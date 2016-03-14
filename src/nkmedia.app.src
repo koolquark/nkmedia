@@ -1,0 +1,9 @@
+{application, nkmedia, [
+    {description, "NkMEDIA Framework"},
+    {vsn, "develop"},
+    {modules, []},
+    {registered, []},
+    {mod, {nkmedia_app, []}},
+    {applications, [nkdocker, nksip]},
+    {env, []}
+]}.
