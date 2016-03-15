@@ -22,7 +22,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([start_link/4, stop/1, channel_op/3, wait_sdp/2]).
+-export([start_link/5, stop/1, channel_op/3, wait_sdp/2]).
 -export([sip_inbound_invite/4]).
 -export([ch_create/2, ch_park/1, ch_join/2, ch_room/2, ch_hangup/2]).
 -export([get_pid/1, get_all/0, stop_all/0]).
@@ -51,7 +51,7 @@
 -type op() ::
     {join, CallId::binary()} | {room, binary()} | {room_layout, binary()} |
     {hangup, nkmedia_fs:q850()|binary()} | {dtmf, binary()} |
-    {answer, SDP::binary()}.
+    {answer, SDP::binary()} | {sip, Url::binary()}.
 
 
 -type op_opts() ::
@@ -60,7 +60,12 @@
         call_timeout => pos_integer(),
 
         % answer opts
-        verto_dialog => map()
+        verto_dialog => map(),
+
+        % sip opts
+        user => binary(),
+        pass => binary(),
+        proxy => binary()
     }.
 
 
@@ -75,11 +80,12 @@
 
 
 %% @doc
--spec start_link(pid(), module(), binary(), class()) ->
+-spec start_link(pid(), module(), binary(), class(), 
+                 nkmedia_fs_server:in_ch_opts() | nkmedia_fs_server:out_ch_opts()) ->
     {ok, pid()}.
 
-start_link(FsPid, CallBacks, CallId, Type) ->
-    gen_server:start_link(?MODULE, [FsPid, CallBacks, CallId, Type], []).
+start_link(FsPid, CallBacks, CallId, Type, Opts) ->
+    gen_server:start_link(?MODULE, [FsPid, CallBacks, CallId, Type, Opts], []).
 
 
 %% @doc
@@ -215,6 +221,8 @@ stop_all() ->
     call_id :: binary(),
     callbacks :: [module()],
     class :: verto | sip,
+    client_id :: term(),
+    client_pid :: pid(),
     sip_service :: nkservice:id(),
     status :: status(),
     sdp :: binary(),
@@ -235,12 +243,20 @@ stop_all() ->
 -spec init(term()) ->
     {ok, tuple()}.
 
-init([FsPid, CallBacks, CallId, Type]) ->
+init([FsPid, CallBacks, CallId, Type, Opts]) ->
+    Id = maps:get(id, Opts, none),
+    Pid = maps:get(monitor, Opts, undefined),
     State1 = #state{
         fs_pid = FsPid,
         call_id = CallId,
-        callbacks = CallBacks
+        callbacks = CallBacks,
+        client_id = Id,
+        client_pid = Pid
     },
+    case is_pid(Pid) of
+        true -> monitor(process, Pid);
+        false -> ok
+    end,
     nklib_proc:put({?MODULE, CallId}),
     self() ! send_ping,
     case Type of
@@ -365,6 +381,11 @@ handle_info({timeout, _, park}, State) ->
     State2 = State#state{pending=[#call_op{op={hangup, <<"Park Timeout">>}}]},
     {noreply, perform_ops(State2)};
 
+handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{client_pid=Pid}=State) ->
+    ?LLOG(info, "user process ~p down", [State#state.client_id], State),
+    do_transfer(<<"nkmedia_hangup_user_down">>, State),
+    {stop, normal, State};
+
 handle_info(Info, State) -> 
     lager:warning("Module ~p received unexpected info: ~p (~p)", [?MODULE, Info, State]),
     {noreply, State}.
@@ -384,6 +405,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 terminate(_Reason, #state{pending=CallOps, waiting=Waiting}=State) ->
     ?LLOG(info, "stopped", [], State),
+    send_notify({status, stop}, State),
     CallOps2 = case Waiting of
         #call_op{} = Call -> [Call|CallOps];
         undefined -> CallOps
@@ -424,8 +446,7 @@ update_status(NewStatus, #state{call_id=CallId, timer=Timer}=State) ->
 
 
 %% @private
-send_notify(Msg, State) ->
-    #state{call_id=CallId, callbacks=CallBacks, pending=Pending} = State,
+send_notify(Msg, #state{callbacks=CallBacks, pending=Pending}=State) ->
     UserMsg = case Msg of
         {status, wait_park} -> {status, wait};
         {status, wait_op} -> {status, wait};
@@ -433,9 +454,21 @@ send_notify(Msg, State) ->
         {status, Status} -> {status, Status};
         ping -> ping
     end,
-    nkmedia_fs_server:ch_notify(CallBacks, CallId, UserMsg),
-    State.
+    do_send_notify(CallBacks, UserMsg, State).
 
+
+%% @private
+do_send_notify([], _Msg, State) ->
+    State;
+
+do_send_notify([CallBack|Rest], Msg, #state{call_id=CallId, client_id=Id}=State) ->
+    case nklib_util:apply(CallBack, nkmedia_fs_ch_notify, [CallId, Id, Msg]) of
+        ok ->
+            ok;
+        Other ->
+            ?LLOG(warning, "invalid callback response: ~p", [Other], State)
+    end,
+    do_send_notify(Rest, Msg, State).
 
 
 %% @private

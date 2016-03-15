@@ -25,7 +25,6 @@
 
 -export([start_link/1, stop/1, register/2, get_config/1, api/2, bgapi/2]).
 -export([start_inbound/3, start_outbound/2, channel_op/4]).
--export([ch_notify/3]).
 -export([get_all/0, stop_all/0]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
@@ -74,7 +73,9 @@
 -type in_ch_opts() :: #{
 	class => verto | sip,
 	call_id => binary(),
-	verto_dialog => map()
+	verto_dialog => map(),
+	monitor => pid(),
+	id => term()
 }.
 
 
@@ -116,14 +117,14 @@ register(Pid, CallBack) ->
 
 %% @doc Generates a new inbound channel
 -spec start_inbound(pid(), binary(), in_ch_opts()) ->
-	{ok, CallId::binary(), SDP::binary()} | {error, term()}.
+	{ok, CallId::binary(), pid(), SDP::binary()} | {error, term()}.
 
 start_inbound(Pid, SDP1, #{class:=verto}=Opts) ->
 	case nklib_util:call(Pid, {start_inbound, SDP1, Opts}, ?CALL_TIME) of
 		{ok, CallId, ChPid} ->
 			case nkmedia_fs_channel:wait_sdp(ChPid, #{}) of
 				{ok, SDP2} ->
-					{ok, CallId, SDP2};
+					{ok, CallId, ChPid, SDP2};
 				{error, Error} ->
 					{error, Error}
 			end;
@@ -198,17 +199,6 @@ bgapi(Pid, Api) ->
 
 
 %% @private
--spec ch_notify(module(), binary(), nkmedia_fs:ch_notify()) ->
-	ok | {error, term()}.
-
-ch_notify([], _CallId, _Msg) ->
-	ok;
-ch_notify([CallBack|Rest], CallId, Msg) ->
-    nklib_util:apply(CallBack, nkmedia_fs_ch_notify, [CallId, Msg]),
-    ch_notify(Rest, CallId, Msg).
-
-
-%% @private
 get_all() ->
 	nklib_proc:values(?MODULE).
 
@@ -245,7 +235,7 @@ init([#{pos:=Pos}=Config]) ->
 	process_flag(trap_exit, true),			% Channels and sessions shouldn't stop us
 	nklib_proc:put(?MODULE, Pos),			% 
 	self() ! connect,
-	?LLOG(notice, "started", [], State),
+	?LLOG(info, "started", [], State),
 	{ok, State}.
 
 
@@ -277,7 +267,7 @@ handle_call({start_inbound, SDP, Opts}, _From, #state{callbacks=CallBacks}=State
 	end,
 	Dialog = maps:get(verto_dialog, Opts, #{}),
 	In = {in, SDP, Dialog},
-	{ok, ChPid} = nkmedia_fs_channel:start_link(self(), CallBacks, CallId, In),
+	{ok, ChPid} = nkmedia_fs_channel:start_link(self(), CallBacks, CallId, In, Opts),
 	State2 = started_channel(CallId, ChPid, State),
 	{reply, {ok, CallId, ChPid}, State2};
 
@@ -376,10 +366,10 @@ handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{fs_conn=Pid}=State) ->
 	{noreply, State#state{fs_conn=undefined}};
 
 handle_info({'DOWN', _Ref, process, Pid, _Reason}=Info, State) ->
-	#state{pids=Pids, channels=Channels, callbacks=CallBacks} = State,
+	#state{pids=Pids, channels=Channels, callbacks=_CallBacks} = State,
 	case maps:find(Pid, Pids) of
 		{ok, CallId} ->
-			ch_notify(CallBacks, CallId, stop),
+			% ch_notify(CallBacks, CallId, stop),
 			Channels2 = maps:remove(CallId, Channels),
 			Pids2 = maps:remove(Pid, Pids),
 			{noreply, State#state{channels=Channels2, pids=Pids2}};
@@ -440,7 +430,12 @@ do_send_update([], _Update, State) ->
 
 do_send_update([CallBack|Rest], Update, #state{pos=Pos, status=Status}=State) ->
 	Update2 = Update#{status=>Status, pos=>Pos},
-	nklib_util:apply(CallBack, nkmedia_fs_update, [self(), Update2]),
+	case nklib_util:apply(CallBack, nkmedia_fs_update, [self(), Update2]) of
+		ok ->
+			ok;
+		Other ->
+			?LLOG(warning, "Invalid response from callback: ~p", [Other], State)
+	end,
 	do_send_update(Rest, Update, State).
 	
 

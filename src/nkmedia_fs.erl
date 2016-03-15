@@ -169,7 +169,7 @@ start_proxy(Pid) ->
 
 %% @doc Generates a new inbound channel
 -spec start_inbound(pid(), binary(), nkmedia_fs_server:in_ch_opts()) ->
-	{ok, CallId::binary(), SDP::binary()} | {error, term()}.
+	{ok, CallId::binary(), pid(), SDP::binary()} | {error, term()}.
 
 start_inbound(Pid, SDP, Opts) ->
 	nkmedia_fs_server:start_inbound(Pid, SDP, Opts).
