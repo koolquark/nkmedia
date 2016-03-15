@@ -21,6 +21,7 @@
 %% @doc NkMEDIA application
 -module(nkmedia_fs_server).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
+-behaviour(gen_server).
 
 -export([start_link/1, stop/1, register/2, get_config/1, api/2, bgapi/2]).
 -export([start_inbound/3, start_outbound/2, channel_op/4]).
