@@ -22,7 +22,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([start_link/5, stop/1, channel_op/3, wait_sdp/2]).
+-export([start_link/5, stop/1, channel_op/3, wait_sdp/2, wait_park/2]).
 -export([sip_inbound_invite/4]).
 -export([ch_create/2, ch_park/1, ch_join/2, ch_room/2, ch_hangup/2]).
 -export([get_pid/1, get_all/0, stop_all/0]).
@@ -114,6 +114,21 @@ wait_sdp(CallId, Opts) ->
         not_found ->
             {error, {unknown_channel, CallId}}
     end.
+
+
+%% @doc
+-spec wait_park(binary()|pid(), op_opts()) ->
+    {ok, binary()} | {error, term()}.
+
+wait_park(CallId, Opts) ->
+    case get_pid(CallId) of
+        {ok, Pid} ->
+            Timeout = maps:get(call_timeout, Opts, ?CALL_OP_TIMEOUT),
+            nklib_util:call(Pid, wait_park, Timeout);
+        not_found ->
+            {error, {unknown_channel, CallId}}
+    end.
+
 
 
 sip_inbound_invite(CallId, Handle, Dialog, SDP) ->
@@ -232,6 +247,7 @@ stop_all() ->
     waiting :: #call_op{},
     timer :: reference(),
     wait_sdp :: {pid(), term()},
+    wait_park :: {pid(), term()},
     sip_handle :: binary(),
     sip_dialog :: binary()
 }).
@@ -263,9 +279,6 @@ init([FsPid, CallBacks, CallId, Type, Opts]) ->
             gen_server:cast(self(), connect_in),
             {ok, State1#state{class=verto, sdp=SDP, data=Dialog}};
         out ->
-
-            lager:warning("STARTING OUT: ~p", [Opts]),
-
             gen_server:cast(self(), connect_out),
             Class = maps:get(class, Opts),
             {ok, State1#state{class=Class}}
@@ -290,12 +303,20 @@ handle_call({op, Op, Opts}, From, #state{pending=Pending}=State) ->
 handle_call(get_call_id, _From, #state{call_id=CallId}=State) ->
     {reply, {ok, CallId}, State};
 
-handle_call(wait_sdp, From, #state{sdp=SDP}=State) ->
+handle_call(wait_sdp, From, #state{wait_sdp=undefined, sdp=SDP}=State) ->
     case is_binary(SDP) of
         true ->
             {reply, {ok, SDP}, State};
         false ->
             {noreply, State#state{wait_sdp=From}}
+    end;
+
+handle_call(wait_park, From, #state{wait_park=undefined, status=Status}=State) ->
+    case Status of
+        park ->
+            {reply, ok, State};
+        _ ->
+            {noreply, State#state{wait_park=From}}
     end;
 
 handle_call({inbound_invite, Handle, Dialog, _SDP}, _From, State) ->
@@ -409,12 +430,12 @@ terminate(_Reason, #state{pending=CallOps, waiting=Waiting}=State) ->
         undefined -> CallOps
     end,
     lists:foreach(
-        fun(#call_op{op=Op, from=From}) ->
+        fun(#call_op{op=Op}=CallOp) ->
             Reply = case Op of
                 {hangup, _} -> ok;
                 _ -> {error, channel_destroyed}
             end,
-            nklib_util:reply(From, Reply)
+            user_reply(Reply, CallOp)
         end,
         CallOps2).
 
@@ -429,8 +450,8 @@ terminate(_Reason, #state{pending=CallOps, waiting=Waiting}=State) ->
 update_status(Status, #state{status=Status}=State) ->
     State;
 
-update_status(NewStatus, #state{call_id=CallId, timer=Timer}=State) ->
-    ?LLOG(info, "status changed to ~p", [NewStatus], State),
+update_status(NewStatus, #state{call_id=CallId, timer=Timer, pending=Pending}=State) ->
+    ?LLOG(info, "status changed to ~p: ~p", [NewStatus, Pending], State),
     nklib_proc:put(?MODULE, {CallId, NewStatus}),
     nklib_util:cancel_timer(Timer),
     Timer2 = case NewStatus of
@@ -480,20 +501,27 @@ process_event({created_out, SDP, Data}, #state{wait_sdp=From}=State) ->
     end,
     State#state{sdp=SDP, data=Data, wait_sdp=SDP};
 
-process_event(park, #state{status=Status}=State) ->
+process_event(park, #state{status=Status, wait_park=WaitPark}=State) ->
     case Status of
         wait_park -> ok;
         _ -> ?LLOG(warning, "received park event in state ~p", [Status], State)
     end,
-    State2 = update_status(park, State),
-    perform_ops(State2);
+    State2 = case WaitPark of
+        undefined -> 
+            State;
+        _ -> 
+            gen_server:reply(WaitPark, ok),
+            State#state{wait_park=undefined}
+    end,
+    State3 = update_status(park, State2),
+    perform_ops(State3);
 
 process_event({room, Room}, #state{status=Status, waiting=Waiting}=State) ->
     case Waiting of
         #call_op{op={room, _}} when Status==wait_op ->
             user_reply(ok, Waiting);
-        #call_op{} ->
-            user_reply({error, channel_updated}, Waiting);
+        #call_op{op=Op} ->
+            user_reply({error, {channel_updated, Status, Op}}, Waiting);
         undefined ->
             ok
     end,
@@ -504,8 +532,8 @@ process_event({join, Bridge}, #state{status=Status, waiting=Waiting}=State) ->
     case Waiting of
         #call_op{op={join, _}} when Status==wait_op ->
             user_reply(ok, Waiting);
-        #call_op{} ->
-            user_reply({error, channel_updated}, Waiting);
+        #call_op{op=Op} ->
+            user_reply({error, {channel_updated, Status, Op}}, Waiting);
         undefined ->
             ok
     end,
@@ -514,6 +542,8 @@ process_event({join, Bridge}, #state{status=Status, waiting=Waiting}=State) ->
 
 process_event({hangup, Reason}, #state{waiting=Waiting}=State) ->
     case Waiting of
+        #call_op{op={hangup, _}} ->
+            user_reply(ok, Waiting);
         #call_op{} ->
             user_reply({error, channel_hangup}, Waiting);
         undefined ->
@@ -533,7 +563,7 @@ perform_ops(#state{status=park, pending=[CallOp|Rest]}=State) ->
             State2 = State#state{pending=Rest, waiting=CallOp},
             update_status(wait_op, State2);
         {error, Error} ->
-            gen_server:reply({error, Error}, CallOp),
+            user_reply({error, Error}, CallOp),
             perform_ops(State#state{pending=Rest})
     end;
 

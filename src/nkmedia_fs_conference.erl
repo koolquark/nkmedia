@@ -180,7 +180,7 @@ handle_cast({del_member, Id}, #state{members=Members}=State) ->
     Members2 = maps:remove(Id, Members),
     case map_size(Members2) of
         0 ->
-            lager:warning("Conference stopped (0 members)"),
+            lager:info("Conference stopped (0 members)"),
             {stop, normal, State};
         _ ->
             {noreply, State#state{members=Members2}}
@@ -199,7 +199,7 @@ handle_cast({stop_talking, _Id}, State) ->
     {noreply, State};
 
 handle_cast(stop, State) ->
-    lager:warning("CONF DESTROY"),
+    lager:info("Conference destroyed"),
     {stop, normal, State};
 
 handle_cast(Msg, State) -> 

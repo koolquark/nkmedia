@@ -108,7 +108,6 @@ sip_invite(Req, _Call) ->
     HasSDP = nksip_sdp:is_sdp(SDP),
     case {UA, AOR} of
         {[<<"FreeSWITCH", _/binary>>], {sip, CallId, _Domain}} when HasSDP ->
-            lager:warning("FS INVITE SIP: ~s", [CallId]),
             {ok, Handle} = nksip_request:get_handle(Req),
             {ok, Dialog} = nksip_dialog:get_handle(Req),
             case nkmedia_fs_channel:sip_inbound_invite(CallId, Handle, Dialog, SDP) of
@@ -135,6 +134,8 @@ sip_bye(Req, _Call) ->
             {ok, {sip, User, _}} = nksip_request:meta(aor, Req),
             lager:warning("BYE FROM FS: ~s", [User]);
         _ ->
+            {ok, Dialog} = nksip_dialog:get_handle(Req),
+            gotools_ws:sip_bye(Dialog),
             ok
     end,
     {reply, ok}.
