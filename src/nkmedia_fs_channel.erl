@@ -223,7 +223,6 @@ stop_all() ->
     class :: verto | sip,
     client_id :: term(),
     client_pid :: pid(),
-    sip_service :: nkservice:id(),
     status :: status(),
     sdp :: binary(),
     data = #{} :: map(),
@@ -263,14 +262,13 @@ init([FsPid, CallBacks, CallId, Type, Opts]) ->
         {in, SDP, Dialog} ->
             gen_server:cast(self(), connect_in),
             {ok, State1#state{class=verto, sdp=SDP, data=Dialog}};
-        {out, Opts} ->
+        out ->
 
             lager:warning("STARTING OUT: ~p", [Opts]),
 
             gen_server:cast(self(), connect_out),
             Class = maps:get(class, Opts),
-            Srv = maps:get(sip_service, Opts, undefined),
-            {ok, State1#state{class=Class, sip_service=Srv}}
+            {ok, State1#state{class=Class}}
     end.
 
 
@@ -649,19 +647,9 @@ user_reply(Msg, #call_op{from=From}) -> gen_server:reply(From, Msg).
 %% ===================================================================
 
 
-%% @private
-originate_sip(#state{sip_service=SrvId}=State) ->
-    case nkpacket:get_listening(nksip_protocol, tcp, #{class=>{nksip, SrvId}}) of
-        [NkPort|_] ->
-            {ok, {nksip_protocol, tcp, Ip, Port}} = nkpacket:get_local(NkPort),
-            Host = nksip_util:get_listenhost(SrvId, Ip, []),
-            originate_sip2(Host, Port, State);
-        [] ->
-            {error, no_sip_listen}
-    end.
-
-
-originate_sip2(Host, Port, #state{fs_pid=FsPid, call_id=CallId}) ->
+originate_sip(#state{fs_pid=FsPid, call_id=CallId}) ->
+    Host = nkmedia_app:get(local_host),
+    Port = nkmedia_app:get(sip_port),
     Sip = <<Host/binary, ":", (nklib_util:to_binary(Port))/binary, ";transport=tcp">>,
     Vars = [{<<"nkstatus">>, <<"outbound">>}], 
     CallOpts = #{vars=>Vars, call_id=>CallId},

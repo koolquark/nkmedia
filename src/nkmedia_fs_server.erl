@@ -81,8 +81,7 @@
 
 -type out_ch_opts() :: #{
 	class => verto | sip,
-	call_id => binary(),
-	sip_service => nkservice:id()
+	call_id => binary()
 }.
 
 
@@ -135,7 +134,7 @@ start_inbound(Pid, SDP1, #{class:=verto}=Opts) ->
 
 %% @doc Generates a new outbound channel at this server and node
 -spec start_outbound(pid(), out_ch_opts()) ->
-	{ok, CallId::binary()} | {error, term()}.
+	{ok, CallId::binary(), SDP::binary()} | {error, term()}.
 
 start_outbound(Pid, #{class:=Class}=Opts) when Class==verto; Class==sip ->
 	case nklib_util:call(Pid, {start_outbound, Opts}, ?CALL_TIME) of
@@ -276,7 +275,7 @@ handle_call({start_outbound, Opts}, _From, #state{callbacks=CallBacks}=State) ->
 	    #{call_id:=CallId} -> ok;
 	    _ -> CallId = nklib_util:uuid_4122()
 	end,
-	{ok, ChPid} = nkmedia_fs_channel:start_link(self(), CallBacks, CallId, {out, Opts}),
+	{ok, ChPid} = nkmedia_fs_channel:start_link(self(), CallBacks, CallId, out, Opts),
 	State2 = started_channel(CallId, ChPid, State),
 	{reply, {ok, CallId, ChPid}, State2};
 

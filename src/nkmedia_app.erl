@@ -55,6 +55,7 @@ start(_Type, _Args) ->
         fs_version => binary,
         fs_release => binary,
         fs_password => binary,
+        sip_port => integer,        
 
         no_docker => boolean
 
@@ -64,6 +65,7 @@ start(_Type, _Args) ->
         fs_version => <<"v1.6.5">>,
         fs_release => <<"r01">>,
         fs_password => <<"764123">>,
+        sip_port => 0,
 
         no_docker => false
     },

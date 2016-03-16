@@ -149,11 +149,13 @@ remove(Opts) ->
 launch(Docker, #{pos:=Pos, pass:=Pass}=Opts) ->
     % See external_sip_ip in vars.xml
     CallDebug = maps:get(call_debug, Opts, false),
-    LocalHost = nklib_util:to_host(local_host),
+    LocalHost = nkmedia_app:get(local_host),
     FsHost = nkmedia_app:get(docker_host),
+    ExtIp = nklib_util:to_host(nkpacket_app:get(ext_ip)),
     Env = [
         {"NK_LOCAL_IP", FsHost},      % 127.0.0.1 usually
         {"NK_HOST_IP", LocalHost},    % 127.0.0.1 usually
+        {"NK_EXT_IP", ExtIp},  
         {"NK_PASS", nklib_util:to_list(Pass)},
         {"NK_EVENT_PORT", nklib_util:to_list(8021+Pos)},
         {"NK_SIP_PORT", nklib_util:to_list(5160+Pos)},
@@ -385,15 +387,23 @@ fs_instance_dockerfile(#{rel:=<<"r01">>}=Opts) ->
         "<param name=\"force-register-domain\" value=.+/>",
         "<param name=\"force-register-domain\" value=\""++?VAR(local_ip_v4)++"\"/>",
         "autoload_configs/verto.conf.xml"), " && \\",
+    % replace(
+    %     "<param name=\"rtp-ip\" value=.+/>",
+    %     "<param name=\"rtp-ip\" value=\""++?VAR(nk_ext_ip)++"\"/>",
+    %     "autoload_configs/verto.conf.xml"), " && \\",
     replace(
-        "<param name=\"rtp-ip\" value=.+/>",
-        "<param name=\"rtp-ip\" value=\""++?VAR(nk_ext_ip)++"\"/>",
+        "<!--  <param name=\"ext-rtp-ip\" value=.+/> -->",
+        "<param name=\"ext-rtp-ip\" value=\""++?VAR(nk_ext_ip)++"\"/>",
         "autoload_configs/verto.conf.xml"), " && \\",
 
     % Sip profile
+    % replace(
+    %     "<param name=\"rtp-ip\" value=.+/>",
+    %     "<param name=\"rtp-ip\" value=\""++?VAR(nk_ext_ip)++"\"/>",
+    %     "sip_profiles/internal.xml"), " && \\",
     replace(
-        "<param name=\"rtp-ip\" value=.+/>",
-        "<param name=\"rtp-ip\" value=\""++?VAR(nk_ext_ip)++"\"/>",
+        "<param name=\"ext-rtp-ip\" value=.+/>",
+        "<param name=\"ext-rtp-ip\" value=\""++?VAR(nk_ext_ip)++"\"/>",
         "sip_profiles/internal.xml"), " && \\",
 
     % Remove SIP profiles
@@ -514,7 +524,7 @@ set -e\n
 export LOCAL_IP_V4=\"\\$\\${local_ip_v4}\"
 cat > /usr/local/freeswitch/conf/nkvars.xml <<EOF
 <include>
-    <X-PRE-PROCESS cmd=\"set\" data=\"nk_ext_ip=$LOCAL_IP_V4\"/>
+    <X-PRE-PROCESS cmd=\"set\" data=\"nk_ext_ip=$NK_EXT_IP\"/>
     <X-PRE-PROCESS cmd=\"set\" data=\"local_ip_v4=${NK_LOCAL_IP-$LOCAL_IP_V4}\"/>
     <X-PRE-PROCESS cmd=\"set\" data=\"nk_host_ip=${NK_HOST_IP-127.0.0.1}\"/>
     <X-PRE-PROCESS cmd=\"set\" data=\"default_password=${NK_PASS-6666}\"/>
