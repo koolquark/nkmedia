@@ -87,6 +87,7 @@ init([]) ->
                     Images = find_images(Company, Pid),
                     lager:info("Installed docker images for '~s': ~s", 
                                 [Company, nklib_util:bjoin(Images, <<", ">>)]),
+                    monitor(process, Pid),
                     {ok, #state{server=Pid, events_ref=Ref}};
                 {error, Error} ->
                     {stop, Error}
@@ -129,6 +130,10 @@ handle_cast(Msg, State) ->
 
 handle_info({nkdocker, Ref, {data, Map}}, #state{events_ref=Ref}=State) ->
     {noreply, event(Map, State)};
+
+handle_info({'DOWN', _Ref, process, Pid, Reason}, #state{server=Pid}=State) ->
+    lager:warning("NkMEDIA Docker server failed! (~p)", [Reason]),
+    {stop, docker_error, State};
 
 handle_info(Info, State) -> 
     lager:warning("Module ~p received unexpected info: ~p (~p)", [?MODULE, Info, State]),
