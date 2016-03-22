@@ -66,14 +66,14 @@
 
 start(ServerPid) ->
     case nkmedia_fs_server:get_config(ServerPid) of
-        {ok, #{ip:=Ip, pos:=Pos, pass:=Pass}} ->
+        {ok, #{ip:=Ip, index:=Index, password:=Pass}} ->
             ConnOpts = #{
                 class => nkmedia_fs,
                 monitor => self(),
                 idle_timeout => ?WS_TIMEOUT,
                 user => #{server_pid => ServerPid, pass => Pass}
             },
-            Conn = {nkmedia_fs_verto_client, ws, Ip, 8181+Pos},
+            Conn = {nkmedia_fs_verto_client, ws, Ip, 8181+Index},
             case nkpacket:connect(Conn, ConnOpts) of
                 {ok, Pid} ->
                     case nklib_util:call(Pid, login, ?CALL_TIMEOUT) of

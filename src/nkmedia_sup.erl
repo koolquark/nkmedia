@@ -28,8 +28,8 @@
 
 -include("nkmedia.hrl").
 
-start_fs(#{pos:=Pos}=Config) ->
-    ChildId = {nkmedia_fs_server, Pos},
+start_fs(#{index:=Index}=Config) ->
+    ChildId = {nkmedia_fs_server, Index},
 	Spec = {
         ChildId,
         {nkmedia_fs_server, start_link, [Config]},
@@ -51,8 +51,8 @@ start_fs(#{pos:=Pos}=Config) ->
     end.
 
 
-stop_fs(#{pos:=Pos}) ->
-    ChildId = {nkmedia_fs_server, Pos},
+stop_fs(#{index:=Index}) ->
+    ChildId = {nkmedia_fs_server, Index},
     case supervisor:terminate_child(?MODULE, ChildId) of
         ok -> ok = supervisor:delete_child(?MODULE, ChildId);
         {error, Error} -> {error, Error}
@@ -67,14 +67,14 @@ start_link() ->
     Childs = case nkmedia_app:get(no_docker) of
         false ->
             [
-                {
-                    docker,
-                    {nkmedia_docker, start_link, []},
-                    permanent,
-                    5000,
-                    worker,
-                    [nkmedia_docker]
-                }
+                % {
+                %     docker,
+                %     {nkmedia_docker, start_link, []},
+                %     permanent,
+                %     5000,
+                %     worker,
+                %     [nkmedia_docker]
+                % }
             ];
         true ->
             []

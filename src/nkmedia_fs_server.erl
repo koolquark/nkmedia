@@ -32,7 +32,7 @@
 -define(CONNECT_RETRY, 5000).
 
 -define(LLOG(Type, Txt, Args, State),
-	lager:Type("NkMEDIA FS (~p ~p) "++Txt, [State#state.pos, self()|Args])).
+	lager:Type("NkMEDIA FS (~p ~p) "++Txt, [State#state.index, self()|Args])).
 
 -define(CALL_TIME, 30000).
 
@@ -215,7 +215,7 @@ stop_all() ->
 
 -record(state, {
 	config2 :: nkmedia_fs:start_opts(),
-	pos :: integer(),
+	index :: integer(),
 	status :: nkmedia_fs:status(),
 	callbacks = [] :: [module()],
 	fs_conn :: pid(),
@@ -229,10 +229,10 @@ stop_all() ->
     {ok, tuple()} | {ok, tuple(), timeout()|hibernate} |
     {stop, term()} | ignore.
 
-init([#{pos:=Pos}=Config]) ->
-	State = #state{config2=Config, pos=Pos},
+init([#{index:=Index}=Config]) ->
+	State = #state{config2=Config, index=Index},
 	process_flag(trap_exit, true),			% Channels and sessions shouldn't stop us
-	nklib_proc:put(?MODULE, Pos),			% 
+	nklib_proc:put(?MODULE, Index),			% 
 	self() ! connect,
 	?LLOG(info, "started", [], State),
 	{ok, State}.
@@ -318,12 +318,12 @@ handle_info(connect, #state{fs_conn=Pid}=State) when is_pid(Pid) ->
 	true = is_process_alive(Pid),
 	{noreply, State};
 
-handle_info(connect, #state{config2=Config, pos=Pos}=State) ->
+handle_info(connect, #state{config2=Config, index=Index}=State) ->
 	State1 = update_status(connecting, State),
 	case nkmedia_fs_docker:start(Config) of
 		ok ->
-			#{pos:=Pos, pass:=Pass} = Config,
-			case nkmedia_fs_event_protocol:start(8021+Pos, Pass) of
+			#{index:=Index, password:=Pass} = Config,
+			case nkmedia_fs_event_protocol:start(8021+Index, Pass) of
 				{ok, Pid} ->
 					monitor(process, Pid),
 					State2 = State1#state{fs_conn=Pid},
@@ -427,8 +427,8 @@ send_update(Update, #state{callbacks=CallBacks}=State) ->
 do_send_update([], _Update, State) ->
 	State;
 
-do_send_update([CallBack|Rest], Update, #state{pos=Pos, status=Status}=State) ->
-	Update2 = Update#{status=>Status, pos=>Pos},
+do_send_update([CallBack|Rest], Update, #state{index=Index, status=Status}=State) ->
+	Update2 = Update#{status=>Status, index=>Index},
 	case nklib_util:apply(CallBack, nkmedia_fs_update, [self(), Update2]) of
 		ok ->
 			ok;
@@ -442,8 +442,8 @@ do_send_update([CallBack|Rest], Update, #state{pos=Pos, status=Status}=State) ->
 update_status(Status, #state{status=Status}=State) ->
 	State;
 
-update_status(NewStatus, #state{pos=Pos, status=OldStatus}=State) ->
-	nklib_proc:put({?MODULE, Pos}, NewStatus),
+update_status(NewStatus, #state{index=Index, status=OldStatus}=State) ->
+	nklib_proc:put({?MODULE, Index}, NewStatus),
 	?LLOG(info, "status update ~p->~p", [OldStatus, NewStatus], State),
 	send_update(#{}, State#state{status=NewStatus}).
 

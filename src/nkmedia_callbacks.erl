@@ -18,14 +18,11 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc NkMEDIA application
+%% @doc NkMEDIA callbacks
 
--module(nkmedia).
+-module(nkmedia_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([start_fs/0, start_fs/1, stop_fs/0, stop_fs/1]).
--export([nkdocker_event/2]).
-
-
+-export([nkdocker_notify/2]).
 
 
 %% ===================================================================
@@ -33,67 +30,17 @@
 %% ===================================================================
 
 
--type fs_start_opts() ::
-	#{
-		index => pos_integer(),
-		version => binary(),
-		release => binary(),
-		password => binary(),
-		docker_company => binary()
-	}.
-
-
-
 
 %% ===================================================================
 %% Public functions
 %% ===================================================================
 
+nkdocker_notify(_Id, {stats, _}) ->
+	% lager:info("Stats"),
+	ok;
+	
+nkdocker_notify(_Id, {docker, Event}) ->
+	lager:info("DOCKER EVENT: ~p", [Event]);
 
-%% @doc equivalent to start_fs(#{})
--spec start_fs() ->
-	ok | {error, term()}.
-
-start_fs() ->
-	start_fs(#{}).
-
-
-%% @doc Manually starts a local freeswitch
--spec start_fs(fs_start_opts()) ->
-	ok | {error, term()}.
-
-start_fs(Spec) ->
-	nkmedia_fs:start(Spec).
-
-
-%% @doc equivalent to stop_fs(#{})
--spec stop_fs() ->
-	ok | {error, term()}.
-
-stop_fs() ->
-	stop_fs(#{}).
-
-
-%% @doc Manually starts a local freeswitch
--spec stop_fs(fs_start_opts()) ->
-	ok | {error, term()}.
-
-stop_fs(Spec) ->
-	nkmedia_fs:stop_fs(Spec).
-
-
-
-
-
-
-
-
-
-
-%% ===================================================================
-%% Private
-%% ===================================================================
-
-
-nkdocker_event(Id, Event) ->
-	lager:warning("EVENT: ~p, ~p", [Id, Event]).
+nkdocker_notify(_Id, Event) ->
+	lager:notice("NK EVENT: ~p", [Event]).

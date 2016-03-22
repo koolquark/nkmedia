@@ -38,13 +38,34 @@
 %% ===================================================================
 
 
+%% @doc Manually starts a local FS
+start_fs(nkmedia:start_fs()) ->
+    ok.
+
+start_fs(Spec) ->
+    RunName = nkmedia_fs_docker:fs_run_name(Opts),
+    case get_docker() of
+        {ok, Docker} ->
+            
+
+
+    case nkdocker:inspect(Docker, RunName) of
+        {ok, #{<<"State">> := #{<<"Running">>:=true}}} -> {ok, true};
+        {ok, _} -> {ok, false};
+        {error, Error} -> {error, Error}
+    end.
+
+
+
+    nklib_util:call(?MODULE, {start_fs, Spec}).
+
 
 %% @doc Runs a nkdocker command using configured docker options
 -spec get_docker() ->
-    term() | {error, term()}.
+    {ok, pid()} | {error, term()}.
 
 get_docker() ->
-    gen_server:call(?MODULE, get_pid).
+    nklib_util:call(?MODULE, get_pid).
 
 
 
@@ -80,7 +101,6 @@ init([]) ->
     % Avoid start_link/1 to be able to print errors
     case nkdocker:start(DockerOpts) of
         {ok, Pid} ->
-            link(Pid),
             case nkdocker:events(Pid) of
                 {async, Ref} ->
                     Company = nkmedia_app:get(docker_company),
@@ -102,6 +122,13 @@ init([]) ->
 -spec handle_call(term(), {pid(), term()}, #state{}) ->
     {noreply, #state{}} | {reply, term(), #state{}} |
     {stop, Reason::term(), #state{}} | {stop, Reason::term(), Reply::term(), #state{}}.
+
+handle_call({start_fs, #{index:=Index}=Spec}, _From, State) ->
+
+
+
+
+
 
 handle_call(get_pid, _From, #state{server=Pid}=State) ->
     {reply, {ok, Pid}, State};

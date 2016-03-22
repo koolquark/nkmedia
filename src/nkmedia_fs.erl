@@ -23,11 +23,11 @@
 -module(nkmedia_fs).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/0, start/1, stop/0, stop/1]).
+-export([start/1, stop/1]).
 -export([start_proxy/1]).
 -export([start_inbound/3, start_outbound/2, channel_op/3, channel_op/4]).
 -export([config/1]).
--export_type([install_opts/0, start_opts/0, q850/0]).
+-export_type([start_opts/0, q850/0]).
 
 
 %% ===================================================================
@@ -35,21 +35,17 @@
 %% ===================================================================
 
 
--type install_opts() ::
-    #{
-        vsn => string() | binary(),
-        rel => string() | binary(),
-        pos => pos_integer(),
-        pass => string() | binary()
-    }.
-
-
 -type start_opts() ::
-    install_opts() | 
-    #{                                  
+    #{
+        index => pos_integer(),
+        version => binary(),
+        release => binary(),
+        password => binary(),
+    	docker_company => binary(),
     	callback => module(),
-        call_debug => boolean()
+    	call_debug => boolean()
     }.
+
 
 -type status() ::
 	connecting | ready.
@@ -59,8 +55,8 @@
 	#{
 		status => status(),
 		ip => inet:ip_address(),
-		pos => integer(),
-		vsn => binary(),
+		index => integer(),
+		version => binary(),
 		stats => stats()
 	}.
 
@@ -100,54 +96,53 @@
 %% Public functions
 %% ===================================================================
 
-%% @doc Equivalent to start()
--spec start() ->
-    {ok, pid()} | {error, term()}.
-
-start() ->
-	start(#{}).
-
-
 %% @doc Installs and starts a local FS instance
 -spec start(start_opts()) ->
-    {ok, pid()} | {error, term()}.
+    ok | {error, term()}.
 
-start(Opts) ->
-	case nkmedia_fs_docker:start(Opts) of
-		ok ->
-			case nkmedia_sup:start_fs(config(Opts)) of
-				{ok, Pid} ->
-					case Opts of
-						#{callback:=CallBack} ->
-							case nkmedia_fs_server:register(Pid, CallBack) of
-								ok ->
-									{ok, Pid};
-								{error, Error} ->
-									{error, Error}
-							end;
-						_ ->
-							{ok, Pid}
-					end;
-				{error, Error} ->
-					{error, Error}
-			end;
+start(Spec) ->
+	case nkmedia_fs_docker:config(Spec) of
+		{ok, Spec2, Docker} ->
+			nkmedia_fs_docker:start(Spec2, Docker);
 		{error, Error} ->
 			{error, Error}
 	end.
+	% case nkmedia_fs_docker:start(Opts) of
+	% 	ok ->
+	% 		case nkmedia_sup:start_fs(config(Opts)) of
+	% 			{ok, Pid} ->
+	% 				case Opts of
+	% 					#{callback:=CallBack} ->
+	% 						case nkmedia_fs_server:register(Pid, CallBack) of
+	% 							ok ->
+	% 								{ok, Pid};
+	% 							{error, Error} ->
+	% 								{error, Error}
+	% 						end;
+	% 					_ ->
+	% 						{ok, Pid}
+	% 				end;
+	% 			{error, Error} ->
+	% 				{error, Error}
+	% 		end;
+	% 	{error, Error} ->
+	% 		{error, Error}
+	% end.
 
 
 %% @doc Equivalent to stop()
--spec stop() ->
+-spec stop(start_opts()) ->
     {ok, pid()} | {error, term()}.
 
-stop() ->
-	stop(#{}).
-
-
-%% @doc Stops a server
-stop(Opts) ->
-	nkmedia_sup:stop_fs(config(Opts)),
-	nkmedia_fs_docker:remove(Opts).
+stop(Spec) ->
+	case nkmedia_fs_docker:config(Spec) of
+		{ok, Spec2, Docker} ->
+			nkmedia_fs_docker:stop(Spec2, Docker);
+		{error, Error} ->
+			{error, Error}
+	end.
+	% nkmedia_sup:stop_fs(config(Opts)),
+	% nkmedia_fs_docker:remove(Opts).
 	
 
 
@@ -202,14 +197,29 @@ channel_op(Pid, CallId, Op, Opts) ->
 
 
 %% @private
--spec config(install_opts()) ->
-	install_opts().
+-spec config(map()|list()) ->
+	{ok, nkmedia:fs_start_opts()}.
 
-config(Opts) ->
-	Opts#{
-        vsn => nklib_util:to_binary(maps:get(vsn, Opts, nkmedia_app:get(fs_version))),
-        rel => nklib_util:to_binary(maps:get(rel, Opts, nkmedia_app:get(fs_release))),
-        pos => nklib_util:to_integer(maps:get(pos, Opts, 0)),
-        pass => nklib_util:to_binary(maps:get(pass, Opts, nkmedia_app:get(fs_password)))
-    }.
+config(Spec) ->
+	Syntax = #{
+		index => {integer, 0, 10},
+		version => binary,
+		release => binary,
+		password => binary,
+		docker_company => binary,
+		callback => module,
+		call_debug => boolean
+	},
+	Opts = #{
+		return => map,
+		defaults => nkmedia_app:get(fs_defaults),
+		warning_unknown => true
+	},
+	case nklib_config:parse_config(Spec, Syntax, Opts) of
+		{ok, Spec2, _} ->
+			{ok, Spec2};
+		{error, Error} ->
+			{error, Error}
+	end.
+
 

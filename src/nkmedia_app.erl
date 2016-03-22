@@ -92,14 +92,27 @@ start(_Type, _Args) ->
                         {error, Error} ->
                             lager:error("Error contacting docker: ~p", [Error]),
                             error({docker_error, Error})
-                    end;
+                    end,
+                    {ok, DockerId} = nkdocker_monitor:register(nkmedia_callbacks),
+                    nkmedia_app:put(docker_id, DockerId);
+
+
                     % Images = nkmedia_docker:find_images(),
                     % lager:info("Installed images: ~s", [Images]);
                 true ->
                     lager:warning("No docker support in config")
             end,
+            FsDefs = #{
+                index => 0,
+                version => nkmedia_app:get(fs_version),
+                release => nkmedia_app:get(fs_release),
+                password => nkmedia_app:get(fs_password),
+                docker_company => nkmedia_app:get(docker_company),
+                callback => nkmedia_callbacks
+            },
+            nkmedia_app:put(fs_defaults, FsDefs),
             {ok, Pid} = nkmedia_sup:start_link(),
-            nkmedia_sip:start(),
+            % nkmedia_sip:start(),
             {ok, Pid};
         {error, Error} ->
             lager:error("Error parsing config: ~p", [Error]),

@@ -47,7 +47,7 @@
 -spec start(nkmedia_fs:start_opts()) ->
     {ok, pid()} | {error, term()}.
 
-start(#{pos:=Pos, pass:=Pass}) ->
+start(#{index:=Index, password:=Pass}) ->
     {ok, Ip} = nklib_util:to_ip(nkmedia_app:get(docker_host)),
     ConnOpts = #{
         class => nkmedia_fs_proxy,
@@ -55,7 +55,7 @@ start(#{pos:=Pos, pass:=Pass}) ->
         idle_timeout => ?WS_TIMEOUT,
         user => #{proxy=>self(), pass=>Pass}
     },
-    Conn = {nkmedia_fs_proxy_verto_client, ws, Ip, 8181+Pos},
+    Conn = {nkmedia_fs_proxy_verto_client, ws, Ip, 8181+Index},
     nkpacket:connect(Conn, ConnOpts).
 
 
