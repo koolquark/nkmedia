@@ -23,27 +23,27 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(supervisor).
 
--export([start_fs/1, stop_fs/1]).
+-export([start_fs_engine/4]).
 -export([init/1, start_link/0]).
 
 -include("nkmedia.hrl").
 
-start_fs(#{index:=Index}=Config) ->
-    ChildId = {nkmedia_fs_server, Index},
+start_fs_engine(Name, Image, Ip, Pass) ->
+    ChildId = {nkmedia_fs_engine, Ip},
 	Spec = {
         ChildId,
-        {nkmedia_fs_server, start_link, [Config]},
-        permanent,
+        {nkmedia_fs_engine, start_link, [Name, Image, Ip, Pass]},
+        transient,
         5000,
         worker,
-        [nkmedia_fs_server]
+        [nkmedia_fs_engine]
     },
 	case supervisor:start_child(?MODULE, Spec) of
         {ok, Pid} -> 
             {ok, Pid};
         {error, already_present} ->
             ok = supervisor:delete_child(?MODULE, ChildId),
-            start_fs(Config);
+            start_fs_engine(Name, Image, Ip, Pass);
         {error, {already_started, Pid}} -> 
             {ok, Pid};
         {error, Error} -> 
@@ -51,12 +51,12 @@ start_fs(#{index:=Index}=Config) ->
     end.
 
 
-stop_fs(#{index:=Index}) ->
-    ChildId = {nkmedia_fs_server, Index},
-    case supervisor:terminate_child(?MODULE, ChildId) of
-        ok -> ok = supervisor:delete_child(?MODULE, ChildId);
-        {error, Error} -> {error, Error}
-    end.
+% stop_fs(#{index:=Index}) ->
+%     ChildId = {nkmedia_fs_server, Index},
+%     case supervisor:terminate_child(?MODULE, ChildId) of
+%         ok -> ok = supervisor:delete_child(?MODULE, ChildId);
+%         {error, Error} -> {error, Error}
+%     end.
 
 
 %% @private

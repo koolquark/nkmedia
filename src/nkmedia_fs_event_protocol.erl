@@ -51,12 +51,12 @@
 
 
 %% @doc
--spec start(inet:port_number(), string()|binary()) ->
+-spec start(binary(), binary()) ->
 	{ok, pid()} | {error, term()}.
 
-start(Port, Pass) ->
-	{ok, Ip} = nklib_util:to_ip(nkmedia_app:get(docker_host)),
-	Conn = {?MODULE, tcp, Ip, Port},
+start(Host, Pass) ->
+	{ok, Ip} = nklib_util:to_ip(Host),
+	Conn = {?MODULE, tcp, Ip, 8021},
 	ConnOpts = #{
 		class => nkmedia_fs, 
 		idle_timeout => 60000,

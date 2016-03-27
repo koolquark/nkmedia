@@ -23,7 +23,9 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([build_base_image/0, build_base_image/3]).
+-export([remove_base_image/0, remove_base_image/3]).
 -export([build_nk_image/0, build_nk_image/3]).
+-export([remove_nk_image/0, remove_nk_image/3]).
 
 % -include("nkmedia.hrl").
 
@@ -42,7 +44,7 @@ build_base_image() ->
     build_base_image(?REPO, ?VERSION, ?RELEASE).
 
 
-%% @private
+%% @doc Builds netcomposer/freeswitch:v1.6.5-r01
 build_base_image(Repo, Vsn, Rel) ->
     Name = base_image_name(Repo, Vsn, Rel),
     Tar = nkdocker_util:make_tar([{"Dockerfile", base_image_dockerfile(Vsn)}]),
@@ -56,17 +58,39 @@ build_base_image(Repo, Vsn, Rel) ->
     end.
 
 
+%% @private
+remove_base_image() ->
+    remove_base_image(?REPO, ?VERSION, ?RELEASE).
+
+
+%% @doc Builds netcomposer/freeswitch:v1.6.5-r01
+remove_base_image(Repo, Vsn, Rel) ->
+    Name = base_image_name(Repo, Vsn, Rel),
+    case nkdocker:start_link() of
+        {ok, Pid} ->
+            Res = case nkdocker:rmi(Pid, Name, #{force=>true}) of
+                {ok, _} -> ok;
+                {error, {not_found, _}} -> ok;
+                E3 -> lager:warning("NkMEDIA could not remove ~s: ~p", [Name, E3])
+            end,
+            nkdocker:stop(Pid),
+            Res;
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
 
 %% @private
 build_nk_image() ->
     build_nk_image(?REPO, ?VERSION, ?RELEASE).
 
 
-%% @private Build NK Image
+%% @doc Builds netcomposer/nk_freeswitch:v1.6.5-r01
 %% Environment variables:
-%% - NK_LOCAL_IP: Default 127.0.0.1
-%% - NK_EXT_IP: Default "stun:stun.freeswitch.org"
-%% - NK_HOST_IP: Host for FS to connect to
+%% - NK_LOCAL_IP: Default "$${local_ip_v4}". Maps to local_ip_v4 inside freeswitch
+%% - NK_EXT_IP: Default "stun:stun.freeswitch.org". Used in ext-rtp-ip
+%% - NK_HOST_IP: Host for FS to connect to.
 %% - NK_PASS: Default "6666"
 
 build_nk_image(Repo, Vsn, Rel) ->
@@ -86,6 +110,28 @@ build_nk_image(Repo, Vsn, Rel) ->
             Res;
         {error, Error} ->
             {error, {docker_start_error, Error}}
+    end.
+
+
+%% @private
+remove_nk_image() ->
+    remove_nk_image(?REPO, ?VERSION, ?RELEASE).
+
+
+%% @doc Removes netcomposer/nk_freeswitch:v1.6.5-r01
+remove_nk_image(Repo, Vsn, Rel) ->
+    Name = nk_image_name(Repo, Vsn, Rel),
+    case nkdocker:start_link() of
+        {ok, Pid} ->
+            Res = case nkdocker:rmi(Pid, Name, #{force=>true}) of
+                {ok, _} -> ok;
+                {error, {not_found, _}} -> ok;
+                E3 -> lager:warning("NkMEDIA could not remove ~s: ~p", [Name, E3])
+            end,
+            nkdocker:stop(Pid),
+            Res;
+        {error, Error} ->
+            {error, Error}
     end.
 
 
@@ -362,7 +408,7 @@ export LOCAL_IP_V4=\"\\$\\${local_ip_v4}\"
 export EXT_IP=\"stun:stun.freeswitch.org\"
 cat > /usr/local/freeswitch/conf/nkvars.xml <<EOF
 <include>
-    <X-PRE-PROCESS cmd=\"set\" data=\"nk_ext_ip=${NK_EXT_IP-EXT_IP}\"/>
+    <X-PRE-PROCESS cmd=\"set\" data=\"nk_ext_ip=${NK_EXT_IP-$EXT_IP}\"/>
     <X-PRE-PROCESS cmd=\"set\" data=\"local_ip_v4=${NK_LOCAL_IP-$LOCAL_IP_V4}\"/>
     <X-PRE-PROCESS cmd=\"set\" data=\"nk_host_ip=${NK_HOST_IP-127.0.0.1}\"/>
     <X-PRE-PROCESS cmd=\"set\" data=\"default_password=${NK_PASS-6666}\"/>
@@ -415,4 +461,36 @@ replace_escape([Ch|Rest], Acc) ->
 
 replace_escape([], Acc) ->
     lists:reverse(Acc).
+
+
+
+% FROM debian:jessie
+% ENV DEBIAN_FRONTEND noninteractive
+% ENV APT_LISTCHANGES_FRONTEND noninteractive
+% WORKDIR /root
+% RUN apt-get update
+% RUN apt-get install -y wget git build-essential
+% RUN echo "deb http://files.freeswitch.org/repo/deb/debian/ jessie main" > /etc/apt/sources.list.d/99FreeSWITCH.list
+% RUN wget http://files.freeswitch.org/repo/deb/debian/key.gpg
+% RUN apt-key add key.gpg
+% RUN echo "deb http://packages.erlang-solutions.com/debian jessie contrib" > /etc/apt/sources.list.d/99ErlangSolutions.list
+% RUN wget http://packages.erlang-solutions.com/debian/erlang_solutions.asc
+% RUN apt-key add erlang_solutions.asc
+% RUN apt-get update
+% RUN apt-get install -y --force-yes freeswitch-video-deps-most esl-erlang=1:17.5.3 || echo "We continue with some fails ..."
+% RUN git config --global pull.rebase true
+% WORKDIR /usr/src
+% RUN git clone https://freeswitch.org/stash/scm/fs/freeswitch.git
+% WORKDIR /usr/src/freeswitch
+% RUN git checkout v1.6.6
+% RUN ./bootstrap.sh -j
+% RUN ./configure -C
+% RUN perl -i -pe 's/#applications\/mod_av/applications\/mod_av/g' modules.conf
+% RUN perl -i -pe 's/#applications\/mod_curl/applications\/mod_curl/g' modules.conf
+% RUN perl -i -pe 's/#applications\/mod_http_cache/applications\/mod_http_cache/g' modules.conf
+% RUN perl -i -pe 's/#applications\/mod_mp4/applications\/mod_mp4/g' modules.conf
+% RUN perl -i -pe 's/#applications\/mod_mp4v2/applications\/mod_mp4v2/g' modules.conf
+% RUN perl -i -pe 's/#codecs\/mod_mp4v/codecs\/mod_mp4v/g' modules.conf
+% RUN perl -i -pe 's/#formats\/mod_vlc/formats\/mod_vlc/g' modules.conf
+% RUN perl -i -pe 's/#say\/mod_say_es/say\/mod_say_es/g' modules.conf
 

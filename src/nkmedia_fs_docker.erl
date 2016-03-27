@@ -22,7 +22,7 @@
 -module(nkmedia_fs_docker).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([launch/0]).
+-export([start/0, start/2, stop/0, stop/1]).
 
 
 
@@ -31,12 +31,14 @@
 %% ===================================================================
         
 
-launch() ->
-    launch("netcomposer/nk_freeswitch:v1.6.5-r01", "7777").
+%% @doc Starts a FS instance
+start() ->
+    Pass = nklib_util:hash(make_ref()),
+    start("netcomposer/nk_freeswitch:v1.6.5-r01", Pass).
 
 
-
-launch(Image, Pass) ->
+%% @doc Starts a FS instance
+start(Image, Pass) ->
     LocalHost = nkmedia_app:get(local_host),
     case nkmedia_app:get(docker_host) of
         <<"127.0.0.1">> ->
@@ -44,17 +46,20 @@ launch(Image, Pass) ->
             Byte2 = crypto:rand_uniform(1, 255),
             Byte3 = crypto:rand_uniform(1, 255),
             FsHost = nklib_util:to_host({127, Byte1, Byte2, Byte3}),
-            Name = list_to_binary(["nk_freeswitch", nklib_util:hash(FsHost)]);
+            Name = list_to_binary(["nk_freeswitch_", nklib_util:hash(FsHost)]);
         FsHost ->
             Name = "nk_freeswitch"
 
     end,
     ExtIp = nklib_util:to_host(nkpacket_app:get(ext_ip)),
     Env = [
-        {"NK_HOST_IP", LocalHost},    % 127.0.0.1 usually
-        {"NK_LOCAL_IP", FsHost},      % 127.0.0.1 usually
+        {"NK_HOST_IP", LocalHost},   
+        {"NK_LOCAL_IP", FsHost},     
         {"NK_EXT_IP", ExtIp},  
         {"NK_PASS", nklib_util:to_list(Pass)}
+    ],
+    Labels = [
+        {"nkmedia", "freeswitch"}
     ],
     Cmds = ["bash", "/usr/local/freeswitch/start.sh"],
     DockerOpts = #{
@@ -62,11 +67,13 @@ launch(Image, Pass) ->
         env => Env,
         cmds => Cmds,
         net => host,
-        interactive => true
+        interactive => true,
+        labels => Labels
     },
     lager:info("NkMEDIA FS Docker: creating instance ~s", [Name]),
     case nkdocker:start_link(#{}) of
         {ok, Pid} ->
+            nkdocker:rm(Pid, Name),
             Res = case nkdocker:create(Pid, Image, DockerOpts) of
                 {ok, _} -> 
                     lager:info("NkMEDIA FS Docker: starting ~s", [Name]),
@@ -81,76 +88,30 @@ launch(Image, Pass) ->
     end.
 
 
+%% @doc Stops a FS instance
+stop() ->
+    stop("nk_freeswitch").
+
+
+%% @doc Stops a FS instance
+stop(Name) ->
+    case nkdocker:start_link(#{}) of
+        {ok, Pid} ->
+            case nkdocker:kill(Pid, Name) of
+                ok -> ok;
+                {error, {not_found, _}} -> ok;
+                E1 -> lager:warning("NkMEDIA could not kill ~s: ~p", [Name, E1])
+            end,
+            case nkdocker:rm(Pid, Name) of
+                ok -> ok;
+                {error, {not_found, _}} -> ok;
+                E2 -> lager:warning("NkMEDIA could not remove ~s: ~p", [Name, E2])
+            end,
+            nkdocker:stop(Pid);
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 
-
-
-% %% @doc Starts a docker instance
-% -spec start(nkmedia_fs:start_opts(), pid()) ->
-%     ok | {error, term()}.
-
-% start(Spec, Docker) ->
-%     case build_fs_instance(Docker, Spec) of
-%         ok ->
-%             RunName = fs_run_name(Spec),
-%             case nkdocker:inspect(Docker, RunName) of
-%                 {ok, #{<<"State">> := #{<<"Running">>:=true}}} -> 
-%                     {error, already_running};
-%                 {ok, _} ->
-%                     lager:info("NkMEDIA FS Docker: removing ~s", [RunName]),
-%                     case nkdocker:rm(Docker, RunName) of
-%                         ok -> 
-%                             launch(Docker, Spec);
-%                         {error, Error} ->
-%                             {error, Error}
-%                     end;
-%                 {error, {not_found, _}} -> 
-%                     launch(Docker, Spec);
-%                 {error, Error} ->
-%                     {error, Error}
-%             end;
-%         {error, Error} ->
-%             {error, Error}
-%     end.
-
-
-% %% @doc Stops the instance
-% -spec stop(nkmedia_fs:start_opts(), pid()) ->
-%     ok.
-
-% stop(Spec, Docker) ->
-%     Name = fs_run_name(Spec),
-%     case nkdocker:kill(Docker, Name) of
-%         ok -> ok;
-%         {error, {not_found, _}} -> ok;
-%         E1 -> lager:warning("NkMEDIA could not kill ~s: ~p", [Name, E1])
-%     end,
-%     case nkdocker:rm(Docker, Name) of
-%         ok -> ok;
-%         {error, {not_found, _}} -> ok;
-%         E2 -> lager:warning("NkMEDIA could not remove ~s: ~p", [Name, E2])
-%     end,
-%     ok.
-
-    
-
-% %% @private
-% -spec build_base(nkmedia_fs:start_opts(), pid()) ->
-%     ok | {error, term()}.
-
-% build_base(Spec, Docker) ->
-%     build_fs_base(Docker, Spec).
-
-
-
-% %% @doc Stops and removes a freeswitch instance and removes images
-% remove(Spec, Docker) ->
-%     stop(Spec, Docker),
-%     InstName = fs_instance_name(Spec),
-% 	case nkdocker:rmi(Docker, InstName, #{force=>true}) of
-% 		{ok, _} -> ok;
-% 		{error, {not_found, _}} -> ok;
-% 		E3 -> lager:warning("NkMEDIA could not remove ~s: ~p", [InstName, E3])
-% 	end.
 
