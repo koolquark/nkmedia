@@ -678,7 +678,7 @@ user_reply(Msg, #call_op{from=From}) -> gen_server:reply(From, Msg).
 
 
 originate_sip(#state{fs_pid=FsPid, call_id=CallId}) ->
-    Host = nkmedia_app:get(local_host),
+    Host = nklib_util:to_host(nkmedia_app:get(local_ip)),
     Port = nkmedia_app:get(sip_port),
     Sip = <<Host/binary, ":", (nklib_util:to_binary(Port))/binary, ";transport=tcp">>,
     Vars = [{<<"nkstatus">>, <<"outbound">>}], 

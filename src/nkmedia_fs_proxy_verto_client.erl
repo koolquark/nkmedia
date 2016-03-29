@@ -48,7 +48,7 @@
     {ok, pid()} | {error, term()}.
 
 start(#{index:=Index, password:=Pass}) ->
-    {ok, Ip} = nklib_util:to_ip(nkmedia_app:get(docker_host)),
+    Ip = nkmedia_app:get(docker_host),
     ConnOpts = #{
         class => nkmedia_fs_proxy,
         monitor => self(),

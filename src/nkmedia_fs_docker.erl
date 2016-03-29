@@ -39,9 +39,9 @@ start() ->
 
 %% @doc Starts a FS instance
 start(Image, Pass) ->
-    LocalHost = nkmedia_app:get(local_host),
-    case nkmedia_app:get(docker_host) of
-        <<"127.0.0.1">> ->
+    LocalHost = nklib_util:to_host(nkmedia_app:get(local_ip)),
+    case nkmedia_app:get(docker_ip) of
+        {127,0,0,1} ->
             Byte1 = crypto:rand_uniform(1, 255),
             Byte2 = crypto:rand_uniform(1, 255),
             Byte3 = crypto:rand_uniform(1, 255),
