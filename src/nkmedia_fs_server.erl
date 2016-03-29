@@ -97,7 +97,7 @@
     {ok, pid()} | {error, term()}.
 
 start_link(Config) ->
-	{ok, Ip} = nklib_util:to_ip(nkmedia_app:get(docker_host)),
+	Ip = nkmedia_app:get(docker_ip),
 	gen_server:start_link({local, ?MODULE}, ?MODULE, [Config#{ip=>Ip}], []).
 
 
@@ -433,7 +433,8 @@ do_send_update([CallBack|Rest], Update, #state{pos=Pos, status=Status}=State) ->
 		ok ->
 			ok;
 		Other ->
-			?LLOG(warning, "Invalid response from callback: ~p", [Other], State)
+			?LLOG(warning, "Invalid response calling ~p:~p(~p, ~p): ~p", 
+				  [CallBack, nkmedia_fs_update, self(), Update2, Other], State)
 	end,
 	do_send_update(Rest, Update, State).
 	

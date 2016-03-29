@@ -149,8 +149,8 @@ remove(Opts) ->
 launch(Docker, #{pos:=Pos, pass:=Pass}=Opts) ->
     % See external_sip_ip in vars.xml
     CallDebug = maps:get(call_debug, Opts, false),
-    LocalHost = nkmedia_app:get(local_host),
-    FsHost = nkmedia_app:get(docker_host),
+    LocalHost = nklib_util:to_host(nkmedia_app:get(local_ip)),
+    FsHost = nklib_util:to_host(nkmedia_app:get(docker_ip)),
     ExtIp = nklib_util:to_host(nkpacket_app:get(ext_ip)),
     Env = [
         {"NK_LOCAL_IP", FsHost},      % 127.0.0.1 usually

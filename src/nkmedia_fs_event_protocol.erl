@@ -55,7 +55,7 @@
 	{ok, pid()} | {error, term()}.
 
 start(Port, Pass) ->
-	{ok, Ip} = nklib_util:to_ip(nkmedia_app:get(docker_host)),
+	Ip = nkmedia_app:get(docker_ip),
 	Conn = {?MODULE, tcp, Ip, Port},
 	ConnOpts = #{
 		class => nkmedia_fs, 
