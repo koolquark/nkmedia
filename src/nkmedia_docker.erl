@@ -167,6 +167,10 @@ event(#{<<"status">>:=Status, <<"id">>:=Id, <<"time">>:=Time}=Msg, State) ->
     lager:debug("Event: ~p", [Event]),
     State;
 
+event(#{<<"Action">>:=Action}, State) ->
+    lager:notice("Action event: ~s", [Action]),
+    State;
+
 event(Event, State) ->
     lager:notice("Unrecognized event: ~p", [Event]),
     State.
