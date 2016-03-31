@@ -132,10 +132,10 @@ sip_bye(Req, _Call) ->
     case UA of
         [<<"FreeSWITCH", _/binary>>] ->
             {ok, {sip, User, _}} = nksip_request:meta(aor, Req),
-            lager:warning("BYE FROM FS: ~s", [User]);
+            lager:info("BYE FROM FS: ~s", [User]);
         _ ->
             {ok, Dialog} = nksip_dialog:get_handle(Req),
-            gotools_ws:sip_bye(Dialog),
+            gotools_call_fs:sip_bye(Dialog),
             ok
     end,
     {reply, ok}.

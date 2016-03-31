@@ -527,7 +527,7 @@ parse_event(<<"CHANNEL_HANGUP">>, Data, #state{channels=Channels}=State) ->
 		{ok, ChPid} ->
 			nkmedia_fs_channel:ch_hangup(ChPid, Reason);
 		error ->
-			?LLOG(warning, "event CHANNEL_HANGUP for unknown channel ~s", 
+			?LLOG(info, "event CHANNEL_HANGUP for unknown channel ~s", 
 				  [CallId], State)
 	end,
 	State;
