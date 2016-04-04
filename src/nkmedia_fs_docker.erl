@@ -387,10 +387,10 @@ fs_instance_dockerfile(#{rel:=<<"r01">>}=Opts) ->
         "<param name=\"force-register-domain\" value=.+/>",
         "<param name=\"force-register-domain\" value=\""++?VAR(local_ip_v4)++"\"/>",
         "autoload_configs/verto.conf.xml"), " && \\",
-    % replace(
-    %     "<param name=\"rtp-ip\" value=.+/>",
-    %     "<param name=\"rtp-ip\" value=\""++?VAR(nk_ext_ip)++"\"/>",
-    %     "autoload_configs/verto.conf.xml"), " && \\",
+    replace(
+        "<param name=\"rtp-ip\" value=.+/>",
+        "<param name=\"rtp-ip\" value=\""++?VAR(nk_ext_ip)++"\"/>",
+        "autoload_configs/verto.conf.xml"), " && \\",
     replace(
         "<!--  <param name=\"ext-rtp-ip\" value=.+/> -->",
         "<param name=\"ext-rtp-ip\" value=\""++?VAR(nk_ext_ip)++"\"/>",
@@ -405,10 +405,10 @@ fs_instance_dockerfile(#{rel:=<<"r01">>}=Opts) ->
         "autoload_configs/verto.conf.xml"), " && \\",
 
     % Sip profile
-    % replace(
-    %     "<param name=\"rtp-ip\" value=.+/>",
-    %     "<param name=\"rtp-ip\" value=\""++?VAR(nk_ext_ip)++"\"/>",
-    %     "sip_profiles/internal.xml"), " && \\",
+    replace(
+        "<param name=\"rtp-ip\" value=.+/>",
+        "<param name=\"rtp-ip\" value=\""++?VAR(nk_ext_ip)++"\"/>",
+        "sip_profiles/internal.xml"), " && \\",
     replace(
         "<param name=\"ext-rtp-ip\" value=.+/>",
         "<param name=\"ext-rtp-ip\" value=\""++?VAR(nk_ext_ip)++"\"/>",
