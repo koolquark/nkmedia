@@ -499,7 +499,7 @@ process_server_req(<<"verto.punt">>, _Msg, _NkPort, State) ->
 process_server_req(<<"verto.invite">>, Msg, NkPort, State) ->
     #{<<"params">>:=Params} = Msg,
     #{<<"callID">>:=CallId, <<"sdp">>:=_SDP} = Params, 
-    ?LLOG(notice, "INVITE from FS", [], State),
+    % ?LLOG(notice, "INVITE from FS", [], State),
     Msg2 = nkmedia_fs_verto:make_resp(<<"verto.invite">>, Msg),
     case send(Msg2, NkPort) of
         ok ->

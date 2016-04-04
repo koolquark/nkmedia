@@ -177,7 +177,7 @@ start_inbound(Pid, SDP, Opts) ->
 
 %% @doc Generates a new outbound channel at this server and node
 -spec start_outbound(pid(), nkmedia_fs_server:out_ch_opts()) ->
-	{ok, CallId::binary()} | {error, term()}.
+	{ok, CallId::binary(), pid(), SDP::binary()} | {error, term()}.
 
 start_outbound(Pid, Opts) ->
 	nkmedia_fs_server:start_outbound(Pid, Opts).

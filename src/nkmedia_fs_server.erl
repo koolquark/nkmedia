@@ -134,14 +134,14 @@ start_inbound(Pid, SDP1, #{class:=verto}=Opts) ->
 
 %% @doc Generates a new outbound channel at this server and node
 -spec start_outbound(pid(), out_ch_opts()) ->
-	{ok, CallId::binary(), SDP::binary()} | {error, term()}.
+	{ok, CallId::binary(), pid(), SDP::binary()} | {error, term()}.
 
 start_outbound(Pid, #{class:=Class}=Opts) when Class==verto; Class==sip ->
 	case nklib_util:call(Pid, {start_outbound, Opts}, ?CALL_TIME) of
 		{ok, CallId, ChPid} ->
 			case nkmedia_fs_channel:wait_sdp(ChPid, #{}) of
 				{ok, SDP2} ->
-					{ok, CallId, SDP2};
+					{ok, CallId, ChPid, SDP2};
 				{error, Error} ->
 					{error, Error}
 			end;
