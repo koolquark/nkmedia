@@ -395,6 +395,14 @@ fs_instance_dockerfile(#{rel:=<<"r01">>}=Opts) ->
         "<!--  <param name=\"ext-rtp-ip\" value=.+/> -->",
         "<param name=\"ext-rtp-ip\" value=\""++?VAR(nk_ext_ip)++"\"/>",
         "autoload_configs/verto.conf.xml"), " && \\",
+    replace(
+        "<param name=\"outbound-codec-string\" value=.+/>",
+        "<param name=\"outbound-codec-string\" value=\"opus,vp8i,speex,iLBC,GSM,PCMU,PCMA\"/>",
+        "autoload_configs/verto.conf.xml"), " && \\",
+    replace(
+        "<param name=\"inbound-codec-string\" value=.+/>",
+        "<param name=\"inbound-codec-string\" value=\"opus,vp8i,speex,iLBC,GSM,PCMU,PCMA\"/>",
+        "autoload_configs/verto.conf.xml"), " && \\",
 
     % Sip profile
     % replace(
