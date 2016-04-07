@@ -48,6 +48,7 @@ start() ->
             Error
     end.
 
+
 %% @private OTP standard start callback
 start(_Type, _Args) ->
     Syntax = #{
@@ -81,7 +82,7 @@ start(_Type, _Args) ->
                         {ok, {{127,0,0,1}, Opts}} ->
                             nkmedia_app:put(local_ip, {127,0,0,1}),
                             nkmedia_app:put(docker_ip, {127,0,0,1}),
-                            nkmedia_app:put(docker_opts, Opts);
+                            % nkmedia_app:put(docker_opts, Opts);
                         {ok, {Docker, Opts}} ->
                             lager:warning("NkMEDIA: remote docker mode enabled"),
                             Local = nkpacket_config_cache:main_ip(),
@@ -90,7 +91,7 @@ start(_Type, _Args) ->
                                           nklib_util:to_host(Docker)]),
                             nkmedia_app:put(local_ip, Local),
                             nkmedia_app:put(docker_ip, Docker),
-                            nkmedia_app:put(docker_opts, Opts);
+                            % nkmedia_app:put(docker_opts, Opts);
                         {error, Error} ->
                             lager:error("Error contacting docker: ~p", [Error]),
                             error({docker_error, Error})
