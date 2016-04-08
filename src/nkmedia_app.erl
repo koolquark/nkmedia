@@ -57,7 +57,6 @@ start(_Type, _Args) ->
         fs_release => binary,
         fs_password => binary,
         sip_port => integer,        
-
         no_docker => boolean
 
     },
@@ -67,7 +66,6 @@ start(_Type, _Args) ->
         fs_release => <<"r01">>,
         fs_password => <<"764123">>,
         sip_port => 0,
-
         no_docker => false
     },
     case nklib_config:load_env(?APP, Syntax, Defaults) of
@@ -76,44 +74,42 @@ start(_Type, _Args) ->
             % nkpacket:register_protocol(fs_verto_proxy, nkmedia_fs_proxy_verto_client),
             {ok, Vsn} = application:get_key(?APP, vsn),
             lager:info("NkMEDIA v~s is starting", [Vsn]),
+            MainIp = nkpacket_config_cache:main_ip(),
+            nkmedia_app:put(main_ip, MainIp),
+            % Erlang IP is used for the media servers to contact to the
+            % management server 
             case nkmedia_app:get(no_docker) of
                 false ->
-                    case nkdocker_server:get_conn(#{}) of
-                        {ok, {{127,0,0,1}, Opts}} ->
-                            nkmedia_app:put(local_ip, {127,0,0,1}),
-                            nkmedia_app:put(docker_ip, {127,0,0,1}),
-                            % nkmedia_app:put(docker_opts, Opts);
-                        {ok, {Docker, Opts}} ->
+                    {ok, #{ip:=DockerIp}} =nkdocker_util:get_conn_info(),
+                    case DockerIp of
+                        {127,0,0,1} ->
+                            nkmedia_app:put(erlang_ip, {127,0,0,1}),
+                            nkmedia_app:put(docker_ip, {127,0,0,1});
+                        _ ->
                             lager:warning("NkMEDIA: remote docker mode enabled"),
-                            Local = nkpacket_config_cache:main_ip(),
-                            lager:warning("Host: ~s, Docker: ~s", 
-                                         [nklib_util:to_host(Local), 
-                                          nklib_util:to_host(Docker)]),
-                            nkmedia_app:put(local_ip, Local),
-                            nkmedia_app:put(docker_ip, Docker),
-                            % nkmedia_app:put(docker_opts, Opts);
-                        {error, Error} ->
-                            lager:error("Error contacting docker: ~p", [Error]),
-                            error({docker_error, Error})
+                            lager:warning("Erlang: ~s, Docker: ~s", 
+                                         [nklib_util:to_host(MainIp), 
+                                          nklib_util:to_host(DockerIp)]),
+                            nkmedia_app:put(erlang_ip, MainIp),
+                            nkmedia_app:put(docker_ip, DockerIp)
                     end,
-                    {ok, DockerId} = nkdocker_monitor:register(nkmedia_callbacks),
-                    nkmedia_app:put(docker_id, DockerId);
-
+                    {ok, DockerMonId} = nkdocker_monitor:register(nkmedia_callbacks),
+                    nkmedia_app:put(docker_mon_id, DockerMonId);
 
                     % Images = nkmedia_docker:find_images(),
                     % lager:info("Installed images: ~s", [Images]);
                 true ->
                     lager:warning("No docker support in config")
             end,
-            FsDefs = #{
-                index => 0,
-                version => nkmedia_app:get(fs_version),
-                release => nkmedia_app:get(fs_release),
-                password => nkmedia_app:get(fs_password),
-                docker_company => nkmedia_app:get(docker_company),
-                callback => nkmedia_callbacks
-            },
-            nkmedia_app:put(fs_defaults, FsDefs),
+            % FsDefs = #{
+            %     index => 0,
+            %     version => nkmedia_app:get(fs_version),
+            %     release => nkmedia_app:get(fs_release),
+            %     password => nkmedia_app:get(fs_password),
+            %     docker_company => nkmedia_app:get(docker_company),
+            %     callback => nkmedia_callbacks
+            % },
+            % nkmedia_app:put(fs_defaults, FsDefs),
             {ok, Pid} = nkmedia_sup:start_link(),
             % nkmedia_sip:start(),
             {ok, Pid};

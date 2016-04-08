@@ -33,7 +33,7 @@
 
 
 %% ===================================================================
-%% Public functions
+%% Docker Monitor Callbacks
 %% ===================================================================
 
 nkdocker_notify(MonId, {start, {<<"nk_freeswitch", _/binary>>, Data}}) ->

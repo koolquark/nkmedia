@@ -24,48 +24,39 @@
 
 -export([build_base_image/0, build_base_image/3]).
 -export([remove_base_image/0, remove_base_image/3]).
--export([build_nk_image/0, build_nk_image/3]).
--export([remove_nk_image/0, remove_nk_image/3]).
+-export([build_run_image/0, build_run_image/3]).
+-export([remove_run_image/0, remove_run_image/3]).
+-export([run_image_name/3]).
 
 % -include("nkmedia.hrl").
-
--define(REPO, "netcomposer").
--define(VERSION, "v1.6.5").
--define(RELEASE, "r01").
-
 
 %% ===================================================================
 %% Public
 %% ===================================================================
         
 
-%% @private
+%% @doc Builds base image (netcomposer/nk_freeswitch_base:v1.6.5-r01)
 build_base_image() ->
-    build_base_image(?REPO, ?VERSION, ?RELEASE).
+    {Comp, Vsn, Rel} = nkmedia_fs_docker:get_image_parts(), 
+    build_base_image(Comp, Vsn, Rel).
 
 
-%% @doc Builds netcomposer/freeswitch:v1.6.5-r01
-build_base_image(Repo, Vsn, Rel) ->
-    Name = base_image_name(Repo, Vsn, Rel),
+%% @doc 
+build_base_image(Comp, Vsn, Rel) ->
+    Name = base_image_name(Comp, Vsn, Rel),
     Tar = nkdocker_util:make_tar([{"Dockerfile", base_image_dockerfile(Vsn)}]),
-    case nkdocker:start_link() of
-        {ok, Pid} ->
-            Res = nkdocker_util:build(Pid, Name, Tar),
-            nkdocker:stop(Pid),
-            Res;
-                {error, Error} ->
-            {error, {docker_start_error, Error}}
-    end.
+    nkdocker_util:build(Name, Tar).
 
 
-%% @private
+%% @doc
 remove_base_image() ->
-    remove_base_image(?REPO, ?VERSION, ?RELEASE).
+    {Comp, Vsn, Rel} = nkmedia_fs_docker:get_image_parts(), 
+    remove_base_image(Comp, Vsn, Rel).
 
 
-%% @doc Builds netcomposer/freeswitch:v1.6.5-r01
-remove_base_image(Repo, Vsn, Rel) ->
-    Name = base_image_name(Repo, Vsn, Rel),
+%% @doc 
+remove_base_image(Comp, Vsn, Rel) ->
+    Name = base_image_name(Comp, Vsn, Rel),
     case nkdocker:start_link() of
         {ok, Pid} ->
             Res = case nkdocker:rmi(Pid, Name, #{force=>true}) of
@@ -80,47 +71,42 @@ remove_base_image(Repo, Vsn, Rel) ->
     end.
 
 
+%% @doc
+build_run_image() ->
+    {Comp, Vsn, Rel} = nkmedia_fs_docker:get_image_parts(), 
+    build_run_image(Comp, Vsn, Rel).
 
-%% @private
-build_nk_image() ->
-    build_nk_image(?REPO, ?VERSION, ?RELEASE).
 
-
-%% @doc Builds netcomposer/nk_freeswitch:v1.6.5-r01
+%% @doc Builds run image (netcomposer/nk_freeswitch_run:v1.6.5-r01)
 %% Environment variables:
-%% - NK_LOCAL_IP: Default "$${local_ip_v4}". Maps to local_ip_v4 inside freeswitch
+%% - NK_FS_IP: Default "$${local_ip_v4}". Maps to local_ip_v4 inside freeswitch
+%% - NK_RTP_IP: Default "$${local_ip_v4}".
+%% - NK_ERLANG_IP: Host for FS to connect to. Used in rtp-ip
 %% - NK_EXT_IP: Default "stun:stun.freeswitch.org". Used in ext-rtp-ip
-%% - NK_HOST_IP: Host for FS to connect to.
 %% - NK_PASS: Default "6666"
-
-build_nk_image(Repo, Vsn, Rel) ->
-    Name = nk_image_name(Repo, Vsn, Rel),
+build_run_image(Comp, Vsn, Rel) ->
+    Name = run_image_name(Comp, Vsn, Rel),
     Tar = nkdocker_util:make_tar([
-        {"Dockerfile", nk_image_dockerfile(Repo, Vsn, Rel)},
-        {"modules.conf.xml", nk_image_modules()},
-        {"0000_nkmedia.xml", nk_image_dialplan()},
-        {"event_socket.conf.xml", nk_image_event_socket()},
-        {"verto.conf.xml", nk_image_verto()},
-        {"start.sh", nk_image_start()}
+        {"Dockerfile", run_image_dockerfile(Comp, Vsn, Rel)},
+        {"modules.conf.xml", run_image_modules()},
+        {"0000_nkmedia.xml", run_image_dialplan()},
+        {"event_socket.conf.xml", run_image_event_socket()},
+        {"sip.xml", run_image_sip()},
+        {"verto.conf.xml", run_image_verto()},
+        {"start.sh", run_image_start()}
     ]),
-    case nkdocker:start_link() of
-        {ok, Pid} ->
-            Res = nkdocker_util:build(Pid, Name, Tar),
-            nkdocker:stop(Pid),
-            Res;
-        {error, Error} ->
-            {error, {docker_start_error, Error}}
-    end.
+    nkdocker_util:build(Name, Tar).
 
 
-%% @private
-remove_nk_image() ->
-    remove_nk_image(?REPO, ?VERSION, ?RELEASE).
+%% @doc
+remove_run_image() ->
+    {Comp, Vsn, Rel} = nkmedia_fs_docker:get_image_parts(), 
+    remove_run_image(Comp, Vsn, Rel).
 
 
-%% @doc Removes netcomposer/nk_freeswitch:v1.6.5-r01
-remove_nk_image(Repo, Vsn, Rel) ->
-    Name = nk_image_name(Repo, Vsn, Rel),
+%% @doc 
+remove_run_image(Comp, Vsn, Rel) ->
+    Name = run_image_name(Comp, Vsn, Rel),
     case nkdocker:start_link() of
         {ok, Pid} ->
             Res = case nkdocker:rmi(Pid, Name, #{force=>true}) of
@@ -137,13 +123,13 @@ remove_nk_image(Repo, Vsn, Rel) ->
 
 
 %% ===================================================================
-%% Base image (Repo/freeswitch:vXXX-rXXX)
+%% Base image (Comp/nk_freeswitch_base:vXXX-rXXX)
 %% ===================================================================
 
 
 %% @private
-base_image_name(Repo, Vsn, Rel) ->
-    list_to_binary([Repo, "/freeswitch:", Vsn, "-", Rel]).
+base_image_name(Comp, Vsn, Rel) ->
+    list_to_binary([Comp, "/nk_freeswitch_base:", Vsn, "-", Rel]).
 
 
 % -define(DEBIAN, "ftp.us.debian.org").
@@ -196,13 +182,13 @@ WORKDIR /usr/src/freeswitch
 
 
 %% ===================================================================
-%% Instance build files (Repo/nk_freeswitch:vXXX-rXXX)
+%% Instance build files (Comp/nk_freeswitch_run:vXXX-rXXX)
 %% ===================================================================
 
 
 %% @private
-nk_image_name(Repo, Vsn, Rel) -> 
-    list_to_binary([Repo, "/nk_freeswitch:", Vsn, "-", Rel]).
+run_image_name(Comp, Vsn, Rel) -> 
+    list_to_binary([Comp, "/nk_freeswitch_run:", Vsn, "-", Rel]).
 
 
 -define(VAR(Name), "\\\\$\\\\$\\\\{" ++ nklib_util:to_list(Name) ++ "}").
@@ -212,9 +198,9 @@ nk_image_name(Repo, Vsn, Rel) ->
 
 
 
-nk_image_dockerfile(Repo, Vsn, Rel) ->
+run_image_dockerfile(Comp, Vsn, Rel) ->
     list_to_binary([
-"FROM ", base_image_name(Repo, Vsn, Rel), "\n"
+"FROM ", base_image_name(Comp, Vsn, Rel), "\n"
 "WORKDIR /usr/local/freeswitch/\n"
 "RUN mkdir -p certs\n"
 "WORKDIR /usr/local/freeswitch/conf/\n"
@@ -240,17 +226,13 @@ nk_image_dockerfile(Repo, Vsn, Rel) ->
 
     "mv autoload_configs/event_socket.conf.xml autoload_configs/event_socket.conf.xml.backup && \\"
     "mv autoload_configs/verto.conf.xml autoload_configs/verto.conf.xml.backup && \\",
-
-    % Sip profile is too complex, we change some values
-    replace(
-        "<param name=\"ext-rtp-ip\" value=.+/>",
-        "<param name=\"ext-rtp-ip\" value=\""++?VAR(nk_ext_ip)++"\"/>",
-        "sip_profiles/internal.xml"), " && \\",
+    "mv sip_profiles/internal.xml sip_profiles/internal.xml.backup && \\"
     "mv sip_profiles/external.xml sip_profiles/external.xml.backup && \\"
     "mv sip_profiles/external-ipv6.xml sip_profiles/external-ipv6.xml.backup && \\"
     "mv sip_profiles/internal-ipv6.xml sip_profiles/internal-ipv6.xml.backup && \\"
     "mv autoload_configs/modules.conf.xml autoload_configs/modules.conf.xml.backup\n"
 
+"ADD sip.xml /usr/local/freeswitch/conf/sip_profiles/\n"
 "ADD event_socket.conf.xml /usr/local/freeswitch/conf/autoload_configs/\n"
 "ADD verto.conf.xml /usr/local/freeswitch/conf/autoload_configs/\n"
 "ADD modules.conf.xml /usr/local/freeswitch/conf/autoload_configs/\n"
@@ -260,7 +242,7 @@ nk_image_dockerfile(Repo, Vsn, Rel) ->
 ]).
 
 
-nk_image_event_socket() -> <<"
+run_image_event_socket() -> <<"
 <configuration name=\"event_socket.conf\" description=\"Socket Client\">
   <settings>
     <param name=\"nat-map\" value=\"false\"/>
@@ -273,7 +255,7 @@ nk_image_event_socket() -> <<"
 </configuration>
 ">>.
 
-nk_image_verto() -> <<"
+run_image_verto() -> <<"
 <configuration name=\"verto.conf\" description=\"HTML5 Verto Endpoint\">
   <settings>
     <param name=\"debug\" value=\"$${verto_debug}\"/>
@@ -286,7 +268,7 @@ nk_image_verto() -> <<"
       <param name=\"blind-reg\" value=\"true\"/>
       <param name=\"mcast-ip\" value=\"224.1.1.1\"/>
       <param name=\"mcast-port\" value=\"1337\"/>
-      <param name=\"rtp-ip\" value=\"$${local_ip_v4}\"/>
+      <param name=\"rtp-ip\" value=\"$${nk_rtp_ip}\"/>
       <param name=\"ext-rtp-ip\" value=\"$${nk_ext_ip}\"/>
       <param name=\"local-network\" value=\"localnet.auto\"/>
       <param name=\"outbound-codec-string\" value=\"opus,vp8\"/>
@@ -302,7 +284,76 @@ nk_image_verto() -> <<"
 ">>.
 
 
-nk_image_modules() -> <<"
+run_image_sip() -> <<"
+<profile name=\"internal\">
+  <aliases>
+  </aliases>
+  <gateways>
+  </gateways>
+  <domains>
+    <domain name=\"all\" alias=\"true\" parse=\"false\"/>
+  </domains>
+  <settings>
+    <param name=\"debug\" value=\"0\"/>
+    <param name=\"shutdown-on-fail\" value=\"true\"/>
+    <param name=\"sip-trace\" value=\"no\"/>
+    <param name=\"sip-capture\" value=\"no\"/>
+    <!-- Don't be picky about negotiated DTMF just always offer 2833 and accept both 2833 and INFO -->
+    <!--<param name=\"liberal-dtmf\" value=\"true\"/>-->
+    <param name=\"watchdog-enabled\" value=\"no\"/>
+    <param name=\"watchdog-step-timeout\" value=\"30000\"/>
+    <param name=\"watchdog-event-timeout\" value=\"30000\"/>
+    <param name=\"log-auth-failures\" value=\"false\"/>
+    <param name=\"forward-unsolicited-mwi-notify\" value=\"false\"/>
+    <param name=\"context\" value=\"public\"/>
+    <param name=\"rfc2833-pt\" value=\"101\"/>
+    <param name=\"sip-port\" value=\"$${internal_sip_port}\"/>
+    <param name=\"dialplan\" value=\"XML\"/>
+    <param name=\"dtmf-duration\" value=\"2000\"/>
+    <param name=\"inbound-codec-prefs\" value=\"$${global_codec_prefs}\"/>
+    <param name=\"outbound-codec-prefs\" value=\"$${global_codec_prefs}\"/>
+    <param name=\"rtp-timer-name\" value=\"soft\"/>
+    <param name=\"rtp-ip\" value=\"$${nk_rtp_ip}\"/>
+    <param name=\"sip-ip\" value=\"$${local_ip_v4}\"/>
+    <param name=\"hold-music\" value=\"$${hold_music}\"/>
+    <param name=\"apply-nat-acl\" value=\"nat.auto\"/>
+    <param name=\"apply-inbound-acl\" value=\"domains\"/>
+    <param name=\"local-network-acl\" value=\"localnet.auto\"/>
+    <!--<param name=\"dtmf-type\" value=\"info\"/>-->
+    <param name=\"record-path\" value=\"$${recordings_dir}\"/>
+    <param name=\"record-template\" value=\"${caller_id_number}.${target_domain}.${strftime(%Y-%m-%d-%H-%M-%S)}.wav\"/>
+    <param name=\"manage-presence\" value=\"true\"/>
+    <param name=\"presence-hosts\" value=\"$${domain},$${local_ip_v4}\"/>
+    <param name=\"presence-privacy\" value=\"$${presence_privacy}\"/>
+    <!--set to 'greedy' if you want your codec list to take precedence -->
+    <param name=\"inbound-codec-negotiation\" value=\"generous\"/>
+    <param name=\"tls\" value=\"false\"/>
+    <!--<param name=\"pass-rfc2833\" value=\"true\"/>-->
+    <!--<param name=\"inbound-bypass-media\" value=\"true\"/>-->
+    <!--<param name=\"inbound-proxy-media\" value=\"true\"/>-->
+    <!-- Let calls hit the dialplan before selecting codec for the a-leg -->
+    <param name=\"inbound-late-negotiation\" value=\"true\"/>
+    <param name=\"nonce-ttl\" value=\"60\"/>
+    <param name=\"auth-calls\" value=\"$${internal_auth_calls}\"/>
+    <param name=\"inbound-reg-force-matching-username\" value=\"true\"/>
+    <param name=\"auth-all-packets\" value=\"false\"/>
+    <param name=\"ext-rtp-ip\" value=\"$${nk_ext_ip}\"/>
+    <param name=\"ext-sip-ip\" value=\"auto-nat\"/>
+    <param name=\"rtp-timeout-sec\" value=\"300\"/>
+    <param name=\"rtp-hold-timeout-sec\" value=\"1800\"/>
+    <param name=\"force-register-domain\" value=\"$${domain}\"/>
+    <param name=\"force-subscription-domain\" value=\"$${domain}\"/>
+    <param name=\"force-register-db-domain\" value=\"$${domain}\"/>
+    <param name=\"ws-binding\"  value=\":5066\"/>
+    <param name=\"wss-binding\" value=\":7443\"/>
+    <param name=\"challenge-realm\" value=\"auto_from\"/>
+  </settings>
+</profile>
+">>.
+
+
+
+run_image_modules() -> <<"
 <configuration name=\"modules.conf\" description=\"Modules\">
   <modules>
     <load module=\"mod_event_socket\"/>
@@ -344,7 +395,7 @@ nk_image_modules() -> <<"
 ">>.
 
 
-nk_image_dialplan() -> 
+run_image_dialplan() -> 
 <<"
 <include>
 
@@ -400,19 +451,31 @@ nk_image_dialplan() ->
 ">>.
 
 
-nk_image_start() ->
+%% Expects:
+%% - NK_FS_IP
+%% - NK_RTP_IP
+%% - NK_ERLANG_IP
+%% - NK_EXT_IP
+%% - NK_PASS
+
+run_image_start() ->
 <<"
 #!/bin/bash\n
 set -e\n
 export LOCAL_IP_V4=\"\\$\\${local_ip_v4}\"
-export EXT_IP=\"stun:stun.freeswitch.org\"
+export FS_IP=\"${NK_FS_IP-$LOCAL_IP_V4}\"
+export RTP_IP=\"${NK_RTP_IP-$LOCAL_IP_V4}\"
+export ERLANG_IP=\"${NK_ERLANG_IP-127.0.0.1}\"
+export EXT_IP=\"${NK_EXT_IP-stun:stun.freeswitch.org}\"
+export PASS=\"${NK_PASS-6666}\"
 cat > /usr/local/freeswitch/conf/nkvars.xml <<EOF
 <include>
-    <X-PRE-PROCESS cmd=\"set\" data=\"nk_ext_ip=${NK_EXT_IP-$EXT_IP}\"/>
-    <X-PRE-PROCESS cmd=\"set\" data=\"local_ip_v4=${NK_LOCAL_IP-$LOCAL_IP_V4}\"/>
-    <X-PRE-PROCESS cmd=\"set\" data=\"nk_host_ip=${NK_HOST_IP-127.0.0.1}\"/>
-    <X-PRE-PROCESS cmd=\"set\" data=\"default_password=${NK_PASS-6666}\"/>
-    <!-- <X-PRE-PROCESS cmd=\"set\" data=\"domain=${LOCAL_IP_V4}\"/> -->
+    <X-PRE-PROCESS cmd=\"set\" data=\"local_ip_v4=$FS_IP\"/>
+    <X-PRE-PROCESS cmd=\"set\" data=\"nk_erlang_ip=$ERLANG_IP\"/>
+    <X-PRE-PROCESS cmd=\"set\" data=\"nk_rtp_ip=$RTP_IP\"/>
+    <X-PRE-PROCESS cmd=\"set\" data=\"nk_ext_ip=$EXT_IP\"/>
+    <X-PRE-PROCESS cmd=\"set\" data=\"default_password=$PASS\"/>
+    <!-- <X-PRE-PROCESS cmd=\"set\" data=\"domain=$FS_IP\"/> -->
     <X-PRE-PROCESS cmd=\"set\" data=\"local_ip_v6=[::1]\"/>
     <X-PRE-PROCESS cmd=\"set\" data=\"nkevent=Event-Name=CUSTOM,Event-Subclass=NkMEDIA\"/>
 </include>
@@ -420,7 +483,7 @@ EOF
 #rm /usr/local/bin/fs_cli
 cat > /usr/local/bin/fs_cli2 <<EOF
 !/bin/bash
-/usr/local/freeswitch/bin/fs_cli -H $NK_LOCAL_IP -p $NK_PASS
+/usr/local/freeswitch/bin/fs_cli -H $FS_IP -p $PASS
 EOF
 chmod a+x /usr/local/bin/fs_cli2
 exec /usr/local/freeswitch/bin/freeswitch -nf -nonat
@@ -431,8 +494,6 @@ exec /usr/local/freeswitch/bin/freeswitch -nf -nonat
 %% ===================================================================
 %% Utilities
 %% ===================================================================
-
-
 
 
 replace(Text, Rep, File) ->
