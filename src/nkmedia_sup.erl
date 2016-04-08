@@ -28,11 +28,11 @@
 
 -include("nkmedia.hrl").
 
-start_fs_engine(Name, Image, Ip, Pass) ->
+start_fs_engine(Name, Rel, Ip, Pass) ->
     ChildId = {nkmedia_fs_engine, Ip},
 	Spec = {
         ChildId,
-        {nkmedia_fs_engine, start_link, [Name, Image, Ip, Pass]},
+        {nkmedia_fs_engine, start_link, [Name, Rel, Ip, Pass]},
         transient,
         5000,
         worker,
@@ -43,7 +43,7 @@ start_fs_engine(Name, Image, Ip, Pass) ->
             {ok, Pid};
         {error, already_present} ->
             ok = supervisor:delete_child(?MODULE, ChildId),
-            start_fs_engine(Name, Image, Ip, Pass);
+            start_fs_engine(Name, Rel, Ip, Pass);
         {error, {already_started, Pid}} -> 
             {ok, Pid};
         {error, Error} -> 

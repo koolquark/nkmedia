@@ -22,7 +22,7 @@
 -module(nkmedia_fs_docker).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/0, start/4]).
+-export([start/0, start/4, stop/0, stop/3]).
 -export([get_image_parts/0]).
 
 
@@ -97,34 +97,41 @@ start(Comp, Vsn, Rel, Pass) ->
     end.
 
 
-% %% @doc Stops a FS instance
-% stop() ->
-%     {Comp, Vsn, Rel} = get_image_parts(),
-%     Pass = nklib_util:hash(make_ref()),
-%     start(Comp, Vsn, Rel, Pass).
-
-%     stop("nk_freeswitch").
+%% @doc Stops a dev FS instance
+stop() ->
+    stop(<<"nk_fs_dev">>).
 
 
-% %% @doc Stops a FS instance
-% stop(Name) ->
-%     Image = nkdocker_fs_build:run_image_name(Comp, Vsn, Rel),
-%     case nkdocker:start_link(#{}) of
-%         {ok, Pid} ->
-%             case nkdocker:kill(Pid, Name) of
-%                 ok -> ok;
-%                 {error, {not_found, _}} -> ok;
-%                 E1 -> lager:warning("NkMEDIA could not kill ~s: ~p", [Name, E1])
-%             end,
-%             case nkdocker:rm(Pid, Name) of
-%                 ok -> ok;
-%                 {error, {not_found, _}} -> ok;
-%                 E2 -> lager:warning("NkMEDIA could not remove ~s: ~p", [Name, E2])
-%             end,
-%             nkdocker:stop(Pid);
-%         {error, Error} ->
-%             {error, Error}
-%     end.
+%% @doc Stops a X_Y_Z FS instance
+stop(A, B, C) ->
+    Name = list_to_binary([
+        "nk_fs_", 
+        integer_to_list(A), "_",
+        integer_to_list(B), "_",
+        integer_to_list(C)
+    ]),
+    stop(Name).
+
+
+%% @doc Stops a FS instance
+stop(Name) ->    
+    case get_docker_pid() of
+        {ok, DockerPid} ->
+            case nkdocker:kill(DockerPid, Name) of
+                ok -> ok;
+                {error, {not_found, _}} -> ok;
+                E1 -> lager:warning("NkMEDIA could not kill ~s: ~p", [Name, E1])
+            end,
+            case nkdocker:rm(DockerPid, Name) of
+                ok -> ok;
+                {error, {not_found, _}} -> ok;
+                E2 -> lager:warning("NkMEDIA could not remove ~s: ~p", [Name, E2])
+            end,
+            ok;
+        {error, Error} ->
+            {error, Error}
+    end.
+
 
 
 %% @private

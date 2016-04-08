@@ -23,7 +23,8 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([connect/4, stop/1, stats/2, register/2, get_config/1, api/2, bgapi/2]).
+-export([connect/4, stop/1, find/1]).
+-export([stats/2, register/2, get_config/1, api/2, bgapi/2]).
 -export([start_inbound/3, start_outbound/2, channel_op/4]).
 -export([get_all/0, stop_all/0]).
 -export([start_link/4, init/1, terminate/2, code_change/3, handle_call/3,
@@ -32,11 +33,9 @@
 -define(CONNECT_RETRY, 5000).
 
 -define(LLOG(Type, Txt, Args, State),
-	lager:Type("NkMEDIA FS ENGINE (~s ~p) "++Txt, [State#state.ip, self()|Args])).
+	lager:Type("NkMEDIA FS Engine '~s' "++Txt, [State#state.name|Args])).
 
 -define(CALL_TIME, 30000).
-
-
 
 -define(EVENT_PROCESS, [
 	<<"NkMEDIA">>, <<"HEARTBEAT">>,
@@ -45,7 +44,6 @@
 	<<"conference::maintenance">>
 ]).
 	
-
 -define(EVENT_IGNORE,	[
 	<<"verto::client_connect">>, <<"verto::client_disconnect">>, <<"verto::login">>, 
 	<<"CHANNEL_OUTGOING">>, <<"CHANNEL_STATE">>, <<"CHANNEL_CALLSTATE">>, 
@@ -61,9 +59,8 @@
 	<<"TRAP">>
 ]).
 
-
-
 -include("nkmedia.hrl").
+
 
 %% ===================================================================
 %% Types
@@ -92,17 +89,25 @@
 %% ===================================================================
 
 %% @private
-connect(Name, Image, Ip, Pass) ->
-	case nklib_proc:values({?MODULE, Name}) of
-		[] ->
-			case connect_fs(nklib_util:to_list(Ip), Pass, 10) of
+-spec connect(binary(), binary(), inet:ip_address(),binary()) ->
+	{ok, pid()} | {error, term()}.
+
+connect(Name, Rel, Ip, Pass) ->
+	case find(Name) of
+		not_found ->
+			case connect_fs(Ip, Pass, 10) of
 				ok ->
-					nkmedia_sup:start_fs_engine(Name, Image, Ip, Pass);
+					nkmedia_sup:start_fs_engine(Name, Rel, Ip, Pass);
 				error ->
 					{error, no_connection}
 			end;
-		[{_, Pid}] ->
-			{ok, Pid}
+		{ok, _Status, FsPid, _ConnPid} ->
+			case nklib_util:call(FsPid, get_rel_pass) of
+				{ok, Rel, Pass} ->
+					{ok, FsPid};
+				_ ->
+					{error, incompatible_version}
+			end
 	end.
 
 
@@ -111,28 +116,18 @@ stop(Pid) when is_pid(Pid) ->
 	gen_server:cast(Pid, stop);
 
 stop(Name) ->
-	case nklib_proc:values({?MODULE, Name}) of
-		[{_, Pid}|_] -> stop(Pid);
-		[] -> ok
+	case find(Name) of
+		{ok, _Status, FsPid, _ConnPid} -> stop(FsPid);
+		not_found -> ok
 	end.
 
 
 %% @private
 stats(Name, Stats) ->
-	case nklib_proc:values({?MODULE, Name}) of
-		[{_, Pid}|_] -> gen_server:cast(Pid, {stats, Stats});
-		[] -> ok
+	case find(Name) of
+		{ok, _Status, FsPid, _ConnPid} -> gen_server:cast(FsPid, {stats, Stats});
+		not_found -> ok
 	end.
-
-
-%% @private 
--spec start_link(binary(), binary(), binary(), binary()) ->
-    {ok, pid()} | {error, term()}.
-
-start_link(Name, Image, Ip, Pass) ->
-	gen_server:start_link({local, ?MODULE}, ?MODULE, [Name, Image, Ip, Pass], []).
-
-
 
 
 %% @private Registers a callback module
@@ -199,30 +194,32 @@ get_config(Pid) ->
 
 
 %% @priavte
--spec api(pid(), iolist()) ->
+-spec api(binary()|pid(), iolist()) ->
 	{ok, binary()} | {error, term()}.
 
-api(Pid, Api) ->
-	case nklib_util:call(Pid, get_event_port, ?CALL_TIME) of
-		{ok, EventPort} ->
-			Api1 = nklib_util:to_binary(Api),
-			nkmedia_fs_event_protocol:api(EventPort, Api1);
-		{error, Error} ->
-			{error, Error}
+api(NameOrPid, Api) ->
+	case find(NameOrPid) of
+		{ok, ready, _FsPid, ConnPid} when is_pid(ConnPid) ->
+			nkmedia_fs_event_protocol:api(ConnPid, Api);
+		{ok, _, _, _} ->
+			{error, not_ready};
+		not_found ->
+			{error, no_connection}
 	end.
 
 
 %% @doc
--spec bgapi(pid(), iolist()) ->
+-spec bgapi(binary()|pid(), iolist()) ->
 	{ok, binary()} | {error, term()}.
 
-bgapi(Pid, Api) ->
-	case nklib_util:call(Pid, get_event_port, ?CALL_TIME) of
-		{ok, EventPort} ->
-			Api1 = nklib_util:to_binary(Api),
-			nkmedia_fs_event_protocol:bgapi(EventPort, Api1);
-		{error, Error} ->
-			{error, Error}
+bgapi(NameOrPid, Api) ->
+	case find(NameOrPid) of
+		{ok, ready, _FsPid, ConnPid} when is_pid(ConnPid) ->
+			nkmedia_fs_event_protocol:bgapi(ConnPid, Api);
+		{ok, _, _, _} ->
+			{error, not_ready};
+		not_found ->
+			{error, no_connection}
 	end.
 
 
@@ -232,8 +229,30 @@ get_all() ->
 
 
 %% @private
+find(NameOrPid) ->
+	NameOrPid2 = case is_pid(NameOrPid) of
+		true -> NameOrPid;
+		false -> nklib_util:to_binary(NameOrPid)
+	end,
+	case nklib_proc:values({?MODULE, NameOrPid2}) of
+		[{{Status, ConnPid}, FsPid}] -> {ok, Status, FsPid, ConnPid};
+		[] -> not_found
+	end.
+
+
+%% @private
 stop_all() ->
 	lists:foreach(fun({_, Pid}) -> stop(Pid) end, get_all()).
+
+
+%% @private 
+-spec start_link(binary(), binary(), binary(), binary()) ->
+    {ok, pid()} | {error, term()}.
+
+start_link(Name, Rel, Ip, Pass) ->
+	gen_server:start_link(?MODULE, [Name, Rel, Ip, Pass], []).
+
+
 
 
 
@@ -243,7 +262,8 @@ stop_all() ->
 
 
 -record(state, {
-	image :: binary(),
+	rel :: binary(),
+	name :: binary(),
 	ip :: binary(),
 	pass :: binary(),
 	status :: nkmedia_fs:status(),
@@ -256,13 +276,13 @@ stop_all() ->
     {ok, tuple()} | {ok, tuple(), timeout()|hibernate} |
     {stop, term()} | ignore.
 
-init([Name, Image, Ip, Pass]) ->
-	State = #state{image=Image, ip=Ip, pass=Pass},
+init([Name, Rel, Ip, Pass]) ->
+	State = #state{rel=Rel, name=Name, ip=Ip, pass=Pass},
 	process_flag(trap_exit, true),			% Channels and sessions shouldn't stop us
-	nklib_proc:put(?MODULE, Ip),			% 
-	true = nklib_proc:reg({?MODULE, Name}, connecting), 
+	nklib_proc:put(?MODULE, Name),
+	true = nklib_proc:reg({?MODULE, Name}, {connecting, undefined}),
 	self() ! connect,
-	?LLOG(info, "started", [], State),
+	?LLOG(info, "started (~p)", [self()], State),
 	{ok, State}.
 
 
@@ -313,6 +333,9 @@ handle_call(get_event_port, _From, #state{fs_conn=Conn}=State) ->
 % 			{reply, {error, unknown_channel}, State}
 % 	end;
 
+handle_call(get_rel_pass, _From, #state{rel=Rel, pass=Pass}=State) ->
+    {reply, {ok, Rel, Pass}, State};
+
 handle_call(Msg, _From, State) ->
     lager:error("Module ~p received unexpected call ~p", [?MODULE, Msg]),
     {noreply, State}.
@@ -342,35 +365,38 @@ handle_info(connect, #state{fs_conn=Pid}=State) when is_pid(Pid) ->
 	{noreply, State};
 
 handle_info(connect, #state{ip=Ip, pass=Pass}=State) ->
-	State1 = update_status(connecting, State),
+	State2 = update_status(connecting, State#state{fs_conn=undefined}),
 	case nkmedia_fs_event_protocol:start(Ip, Pass) of
 		{ok, Pid} ->
 			monitor(process, Pid),
-			State2 = State1#state{fs_conn=Pid},
-			{noreply, update_status(ready, State2)};
+			State3 = State2#state{fs_conn=Pid},
+			{noreply, update_status(ready, State3)};
 		{error, Error} ->
-			?LLOG(warning, "could not connect: ~p", [Error], State),
-			{stop, normal, State}
+			?LLOG(warning, "could not connect: ~p", [Error], State2),
+			{stop, normal, State2}
 	end;
 
 handle_info({nkmedia_fs_event, _Pid, <<"SHUTDOWN">>, _Event}, State) ->
 	{stop, normal, State};
 
+handle_info({nkmedia_fs_event, _Pid, <<"HEARTBEAT">>, _Event}, State) ->
+	{noreply, State};
+
 handle_info({nkmedia_fs_event, _Pid, Name, Event}, State) ->
 	% lager:info("EV: ~p", [Event]),
-	Name1 = case Name of
+	Name2 = case Name of
 		<<"CUSTOM">> -> maps:get(<<"Event-Subclass">>, Event);
 		_ -> Name
 	end,
-	case lists:member(Name1, ?EVENT_PROCESS) of
+	case lists:member(Name2, ?EVENT_PROCESS) of
 		true ->
-			{noreply, parse_event(Name1, Event, State)};
+			{noreply, parse_event(Name2, Event, State)};
 		false ->
-			case lists:member(Name1, ?EVENT_IGNORE) of
+			case lists:member(Name2, ?EVENT_IGNORE) of
 				true -> 
 					{noreply, State};
 				false ->
-					?LLOG(info, "ignoring event ~s", [Name1], State),
+					?LLOG(info, "ignoring event ~s", [Name2], State),
 					lager:info("\n~s\n", [nklib_json:encode_pretty(Event)]),
 					{noreply, State}
 			end
@@ -378,7 +404,8 @@ handle_info({nkmedia_fs_event, _Pid, Name, Event}, State) ->
 
 handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{fs_conn=Pid}=State) ->
 	?LLOG(warning, "connection event down", [], State),
-	{stop, event_socket_down, State};
+	erlang:send_after(?CONNECT_RETRY, self(), connect),
+	{noreply, update_status(connecting, State#state{fs_conn=undefined})};
 
 % handle_info({'DOWN', _Ref, process, Pid, _Reason}=Info, State) ->
 % 	#state{pids=Pids, channels=Channels, callbacks=_CallBacks} = State,
@@ -458,8 +485,9 @@ terminate(Reason, State) ->
 update_status(Status, #state{status=Status}=State) ->
 	State;
 
-update_status(NewStatus, #state{ip=Ip, status=OldStatus}=State) ->
-	nklib_proc:put({?MODULE, Ip}, NewStatus),
+update_status(NewStatus, #state{name=Name, status=OldStatus, fs_conn=Pid}=State) ->
+	nklib_proc:put({?MODULE, Name}, {NewStatus, Pid}),
+	nklib_proc:put({?MODULE, self()}, {NewStatus, Pid}),
 	?LLOG(info, "status update ~p->~p", [OldStatus, NewStatus], State),
 	State#state{status=NewStatus}.
 	% send_update(#{}, State#state{status=NewStatus}).
@@ -611,15 +639,16 @@ parse_event(Name, _Data, State) ->
 connect_fs(_Host, _Pass, 0) ->
 	error;
 connect_fs(Host, Pass, Tries) ->
-	lager:notice("Trying to connect to FS at ~s (~p) ...", [Host, Tries]),
-	case gen_tcp:connect(Host, 8021, [{active, false}, binary], 5000) of
+	Host2 = nklib_util:to_list(Host),
+	case gen_tcp:connect(Host2, 8021, [{active, false}, binary], 5000) of
 		{ok, Socket} ->
 			Res = connect_fs(Socket, Pass),
 			gen_tcp:close(Socket),
 			Res;
 		{error, _} ->
+			lager:info("Waiting for FS at ~s to start (~p) ...", [Host, Tries]),
 			timer:sleep(1000),
-			connect_fs(Host, Pass, Tries-1)
+			connect_fs(Host2, Pass, Tries-1)
 	end.
 
 

@@ -231,7 +231,7 @@ conn_parse(?CT_AUTH_ACCEPTED, NkPort, #state{authenticated=false}=State) ->
 	ret_send(<<"events json all\n\n">>, NkPort, State);
 
 conn_parse(?CT_AUTH_EVENTS, _NkPort, #state{authenticated=false}=State) ->
-	lager:info("NkMEDIA FS connected to freeswitch"),
+	lager:info("NkMEDIA FS Event Protocol connected to freeswitch"),
 	{ok, State#state{authenticated=true}};
 
 conn_parse(Data, _NkPort, #state{}=State) ->
