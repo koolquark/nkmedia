@@ -22,6 +22,11 @@
 
 -module(nkmedia_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
+
+-export([nkmedia_session_init/2, nkmedia_session_terminate/2, 
+		 nkmedia_session_status/2,
+		 nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2,
+		 nkmedia_session_handle_info/2, nkmedia_session_code_change/3]).
 -export([nkdocker_notify/2]).
 
 -include("nkmedia.hrl").
@@ -30,6 +35,35 @@
 %% ===================================================================
 %% Types
 %% ===================================================================
+
+
+%% ===================================================================
+%% Session Callbacks
+%% ===================================================================
+
+nkmedia_session_init(_Id, Config) ->
+	{ok, Config}.
+
+nkmedia_session_terminate(_Reason, Config) ->
+	{ok, Config}.
+
+nkmedia_session_status(_Status, Config) ->
+	{ok, Config}.
+
+nkmedia_session_handle_call(Msg, _From, Config) ->
+    lager:error("Module nkmedia_session received unexpected call ~p", [Msg]),
+    {noreply, Config}.
+
+nkmedia_session_handle_cast(Msg, Config) ->
+    lager:error("Module nkmedia_session received unexpected cast ~p", [Msg]),
+    {noreply, Config}.
+
+nkmedia_session_handle_info(Msg, Config) ->
+    lager:error("Module nkmedia_session received unexpected info ~p", [Msg]),
+    {noreply, Config}.
+
+nkmedia_session_code_change(_OldVsn, Config, _Extra) ->
+	{ok, Config}.
 
 
 

@@ -179,9 +179,6 @@ shutdown(Pid) ->
     jobs = [] :: [#job{}],
 	buff = <<>> :: binary(),
 	last_event :: nklib_util:timestamp()
-	% sessions = 0 :: integer(),
-	% total_sessions = 0 :: integer(),
-	% cpu = 0 :: integer()
 }).
 
 
@@ -231,7 +228,7 @@ conn_parse(?CT_AUTH_ACCEPTED, NkPort, #state{authenticated=false}=State) ->
 	ret_send(<<"events json all\n\n">>, NkPort, State);
 
 conn_parse(?CT_AUTH_EVENTS, _NkPort, #state{authenticated=false}=State) ->
-	lager:info("NkMEDIA FS Event Protocol connected to freeswitch"),
+	% lager:info("NkMEDIA FS Event Protocol connected to freeswitch"),
 	{ok, State#state{authenticated=true}};
 
 conn_parse(Data, _NkPort, #state{}=State) ->
@@ -257,18 +254,6 @@ conn_handle_call(shutdown, From, NkPort, State) ->
 			gen_server:reply(From, {error, Error})
 	end,
 	{stop, normal, State};
-
-% conn_handle_call(get_status, From, _NkPort, State) ->
-% 	#state{last_event=Last, sessions=Sessions, total_sessions=Total, cpu=Cpu} = State,
-% 	Reply = case Last of
-% 		undefined  -> 
-% 			{0, 0, 0, -1};
-% 		_ ->
-% 			Time = nklib_util:timestamp() - Last,
-% 			{Sessions, Total, Cpu, Time}
-% 	end,
-% 	gen_server:reply(From, {ok, Reply}),
-% 	{ok, State};
 
 conn_handle_call(get_state, From, _NkPort, State) ->
 	gen_server:reply(From, State),
@@ -321,8 +306,8 @@ ret_send(Msg, NkPort, State) ->
         {error, closed} ->
             {stop, normal, State};
         {error, Error} ->
-            lager:notice("Worker error sending ~p: ~p", [Msg, Error]),
-            {stop, normal, State}
+            lager:notice("Error sending FS command ~p: ~p", [Msg, Error]),
+            {stop, {send_error, Error}, State}
     end.
 
 
@@ -410,25 +395,6 @@ do_parse_reply(Msg, Rest, #state{cmds=[#cmd{async=false, from=From}|RestCmds]}=S
 do_parse_event(Ignore, _, Rest, State)
 		when Ignore == <<"RE_SCHEDULE">>; Ignore == <<"API">> ->
 	do_parse(Rest, State);
-
-% do_parse_event(<<"HEARTBEAT">>, Event, Rest, #state{notify=Notify}=State) ->
-% 	#{
-% 		<<"Session-Count">> := Sessions, 
-% 		<<"Session-Since-Startup">> := TotalSessions,
-% 		<<"Idle-CPU">> := IdleCpu
-% 	} = Event,
-% 	% lager:debug("Heartbeat"),
-% 	Event1 = maps:without(?IGNORE_FIELDS, Event),
-% 	Notify ! {nkmedia_fs_event, self(), Name, Event1};
-
-
-% 	State1 = State#state{
-% 		last_event = nklib_util:timestamp(),
-% 		sessions = nklib_util:to_integer(Sessions),
-% 		total_sessions = nklib_util:to_integer(TotalSessions),
-% 		cpu = 100 - list_to_float(binary_to_list(IdleCpu))
-% 	},
-% 	do_parse(Rest, State1);
 
 do_parse_event(<<"BACKGROUND_JOB">>, Event, Rest, #state{jobs=Jobs}=State) ->
 	#{<<"Job-UUID">>:=UUID, <<"_body">>:=Data} = Event,
