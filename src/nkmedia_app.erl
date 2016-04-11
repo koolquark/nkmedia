@@ -77,12 +77,13 @@ start(_Type, _Args) ->
             lager:info("NkMEDIA v~s is starting", [Vsn]),
             case nkmedia_app:get(no_docker) of
                 false ->
-                    case nkdocker_util:get_conn_info() of
-                        {ok, {{127,0,0,1}, Opts}} ->
+                    {ok, #{ip:=DockerIp}=Opts} = nkdocker_util:get_conn_info(),
+                    case DockerIp of
+                        {127,0,0,1} ->
                             nkmedia_app:put(local_ip, {127,0,0,1}),
                             nkmedia_app:put(docker_ip, {127,0,0,1}),
                             nkmedia_app:put(docker_opts, Opts);
-                        {ok, {Docker, Opts}} ->
+                        Docker ->
                             lager:warning("NkMEDIA: remote docker mode enabled"),
                             Local = nkpacket_config_cache:main_ip(),
                             lager:warning("Host: ~s, Docker: ~s", 
@@ -90,10 +91,7 @@ start(_Type, _Args) ->
                                           nklib_util:to_host(Docker)]),
                             nkmedia_app:put(local_ip, Local),
                             nkmedia_app:put(docker_ip, Docker),
-                            nkmedia_app:put(docker_opts, Opts);
-                        {error, Error} ->
-                            lager:error("Error contacting docker: ~p", [Error]),
-                            error({docker_error, Error})
+                            nkmedia_app:put(docker_opts, Opts)
                     end;
                     % Images = nkmedia_docker:find_images(),
                     % lager:info("Installed images: ~s", [Images]);
