@@ -42,7 +42,7 @@
 	<<"NkMEDIA">>, <<"HEARTBEAT">>,
 	<<"CHANNEL_CREATE">>, <<"CHANNEL_PARK">>, <<"CHANNEL_DESTROY">>, 
 	<<"CHANNEL_BRIDGE">>, <<"CHANNEL_HANGUP">>,
-	<<"conference::maintenance">>
+	<<"conference::maintenance">>, <<"DTMF">>
 ]).
 	
 
@@ -582,8 +582,11 @@ parse_event(<<"conference::maintenance">>, Data, #state{channels=Channels}=State
 			ok
 	end,
 	nkmedia_fs_conference:fs_event(Data),
-	State.
+	State;
 
+parse_event(<<"DTMF">>, #{<<"DTMF-Digit">>:=Digit}, State) ->
+	?LLOG(notice, "DTMF event: ~s", [Digit], State),
+	State.
 
 
 
