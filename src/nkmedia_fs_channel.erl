@@ -610,7 +610,8 @@ do_api(Api, #state{fs_pid=Pid}) ->
 
 
 %% @private
-quick_ops({dtmf, _DTMF}, _Opts, State) ->
+quick_ops({dtmf, DTMF}, _Opts, #state{fs_pid=Pid, call_id=CallId}=State) ->
+    nkmedia_fs_cmd:dtmf(Pid, CallId, DTMF),
     {true, ok, State};
 
 quick_ops({room_layout, Layout}, _Opts, #state{status=Status}=State) ->

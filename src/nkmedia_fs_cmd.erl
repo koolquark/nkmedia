@@ -25,7 +25,7 @@
 -export([status/1, call/4, hangup/2, call_exists/2, unsched_api/2]).
 -export([set_var/4, set_vars/3, unset_var/3, get_var/3, dump/2]).
 -export([transfer/3, bridge/3, park/2, break/2, break_all/2]).
--export([mute/2, silence/2, clean/2]).
+-export([mute/2, silence/2, clean/2, dtmf/3]).
 -export([conference_relate/5, get_conference_data/2]).
 -export([reloadxml/1, shutdown/1]).
 -export([profile_restart/2]).
@@ -187,6 +187,15 @@ dump(Pid, CallId) ->
 
 transfer(Pid, CallId, Extension) ->
 	bgapi(Pid, ["uuid_transfer ", CallId, " ", Extension, " XML default"]).
+
+
+%% @doc
+-spec dtmf(pid(), call_id(), string()|binary()) ->
+	term().
+
+dtmf(Pid, CallId, Dtmf) ->
+	bgapi(Pid, ["uuid_send_dtmf ", CallId, " ", Dtmf]).
+
 
 
 %% @doc
