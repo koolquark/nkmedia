@@ -77,7 +77,7 @@ start(_Type, _Args) ->
             lager:info("NkMEDIA v~s is starting", [Vsn]),
             case nkmedia_app:get(no_docker) of
                 false ->
-                    case nkdocker_server:get_conn(#{}) of
+                    case nkdocker_util:get_conn_info() of
                         {ok, {{127,0,0,1}, Opts}} ->
                             nkmedia_app:put(local_ip, {127,0,0,1}),
                             nkmedia_app:put(docker_ip, {127,0,0,1}),
