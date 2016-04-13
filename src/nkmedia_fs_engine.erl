@@ -23,11 +23,11 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([connect/4, stop/1, find/1]).
+-export([connect/1, stop/1, find/1]).
 -export([stats/2, register/2, get_config/1, api/2, bgapi/2]).
 -export([start_inbound/3, start_outbound/2, channel_op/4]).
 -export([get_all/0, stop_all/0]).
--export([start_link/4, init/1, terminate/2, code_change/3, handle_call/3,
+-export([start_link/1, init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
 
 -define(CONNECT_RETRY, 5000).
@@ -66,6 +66,14 @@
 %% Types
 %% ===================================================================
 
+-type config() ::
+	#{
+		name => binary(),
+		rel => binary(),
+		host => binary(),
+		pass => binary()
+	}.
+
 
 -type in_ch_opts() :: #{
 	class => verto | sip,
@@ -89,21 +97,21 @@
 %% ===================================================================
 
 %% @private
--spec connect(binary(), binary(), inet:ip_address(),binary()) ->
+-spec connect(config()) ->
 	{ok, pid()} | {error, term()}.
 
-connect(Name, Rel, Ip, Pass) ->
+connect(#{name:=Name, rel:=Rel, host:=Host, pass:=Pass}=Config) ->
 	case find(Name) of
 		not_found ->
-			case connect_fs(Ip, Pass, 10) of
+			case connect_fs(Host, Pass, 10) of
 				ok ->
-					nkmedia_sup:start_fs_engine(Name, Rel, Ip, Pass);
+					nkmedia_sup:start_fs_engine(Config);
 				error ->
 					{error, no_connection}
 			end;
 		{ok, _Status, FsPid, _ConnPid} ->
-			case nklib_util:call(FsPid, get_rel_pass) of
-				{ok, Rel, Pass} ->
+			case get_config(FsPid) of
+				{ok, #{rel:=Rel, pass:=Pass}} ->
 					{ok, FsPid};
 				_ ->
 					{error, incompatible_version}
@@ -136,7 +144,6 @@ stats(Name, Stats) ->
 
 register(Pid, CallBack) ->
 	nklib_util:call(Pid, {register_callback, CallBack}).
-
 
 %% @doc Generates a new inbound channel
 -spec start_inbound(pid(), binary(), in_ch_opts()) ->
@@ -187,7 +194,7 @@ channel_op(Pid, CallId, Op, Opts) ->
 
 %% @private
 -spec get_config(pid()) ->
-	{ok, nkmedia_fs:start_opts()} | {error, term()}.
+	{ok, config()} | {error, term()}.
 
 get_config(Pid) ->
 	nklib_util:call(Pid, get_config, ?CALL_TIME).
@@ -246,11 +253,11 @@ stop_all() ->
 
 
 %% @private 
--spec start_link(binary(), binary(), binary(), binary()) ->
+-spec start_link(config()) ->
     {ok, pid()} | {error, term()}.
 
-start_link(Name, Rel, Ip, Pass) ->
-	gen_server:start_link(?MODULE, [Name, Rel, Ip, Pass], []).
+start_link(Config) ->
+	gen_server:start_link(?MODULE, [Config], []).
 
 
 
@@ -262,10 +269,10 @@ start_link(Name, Rel, Ip, Pass) ->
 
 
 -record(state, {
-	rel :: binary(),
+	config :: config(),
 	name :: binary(),
-	ip :: binary(),
-	pass :: binary(),
+	% ip :: binary(),
+	% pass :: binary(),
 	status :: nkmedia_fs:status(),
 	fs_conn :: pid()
 }).
@@ -276,8 +283,8 @@ start_link(Name, Rel, Ip, Pass) ->
     {ok, tuple()} | {ok, tuple(), timeout()|hibernate} |
     {stop, term()} | ignore.
 
-init([Name, Rel, Ip, Pass]) ->
-	State = #state{rel=Rel, name=Name, ip=Ip, pass=Pass},
+init([#{name:=Name}=Config]) ->
+	State = #state{config=Config, name=Name},
 	process_flag(trap_exit, true),			% Channels and sessions shouldn't stop us
 	nklib_proc:put(?MODULE, Name),
 	true = nklib_proc:reg({?MODULE, Name}, {connecting, undefined}),
@@ -333,8 +340,8 @@ handle_call(get_event_port, _From, #state{fs_conn=Conn}=State) ->
 % 			{reply, {error, unknown_channel}, State}
 % 	end;
 
-handle_call(get_rel_pass, _From, #state{rel=Rel, pass=Pass}=State) ->
-    {reply, {ok, Rel, Pass}, State};
+handle_call(get_config, _From, #state{config=Config}=State) ->
+    {reply, {ok, Config}, State};
 
 handle_call(Msg, _From, State) ->
     lager:error("Module ~p received unexpected call ~p", [?MODULE, Msg]),
@@ -364,9 +371,9 @@ handle_info(connect, #state{fs_conn=Pid}=State) when is_pid(Pid) ->
 	true = is_process_alive(Pid),
 	{noreply, State};
 
-handle_info(connect, #state{ip=Ip, pass=Pass}=State) ->
+handle_info(connect, #state{config=#{host:=Host, pass:=Pass}}=State) ->
 	State2 = update_status(connecting, State#state{fs_conn=undefined}),
-	case nkmedia_fs_event_protocol:start(Ip, Pass) of
+	case nkmedia_fs_event_protocol:start(Host, Pass) of
 		{ok, Pid} ->
 			monitor(process, Pid),
 			State3 = State2#state{fs_conn=Pid},
@@ -488,7 +495,7 @@ update_status(Status, #state{status=Status}=State) ->
 update_status(NewStatus, #state{name=Name, status=OldStatus, fs_conn=Pid}=State) ->
 	nklib_proc:put({?MODULE, Name}, {NewStatus, Pid}),
 	nklib_proc:put({?MODULE, self()}, {NewStatus, Pid}),
-	?LLOG(info, "status update ~p->~p", [OldStatus, NewStatus], State),
+	?LLOG(info, "status ~p -> ~p", [OldStatus, NewStatus], State),
 	State#state{status=NewStatus}.
 	% send_update(#{}, State#state{status=NewStatus}).
 

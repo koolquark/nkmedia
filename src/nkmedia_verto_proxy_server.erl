@@ -20,14 +20,13 @@
 %% -------------------------------------------------------------------
 
 %% @doc 
--module(nkmedia_fs_proxy_verto_server).
+-module(nkmedia_verto_proxy_server).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--behaviour(nkpacket_protocol).
 
-
--export([get_all/0]).
+-export([get_all/0, send_reply/2]).
 -export([transports/1, default_port/1]).
--export([conn_init/1, conn_encode/2, conn_parse/3, conn_handle_call/4, conn_handle_info/3]).
+-export([conn_init/1, conn_encode/2, conn_parse/3, 
+         conn_handle_call/4, conn_handle_info/3]).
 
 
 -define(LLOG(Type, Txt, Args, State),
@@ -40,6 +39,10 @@
 
 get_all() ->
     [{Local, Remote} || {Remote, Local} <- nklib_proc:values(?MODULE)].
+
+
+send_reply(Pid, Event) ->
+    gen_server:call(Pid, {send_reply, Event}).
 
 
 
@@ -74,19 +77,22 @@ conn_init(NkPort) ->
     {ok, Remote} = nkpacket:get_remote_bin(NkPort),
     State = #state{remote=Remote},
     ?LLOG(notice, "new connection (~p)", [self()], State),
-    case ncs_media_fs:find_servers() of
-        {ok, Servers} ->
-            ?LLOG(info, "located servers: ~p", [Servers], State),
-            case connect_proxy(Servers, State) of
+    case nkmedia_fs_engine:get_all() of
+        [{Name, FsPid}|_] ->
+            case nkmedia_verto_proxy_client:start(FsPid) of
                 {ok, ProxyPid} ->
-                    {ok, #state{remote=Remote, proxy=ProxyPid}};
-                error ->
-                    ?LLOG(warning, "no server available", [], State),
-                    {stop, normal}
+                    ?LLOG(info, "connected to FS server ~s", [Name], State),
+                    monitor(process, ProxyPid),
+                    nklib_proc:put(?MODULE, {proxy_client, ProxyPid}),
+                    {ok, State#state{proxy=ProxyPid}};
+                {error, Error} ->
+                    ?LLOG(warning, "could not start proxy to ~s: ~p", 
+                          [Name, Error], State),
+                    {stop, no_fs_server}
             end;
-        {error, Error} ->
-            ?LLOG(error, "error calling find_servers/0: ~p", [Error], State),
-            {stop, {instance_find, Error}}
+        [] ->
+            ?LLOG(error, "could not locate any FS server", [], State),
+            {stop, no_fs_server}
     end.
 
 
@@ -98,7 +104,7 @@ conn_parse(close, _NkPort, State) ->
     {ok, State};
 
 conn_parse({text, <<"#S", _/binary>>=Msg}, _NkPort, #state{proxy=Pid}=State) ->
-    nkmedia_fs_proxy_verto_client:send(Pid, Msg),
+    nkmedia_verto_proxy_client:send(Pid, Msg),
     {ok, State};
 
 conn_parse({text, Data}, _NkPort, #state{proxy=Pid}=State) ->
@@ -109,7 +115,7 @@ conn_parse({text, Data}, _NkPort, #state{proxy=Pid}=State) ->
         Json ->
             Json
     end,
-    nkmedia_fs_proxy_verto_client:send(Pid, Msg),
+    nkmedia_verto_proxy_client:send(Pid, Msg),
     {ok, State}.
 
 
@@ -129,7 +135,7 @@ conn_encode(Msg, _NkPort) when is_binary(Msg) ->
 -spec conn_handle_call(term(), term(), nkpacket:nkport(), #state{}) ->
     {ok, #state{}} | {stop, Reason::term(), #state{}}.
 
-conn_handle_call({nkmedia_fs_verto, _Pid, Event}, From, NkPort, State) ->
+conn_handle_call({send_reply, Event}, From, NkPort, State) ->
     case nkpacket_connection:send(NkPort, Event) of
         ok -> 
             gen_server:reply(From, ok),
@@ -149,7 +155,7 @@ conn_handle_call(Info, _NkPort, _From, State) ->
 -spec conn_handle_info(term(), nkpacket:nkport(), #state{}) ->
     {ok, #state{}} | {stop, Reason::term(), #state{}}.
 
-conn_handle_info({nkmedia_fs_verto, _Pid, Event}, NkPort, State) ->
+conn_handle_info({send_reply, Event}, NkPort, State) ->
     case nkpacket_connection:send(NkPort, Event) of
         ok -> 
             {ok, State};
@@ -176,20 +182,4 @@ conn_handle_info(Info, _NkPort, State) ->
 %% Util
 %% ===================================================================
 
-
-%% @private
-connect_proxy([], _State) ->
-    error;
-connect_proxy([ServerPid|Rest], State) ->
-    case nkmedia_fs:start_proxy(ServerPid) of
-        {ok, ProxyPid} ->
-            ?LLOG(info, "connected to server ~p", [ServerPid], State),
-            % ok = nkmedia_fs_server:register(ServerPid),
-            monitor(process, ProxyPid),
-            nklib_proc:put(?MODULE, {fs_proxy, ProxyPid}),
-            {ok, ProxyPid};
-        {error, Error} ->
-            ?LLOG(warning, "could not start proxy: ~p", [Error], State),
-            connect_proxy(Rest, State)
-    end.
 

@@ -23,16 +23,16 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(supervisor).
 
--export([start_fs_engine/4]).
+-export([start_fs_engine/1]).
 -export([init/1, start_link/0]).
 
 -include("nkmedia.hrl").
 
-start_fs_engine(Name, Rel, Ip, Pass) ->
-    ChildId = {nkmedia_fs_engine, Ip},
+start_fs_engine(#{name:=Name}=Config) ->
+    ChildId = {nkmedia_fs_engine, Name},
 	Spec = {
         ChildId,
-        {nkmedia_fs_engine, start_link, [Name, Rel, Ip, Pass]},
+        {nkmedia_fs_engine, start_link, [Config]},
         transient,
         5000,
         worker,
@@ -43,7 +43,7 @@ start_fs_engine(Name, Rel, Ip, Pass) ->
             {ok, Pid};
         {error, already_present} ->
             ok = supervisor:delete_child(?MODULE, ChildId),
-            start_fs_engine(Name, Rel, Ip, Pass);
+            start_fs_engine(Config);
         {error, {already_started, Pid}} -> 
             {ok, Pid};
         {error, Error} -> 

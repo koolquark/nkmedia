@@ -335,17 +335,17 @@ handle_call(Msg, _From, State) ->
 handle_cast(connect_in, State) ->
     #state{fs_pid=FsPid, call_id=CallId, sdp=SDP, data=Dialog} = State,
     State2 = update_status(wait_park, State),
-    case nkmedia_fs_verto_client:start(FsPid) of
+    case nkmedia_verto_client:start(FsPid) of
         {ok, _SessId, SessPid} ->
             Dialog2 = Dialog#{<<"callID">> => CallId},
             case 
-                nkmedia_fs_verto_client:invite(SessPid, "nkmedia_in", SDP, Dialog2) 
+                nkmedia_verto_client:invite(SessPid, "nkmedia_in", SDP, Dialog2) 
             of
                 {ok, SDP2} ->
                     State3 = State2#state{sdp=SDP2, session_pid=SessPid, data=#{}},
                     {noreply, State3};
                 {error, Error} ->
-                    nkmedia_fs_verto_client:stop(SessPid),
+                    nkmedia_verto_client:stop(SessPid),
                     ?LLOG(warning, "invite error: ~p", [Error], State2),
                     {stop, normal, State2}
             end;
@@ -356,7 +356,7 @@ handle_cast(connect_in, State) ->
 
 handle_cast(connect_out, #state{class=verto, fs_pid=FsPid}=State) ->
     State2 = update_status(wait_park, State),
-    case nkmedia_fs_verto_client:start(FsPid) of
+    case nkmedia_verto_client:start(FsPid) of
         {ok, SessId, SessPid} ->
             State3 = State2#state{session_pid=SessPid, session_id=SessId, data=#{}},
             originate_verto(State3),
@@ -632,7 +632,7 @@ quick_ops({room_layout, Layout}, _Opts, #state{status=Status}=State) ->
 
 quick_ops({answer, SDP}, Opts, #state{class=verto, session_pid=SessPid}=State) ->
     Dialog = maps:get(verto_dialog, Opts, #{}),
-    case nkmedia_fs_verto_client:answer(SessPid, SDP, Dialog) of
+    case nkmedia_verto_client:answer(SessPid, SDP, Dialog) of
         ok ->
             {true, ok, State};
         {error, Error} ->

@@ -19,9 +19,8 @@
 %% -------------------------------------------------------------------
 
 %% @doc 
--module(nkmedia_fs_proxy_verto_client).
+-module(nkmedia_verto_proxy_client).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--behaviour(nkpacket_protocol).
 
 -export([start/1, send/2, stop/1]).
 -export([get_all/0]).
@@ -44,18 +43,19 @@
 
 
 %% @doc Starts a new verto session to FS
--spec start(nkmedia_fs:start_opts()) ->
+-spec start(pid()) ->
     {ok, pid()} | {error, term()}.
 
-start(#{index:=Index, password:=Pass}) ->
-    Ip = nkmedia_app:get(docker_host),
+start(FsPid) ->
+    {ok, #{host:=Host, pass:=Pass}} = nkmedia_fs_engine:get_config(FsPid),
     ConnOpts = #{
-        class => nkmedia_fs_proxy,
+        class => ?MODULE,
         monitor => self(),
-        idle_timeout => ?WS_TIMEOUT,
+        idle_timeout => ?VERTO_WS_TIMEOUT,
         user => #{proxy=>self(), pass=>Pass}
     },
-    Conn = {nkmedia_fs_proxy_verto_client, ws, Ip, 8181+Index},
+    {ok, Ip} = nklib_util:to_ip(Host),
+    Conn = {?MODULE, ws, Ip, 8081},
     nkpacket:connect(Conn, ConnOpts).
 
 
@@ -85,8 +85,6 @@ get_all() ->
 
 
 -record(trans, {
-    % class :: client | server,
-    % from :: {pid(), term()},
     req :: binary(),
     req_msg :: map(),
     resp :: {ok, binary()} | {error, {integer(), binary()}},
@@ -143,19 +141,19 @@ conn_parse(close, _NkPort, State) ->
 conn_parse({text, <<"#S", _/binary>>=Msg}, _NkPort, State) ->
     State1 = case Msg of
         <<"#SPU", _/binary>> ->
-            lager:notice("FS BW REPLY1: ~s", [Msg]),
+            % lager:notice("FS BW REPLY1: ~s", [Msg]),
             State#state{bw_out=0, bw_time=nklib_util:l_timestamp()};
         <<"#SPB", _/binary>> -> 
             Size = byte_size(Msg),
             Out = State#state.bw_out +  Size,
             State#state{bw_out=Out};
         <<"#SPD", _/binary>> ->
-            #state{bw_out=Out, bw_time=Time} = State,
-            Diff = (nklib_util:l_timestamp() - Time) div 10000,
-            lager:notice("FS BW REPLY2: ~s (~p, ~p)", [Msg, Out, Diff]),
+            #state{bw_out=_Out, bw_time=Time} = State,
+            _Diff = (nklib_util:l_timestamp() - Time) div 10000,
+            % lager:notice("FS BW REPLY2: ~s (~p, ~p)", [Msg, Out, Diff]),
             State#state{bw_out=0, bw_time=0}
     end,
-    send_event(Msg, State1),
+    send_reply(Msg, State1),
     {ok, State1};
 
 conn_parse({text, Data}, _NkPort, State) ->
@@ -168,7 +166,7 @@ conn_parse({text, Data}, _NkPort, State) ->
             ok
     end,
     % ?LLOG(notice, ("TEXT:\n~s", [nklib_json:encode_pretty(Data)]),
-    send_event(Msg, State),
+    send_reply(Msg, State),
     {ok, update_server(Msg, State)}.
 
 
@@ -200,33 +198,29 @@ conn_handle_call(Msg, _From, _NkPort, State) ->
     {ok, #state{}} | {stop, term(), #state{}}.
 
 conn_handle_cast({send, <<"#S", _/binary>>=Msg}, NkPort, State) ->
-    State1 = case Msg of
+    State2 = case Msg of
         <<"#SPU ", BytesBin/binary>> ->
-            Bytes = nklib_util:to_integer(BytesBin),
-            lager:notice("Client start BW test (SPU, ~p)", [Bytes]),
+            _Bytes = nklib_util:to_integer(BytesBin),
+            % lager:notice("Client start BW test (SPU, ~p)", [Bytes]),
             State#state{bw_in=0, bw_time=nklib_util:l_timestamp()};
         <<"#SPE">> ->
-            #state{bw_in=Bytes, bw_time=Start} = State,
-            Len = (nklib_util:l_timestamp() - Start) div 1000,
-            lager:notice("Client stops BW test (SPE, ~p, ~p)", [Bytes, Len]),
+            #state{bw_in=_Bytes, bw_time=_Start} = State,
+            % _ = _Len = (nklib_util:l_timestamp() - Start) div 1000,
+            % lager:notice("Client stops BW test (SPE, ~p, ~p)", [Bytes, Len]),
             State;
         <<"#SPB", _/binary>> -> 
             Size = byte_size(Msg),
             In = State#state.bw_in +  Size - 4,
             State#state{bw_in=In}
     end,
-    case nkpacket_connection:send(NkPort, Msg) of
-        ok -> {ok, State1};
-        {error, Error} -> {stop, Error, State1}
-    end;
+    do_send(Msg, NkPort, State2);
 
 conn_handle_cast({send, Msg}, NkPort, State) ->
-    Msg1 = update_password(Msg, State),
-    case nkpacket_connection:send(NkPort, Msg1) of
-        ok -> 
-            {ok, update_client(Msg1, State)};
-        {error, Error} -> 
-            {stop, Error, State}
+    case do_send(Msg, NkPort, State) of
+        {ok, State2} -> 
+            {ok, update_client(Msg, State2)};
+        Other ->
+            Other
     end;
 
 conn_handle_cast(Msg, _NkPort, State) ->
@@ -261,7 +255,7 @@ conn_handle_info(Msg, _NkPort, State) ->
     #state{}.
 
 update_client(Msg, #state{trans=AllTrans}=State) ->
-    case nkmedia_fs_verto:parse_class(Msg) of
+    case nkmedia_verto_util:parse_class(Msg) of
         {{req, Method}, Id} ->
             % Client is sending a request to the server
             false = maps:is_key({client, Id}, AllTrans),
@@ -283,7 +277,7 @@ update_client(Msg, #state{trans=AllTrans}=State) ->
                     State
             end;
         event ->
-            ?LLOG(notice, "Event from Client", [], State),
+            ?LLOG(notice, "Event from client", [], State),
             State;
         unknown ->
             ?LLOG(warning, "unknown verto message: ~p", [Msg], State),
@@ -296,7 +290,7 @@ update_client(Msg, #state{trans=AllTrans}=State) ->
     #state{}.
 
 update_server(Msg, #state{trans=AllTrans}=State) ->
-    case nkmedia_fs_verto:parse_class(Msg) of
+    case nkmedia_verto_util:parse_class(Msg) of
         {{req, Method}, Id} ->
             % Server is sending a request to the client
             false = maps:is_key({server, Id}, AllTrans),
@@ -327,14 +321,20 @@ update_server(Msg, #state{trans=AllTrans}=State) ->
 
 
 %% @private
--spec send_event(binary()|map(), #state{}) ->
+-spec send_reply(binary()|map(), #state{}) ->
     ok.
 
-send_event(Msg, #state{proxy=Pid}) ->
-    ok = gen_server:call(Pid, {nkmedia_fs_verto, self(), Msg}).
-    % Pid ! {nkmedia_fs_verto, self(), Msg},
-    % ok.
+send_reply(Msg, #state{proxy=Pid}) ->
+    ok = nkmedia_verto_proxy_server:send_reply(Pid, Msg).
 
+
+%% @private
+do_send(Msg, NkPort, State) ->
+    Msg2 = update_password(Msg, State),
+    case nkpacket_connection:send(NkPort, Msg2, State) of
+        ok -> {ok, State};
+        {error, Error} -> {stop, Error, State}
+    end.
 
 
 %% @private
@@ -353,12 +353,15 @@ check_old_trans(Now, [{{Type, Id}, #trans{time=Time}=Trans}|Rest], Acc) ->
 
 
 %% @private
+%% When set userauth=false on the profile, it is supposed that the user 'root'
+%% works, but it shuts freeswitch down now
 update_password(Msg, #state{pass=Pass}) ->
     case Msg of
         #{
             <<"method">> := <<"login">>,
             <<"params">> := #{<<"passwd">>:=_}=Params1
         } ->
+            % Params2 = Params1#{<<"login">>:=<<"root">>, <<"passwd">>:=Pass},
             Params2 = Params1#{<<"passwd">>:=Pass},
             Msg#{<<"params">>:=Params2};
         _ ->

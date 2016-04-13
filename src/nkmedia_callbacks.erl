@@ -23,6 +23,7 @@
 -module(nkmedia_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
+-export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
 -export([nkmedia_session_init/2, nkmedia_session_terminate/2, 
 		 nkmedia_session_status/2,
 		 nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2,
@@ -35,6 +36,28 @@
 %% ===================================================================
 %% Types
 %% ===================================================================
+
+
+%% ===================================================================
+%% Plugin callbacks
+%%
+%% These are used when NkMEDIA is started as a NkSERVICE plugin
+%% ===================================================================
+
+
+plugin_deps() ->
+    [nksip].
+
+
+plugin_start(Config, #{name:=Name}) ->
+    lager:info("Plugin NkMEDIA (~s) starting", [Name]),
+    {ok, Config}.
+
+
+plugin_stop(Config, #{name:=Name}) ->
+    lager:info("Plugin NkMEDIA (~p) stopping", [Name]),
+    {ok, Config}.
+
 
 
 %% ===================================================================
@@ -76,14 +99,15 @@ nkdocker_notify(MonId, {start, {<<"nk_fs_", _/binary>>, Data}}) ->
 		#{
 			name := Name,
 			labels := #{<<"nkmedia">> := <<"freeswitch">>},
-			env := #{<<"NK_FS_IP">> := Ip, <<"NK_PASS">> := Pass},
+			env := #{<<"NK_FS_IP">> := Host, <<"NK_PASS">> := Pass},
 			image := Image
 		} ->
 			case binary:split(Image, <<"/">>) of
 				[_Comp, <<"nk_freeswitch_run:", Rel/binary>>] -> 
 					case lists:member(Rel, ?SUPPORTED_FS) of
 						true ->
-							connect_fs(MonId, Name, Rel, Ip, Pass);
+							Config = #{name=>Name, rel=>Rel, host=>Host, pass=>Pass},
+							connect_fs(MonId, Config);
 						false ->
 							lager:warning("Started unsupported nk_freeswitch")
 					end;
@@ -98,10 +122,10 @@ nkdocker_notify(MonId, {stop, {<<"nk_fs_", _/binary>>, Data}}) ->
 	case Data of
 		#{
 			name := Name,
-			labels := #{<<"nkmedia">> := <<"freeswitch">>},
-			env := #{<<"NK_FS_IP">> := Ip}
+			labels := #{<<"nkmedia">> := <<"freeswitch">>}
+			% env := #{<<"NK_FS_IP">> := Host}
 		} ->
-			remove_fs(MonId, Name, Ip);
+			remove_fs(MonId, Name);
 		_ ->
 			ok
 	end;
@@ -120,26 +144,26 @@ nkdocker_notify(_Id, _Event) ->
 %% ===================================================================
 
 %% @private
-connect_fs(MonId, Name, Rel, Ip, Pass) ->
+connect_fs(MonId, #{name:=Name}=Config) ->
 	spawn(
 		fun() -> 
 			timer:sleep(2000),
-			case nkmedia_fs_engine:connect(Name, Rel, Ip, Pass) of
+			case nkmedia_fs_engine:connect(Config) of
 				{ok, _Pid} -> 
 					ok = nkdocker_monitor:start_stats(MonId, Name);
 				{error, Error} -> 
-					lager:warning("Could not connect to Freeswitch at ~s: ~p", 
-								  [Ip, Error])
+					lager:warning("Could not connect to Freeswitch ~s: ~p", 
+								  [Name, Error])
 			end
 		end),
 	ok.
 
 
 %% @private
-remove_fs(MonId, Name, Ip) ->
+remove_fs(MonId, Name) ->
 	spawn(
 		fun() ->
-			nkmedia_fs_engine:stop(Ip),
+			nkmedia_fs_engine:stop(Name),
 			case nkdocker_monitor:get_docker(MonId) of
 				{ok, Pid} -> 
 					nkdocker:rm(Pid, Name);

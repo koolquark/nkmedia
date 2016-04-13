@@ -21,7 +21,6 @@
 %% @doc 
 -module(nkmedia_fs_event_protocol).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--behaviour(nkpacket_protocol).
 
 -export([start/2]).
 -export([api/2, bgapi/2, event/3, msg/3, shutdown/1]).

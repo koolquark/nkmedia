@@ -24,10 +24,9 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([start/1, stop/1]).
--export([start_proxy/1]).
 -export([start_inbound/3, start_outbound/2, channel_op/3, channel_op/4]).
 -export([config/1]).
--export_type([start_opts/0, q850/0]).
+-export_type([config/0, q850/0]).
 
 
 %% ===================================================================
@@ -35,15 +34,13 @@
 %% ===================================================================
 
 
--type start_opts() ::
+-type config() ::
     #{
-        index => pos_integer(),
-        version => binary(),
-        release => binary(),
-        password => binary(),
-    	docker_company => binary(),
-    	callback => module(),
-    	call_debug => boolean()
+        comp => binary(),
+        vsn => binary(),
+        rel => binary(),
+        pass => binary(),
+        name => binary()
     }.
 
 
@@ -97,7 +94,7 @@
 %% ===================================================================
 
 %% @doc Installs and starts a local FS instance
--spec start(start_opts()) ->
+-spec start(config()) ->
     ok | {error, term()}.
 
 start(Spec) ->
@@ -131,7 +128,7 @@ start(Spec) ->
 
 
 %% @doc Equivalent to stop()
--spec stop(start_opts()) ->
+-spec stop(config()) ->
     {ok, pid()} | {error, term()}.
 
 stop(Spec) ->
@@ -146,20 +143,20 @@ stop(Spec) ->
 	
 
 
-%% @doc Starts a proxy connection
-%% We will start a new WS connection to fs, proxy_data/2 must be used to 
-%% send data to it. Responses will be sent as {nkmedia_fs_verto, pid(), proxy_event()} 
-%% messages to the caller
--spec start_proxy(pid()) ->
-	{ok, pid()} | {error, term()}.
+% %% @doc Starts a proxy connection
+% %% We will start a new WS connection to fs, proxy_data/2 must be used to 
+% %% send data to it. Responses will be sent as {nkmedia_fs_verto, pid(), proxy_event()} 
+% %% messages to the caller
+% -spec start_proxy(pid()) ->
+% 	{ok, pid()} | {error, term()}.
 
-start_proxy(Pid) ->
-	case nkmedia_fs_server:get_config(Pid) of
-		{ok, Config } ->
-			nkmedia_fs_proxy_verto_client:start(Config);
-		{error, Error} ->
-			{error, Error}
-	end.
+% start_proxy(Pid) ->
+% 	case nkmedia_fs_server:get_config(Pid) of
+% 		{ok, Config } ->
+% 			nkmedia_verto_proxy_client:start(Config);
+% 		{error, Error} ->
+% 			{error, Error}
+% 	end.
 
 
 %% @doc Generates a new inbound channel

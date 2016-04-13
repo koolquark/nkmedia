@@ -23,7 +23,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, start_link/1]).
--export([call/3, update_config/2]).
+-export([call/3, update_config/2, put_in_ms/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
 
@@ -34,8 +34,10 @@
 
 -define(DEF_WAIT_TIMEOUT, 30).
 
-
 -callback nkmedia_session_init(id(), config()) ->
+    {ok, config()}.
+
+-callback nkmedia_session_update(id(), config()) ->
     {ok, config()}.
 
 -callback nkmedia_session_terminate(Reason::term(), config()) ->
@@ -72,12 +74,11 @@
         srv_id => nkservice:id(),
         monitor => pid(),
         type => inbound | outbound,
-        role => caller | callee,
+        % role => caller | callee,
         sdp_a => binary(),
         sdp_b => binary(),
-        call => term(),
-        wait_timeout => integer(),                  %% Secs
-        call_fail_if_answered => boolean(),         %% Default true
+        call => call_dest(),                        % Call to this
+        wait_timeout => integer(),                  % Secs
 
         id => id(),                     % Non user-modificable values
         answered => true,
@@ -92,10 +93,8 @@
 -type call_dest() ::
     {room, binary()} | {sip, Url::binary(), Opts::list()}.
 
-
-
-
-
+-type mediaserver() ::
+    {fs, Name::binary()}.
 
 
 %% ===================================================================
@@ -132,6 +131,15 @@ call(SessId, CallDest, Config) ->
 update_config(SessId, Config) ->
     do_call(SessId, {update_config, Config}).
 
+
+-spec put_in_ms(id(), mediaserver()) ->
+    ok | {error, term()}.
+
+put_in_ms(SessId, MS) ->
+    do_call(SessId, {put_in_ms, MS}).
+
+
+
 %% ===================================================================
 %% Internal
 %% ===================================================================
@@ -148,7 +156,7 @@ update_config(SessId, Config) ->
     id :: id(),
     srv_id :: nkservice:id(),
     config = #{} :: config(),
-    mon :: reference(),
+    user_mon :: reference(),
     status :: status(),
     timer :: reference(),
     ms :: {module(), term()},
@@ -167,11 +175,16 @@ init([#{id:=Id}=Config]) ->
         {ok, Pid} -> monitor:process(Pid);
         error -> undefined
     end,
-    {ok, Config2} = SrvId:nkmedia_session_init(Id, Config),    
+    case erlang:function_exported(SrvId, nkmedia_session_init, 2) of
+        true ->
+            {ok, Config2} = SrvId:nkmedia_session_init(Id, Config);
+        false ->
+            Config2 = Config
+    end,
     State = #state{
         id = Id, 
         srv_id = SrvId, 
-        mon = Mon,
+        user_mon = Mon,
         config = Config2,
         status = init
     },
@@ -202,11 +215,18 @@ handle_call({call, Dest, CallConfig}, From, #state{config=Config}=State) ->
     end;
 
 handle_call({update_config, NewConfig}, _From, #state{config=Config}=State) ->
-    Config2 = maps:merge(Config, NewConfig),
-    {reply, ok, State#state{config=Config2}};
+    State2 = State#state{config=maps:merge(Config, NewConfig)},
+    case 
+        nklib_gen_server:handle_any(nkmedia_session_update_config, [], State2,
+                                    #state.srv_id, #state.config)
+    of
+        nklib_not_exported -> {reply, ok, State2};
+        {ok, Config2} -> {reply, ok, State#state{config=Config2}}
+    end;
 
 handle_call(Msg, From, State) -> 
-    handle(nkmedia_session_handle_call, [Msg, From], State).
+    nklib_gen_server:handle_call(nkmedia_session_handle_cast, Msg, From, State,
+                                 #state.srv_id, #state.config).
 
 
 %% @private
@@ -214,7 +234,8 @@ handle_call(Msg, From, State) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
 handle_cast(Msg, State) -> 
-    handle(nkmedia_session_handle_cast, [Msg], State).
+    nklib_gen_server:handle_cast(nkmedia_session_handle_cast, Msg, State,
+                                 #state.srv_id, #state.config).
 
 
 %% @private
@@ -225,7 +246,7 @@ handle_info({timeout, _, status_timeout}, State) ->
     ?LLOG(warning, "status timeout", [], State),
     {stop, normal, State};
 
-handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{mon=Ref}=State) ->
+handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{user_mon=Ref}=State) ->
     ?LLOG(warning, "caller process stopped: ~p", [Reason], State),
     {stop, Reason, State};
 
@@ -240,7 +261,8 @@ handle_info({'DOWN', Ref, process, CallPid, Reason}=Msg, #state{calls=Calls}=Sta
     end;
 
 handle_info(Msg, State) ->
-    handle(nkmedia_session_handle_info, [Msg], State).
+    nklib_gen_server:handle_info(nkmedia_session_handle_info, Msg, State,
+                                 #state.srv_id, #state.config).
 
 
 %% @private
@@ -248,16 +270,17 @@ handle_info(Msg, State) ->
     {ok, #state{}}.
 
 code_change(OldVsn, State, Extra) ->
-    nklib_gen_server:code_change(nkmedia_session_code_change, OldVsn, State, Extra, 
+    nklib_gen_server:code_change(nkmedia_session_code_change, 
+                                 OldVsn, State, Extra, 
                                  #state.srv_id, #state.config).
-
 
 %% @private
 -spec terminate(term(), #state{}) ->
     ok.
 
 terminate(Reason, State) ->
-    catch handle(nkmedia_session_terminate, [Reason], State),
+    catch nklib_gen_server:terminate(nkmedia_session_terminate, Reason, State,
+                                     #state.srv_id, #state.config),
     ?LLOG(info, "stopped (~p)", [Reason], State).
 
 
@@ -266,6 +289,7 @@ terminate(Reason, State) ->
 %% ===================================================================
 
 
+%% @private
 make_call(Dest, CallConfig, #state{config=Config, calls=Calls}=State) ->
     CallId = make_id(),
     CallConfig2 = CallConfig#{
@@ -279,11 +303,6 @@ make_call(Dest, CallConfig, #state{config=Config, calls=Calls}=State) ->
     Calls2 = [{CallId, CallPid, Mon}|Calls],
     State2 = State#state{config=Config#{role=>caller}, calls=Calls2},
     {CallId, update_status(calling, State2)}.
-
-
-
-
-
 
 
 %% @private
@@ -314,7 +333,12 @@ restart_timer(Status, #state{timer=Timer, config=Config}=State) ->
 
 %% @private
 handle(Fun, Args, State) ->
-    nklib_gen_server:handle_any(Fun, Args, State, #state.srv_id, #state.config).
+    case nklib_gen_server:handle_any(Fun, Args, State, #state.srv_id, #state.config) of
+        nklib_not_exported ->
+            {ok, State};
+        Other ->
+            Other
+    end.
 
 
 %% @private

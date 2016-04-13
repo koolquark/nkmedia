@@ -22,10 +22,14 @@
 -module(nkmedia_fs_docker).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/0, start/4, stop/0, stop/3]).
--export([get_image_parts/0]).
+-export([start/0, start/1, stop/1]).
+-export([defaults/1]).
 
 
+
+%% ===================================================================
+%% Types    
+%% ===================================================================
 
 %% ===================================================================
 %% Freeswitch Instance
@@ -33,39 +37,38 @@
         
 
 %% @doc Starts a FS instance
+-spec start() ->
+    {ok, Name::binary()} | {error, term()}.
+
 start() ->
-    {Comp, Vsn, Rel} = get_image_parts(),
-    Pass = nklib_util:hash(make_ref()),
-    start(Comp, Vsn, Rel, Pass).
+    start(#{}).
 
 
 %% @doc Starts a FS instance
-start(Comp, Vsn, Rel, Pass) ->
-    Image = nkmedia_fs_build:run_image_name(Comp, Vsn, Rel),
+-spec start(nkmedia_fs:config()) ->
+    {ok, Name::binary()} | {error, term()}.
+
+start(Config) ->
+    Config2 = defaults(Config),
+    Image = nkmedia_fs_build:run_image_name(Config2),
     ErlangIp = nklib_util:to_host(nkmedia_app:get(erlang_ip)),
-    MainIp = nklib_util:to_host(nkmedia_app:get(main_ip)),
-    case nkmedia_app:get(docker_ip) of
+    _MainIp = nklib_util:to_host(nkmedia_app:get(main_ip)),
+    FsIp = case nkmedia_app:get(docker_ip) of
         {127,0,0,1} ->
             Byte1 = crypto:rand_uniform(1, 255),
             Byte2 = crypto:rand_uniform(1, 255),
             Byte3 = crypto:rand_uniform(1, 255),
-            FsIp = nklib_util:to_host({127, Byte1, Byte2, Byte3}),
-            Name = list_to_binary([
-                "nk_fs_", 
-                integer_to_list(Byte1), "_",
-                integer_to_list(Byte2), "_",
-                integer_to_list(Byte3)
-            ]);
+            nklib_util:to_host({127, Byte1, Byte2, Byte3});
         DockerIp ->
-            FsIp = nklib_util:to_host(DockerIp),
-            Name = "nk_fs_dev"
-
+            nklib_util:to_host(DockerIp)
     end,
+    Name = list_to_binary(["nk_fs_", nklib_util:hash({Image, FsIp})]),
     ExtIp = nklib_util:to_host(nkpacket_app:get(ext_ip)),
+    #{pass:=Pass} = Config2,
     Env = [
         {"NK_FS_IP", FsIp},                 %% 127.X.Y.Z except in dev mode
         {"NK_ERLANG_IP", ErlangIp},         %% 127.0.0.1 except in dev mode
-        {"NK_RTP_IP", MainIp},       
+        {"NK_RTP_IP", "$${local_ip_v4}"},       
         {"NK_EXT_IP", ExtIp},  
         {"NK_PASS", nklib_util:to_list(Pass)}
     ],
@@ -88,7 +91,12 @@ start(Comp, Vsn, Rel, Pass) ->
             case nkdocker:create(DockerPid, Image, DockerOpts) of
                 {ok, _} -> 
                     lager:info("NkMEDIA FS Docker: starting instance ~s", [Name]),
-                    nkdocker:start(DockerPid, Name);
+                    case nkdocker:start(DockerPid, Name) of
+                        ok ->
+                            {ok, Name};
+                        {error, Error} ->
+                            {error, Error}
+                    end;
                 {error, Error} -> 
                     {error, Error}
             end;
@@ -97,23 +105,10 @@ start(Comp, Vsn, Rel, Pass) ->
     end.
 
 
-%% @doc Stops a dev FS instance
-stop() ->
-    stop(<<"nk_fs_dev">>).
-
-
-%% @doc Stops a X_Y_Z FS instance
-stop(A, B, C) ->
-    Name = list_to_binary([
-        "nk_fs_", 
-        integer_to_list(A), "_",
-        integer_to_list(B), "_",
-        integer_to_list(C)
-    ]),
-    stop(Name).
-
-
 %% @doc Stops a FS instance
+-spec stop(binary()) ->
+    ok | {error, term()}.
+
 stop(Name) ->    
     case get_docker_pid() of
         {ok, DockerPid} ->
@@ -143,13 +138,19 @@ get_docker_pid() ->
     nkdocker_monitor:get_docker(DockerMonId).
 
 
+
 %% @private
-get_image_parts() ->
-    {
-        nkmedia_app:get(docker_company), 
-        nkmedia_app:get(fs_version), 
-        nkmedia_app:get(fs_release)
-    }.
+-spec defaults(map()) ->
+    nkmedia_fs:config().
+
+defaults(Config) ->
+    Defs = #{
+        comp => nkmedia_app:get(docker_company), 
+        vsn => nkmedia_app:get(fs_version), 
+        rel => nkmedia_app:get(fs_release),
+        pass => nklib_util:uid()
+    },
+    maps:merge(Defs, Config).
 
 
 

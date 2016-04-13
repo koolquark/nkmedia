@@ -71,7 +71,7 @@ start(_Type, _Args) ->
     case nklib_config:load_env(?APP, Syntax, Defaults) of
         {ok, _} ->
             % nkpacket:register_protocol(fs_event, nkmedia_fs_event_protocol),
-            % nkpacket:register_protocol(fs_verto_proxy, nkmedia_fs_proxy_verto_client),
+            % nkpacket:register_protocol(fs_verto_proxy, nkmedia_verto_proxy_client),
             {ok, Vsn} = application:get_key(?APP, vsn),
             lager:info("NkMEDIA v~s is starting", [Vsn]),
             MainIp = nkpacket_config_cache:main_ip(),
@@ -93,8 +93,13 @@ start(_Type, _Args) ->
                             nkmedia_app:put(erlang_ip, MainIp),
                             nkmedia_app:put(docker_ip, DockerIp)
                     end,
-                    {ok, DockerMonId} = nkdocker_monitor:register(nkmedia_callbacks),
-                    nkmedia_app:put(docker_mon_id, DockerMonId);
+                    case nkdocker_monitor:register(nkmedia_callbacks) of
+                        {ok, DockerMonId} ->
+                            nkmedia_app:put(docker_mon_id, DockerMonId);
+                        {error, Error} ->
+                            lager:error("Could not start Docker Monitor: ~p", [Error]),
+                            error(docker_monitor)
+                    end;
 
                     % Images = nkmedia_docker:find_images(),
                     % lager:info("Installed images: ~s", [Images]);

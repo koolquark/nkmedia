@@ -22,11 +22,11 @@
 -module(nkmedia_fs_build).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([build_base_image/0, build_base_image/3]).
--export([remove_base_image/0, remove_base_image/3]).
--export([build_run_image/0, build_run_image/3]).
--export([remove_run_image/0, remove_run_image/3]).
--export([run_image_name/3]).
+-export([build_base_image/0, build_base_image/1]).
+-export([remove_base_image/0, remove_base_image/1]).
+-export([build_run_image/0, build_run_image/1]).
+-export([remove_run_image/0, remove_run_image/1]).
+-export([run_image_name/1]).
 
 % -include("nkmedia.hrl").
 
@@ -37,26 +37,25 @@
 
 %% @doc Builds base image (netcomposer/nk_freeswitch_base:v1.6.5-r01)
 build_base_image() ->
-    {Comp, Vsn, Rel} = nkmedia_fs_docker:get_image_parts(), 
-    build_base_image(Comp, Vsn, Rel).
+    build_base_image(#{}).
 
 
 %% @doc 
-build_base_image(Comp, Vsn, Rel) ->
-    Name = base_image_name(Comp, Vsn, Rel),
+build_base_image(Config) ->
+    Name = base_image_name(Config),
+    #{vsn:=Vsn} = nkmedia_fs_docker:defaults(Config),
     Tar = nkdocker_util:make_tar([{"Dockerfile", base_image_dockerfile(Vsn)}]),
     nkdocker_util:build(Name, Tar).
 
 
 %% @doc
 remove_base_image() ->
-    {Comp, Vsn, Rel} = nkmedia_fs_docker:get_image_parts(), 
-    remove_base_image(Comp, Vsn, Rel).
+    remove_base_image(#{}).
 
 
 %% @doc 
-remove_base_image(Comp, Vsn, Rel) ->
-    Name = base_image_name(Comp, Vsn, Rel),
+remove_base_image(Config) ->
+    Name = base_image_name(Config),
     case nkdocker:start_link() of
         {ok, Pid} ->
             Res = case nkdocker:rmi(Pid, Name, #{force=>true}) of
@@ -73,8 +72,7 @@ remove_base_image(Comp, Vsn, Rel) ->
 
 %% @doc
 build_run_image() ->
-    {Comp, Vsn, Rel} = nkmedia_fs_docker:get_image_parts(), 
-    build_run_image(Comp, Vsn, Rel).
+    build_run_image(#{}).
 
 
 %% @doc Builds run image (netcomposer/nk_freeswitch_run:v1.6.5-r01)
@@ -84,12 +82,12 @@ build_run_image() ->
 %% - NK_ERLANG_IP: Host for FS to connect to. Used in rtp-ip
 %% - NK_EXT_IP: Default "stun:stun.freeswitch.org". Used in ext-rtp-ip
 %% - NK_PASS: Default "6666"
-build_run_image(Comp, Vsn, Rel) ->
-    Name = run_image_name(Comp, Vsn, Rel),
+build_run_image(Config) ->
+    Name = run_image_name(Config),
     Tar = nkdocker_util:make_tar([
-        {"Dockerfile", run_image_dockerfile(Comp, Vsn, Rel)},
+        {"Dockerfile", run_image_dockerfile(Config)},
         {"modules.conf.xml", run_image_modules()},
-        {"0000_nkmedia.xml", run_image_dialplan()},
+        {"nkmedia_dp.xml", run_image_dialplan()},
         {"event_socket.conf.xml", run_image_event_socket()},
         {"sip.xml", run_image_sip()},
         {"verto.conf.xml", run_image_verto()},
@@ -100,13 +98,13 @@ build_run_image(Comp, Vsn, Rel) ->
 
 %% @doc
 remove_run_image() ->
-    {Comp, Vsn, Rel} = nkmedia_fs_docker:get_image_parts(), 
-    remove_run_image(Comp, Vsn, Rel).
+    remove_run_image(#{}).
 
 
 %% @doc 
-remove_run_image(Comp, Vsn, Rel) ->
-    Name = run_image_name(Comp, Vsn, Rel),
+remove_run_image(Config) ->
+    Config2 = nkmedia_fs_docker:defaults(Config),
+    Name = run_image_name(Config2),
     case nkdocker:start_link() of
         {ok, Pid} ->
             Res = case nkdocker:rmi(Pid, Name, #{force=>true}) of
@@ -128,7 +126,9 @@ remove_run_image(Comp, Vsn, Rel) ->
 
 
 %% @private
-base_image_name(Comp, Vsn, Rel) ->
+base_image_name(Config) ->
+    Config2 = nkmedia_fs_docker:defaults(Config),
+    #{comp:=Comp, vsn:=Vsn, rel:=Rel} = Config2,
     list_to_binary([Comp, "/nk_freeswitch_base:", Vsn, "-", Rel]).
 
 
@@ -187,7 +187,9 @@ WORKDIR /usr/src/freeswitch
 
 
 %% @private
-run_image_name(Comp, Vsn, Rel) -> 
+run_image_name(Config) -> 
+    Config2 = nkmedia_fs_docker:defaults(Config),
+    #{comp:=Comp, vsn:=Vsn, rel:=Rel} = Config2,
     list_to_binary([Comp, "/nk_freeswitch_run:", Vsn, "-", Rel]).
 
 
@@ -198,9 +200,9 @@ run_image_name(Comp, Vsn, Rel) ->
 
 
 
-run_image_dockerfile(Comp, Vsn, Rel) ->
+run_image_dockerfile(Config) ->
     list_to_binary([
-"FROM ", base_image_name(Comp, Vsn, Rel), "\n"
+"FROM ", base_image_name(Config), "\n"
 "WORKDIR /usr/local/freeswitch/\n"
 "RUN mkdir -p certs\n"
 "WORKDIR /usr/local/freeswitch/conf/\n"
@@ -212,7 +214,7 @@ run_image_dockerfile(Comp, Vsn, Rel) ->
         "\\1\\n  <X-PRE-PROCESS cmd=\"include\" data=\"nkvars.xml\"/>",
         "freeswitch.xml"), " && \\",
 
-        %% Uncomment jsonrpc-allowed-event-channels in directory/default.xml
+    %% Uncomment jsonrpc-allowed-event-channels in directory/default.xml
     replace(
         "<!-- (<param name=\"jsonrpc-allowed-event-channels\" value=\"demo,conference,presence\"/>) -->", 
         "\\1", 
@@ -223,6 +225,11 @@ run_image_dockerfile(Comp, Vsn, Rel) ->
         "<!-- (<param name=\"conference-flags\" value=\"livearray-sync\"/>) -->", 
         "\\1", 
         "autoload_configs/conference.conf.xml"), " && \\",
+
+    replace(
+        "(<context name=\"default\">)",
+        "\\1\\n    <X-PRE-PROCESS cmd=\"include\" data=\"nkmedia/*.xml\"/>", 
+        "dialplan/default.xml"), " && \\",
 
     "mv autoload_configs/event_socket.conf.xml autoload_configs/event_socket.conf.xml.backup && \\"
     "mv autoload_configs/verto.conf.xml autoload_configs/verto.conf.xml.backup && \\",
@@ -236,7 +243,7 @@ run_image_dockerfile(Comp, Vsn, Rel) ->
 "ADD event_socket.conf.xml /usr/local/freeswitch/conf/autoload_configs/\n"
 "ADD verto.conf.xml /usr/local/freeswitch/conf/autoload_configs/\n"
 "ADD modules.conf.xml /usr/local/freeswitch/conf/autoload_configs/\n"
-"ADD 0000_nkmedia.xml /usr/local/freeswitch/conf/dialplan/default/\n"
+"ADD nkmedia_dp.xml /usr/local/freeswitch/conf/dialplan/nkmedia/\n"
 "ADD start.sh /usr/local/freeswitch/\n"
 "WORKDIR /usr/local/freeswitch/\n"
 ]).
@@ -246,7 +253,7 @@ run_image_event_socket() -> <<"
 <configuration name=\"event_socket.conf\" description=\"Socket Client\">
   <settings>
     <param name=\"nat-map\" value=\"false\"/>
-    <param name=\"listen-ip\" value=\"$${local_ip_v4}\"/>
+    <param name=\"listen-ip\" value=\"$${nk_fs_ip}\"/>
     <param name=\"listen-port\" value=\"8021\"/>
     <param name=\"password\" value=\"$${default_password}\"/>
     <param name=\"apply-inbound-acl\" value=\"0.0.0.0/0\"/>
@@ -258,11 +265,11 @@ run_image_event_socket() -> <<"
 run_image_verto() -> <<"
 <configuration name=\"verto.conf\" description=\"HTML5 Verto Endpoint\">
   <settings>
-    <param name=\"debug\" value=\"$${verto_debug}\"/>
+    <param name=\"debug\" value=\"0\"/>
   </settings>
   <profiles>
-    <profile name=\"default\">
-      <param name=\"bind-local\" value=\"$${local_ip_v4}:8081\"/>
+    <profile name=\"nkmedia\">
+      <param name=\"bind-local\" value=\"$${nk_fs_ip}:8081\"/>
       <param name=\"force-register-domain\" value=\"$${local_ip_v4}\"/>
       <param name=\"userauth\" value=\"true\"/>
       <param name=\"blind-reg\" value=\"true\"/>
@@ -271,8 +278,8 @@ run_image_verto() -> <<"
       <param name=\"rtp-ip\" value=\"$${nk_rtp_ip}\"/>
       <param name=\"ext-rtp-ip\" value=\"$${nk_ext_ip}\"/>
       <param name=\"local-network\" value=\"localnet.auto\"/>
-      <param name=\"outbound-codec-string\" value=\"opus,vp8\"/>
-      <param name=\"inbound-codec-string\" value=\"opus,vp8\"/>
+      <param name=\"outbound-codec-string\" value=\"opus,vp8,speex,iLBC,GSM,PCMU,PCMA\"/>
+      <param name=\"inbound-codec-string\" value=\"opus,vp8,speex,iLBC,GSM,PCMU,PCMA\"/>
       <param name=\"apply-candidate-acl\" value=\"localnet.auto\"/>
       <param name=\"apply-candidate-acl\" value=\"wan_v4.auto\"/>
       <param name=\"apply-candidate-acl\" value=\"rfc1918.auto\"/>
@@ -314,7 +321,7 @@ run_image_sip() -> <<"
     <param name=\"outbound-codec-prefs\" value=\"$${global_codec_prefs}\"/>
     <param name=\"rtp-timer-name\" value=\"soft\"/>
     <param name=\"rtp-ip\" value=\"$${nk_rtp_ip}\"/>
-    <param name=\"sip-ip\" value=\"$${local_ip_v4}\"/>
+    <param name=\"sip-ip\" value=\"$${nk_fs_ip}\"/>
     <param name=\"hold-music\" value=\"$${hold_music}\"/>
     <param name=\"apply-nat-acl\" value=\"nat.auto\"/>
     <param name=\"apply-inbound-acl\" value=\"domains\"/>
@@ -351,6 +358,24 @@ run_image_sip() -> <<"
 </profile>
 ">>.
 
+% run_image_directory() -> <<"
+% <include>
+%     <domain name=\"nkmedia\">
+%         <params>
+%             <param name=\"jsonrpc-allowed-methods\" value=\"verto\"/>
+%             <param name=\"jsonrpc-allowed-event-channels\" value=\"demo,conference,presence\"/>
+%         </params>
+%         <variables>
+%         <variable name=\"record_stereo\" value=\"true\"/>
+%         <variable name=\"user_context\" value=\"nkmedia\"/>
+%         </variables>
+%         <groups>
+%             <users>
+%             </users>
+%         </groups>
+%     </domain>
+% </include>
+% ">>.
 
 
 run_image_modules() -> <<"
@@ -470,12 +495,11 @@ export EXT_IP=\"${NK_EXT_IP-stun:stun.freeswitch.org}\"
 export PASS=\"${NK_PASS-6666}\"
 cat > /usr/local/freeswitch/conf/nkvars.xml <<EOF
 <include>
-    <X-PRE-PROCESS cmd=\"set\" data=\"local_ip_v4=$FS_IP\"/>
+    <X-PRE-PROCESS cmd=\"set\" data=\"nk_fs_ip=$FS_IP\"/>
     <X-PRE-PROCESS cmd=\"set\" data=\"nk_erlang_ip=$ERLANG_IP\"/>
     <X-PRE-PROCESS cmd=\"set\" data=\"nk_rtp_ip=$RTP_IP\"/>
     <X-PRE-PROCESS cmd=\"set\" data=\"nk_ext_ip=$EXT_IP\"/>
     <X-PRE-PROCESS cmd=\"set\" data=\"default_password=$PASS\"/>
-    <!-- <X-PRE-PROCESS cmd=\"set\" data=\"domain=$FS_IP\"/> -->
     <X-PRE-PROCESS cmd=\"set\" data=\"local_ip_v6=[::1]\"/>
     <X-PRE-PROCESS cmd=\"set\" data=\"nkevent=Event-Name=CUSTOM,Event-Subclass=NkMEDIA\"/>
 </include>

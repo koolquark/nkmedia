@@ -19,12 +19,11 @@
 %% -------------------------------------------------------------------
 
 %% @doc 
--module(nkmedia_fs_verto).
+-module(nkmedia_verto_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--behaviour(nkpacket_protocol).
 
 -export([parse_class/1, make_req/3, make_resp/2, make_error/3, make_error/4]).
--export([send/3, print/2]).
+-export([print/2]).
 
 
 %% ===================================================================
@@ -108,53 +107,50 @@ make_error(Code, Txt, Method, #{<<"id">>:=Id}) ->
     }.
 
 
-%% @private
-send(_App, [], _NkPort) ->
-    ok;
+% %% @private
+% send([], _NkPort) ->
+%     ok;
 
-send(App, [Msg1|Rest], NkPort) ->
-    false = is_list(Msg1),
-    case send(App, Msg1, NkPort) of
-        ok -> send(App, Rest, NkPort);
-        error -> error
-    end;
+% send([Msg1|Rest], NkPort) ->
+%     false = is_list(Msg1),
+%     case send(Msg1, NkPort) of
+%         ok -> send(Rest, NkPort);
+%         error -> {error, <<"Network Error">>}
+%     end;
 
-send(App, Msg, NkPort) ->
-    nkport = element(1, NkPort),
-    case is_map(Msg) of
-        true -> print(App, Msg);
-        false -> ok
-    end,
-    case nkpacket_connection:send(NkPort, Msg) of
-        ok ->
-            ok;
-        {error, Error} ->
-            lager:notice("~p error sending reply: ~p", [App, Error]),
-            error
-    end.
+% send(Msg, NkPort) ->
+%     case nkpacket_connection:send(NkPort, Msg) of
+%         ok ->
+%             ok;
+%         {error, Error} ->
+%             {error, Error}
+%     end.
 
 
 %% @private
+print(App, Msg) when is_list(Msg); is_binary(Msg) ->
+    lager:info("~s ~s", [App, Msg]);
+    
 print(App, Msg) ->
     case parse_class(Msg) of
         {{req, Method}, _} ->
             lager:info("~s req ~s", [App, Method]),
             if 
-                Method == <<"login">>; Method == <<"verto.invite">>;
-                Method == <<"verto.answer">>; Method == <<"verto.bye">>;
-                Method == <<"verto.info">>; Method== <<"verto.display">> ->
-                    ok;
+                % Method == <<"login">>; Method == <<"verto.invite">>;
+                % Method == <<"verto.answer">>; Method == <<"verto.bye">>;
+                % Method == <<"verto.info">>; Method== <<"verto.display">> ->
+                %     ok;
                 true ->
                     lager:info("~s", [nklib_json:encode_pretty(Msg)])
             end;
         {{resp, {ok, Res}}, _} ->
             lager:info("~s resp ok ~s", [App, Res]),
             if 
-                Res == <<"logged in">>; Res == <<"CALL CREATED">>; 
-                Res == <<"verto.answer">>; Res == <<"verto.bye">>;
-                Res == <<"CALL ENDED">>; Res == <<"SENT">>;
-                Res == <<"verto.invite">> ->
-                    ok;
+                % Res == <<"logged in">>; Res == <<"CALL CREATED">>; 
+                % Res == <<"verto.answer">>; Res == <<"verto.bye">>;
+                % Res == <<"CALL ENDED">>; Res == <<"SENT">>;
+                % Res == <<"verto.invite">> ->
+                %     ok;
                 true ->
                     lager:info("~s", [nklib_json:encode_pretty(Msg)])
             end;
