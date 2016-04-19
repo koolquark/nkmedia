@@ -24,11 +24,11 @@
 -behaviour(gen_server).
 
 -export([connect/1, stop/1, find/1]).
--export([stats/2, register/2, get_config/1, api/2, bgapi/2]).
--export([start_inbound/3, start_outbound/2, channel_op/4]).
+-export([stats/2, get_config/1, api/2]).
 -export([get_all/0, stop_all/0]).
 -export([start_link/1, init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
+-export_type([id/0, config/0]).
 
 -define(CONNECT_RETRY, 5000).
 
@@ -39,13 +39,14 @@
 
 -define(EVENT_PROCESS, [
 	<<"NkMEDIA">>, <<"HEARTBEAT">>,
-	<<"CHANNEL_CREATE">>, <<"CHANNEL_PARK">>, <<"CHANNEL_DESTROY">>, 
+	<<"CHANNEL_PARK">>, <<"CHANNEL_DESTROY">>, 
 	<<"CHANNEL_BRIDGE">>, <<"CHANNEL_HANGUP">>, <<"SHUTDOWN">>,
 	<<"conference::maintenance">>
 ]).
 	
 -define(EVENT_IGNORE,	[
 	<<"verto::client_connect">>, <<"verto::client_disconnect">>, <<"verto::login">>, 
+	<<"CHANNEL_CREATE">>,
 	<<"CHANNEL_OUTGOING">>, <<"CHANNEL_STATE">>, <<"CHANNEL_CALLSTATE">>, 
 	<<"CHANNEL_EXECUTE">>, <<"CHANNEL_EXECUTE_COMPLETE">>, <<"CHANNEL_UNBRIDGE">>,
 	<<"CALL_STATE">>, <<"CHANNEL_ANSWER">>, <<"CHANNEL_UNPARK">>,
@@ -66,6 +67,8 @@
 %% Types
 %% ===================================================================
 
+-type id() :: Name:: binary() | pid().
+
 -type config() ::
 	#{
 		name => binary(),
@@ -73,22 +76,6 @@
 		host => binary(),
 		pass => binary()
 	}.
-
-
--type in_ch_opts() :: #{
-	class => verto | sip,
-	call_id => binary(),
-	verto_dialog => map(),
-	monitor => pid(),
-	id => term()
-}.
-
-
--type out_ch_opts() :: #{
-	class => verto | sip,
-	call_id => binary()
-}.
-
 
 
 
@@ -131,81 +118,32 @@ stop(Name) ->
 
 
 %% @private
-stats(Name, Stats) ->
-	case find(Name) of
+stats(Id, Stats) ->
+	case find(Id) of
 		{ok, _Status, FsPid, _ConnPid} -> gen_server:cast(FsPid, {stats, Stats});
 		not_found -> ok
 	end.
 
 
-%% @private Registers a callback module
--spec register(pid(), module()) ->
-	ok | {error, term()}.
-
-register(Pid, CallBack) ->
-	nklib_util:call(Pid, {register_callback, CallBack}).
-
-%% @doc Generates a new inbound channel
--spec start_inbound(pid(), binary(), in_ch_opts()) ->
-	{ok, CallId::binary(), pid(), SDP::binary()} | {error, term()}.
-
-start_inbound(Pid, SDP1, #{class:=verto}=Opts) ->
-	case nklib_util:call(Pid, {start_inbound, SDP1, Opts}, ?CALL_TIME) of
-		{ok, CallId, ChPid} ->
-			case nkmedia_fs_channel:wait_sdp(ChPid, #{}) of
-				{ok, SDP2} ->
-					{ok, CallId, ChPid, SDP2};
-				{error, Error} ->
-					{error, Error}
-			end;
-		{error, Error} ->
-			{error, Error}
-	end.
-
-
-%% @doc Generates a new outbound channel at this server and node
--spec start_outbound(pid(), out_ch_opts()) ->
-	{ok, CallId::binary(), SDP::binary()} | {error, term()}.
-
-start_outbound(Pid, #{class:=Class}=Opts) when Class==verto; Class==sip ->
-	case nklib_util:call(Pid, {start_outbound, Opts}, ?CALL_TIME) of
-		{ok, CallId, ChPid} ->
-			case nkmedia_fs_channel:wait_sdp(ChPid, #{}) of
-				{ok, SDP2} ->
-					{ok, CallId, SDP2};
-				{error, Error} ->
-					{error, Error}
-			end;
-		{error, Error} ->
-			{error, Error}
-	end.
-
-
-
-%% @doc Tries to perform an operation over a channel.
-%% We need to send the request to the right node.
--spec channel_op(pid(), binary(), nkmedia_fs_channel:op(), 
-			     nkmedia_fs_channel:op_opts()) ->
-	ok | {error, term()}.
-
-channel_op(Pid, CallId, Op, Opts) ->
-	nklib_util:call(Pid, {channel_op, CallId, Op, Opts}, ?CALL_TIME).
-
-
 %% @private
--spec get_config(pid()) ->
+-spec get_config(id()) ->
 	{ok, config()} | {error, term()}.
 
-get_config(Pid) ->
-	nklib_util:call(Pid, get_config, ?CALL_TIME).
+get_config(Id) ->
+	case find(Id) of
+		{ok, _Status, FsPid, _ConnPid} ->
+			nklib_util:call(FsPid, get_config, ?CALL_TIME);
+		not_found ->
+			{error, no_connection}
+	end.
 
 
 %% @priavte
--spec api(binary()|pid(), iolist()) ->
+-spec api(id(), iolist()) ->
 	{ok, binary()} | {error, term()}.
 
-api(NameOrPid, Api) ->
-	case find(NameOrPid) of
+api(Id, Api) ->
+	case find(Id) of
 		{ok, ready, _FsPid, ConnPid} when is_pid(ConnPid) ->
 			nkmedia_fs_event_protocol:api(ConnPid, Api);
 		{ok, _, _, _} ->
@@ -215,33 +153,22 @@ api(NameOrPid, Api) ->
 	end.
 
 
+
 %% @doc
--spec bgapi(binary()|pid(), iolist()) ->
-	{ok, binary()} | {error, term()}.
+-spec get_all() ->
+	[{Name::binary(), pid()}].
 
-bgapi(NameOrPid, Api) ->
-	case find(NameOrPid) of
-		{ok, ready, _FsPid, ConnPid} when is_pid(ConnPid) ->
-			nkmedia_fs_event_protocol:bgapi(ConnPid, Api);
-		{ok, _, _, _} ->
-			{error, not_ready};
-		not_found ->
-			{error, no_connection}
-	end.
-
-
-%% @private
 get_all() ->
 	nklib_proc:values(?MODULE).
 
 
 %% @private
-find(NameOrPid) ->
-	NameOrPid2 = case is_pid(NameOrPid) of
-		true -> NameOrPid;
-		false -> nklib_util:to_binary(NameOrPid)
+find(Id) ->
+	Id2 = case is_pid(Id) of
+		true -> Id;
+		false -> nklib_util:to_binary(Id)
 	end,
-	case nklib_proc:values({?MODULE, NameOrPid2}) of
+	case nklib_proc:values({?MODULE, Id2}) of
 		[{{Status, ConnPid}, FsPid}] -> {ok, Status, FsPid, ConnPid};
 		[] -> not_found
 	end.
@@ -271,8 +198,6 @@ start_link(Config) ->
 -record(state, {
 	config :: config(),
 	name :: binary(),
-	% ip :: binary(),
-	% pass :: binary(),
 	status :: nkmedia_fs:status(),
 	fs_conn :: pid()
 }).
@@ -303,42 +228,6 @@ handle_call(get_state, _From, State) ->
 
 handle_call(_, _From, #state{status=Status}=State) when Status/=ready ->
 	{reply, {error, {not_ready, Status}}, State};
-
-handle_call(get_event_port, _From, #state{fs_conn=Conn}=State) ->
-	{reply, {ok, Conn}, State};
-
-% handle_call({start_inbound, SDP, Opts}, _From, #state{callbacks=CallBacks}=State) ->
-% 	case Opts of
-% 	    #{call_id:=CallId} -> ok;
-% 	    _ -> CallId = nklib_util:uuid_4122()
-% 	end,
-% 	Dialog = maps:get(verto_dialog, Opts, #{}),
-% 	In = {in, SDP, Dialog},
-% 	{ok, ChPid} = nkmedia_fs_channel:start_link(self(), CallBacks, CallId, In, Opts),
-% 	State2 = started_channel(CallId, ChPid, State),
-% 	{reply, {ok, CallId, ChPid}, State2};
-
-% handle_call({start_outbound, Opts}, _From, #state{callbacks=CallBacks}=State) ->
-% 	case Opts of
-% 	    #{call_id:=CallId} -> ok;
-% 	    _ -> CallId = nklib_util:uuid_4122()
-% 	end,
-% 	{ok, ChPid} = nkmedia_fs_channel:start_link(self(), CallBacks, CallId, out, Opts),
-% 	State2 = started_channel(CallId, ChPid, State),
-% 	{reply, {ok, CallId, ChPid}, State2};
-
-% handle_call({channel_op, CallId, Op, Opts}, From, #state{channels=Channels}=State) ->
-% 	case maps:find(CallId, Channels) of
-% 		{ok, Pid} ->
-% 			spawn_link(
-% 				fun() ->
-% 					Reply = nkmedia_fs_channel:channel_op(Pid, Op, Opts),
-% 					gen_server:reply(From, Reply)
-% 				end),
-% 			{noreply, State};
-% 		error ->
-% 			{reply, {error, unknown_channel}, State}
-% 	end;
 
 handle_call(get_config, _From, #state{config=Config}=State) ->
     {reply, {ok, Config}, State};
@@ -397,7 +286,8 @@ handle_info({nkmedia_fs_event, _Pid, Name, Event}, State) ->
 	end,
 	case lists:member(Name2, ?EVENT_PROCESS) of
 		true ->
-			{noreply, parse_event(Name2, Event, State)};
+			parse_event(Name2, Event, State),
+			{noreply, State};
 		false ->
 			case lists:member(Name2, ?EVENT_IGNORE) of
 				true -> 
@@ -413,23 +303,6 @@ handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{fs_conn=Pid}=State) ->
 	?LLOG(warning, "connection event down", [], State),
 	erlang:send_after(?CONNECT_RETRY, self(), connect),
 	{noreply, update_status(connecting, State#state{fs_conn=undefined})};
-
-% handle_info({'DOWN', _Ref, process, Pid, _Reason}=Info, State) ->
-% 	#state{pids=Pids, channels=Channels, callbacks=_CallBacks} = State,
-% 	case maps:find(Pid, Pids) of
-% 		{ok, CallId} ->
-% 			% ch_notify(CallBacks, CallId, stop),
-% 			Channels2 = maps:remove(CallId, Channels),
-% 			Pids2 = maps:remove(Pid, Pids),
-% 			{noreply, State#state{channels=Channels2, pids=Pids2}};
-% 		error ->
-% 		    lager:warning("Module ~p received unexpected info: ~p (~p)", 
-% 		    			  [?MODULE, Info, State]),
-%     		{noreply, State}
-%     end;
-
-% handle_info({'EXIT', _, normal}, State) ->
-% 	{noreply, State};
 
 handle_info(Info, State) -> 
     lager:warning("Module ~p received unexpected info: ~p (~p)", [?MODULE, Info, State]),
@@ -458,36 +331,6 @@ terminate(Reason, State) ->
 %% ===================================================================
 
 
-% %% @private
-% started_channel(CallId, ChPid, State) ->
-% 	monitor(process, ChPid),
-% 	#state{channels=Channels, pids=Pids} = State,
-% 	State#state{
-% 		channels = maps:put(CallId, ChPid, Channels),
-% 		pids = maps:put(ChPid, CallId, Pids)
-% 	}.
-
-
-% %% @private
-% send_update(Update, #state{callbacks=CallBacks}=State) ->
-% 	do_send_update(CallBacks, Update, State).
-
-
-% %% @private
-% do_send_update([], _Update, State) ->
-% 	State;
-
-% do_send_update([CallBack|Rest], Update, #state{index=Index, status=Status}=State) ->
-% 	Update2 = Update#{status=>Status, index=>Index},
-% 	case nklib_util:apply(CallBack, nkmedia_fs_update, [self(), Update2]) of
-% 		ok ->
-% 			ok;
-% 		Other ->
-% 			?LLOG(warning, "Invalid response from callback: ~p", [Other], State)
-% 	end,
-% 	do_send_update(Rest, Update, State).
-	
-
 %% @private
 update_status(Status, #state{status=Status}=State) ->
 	State;
@@ -499,12 +342,8 @@ update_status(NewStatus, #state{name=Name, status=OldStatus, fs_conn=Pid}=State)
 	State#state{status=NewStatus}.
 	% send_update(#{}, State#state{status=NewStatus}).
 
-parse_event(Name, _Data, State) ->
-	lager:warning("Event: ~s", [Name]),
-	State.
 
-
-% %% @private
+%% @private
 % parse_event(<<"HEARTBEAT">>, Data, State) ->
 % 	#{
 % 		<<"Event-Info">> := Info,
@@ -536,110 +375,55 @@ parse_event(Name, _Data, State) ->
 % 		<<"System Ready">> -> ok;
 % 		_ -> ?LLOG(warning, "unknown HEARTBEAT info: ~s", [Info], State)
 % 	end,
-% 	Update = #{vsn => Vsn, stats => Stats},
-% 	send_update(Update, State);
-
-% parse_event(<<"NkMEDIA">>, _Data, State) ->
-% 	% CallId = maps:get(<<"Unique-ID">>, Data),
-% 	% ?LLOG(info, "Media EVENT: ~p", [Data], State),
+% 	Update = #{vsn => Vsn, stats => _Stats},
 % 	State;
 
-% parse_event(<<"CHANNEL_CREATE">>, Data, State) ->
-% 	#state{channels=Channels, callbacks=CallBacks} = State,
-% 	CallId = maps:get(<<"Unique-ID">>, Data),
-% 	case maps:find(CallId, Channels) of
-% 		{ok, ChPid} ->
-% 			nkmedia_fs_channel:ch_create(ChPid, Data),
-% 			State;
-% 		error ->
-% 			case Data of
-% 				#{<<"variable_nkstatus">> := <<"outbound">>} ->
-% 					{ok, ChPid} = 
-% 						nkmedia_fs_channel:start_link(self(), CallBacks, CallId, out),
-% 					started_channel(CallId, ChPid, State);
-% 				_ ->
-% 					?LLOG(warning, "event CHANNEL_CREATE for unknown channel ~s", 
-% 						  [CallId], State),
-% 					State
-% 			end
-% 	end;
+%% @private
+parse_event(<<"NkMEDIA">>, #{<<"Unique-ID">>:=_CallId}, State) ->
+    ?LLOG(info, "event 'NkMEDIA'", [], State);
+    
+parse_event(<<"CHANNEL_PARK">>, #{<<"Unique-ID">>:=CallId}, State) ->
+	send_event(CallId, parked, State);
 
-% parse_event(<<"CHANNEL_PARK">>, Data, #state{channels=Channels}=State) ->
-% 	CallId = maps:get(<<"Unique-ID">>, Data),
-% 	case maps:find(CallId, Channels) of
-% 		{ok, ChPid} ->
-% 			nkmedia_fs_channel:ch_park(ChPid);
-% 		error ->
-% 			?LLOG(warning, "event CHANNEL_PARK for unknown channel ~s", 
-% 				  [CallId], State)
-% 	end,
-% 	State;
+parse_event(<<"CHANNEL_HANGUP">>, #{<<"Unique-ID">>:=CallId}, State) ->
+	send_event(CallId, stop, State);
 
-% parse_event(<<"CHANNEL_HANGUP">>, Data, #state{channels=Channels}=State) ->
-% 	CallId = maps:get(<<"Unique-ID">>, Data),
-% 	Reason = maps:get(<<"Hangup-Cause">>, Data, <<"Unknown">>),
-% 	case maps:find(CallId, Channels) of
-% 		{ok, ChPid} ->
-% 			nkmedia_fs_channel:ch_hangup(ChPid, Reason);
-% 		error ->
-% 			?LLOG(warning, "event CHANNEL_HANGUP for unknown channel ~s", 
-% 				  [CallId], State)
-% 	end,
-% 	State;
+parse_event(<<"CHANNEL_DESTROY">>, #{<<"Unique-ID">>:=CallId}, State) ->
+	send_event(CallId, stop, State);
 
-% parse_event(<<"CHANNEL_DESTROY">>, Data, #state{channels=Channels}=State) ->
-% 	CallId = maps:get(<<"Unique-ID">>, Data),
-% 	case maps:find(CallId, Channels) of
-% 		{ok, ChPid} ->
-% 			nkmedia_fs_channel:stop(ChPid);
-% 		error ->
-% 			?LLOG(info, "event CHANNEL_CREATE for unknown channel ~s", 
-% 				  [CallId], State)
-% 	end,
-% 	State;
+parse_event(<<"CHANNEL_BRIDGE">>, Data, State) ->
+    CallIdA = maps:get(<<"Bridge-A-Unique-ID">>, Data),
+    CallIdB = maps:get(<<"Bridge-B-Unique-ID">>, Data),
+    send_event(CallIdA, {bridge, CallIdB}, State),
+	send_event(CallIdB, {bridge, CallIdB}, State);
 
-% parse_event(<<"CHANNEL_BRIDGE">>, Data, #state{channels=Channels}=State) ->
-% 	CallIdA = maps:get(<<"Bridge-A-Unique-ID">>, Data),
-% 	CallIdB = maps:get(<<"Bridge-B-Unique-ID">>, Data),
-% 	case maps:find(CallIdA, Channels) of
-% 		{ok, ChPidA} ->
-% 			nkmedia_fs_channel:ch_join(ChPidA, CallIdB);
-% 		error ->
-% 			?LLOG(notice, "event CHANNEL_BRIDGE for unknown channel ~s", 
-% 				  [CallIdA], State)
-% 	end,
-% 	case maps:find(CallIdB, Channels) of
-% 		{ok, ChPidB} ->
-% 			nkmedia_fs_channel:ch_join(ChPidB, CallIdA);
-% 		error ->
-% 			?LLOG(notice, "event CHANNEL_BRIDGE for unknown channel ~s", 
-% 				  [CallIdB], State)
-% 	end,
-% 	State;
+parse_event(<<"CONFERENCE_DATA">>, Data, State) ->
+    ?LLOG(notice, "CONF DATA: ~s", [nklib_json:encode_pretty(Data)], State);
 
-% parse_event(<<"CONFERENCE_DATA">>, Data, State) ->
-% 	lager:info("CONF1: ~s", [nklib_json:encode_pretty(Data)]),
-% 	State;
+parse_event(<<"conference::maintenance">>, Data, State) ->
+    case Data of
+        #{
+        	<<"Action">> := <<"add-member">>,
+            <<"Unique-ID">> := CallId,
+            <<"Member-ID">> := MemberId,
+            <<"Conference-Name">> := ConfName
+        } ->
+        	Conf = #{
+        		room_name => ConfName,
+        		room_member_id => MemberId
+        	},
+        	send_event(CallId, {mcu, Conf}, State);
+        _ ->
+            ok
+    end;
 
-% parse_event(<<"conference::maintenance">>, Data, #state{channels=Channels}=State) ->
-% 	case Data of
-% 		#{<<"Action">> := <<"add-member">>} ->
-% 			CallId = maps:get(<<"Unique-ID">>, Data),
-% 			case maps:find(CallId, Channels) of
-% 				{ok, ChPid} ->
-% 					Room = maps:get(<<"Conference-Name">>, Data),
-% 					nkmedia_fs_channel:ch_room(ChPid, Room);
-% 				error ->
-% 					?LLOG(warning, "event conf_add_member for unknown channel ~s", 
-% 						  [CallId], State)
-% 			end;
-% 		_ ->
-% 			ok
-% 	end,
-% 	nkmedia_fs_conference:fs_event(Data),
-% 	State.
+parse_event(Name, _Data, State) ->
+    ?LLOG(warning, "unexpected event: ~s", [Name], State).
 
 
+%% @private
+send_event(ChId, Status, #state{name=FsId}) ->
+    nkmedia_session:event(ChId, {freeswitch, FsId}, Status).
 
 
 %% @private

@@ -71,7 +71,7 @@ start(_Type, _Args) ->
     case nklib_config:load_env(?APP, Syntax, Defaults) of
         {ok, _} ->
             % nkpacket:register_protocol(fs_event, nkmedia_fs_event_protocol),
-            % nkpacket:register_protocol(fs_verto_proxy, nkmedia_verto_proxy_client),
+            % nkpacket:register_protocol(fs_verto_proxy, nkmedia_fs_verto_proxy_client),
             {ok, Vsn} = application:get_key(?APP, vsn),
             lager:info("NkMEDIA v~s is starting", [Vsn]),
             MainIp = nkpacket_config_cache:main_ip(),
@@ -95,7 +95,9 @@ start(_Type, _Args) ->
                     end,
                     case nkdocker_monitor:register(nkmedia_callbacks) of
                         {ok, DockerMonId} ->
-                            nkmedia_app:put(docker_mon_id, DockerMonId);
+                            nkmedia_app:put(docker_mon_id, DockerMonId),
+                            lager:info("Installed images: ~s", 
+                                [nklib_util:bjoin(find_images(DockerMonId))]);
                         {error, Error} ->
                             lager:error("Could not start Docker Monitor: ~p", [Error]),
                             error(docker_monitor)
@@ -106,17 +108,8 @@ start(_Type, _Args) ->
                 true ->
                     lager:warning("No docker support in config")
             end,
-            % FsDefs = #{
-            %     index => 0,
-            %     version => nkmedia_app:get(fs_version),
-            %     release => nkmedia_app:get(fs_release),
-            %     password => nkmedia_app:get(fs_password),
-            %     docker_company => nkmedia_app:get(docker_company),
-            %     callback => nkmedia_callbacks
-            % },
-            % nkmedia_app:put(fs_defaults, FsDefs),
             {ok, Pid} = nkmedia_sup:start_link(),
-            % nkmedia_sip:start(),
+            nkmedia_sip:start(),
             {ok, Pid};
         {error, Error} ->
             lager:error("Error parsing config: ~p", [Error]),
@@ -157,5 +150,14 @@ get_env(Key, Default) ->
 %% @private
 set_env(Key, Value) ->
     application:set_env(?APP, Key, Value).
+
+%% @private
+find_images(MonId) ->
+    {ok, Docker} = nkdocker_monitor:get_docker(MonId),
+    {ok, Images} = nkdocker:images(Docker),
+    Tags = lists:flatten([T || #{<<"RepoTags">>:=T} <- Images]),
+    lists:filter(fun(Img) -> length(binary:split(Img, <<"/nk_">>))==2 end, Tags).
+
+
 
 

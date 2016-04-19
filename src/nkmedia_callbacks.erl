@@ -25,9 +25,11 @@
 
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
 -export([nkmedia_session_init/2, nkmedia_session_terminate/2, 
-		 nkmedia_session_status/2,
+		 nkmedia_session_event/2, nkmedia_session_send_call/2,
 		 nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2,
-		 nkmedia_session_handle_info/2, nkmedia_session_code_change/3]).
+		 nkmedia_session_handle_info/2]).
+
+
 -export([nkdocker_notify/2]).
 
 -include("nkmedia.hrl").
@@ -36,6 +38,9 @@
 %% ===================================================================
 %% Types
 %% ===================================================================
+
+-type continue() :: continue | {continue, list()}.
+
 
 
 %% ===================================================================
@@ -64,35 +69,76 @@ plugin_stop(Config, #{name:=Name}) ->
 %% Session Callbacks
 %% ===================================================================
 
+-type sess_id() :: nkmedia_session:id().
+-type session() :: nkmedia_session:session().
+
+
+%% @doc Called when a new session starts
+-spec nkmedia_session_init(sess_id(), session()) ->
+	{ok, session()}.
+
 nkmedia_session_init(_Id, Config) ->
 	{ok, Config}.
+
+%% @doc Called when the session stops
+-spec nkmedia_session_terminate(Reason::term(), session()) ->
+	{ok, session()}.
 
 nkmedia_session_terminate(_Reason, Config) ->
 	{ok, Config}.
 
-nkmedia_session_status(_Status, Config) ->
+
+%% @doc Called when the status of the session changes
+-spec nkmedia_session_event(nkmedia_session:event(), session()) ->
+	{ok, session()}.
+
+nkmedia_session_event(_Event, Config) ->
 	{ok, Config}.
 
-nkmedia_session_handle_call(Msg, _From, Config) ->
-    lager:error("Module nkmedia_session received unexpected call ~p", [Msg]),
-    {noreply, Config}.
+
+%% @doc Called when the configuration is updated
+-spec nkmedia_session_send_call(term(), session()) ->
+	{ok, SDP::binary(), Opts::map()} | async | {error, term()} | continue.
+
+nkmedia_session_send_call(_CallDest, Config) ->
+	{error, unrecognized_destination, Config}.
+
+
+%% @doc
+-spec nkmedia_session_handle_call(term(), {pid(), term()}, session()) ->
+	{reply, term(), session()} | {noreply, session()} | continue().
+
+nkmedia_session_handle_call(Msg, From, Config) ->
+	{continue, [Msg, From, Config]}.
+
+
+%% @doc
+-spec nkmedia_session_handle_cast(term(), session()) ->
+	{noreply, session()} | continue().
 
 nkmedia_session_handle_cast(Msg, Config) ->
-    lager:error("Module nkmedia_session received unexpected cast ~p", [Msg]),
-    {noreply, Config}.
+	{continue, [Msg, Config]}.
+
+
+%% @doc
+-spec nkmedia_session_handle_info(term(), session()) ->
+	{noreply, session()} | continue().
 
 nkmedia_session_handle_info(Msg, Config) ->
-    lager:error("Module nkmedia_session received unexpected info ~p", [Msg]),
-    {noreply, Config}.
+	{continue, [Msg, Config]}.
 
-nkmedia_session_code_change(_OldVsn, Config, _Extra) ->
-	{ok, Config}.
+
+
+
 
 
 
 %% ===================================================================
 %% Docker Monitor Callbacks
 %% ===================================================================
+
+nkdocker_notify(MonId, {ping, {<<"nk_fs_", _/binary>>=Name, Data}}) ->
+	nkdocker_notify(MonId, {start, {Name, Data}});
 
 nkdocker_notify(MonId, {start, {<<"nk_fs_", _/binary>>, Data}}) ->
 	case Data of
@@ -130,11 +176,10 @@ nkdocker_notify(MonId, {stop, {<<"nk_fs_", _/binary>>, Data}}) ->
 			ok
 	end;
 
-nkdocker_notify(_MonId, {stats, {Name, Stats}}) ->
+nkdocker_notify(_MonId, {stats, {<<"nk_fs_", _/binary>>=Name, Stats}}) ->
 	nkmedia_fs_engine:stats(Name, Stats);
 
 nkdocker_notify(_Id, _Event) ->
-	% lager:notice("NK EVENT: ~p", [Event]).
 	ok.
 
 

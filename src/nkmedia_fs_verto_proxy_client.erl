@@ -19,7 +19,7 @@
 %% -------------------------------------------------------------------
 
 %% @doc 
--module(nkmedia_verto_proxy_client).
+-module(nkmedia_fs_verto_proxy_client).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([start/1, send/2, stop/1]).
@@ -255,7 +255,7 @@ conn_handle_info(Msg, _NkPort, State) ->
     #state{}.
 
 update_client(Msg, #state{trans=AllTrans}=State) ->
-    case nkmedia_verto_util:parse_class(Msg) of
+    case nkmedia_fs_util:verto_class(Msg) of
         {{req, Method}, Id} ->
             % Client is sending a request to the server
             false = maps:is_key({client, Id}, AllTrans),
@@ -290,7 +290,7 @@ update_client(Msg, #state{trans=AllTrans}=State) ->
     #state{}.
 
 update_server(Msg, #state{trans=AllTrans}=State) ->
-    case nkmedia_verto_util:parse_class(Msg) of
+    case nkmedia_fs_util:verto_class(Msg) of
         {{req, Method}, Id} ->
             % Server is sending a request to the client
             false = maps:is_key({server, Id}, AllTrans),
@@ -325,7 +325,7 @@ update_server(Msg, #state{trans=AllTrans}=State) ->
     ok.
 
 send_reply(Msg, #state{proxy=Pid}) ->
-    ok = nkmedia_verto_proxy_server:send_reply(Pid, Msg).
+    ok = nkmedia_fs_verto_proxy_server:send_reply(Pid, Msg).
 
 
 %% @private

@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([start_link/1, stop/1, register/2, get_config/1, api/2, bgapi/2]).
+-export([start_link/1, stop/1, register/2, get_config/1, api/2]).
 -export([start_inbound/3, start_outbound/2, channel_op/4]).
 -export([get_all/0, stop_all/0]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
@@ -178,20 +178,6 @@ api(Pid, Api) ->
 		{ok, EventPort} ->
 			Api1 = nklib_util:to_binary(Api),
 			nkmedia_fs_event_protocol:api(EventPort, Api1);
-		{error, Error} ->
-			{error, Error}
-	end.
-
-
-%% @doc
--spec bgapi(pid(), iolist()) ->
-	{ok, binary()} | {error, term()}.
-
-bgapi(Pid, Api) ->
-	case nklib_util:call(Pid, get_event_port, ?CALL_TIME) of
-		{ok, EventPort} ->
-			Api1 = nklib_util:to_binary(Api),
-			nkmedia_fs_event_protocol:bgapi(EventPort, Api1);
 		{error, Error} ->
 			{error, Error}
 	end.

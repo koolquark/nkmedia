@@ -19,36 +19,40 @@
 %% -------------------------------------------------------------------
 
 %% @doc 
--module(nkmedia_verto_client).
+-module(nkmedia_fs_verto).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/1, stop/1, get_all/0]).
--export([bw_test/2, invite/4, bye/2, dtmf/3, outbound/2, answer/4]).
+-export([start_in/4, start_out/3, start/1, start/2, stop/1, get_all/0]).
+-export([bw_test/2, invite/5, bye/2, dtmf/3, outbound/3, answer/4, cmd/2]).
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_stop/3]).
 -export([conn_handle_call/4, conn_handle_cast/3, conn_handle_info/3]).
+-export([print/3]).
 
 -include("nkmedia.hrl").
 
 
+
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkMEDIA verto client (~s) "++Txt, [State#state.call_id | Args])).
+    lager:Type("NkMEDIA FS Client (~s) "++Txt, [State#state.sess_id | Args])).
 
 -define(PRINT(Txt, Args, State), 
-        print(Txt, Args, State),    % Comment this
+        % print(Txt, Args, State),    % Comment this
         ok).
 
 
 -define(IN_BW, 12800).
 -define(OUT_BW, 4800).
 -define(OP_TIME, 15000).    % Maximum operation time
--define(CALL_TIMEOUT, 30000).
+-define(CALL_TIMEOUT, 5*60*1000).
+-define(CODECS, [opus,vp8,speex,iLBC,'GSM','PCMU','PCMA']).
 
 
 %% ===================================================================
 %% Types
 %% ===================================================================
 
+-type id() :: binary().
 
 
 %% ===================================================================
@@ -56,94 +60,171 @@
 %% ===================================================================
 
 
+%% @doc Starts a new verto session and place an inbound call with the same 
+%% CallId as the SessId.
+-spec start_in(id(), nkmedia_fs_engine:id(), binary(), map()) ->
+    {ok, SDP::binary(), pid()} | {error, term()}.
+
+start_in(SessId, FsId, SDP, Dialog) ->
+    case start(SessId, FsId) of
+        {ok, SessPid} ->
+            case invite(SessPid, SessId, <<"nkmedia_in">>, SDP, Dialog) of
+                {ok, SDP_B} ->
+                    {ok, SDP_B, SessPid};
+                {error, Error} ->
+                    {error, Error}
+            end;
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @doc Starts a new verto session and generates an outbounc call with the same
+%% CallId as the SessId.
+-spec start_out(id(), nkmedia_fs_engine:id(), map()) ->
+    {ok, SDP::binary()} | {error, term()}.
+
+start_out(SessId, FsId, Opts) ->
+    case start(SessId, FsId) of
+        {ok, SessPid} ->
+            outbound(SessPid, SessId, Opts);
+        {error, Error} ->
+            {error, Error}
+    end.
+
 
 %% @doc Starts a new verto session to FS
--spec start(pid()) ->
-    {ok, VertoId::binary(), pid()} | {error, term()}.
+-spec start(nkmedia_fs_engine:id()) ->
+    {ok, pid()} | {error, term()}.
 
-start(FsPid) ->
-    {ok, #{host:=Host, pass:=Pass}} = nkmedia_fs_engine:get_config(FsPid),
-    SessId = nklib_util:uuid_4122(),
+start(FsId) ->
+    start(nklib_util:uuid_4122(), FsId).
+
+
+%% @doc Starts a new verto session to FS
+-spec start(id(), nkmedia_fs_engine:id()) ->
+    {ok, pid()} | {error, term()}.
+
+start(SessId, FsId) ->
+    {ok, #{host:=Host, pass:=Pass}} = nkmedia_fs_engine:get_config(FsId),
     ConnOpts = #{
         class => ?MODULE,
         monitor => self(),
         idle_timeout => ?VERTO_WS_TIMEOUT,
-        user => #{pass=>Pass, sess_id=>SessId}
+        user => #{fs_id=>FsId, pass=>Pass, sess_id=>SessId}
     },
     {ok, Ip} = nklib_util:to_ip(Host),
     Conn = {?MODULE, ws, Ip, 8081},
     case nkpacket:connect(Conn, ConnOpts) of
-        {ok, Pid} -> {ok, SessId, Pid};
-        {error, Error} -> {error, Error}
+        {ok, Pid} -> 
+            case nklib_util:call(Pid, login) of
+                ok ->
+                    {ok, Pid};
+                {error, Error} ->
+                    {error, Error}
+            end;
+        {error, Error} -> 
+            {error, Error}
     end.
 
 
 %% @doc 
-stop(VertoPid) ->
-    nkpacket_connection:stop(VertoPid).
+stop(SessId) ->
+    cast(SessId, stop).
 
 
 %% @doc
 -spec bw_test(pid(), binary()) ->
     ok.
 
-bw_test(VertoPid, <<"#S", _/binary>>=Data) ->
-    nklib_util:call(VertoPid, {bw_test, Data, self()}, 30000).
+bw_test(SessId, <<"#S", _/binary>>=Data) ->
+    call(SessId, {bw_test, Data, self()}).
 
 
 %% @doc
--spec invite(pid(), binary(), binary(), #{binary() => term()}) ->
-    {ok, CallId::binary(), SDP::binary()} | {error, term()}.
+-spec invite(id()|pid(), binary(), binary(), binary(), #{binary() => term()}) ->
+    {ok, SDP::binary()} | {error, term()}.
 
-invite(VertoPid, Dest, SDP, Dialog) ->
-    Dest1 = nklib_util:to_binary(Dest),
-    SDP1 = nklib_util:to_binary(SDP), 
-    Dialog2 = Dialog#{
-        <<"incomingBandwidth">> => ?IN_BW,
-        <<"outgoingBandwidth">> => ?OUT_BW
-    },
-    call(VertoPid, {invite, Dest1, SDP1, Dialog2}).
+invite(SessId, CallId, Dest, SDP, Dialog) ->
+    % Dialog2 = Dialog#{
+    %     <<"incomingBandwidth">> => ?IN_BW,
+    %     <<"outgoingBandwidth">> => ?OUT_BW
+    % },
+    call(SessId, {invite, CallId, Dest, SDP, Dialog}).
 
 
 %% @doc
--spec bye(pid(), binary()) ->
+-spec bye(id()|pid(), binary()) ->
     ok | {error, term()}.
 
-bye(VertoPid, CallId) ->
-    call(VertoPid, {bye, CallId}).
+bye(SessId, CallId) ->
+    call(SessId, {bye, CallId}).
 
 
--spec dtmf(pid(), binary(), binary()) ->
+-spec dtmf(id()|pid(), binary(), binary()) ->
     ok | {error, term()}.
 
-dtmf(VertoPid, CallId, DTMF) ->
-    call(VertoPid, {info, CallId, DTMF}).
+dtmf(SessId, CallId, DTMF) ->
+    call(SessId, {info, CallId, DTMF}).
 
 
--spec outbound(pid(), map()) ->
-    {ok, CallId::binary(), SDP::binary()} | {error, term()}.
+-spec outbound(id()|pid(), binary(), map()) ->
+    {ok, SDP::binary()} | {error, term()}.
 
-outbound(VertoPid, Dialog) ->
-    call(VertoPid, {outbound, Dialog}).
+outbound(SessId, CallId, Opts) ->
+    call(SessId, {outbound, CallId, Opts}).
 
 
 %% @doc
-answer(VertoPid, CallId, SDP, Dialog) ->
-    Dialog2 = Dialog#{
-        <<"incomingBandwidth">> => ?IN_BW,
-        <<"outgoingBandwidth">> => ?OUT_BW
-    },
-    call(VertoPid, {answer, CallId, SDP, Dialog2}).
+-spec answer(id()|pid(), binary(), binary(), map()) ->
+    ok | {error, term()}.
+
+answer(SessId, CallId, SDP, Dialog) ->
+    % Dialog2 = Dialog#{
+    %     <<"incomingBandwidth">> => ?IN_BW,
+    %     <<"outgoingBandwidth">> => ?OUT_BW
+    % },
+    call(SessId, {answer, CallId, SDP, Dialog}).
 
 
 %% @private
+cmd(SessId, Cmd) ->
+    call(SessId, {cmd, Cmd}).
+
+
+%% @private
+-spec get_all() ->
+    [{id(), pid()}].
+
 get_all() ->
-    [Pid || {undefined, Pid}<- nklib_proc:values(?MODULE)].
+    nklib_proc:values(?MODULE).
 
 
 %% @private
-call(VertoPid, Msg) ->
-    nklib_util:call(VertoPid, Msg, ?CALL_TIMEOUT).
+call(SessId, Msg) ->
+    case find(SessId) of
+        {ok, Pid} -> nklib_util:call(Pid, Msg, ?CALL_TIMEOUT);
+        not_found -> {error, verto_client_not_found}
+    end.
+
+
+%% @private
+cast(SessId, Msg) ->
+    case find(SessId) of
+        {ok, Pid} -> gen_server:cast(Pid, Msg);
+        not_found -> {error, verto_client_not_found}
+    end.
+
+
+%% @private
+find(Pid) when is_pid(Pid) ->
+    {ok, Pid};
+
+find(Id) ->
+    case nklib_proc:values({?MODULE, Id}) of
+        [{undefined, Pid}] -> {ok, Pid};
+        [] -> not_found
+    end.
 
 
 %% ===================================================================
@@ -161,12 +242,13 @@ call(VertoPid, Msg) ->
 }).
 
 -record(state, {
+    fs_id :: nkmedia_fs_engine:id(),
     remote :: binary(),
     sess_id :: binary(),
     pass :: binary(),
     current_id = 1 :: pos_integer(),
     session_ops = #{} :: #{op_id() => #session_op{}},
-    call_id = <<>> :: binary()
+    originates = [] :: [pid()]
 }).
 
 
@@ -186,19 +268,20 @@ default_port(wss) -> 8082.
 -spec conn_init(nkpacket:nkport()) ->
     {ok, #state{}}.
 
+%% TODO: Send and receive pings from session when they are not in same cluster
 conn_init(NkPort) ->
     {ok, Remote} = nkpacket:get_remote_bin(NkPort),
     {ok, _Class, User} = nkpacket:get_user(NkPort),
-    #{pass:=Pass, sess_id:=SessId} = User,
+    #{fs_id:=FsId, pass:=Pass, sess_id:=SessId} = User,
     State = #state{
+        fs_id = FsId,
         sess_id = SessId,
         pass = Pass,
         remote = Remote
     },
     ?LLOG(info, "new connection (~p)", [self()], State),
-    nklib_proc:put(?MODULE),
-    self() ! login,
-    % self() ! check_old_requests,
+    true = nklib_proc:reg({?MODULE, SessId}),
+    nklib_proc:put(?MODULE, SessId),
     {ok, State}.
 
 
@@ -230,7 +313,7 @@ conn_parse({text, Data}, NkPort, State) ->
             ok
     end,
     ?PRINT("received ~s", [Msg], State),
-    case nkmedia_verto_util:parse_class(Msg) of
+    case nkmedia_fs_util:verto_class(Msg) of
         {{req, Method}, _Id} ->
             process_server_req(Method, Msg, NkPort, State);
         {{resp, Resp}, Id} ->
@@ -264,37 +347,37 @@ conn_encode(Msg, _NkPort) when is_binary(Msg) ->
 -spec conn_handle_call(term(), {pid(), term()}, nkpacket:nkport(), #state{}) ->
     {ok, #state{}} | {stop, term(), #state{}}.
 
-conn_handle_call({bw_test, Data}, From, NkPort, State) -> 
-    State2 = insert_op(bw_test, none, From, State),
-    send(Data, NkPort, State2);
-
-conn_handle_call({invite, Dest, SDP, Dialog}, From, NkPort, State) ->
-    send_client_req(invite, {Dest, SDP, Dialog}, From, NkPort, State);
-
-conn_handle_call({bye, CallId}, From, NkPort, State) ->
-    send_client_req(bye, #{call_id=>CallId}, From, NkPort, State);
-
-conn_handle_call({info, CallId, DTMF}, From, NkPort, State) ->
-    send_client_req(info, #{call_id=>CallId, dtmf=>DTMF}, From, NkPort, State);
-
-conn_handle_call({outbound, CallId, _Dialog}, From, _NkPort, State) ->
-    State2 = insert_op({invite, CallId}, none, From, State),
-    {ok, State2};
-
-conn_handle_call({answer, CallId, SDP, Dialog}, From, NkPort, State) ->
-    send_client_req(answer, {CallId, SDP, Dialog}, From, NkPort, State);
-
 conn_handle_call(get_state, From, _NkPort, State) ->
     gen_server:reply(From, State),
     {ok, State};
 
-conn_handle_call(Msg, _From, _NkPort, State) ->
-    lager:error("Module ~p received unexpected call: ~p", [?MODULE, Msg]),
-    {stop, unexpected_call, State}.
+conn_handle_call(Msg, From, NkPort, State) ->
+    case handle_op(Msg, From, NkPort, State) of
+        unknown_op ->
+            lager:error("Module ~p received unexpected call: ~p", [?MODULE, Msg]),
+            {stop, unexpected_call, State};
+        Other ->
+            Other
+    end.
 
 
 -spec conn_handle_cast(term(), nkpacket:nkport(), #state{}) ->
     {ok, #state{}} | {stop, term(), #state{}}.
+
+conn_handle_cast(stop, _NkPort, State) ->
+    lager:warning("RECIVED STOP"),
+    {stop, normal, State};
+
+conn_handle_cast({originate_error, CallId, Error}, _NkPort, State) ->
+    case extract_op({invite, CallId}, State) of
+        #session_op{from=From} ->
+            gen_server:reply(From, {error, Error}),
+            ?LLOG(notice, "originate error: ~p", [Error], State),
+            {stop, normal, State};
+        _ ->
+            lager:error("ORIGINATE ERROR: ~s, ~p", [CallId, Error]),
+            {ok, State}
+    end;
 
 conn_handle_cast(Msg, _NkPort, State) ->
     lager:error("Module ~p received unexpected call: ~p", [?MODULE, Msg]),
@@ -305,9 +388,6 @@ conn_handle_cast(Msg, _NkPort, State) ->
 -spec conn_handle_info(term(), nkpacket:nkport(), #state{}) ->
     {ok, #state{}} | {stop, term(), #state{}}.
 
-conn_handle_info(login, NkPort, State) ->
-    send_client_req(login1, #{}, NkPort, undefined, State);
-
 conn_handle_info({timeout, _, {op_timeout, OpId}}, _NkPort, State) ->
     case extract_op(OpId, State) of
         {#session_op{from=From}, State2} ->
@@ -315,6 +395,15 @@ conn_handle_info({timeout, _, {op_timeout, OpId}}, _NkPort, State) ->
             ?LLOG(warning, "operation timeout", [], State),
             {stop, normal, State2};
         not_found ->
+            {ok, State}
+    end;
+
+conn_handle_info({'EXIT', Pid, _Reason}=Msg, _NkPort, #state{originates=Pids}=State) ->
+    case lists:member(Pid, Pids) of
+        true ->
+            {ok, State#state{originates=Pids--[Pid]}};
+        false ->
+            lager:warning("Module ~p received unexpected info: ~p", [?MODULE, Msg]),
             {ok, State}
     end;
 
@@ -327,30 +416,55 @@ conn_handle_info(Msg, _NkPort, State) ->
 -spec conn_stop(Reason::term(), nkpacket:nkport(), #state{}) ->
     ok.
 
-conn_stop(_Reason, _NkPort, State) ->
-    ?LLOG(notice, "connection stop", [], State).
+conn_stop(Reason, _NkPort, State) ->
+    session_event(stop, State),
+    ?LLOG(info, "connection stop: ~p", [Reason], State).
 
 
 %% ===================================================================
-%% Util
+%% Requests
 %% ===================================================================
 
 
+%% @private
+handle_op(login, From, NkPort, State) ->
+    send_client_req(login1, #{}, From, NkPort, State);
+
+handle_op({bw_test, Data}, From, NkPort, State) -> 
+    State2 = insert_op(bw_test, none, From, State),
+    send(Data, NkPort, State2);
+
+handle_op({invite, CallId, Dest, SDP, Dialog}, From, NkPort, State) ->
+    send_client_req(invite, {CallId, Dest, SDP, Dialog}, From, NkPort, State);
+
+handle_op({bye, CallId}, From, NkPort, State) ->
+    send_client_req(bye, #{call_id=>CallId}, From, NkPort, State);
+
+handle_op({info, CallId, DTMF}, From, NkPort, State) ->
+    send_client_req(info, #{call_id=>CallId, dtmf=>DTMF}, From, NkPort, State);
+
+handle_op({outbound, CallId, Opts}, From, _NkPort, State) ->
+    State2 = originate(CallId, Opts, State),
+    State3 = insert_op({invite, CallId}, none, From, State2),
+    {ok, State3};
+
+handle_op({answer, CallId, SDP, Dialog}, From, NkPort, State) ->
+    send_client_req(answer, {CallId, SDP, Dialog}, From, NkPort, State);
+
+handle_op({cmd, Cmd}, From, NkPort, State) ->
+    send_client_req(cmd, Cmd, From, NkPort, State);
+
+handle_op(_Op, _From, _NkPort, _State) ->
+    unknown_op.
+
 
 %% @private
-send_client_req(Type, Data, From, NkPort, State) ->
-    #state{current_id=Id} = State,
-    {ok, Msg} = make_msg(Id, Type, Data, State),
-    State2 = insert_op({trans, Id}, Type, From, State),
-    send(Msg, NkPort, State2#state{current_id=Id+1}).
-
-
-%% @private
-process_server_resp(#session_op{type=login1}, {error, -32000, _},
+process_server_resp(#session_op{type=login1, from=From}, {error, -32000, _},
                     _Msg, NkPort, State) ->
-    send_client_req(login2, #{}, undefined, NkPort, State);
+    send_client_req(login2, #{}, From, NkPort, State);
 
-process_server_resp(#session_op{type=login2}, {ok, _}, _Msg, _NkPort, State) ->
+process_server_resp(#session_op{type=login2, from=From}, {ok, _}, _Msg, _NkPort, State) ->
+    nklib_util:reply(From, ok),
     {ok, State};
 
 process_server_resp(#session_op{type=login2}, {error, -32001, _},
@@ -360,13 +474,34 @@ process_server_resp(#session_op{type=login2}, {error, -32001, _},
 
 process_server_resp(#session_op{type=invite, from=From}, {ok, _}, Msg, _NkPort, State) ->
     #{<<"result">> := #{<<"callID">> := CallId}} = Msg,
-    State2 = insert_op({answer, CallId}, none, From, State),
-    {ok, State2#state{call_id=CallId}};
+    {ok, insert_op({answer, CallId}, none, From, State)};
 
 process_server_resp(#session_op{type=invite}, {error, Code, Error}, 
                     _Msg, _NkPort, State) ->
     ?LLOG(warning, "invite error: ~p, ~p", [Code, Error], State),
     {stop, normal, State};
+
+process_server_resp(#session_op{type=bye, from=From}, {ok, _}, _Msg, _NkPort, State) ->
+    nklib_util:reply(From, ok),
+    {stop, normal, session_event({hangup, 16}, State)};
+
+process_server_resp(#session_op{type=bye}, {error, Code, Error}, _Msg, _NkPort, State) ->
+    ?LLOG(info, "error response to bye: ~p (~s)", [Code, Error], State),
+    {stop, normal, State};
+
+process_server_resp(#session_op{type=info, from=From}, {ok, _}, _Msg, _NkPort, State) ->
+    nklib_util:reply(From, ok),
+    {ok, State};
+
+process_server_resp(#session_op{type=cmd, from=From}, {ok, _}, Msg, _NkPort, State) ->
+    #{<<"result">> := Result} = Msg,
+    gen_server:reply(From, {ok, Result}),
+    {ok, State};
+
+process_server_resp(#session_op{type=cmd, from=From}, {error, Code, Error}, 
+                    _Msg, _NkPort, State) ->
+    gen_server:reply(From, {error, {Code, Error}}),
+    {ok, State};
 
 process_server_resp(#session_op{from=From}, {ok, _}, _Msg, _NkPort, State) ->
     nklib_util:reply(From, ok),
@@ -383,9 +518,9 @@ process_server_req(<<"verto.invite">>, Msg, NkPort, State) ->
     #{<<"callID">> := CallId, <<"sdp">> := SDP} = Params, 
     case extract_op({invite, CallId}, State) of
         {#session_op{from=From}, State2} ->
-            nklib_util:reply(From, {ok, CallId, SDP}),
-            Resp = nkmedia_verto_util:make_resp(<<"verto.invite">>, Msg),
-            send(Resp, NkPort, State2#state{call_id=CallId});
+            nklib_util:reply(From, {ok, SDP}),
+            Resp = nkmedia_fs_util:verto_resp(<<"verto.invite">>, Msg),
+            send(Resp, NkPort, State2);
         not_found ->
             ?LLOG(warning, "received unexpected INVITE from FS", [], State),
             {stop, normal, State}
@@ -395,29 +530,30 @@ process_server_req(<<"verto.answer">>, Msg, NkPort, State) ->
     #{<<"params">> := #{<<"callID">>:=CallId, <<"sdp">>:=SDP}} = Msg,
     case extract_op({answer, CallId}, State) of
         {#session_op{from=From}, State2} ->
-            nklib_util:reply(From, {ok, CallId, SDP}),
-            Resp = nkmedia_verto_util:make_resp(<<"verto.answer">>, Msg),
-            send(Resp, NkPort, State2#state{call_id=CallId});
+            nklib_util:reply(From, {ok, SDP}),
+            Resp = nkmedia_fs_util:verto_resp(<<"verto.answer">>, Msg),
+            send(Resp, NkPort, State2);
         error ->
-            ?LLOG(warning, "unxpected verto.answer", [], State),
+            ?LLOG(warning, "unexpected verto.answer", [], State),
             {stop, normal, State}
     end;
 
 process_server_req(<<"verto.attach">>, Msg, NkPort, State) ->
     #{<<"params">>:=#{<<"callID">>:=_CallId, <<"sdp">>:=_SDP}} = Msg,
-    Msg2 = nkmedia_verto_util:make_resp(<<"verto.attach">>, Msg),
+    Msg2 = nkmedia_fs_util:verto_resp(<<"verto.attach">>, Msg),
     send(Msg2, NkPort, State);
 
 process_server_req(<<"verto.bye">>, Msg, NkPort, State) ->
     #{<<"params">>:=#{<<"callID">>:=_CallId}} = Msg,
-    Msg2 = nkmedia_verto_util:make_resp(<<"verto.bye">>, Msg),
-    send(Msg2, NkPort, State);
+    Msg2 = nkmedia_fs_util:verto_resp(<<"verto.bye">>, Msg),
+    _ = send(Msg2, NkPort, State),
+    {stop, normal, session_event({hangup, 16}, State)};
 
 %% Sent when FS detects another session for the same session id
 process_server_req(<<"verto.punt">>, _Msg, _NkPort, State) ->
     ?LLOG(notice, "stopping connection because of verto.punt", [], State),
     {stop, normal, State};
-    
+
 process_server_req(<<"verto.display">>, _Msg, _NkPort, State) ->
     {ok, State};
 
@@ -432,11 +568,30 @@ process_server_event(_Event, _NkPort, State) ->
     {ok, State}.
 
 
+%% ===================================================================
+%% Util
+%% ===================================================================
+
+
+%% @private
+session_event(Status, #state{sess_id=SessId, fs_id=FsId}=State) ->
+   nkmedia_session:event(SessId, {freeswitch, FsId}, Status),
+   State.
+
+
+%% @private
+send_client_req(Type, Data, From, NkPort, State) ->
+    #state{current_id=Id} = State,
+    {ok, Msg} = make_msg(Id, Type, Data, State),
+    State2 = insert_op({trans, Id}, Type, From, State),
+    send(Msg, NkPort, State2#state{current_id=Id+1}).
+
+
 %% @private
 make_msg(Id, login1, _, State) ->
     #state{sess_id=SessId} = State,
     Params = #{<<"sessid">>=>SessId},
-    {ok, nkmedia_verto_util:make_req(Id, <<"login">>, Params)};
+    {ok, nkmedia_fs_util:verto_req(Id, <<"login">>, Params)};
 
 make_msg(Id, login2, _, #state{pass=Pass}=State) ->
     #state{sess_id=SessId} = State,
@@ -445,23 +600,22 @@ make_msg(Id, login2, _, #state{pass=Pass}=State) ->
         <<"passwd">> => Pass,
         <<"sessid">> => SessId
     },
-    {ok, nkmedia_verto_util:make_req(Id, <<"login">>, Params)};
+    {ok, nkmedia_fs_util:verto_req(Id, <<"login">>, Params)};
 
-make_msg(Id, invite, {Dest, SDP, Dialog}, _State) ->
-    CallId = case maps:find(<<"callID">>, Dialog) of
-        {ok, CallId0} -> CallId0;
-        error -> nklib_util:uuid_4122()
-    end,
+make_msg(Id, invite, {CallId, Dest, SDP, Dialog}, _State) ->
+    UserVariables1 = maps:get(<<"userVariables">>, Dialog, #{}),
+    UserVariables2 = UserVariables1#{<<"nkmedia_callback">>=><<"nkmedia_fs_verto">>},
     Params = #{
         <<"dialogParams">> => 
             Dialog#{
-                <<"callID">> => CallId,
-                <<"destination_number">> => Dest
+                <<"callID">> => nklib_util:to_binary(CallId),
+                <<"destination_number">> => nklib_util:to_binary(Dest),
+                <<"userVariables">> => UserVariables2
             },
         <<"sdp">> => SDP
     },
     % lager:warning("P: ~s", [nklib_json:encode_pretty(Params)]),
-    {ok, nkmedia_verto_util:make_req(Id, <<"verto.invite">>, Params)};
+    {ok, nkmedia_fs_util:verto_req(Id, <<"verto.invite">>, Params)};
 
 make_msg(Id, bye, #{call_id:=CallId}, State) ->
     #state{sess_id = SessId} = State,
@@ -469,7 +623,7 @@ make_msg(Id, bye, #{call_id:=CallId}, State) ->
         <<"dialogParams">> => #{ <<"CallID">> => CallId },
         <<"sessid">> => SessId
     },
-    {ok, nkmedia_verto_util:make_req(Id, <<"verto.bye">>, Params)};
+    {ok, nkmedia_fs_util:verto_req(Id, <<"verto.bye">>, Params)};
 
 make_msg(Id, info, #{call_id:=CallId, dtmf:=DTMF}, State) ->
     #state{sess_id = SessId} = State,
@@ -478,14 +632,40 @@ make_msg(Id, info, #{call_id:=CallId, dtmf:=DTMF}, State) ->
         <<"dtmf">> => DTMF,
         <<"sessid">> => SessId
     },
-    {ok, nkmedia_verto_util:make_req(Id, <<"verto.info">>, Params)};
+    {ok, nkmedia_fs_util:verto_req(Id, <<"verto.info">>, Params)};
 
 make_msg(Id, answer, {CallId, SDP, Dialog}, _State) ->
     Params = #{
         <<"dialogParams">> => Dialog#{<<"callID">> => CallId},
         <<"sdp">> => SDP
     },
-    {ok, nkmedia_verto_util:make_req(Id, <<"verto.answer">>, Params)}.
+    {ok, nkmedia_fs_util:verto_req(Id, <<"verto.answer">>, Params)};
+
+make_msg(Id, cmd, Cmd, _State) ->
+    Params = #{
+        <<"command">> => nklib_util:to_binary(Cmd),
+        % <<"format">> => <<"pretty">>,
+        <<"data">> => #{}
+    },
+    {ok, nkmedia_fs_util:verto_req(Id, <<"jsapi">>, Params)}.
+
+
+%% @private
+originate(CallId, Opts, #state{fs_id=FsId, sess_id=SessId, originates=Pids}=State) ->
+    Dest = <<"verto.rtc/u:", SessId/binary>>,
+    Vars = [{<<"nkstatus">>, <<"outbound">>}], 
+    Opts2 = Opts#{vars => Vars, call_id=>CallId},
+    Self = self(),
+    Pid = spawn_link(
+        fun() ->
+            case nkmedia_fs_cmd:call(FsId, Dest, <<"nkmedia_out">>, Opts2) of
+                {ok, CallId} -> 
+                    ok;
+                {error, Error} -> 
+                    gen_server:cast(Self, {originate_error, CallId, Error})
+            end
+        end),
+    State#state{originates=[Pid|Pids]}.
 
 
 %% @private
@@ -510,6 +690,7 @@ extract_op(OpId, #state{session_ops=AllOps}=State) ->
     end.
 
 
+%% @private
 send(Msg, NkPort, State) ->
     ?PRINT("sending ~s", [Msg], State),
     case send(Msg, NkPort) of

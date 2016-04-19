@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([start/2]).
--export([api/2, bgapi/2, event/3, msg/3, shutdown/1]).
+-export([api/2, api_block/2, event/3, msg/3, shutdown/1]).
 -export([execute/3, execute/4, execute/5, execute/6]).
 -export([t/1]).
 
@@ -70,15 +70,15 @@ start(Host, Pass) ->
 	{ok, binary()} | {error, term()}.
 
 api(Pid, Api) ->
-	do_call(Pid, {cmd, ["api ", Api], false}).
+	do_call(Pid, {cmd, ["bgapi ", Api], true}).
 
 
 %% @doc
--spec bgapi(pid(), iolist()) ->
+-spec api_block(pid(), iolist()) ->
 	{ok, binary()} | {error, term()}.
 
-bgapi(Pid, Api) ->
-	do_call(Pid, {cmd, ["bgapi ", Api], true}).
+api_block(Pid, Api) ->
+	do_call(Pid, {cmd, ["api ", Api], false}).
 
 
 %% @doc
@@ -143,7 +143,7 @@ msg(Pid, Name, Vars) ->
 	do_call(Pid, {cmd, [<<"sendmsg ">>, Name, <<"\n">>, Vars1], false}).
 
 
-%% @docº
+%% @doc
 -spec shutdown(pid()) ->
 	ok | {error, term()}.
 
@@ -291,7 +291,7 @@ conn_handle_info(Msg, _NkPort, State) ->
 
 %% @private
 do_call(Pid, Msg) ->
-	nklib_util:call(Pid, Msg, 180000).
+	nklib_util:call(Pid, Msg, 5*60*1000).
 
 
 %% @private
@@ -466,7 +466,7 @@ t(P) ->
 t(0, _, _) ->
 	ok;
 t(N, P, R) ->
-	proc_lib:spawn_link(fun() -> {ok, R} = bgapi(P, "show interfaces") end),
+	proc_lib:spawn_link(fun() -> {ok, R} = api(P, "show interfaces") end),
 	t(N-1, P, R).
 
 

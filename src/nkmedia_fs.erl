@@ -153,7 +153,7 @@ stop(Spec) ->
 % start_proxy(Pid) ->
 % 	case nkmedia_fs_server:get_config(Pid) of
 % 		{ok, Config } ->
-% 			nkmedia_verto_proxy_client:start(Config);
+% 			nkmedia_fs_verto_proxy_client:start(Config);
 % 		{error, Error} ->
 % 			{error, Error}
 % 	end.

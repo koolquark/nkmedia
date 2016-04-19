@@ -10,9 +10,11 @@
 -pa deps/jsx/ebin
 -pa deps/nkdocker/ebin
 -pa deps/nksip/ebin
+-pa deps/nksip/plugins/ebin
 -pa deps/nkservice/ebin
 -pa deps/meck/ebin
 -pa deps/mustache/ebin
+-pa deps/enm/ebin
 
 -pa ../nkmedia/ebin
 

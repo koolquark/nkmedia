@@ -23,7 +23,7 @@
 -module(nkmedia_sip).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/0, stop/0]).
+-export([start/0, stop/0, register_call_id/2]).
 -export([sip_invite/2, sip_reinvite/2, sip_bye/2]).
 
 
@@ -38,6 +38,8 @@
 %% ===================================================================
 
 
+%% @private
+%% Starts a nkservice called 'nkmedia_sip', listening for sip
 start() ->
     Port = nkmedia_app:get(sip_port),
     Dummy = case Port of
@@ -66,33 +68,18 @@ start() ->
     nkmedia_app:put(sip_port, Port2).
 
 
+%% @private
 stop() ->
 	nkservice:stop(nkmedia_sip).
 
 
+%% @private
+register_call_id(Module, CallId) ->
+    nklib_proc:put({?MODULE, call, CallId}, Module).
 
-% start() ->
-%     Host = nkmedia_app:get(local_host),
-%     {ok, Ip} = nklib_util:to_ip(Host),
-%     %% Avoid openning 5060 but open a random port
-%     Dummy = case gen_udp:open(5060, [{ip, Ip}]) of
-%         {ok, Socket} -> Socket;
-%         {error, _} -> none
-%     end,
-%     Sip = <<"sip:", Host/binary>>,
-%     Opts = #{
-%         class => nkmedia_sip,
-%         plugins => [nkmedia_sip, nksip],
-%         sip_listen => Sip
-%     },
-%     {ok, bnulhwa} = nkservice:start(nkmedia_sip, Opts),
-%     case Dummy of
-%         error -> ok;
-%         DummySocket -> gen_udp:close(DummySocket)
-%     end,
-%     [Listener] = nkservice:get_listeners(bnulhwa, nksip),
-%     {ok, {nksip_protocol, udp, Ip, Port}} = nkpacket:get_local(Listener),
-%     nkmedia_app:put(sip_port, Port).
+
+
+
 
 
 
@@ -101,20 +88,23 @@ stop() ->
 %% ===================================================================
 
 
-sip_invite(Req, _Call) ->
-    {ok, UA} = nksip_request:header(<<"user-agent">>, Req),
+sip_invite(Req, Call) ->
     {ok, AOR} = nksip_request:meta(aor, Req),
-    {ok, SDP} =  nksip_request:meta(body, Req),
-    HasSDP = nksip_sdp:is_sdp(SDP),
-    case {UA, AOR} of
-        {[<<"FreeSWITCH", _/binary>>], {sip, CallId, _Domain}} when HasSDP ->
-            {ok, Handle} = nksip_request:get_handle(Req),
-            {ok, Dialog} = nksip_dialog:get_handle(Req),
-            case nkmedia_fs_channel:sip_inbound_invite(CallId, Handle, Dialog, SDP) of
-                ok -> 
-                    {reply, ringing};
-                {error, Error} ->
-                    lager:warning("FS SIP Call error: ~p", [Error]),
+    {ok, Dialog} = nksip_dialog:get_handle(Req),
+    case AOR of
+        {sip, <<"nkmedia-", CallId/binary>>, _Domain} ->
+            case nklib_proc:values({?MODULE, call, CallId}) of
+                [{Module, Pid}|_] ->
+                    nklib_proc:put({?MODULE, dialog, Dialog}, Module, Pid),
+                    case erlang:function_exported(Module, sip_invite, 3) of
+                        true ->
+                            Module:sip_invite(Pid, Req, Call);
+                        false ->
+                            lager:error("Unrecognized NkMEDIA SIP Call"),
+                            {reply, decline}
+                    end;
+                [] ->
+                    lager:error("Error decoding SIP PID"),
                     {reply, internal_error}
             end;
         _ ->
@@ -122,22 +112,37 @@ sip_invite(Req, _Call) ->
     end.
 
 
-sip_reinvite(_Req, _Call) ->
-    lager:warning("NcsMEDIA ignoring REINVITE"),
-    {reply, decline}.
+sip_reinvite(Req, Call) ->
+    {ok, Dialog} = nksip_dialog:get_handle(Req),
+    case nklib_proc:values({?MODULE, dialog, Dialog}) of
+        [{Module, Pid}|_] ->
+            case erlang:function_exported(Module, sip_reinvite, 3) of
+                true ->
+                    Module:sip_reinvite(Pid, Req, Call);
+                false ->
+                    lager:warning("NcsMEDIA ignoring REINVITE"),
+                    {reply, decline}
+            end;
+        [] ->
+            lager:warning("NcsMEDIA ignoring REINVITE"),
+            {reply, decline}
+    end.
 
 
-sip_bye(Req, _Call) ->
-    {ok, UA} = nksip_request:header(<<"user-agent">>, Req),
-    case UA of
-        [<<"FreeSWITCH", _/binary>>] ->
-            {ok, {sip, User, _}} = nksip_request:meta(aor, Req),
-            lager:warning("BYE FROM FS: ~s", [User]);
-        _ ->
-            {ok, Dialog} = nksip_dialog:get_handle(Req),
-            gotools_ws:sip_bye(Dialog),
-            ok
-    end,
-    {reply, ok}.
+sip_bye(Req, Call) ->
+    {ok, Dialog} = nksip_dialog:get_handle(Req),
+    case nklib_proc:values({?MODULE, dialog, Dialog}) of
+        [{Module, Pid}|_] ->
+            case erlang:function_exported(Module, sip_bye, 3) of
+                true ->
+                    Module:sip_bye(Pid, Req, Call);
+                false ->
+                    lager:warning("NcsMEDIA ignoring BYE"),
+                    {reply, ok}
+            end;
+        [] ->
+            lager:warning("NcsMEDIA ignoring BYE"),
+            {reply, ok}
+    end.
     
     

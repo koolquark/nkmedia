@@ -20,7 +20,7 @@
 %% -------------------------------------------------------------------
 
 %% @doc 
--module(nkmedia_verto_proxy_server).
+-module(nkmedia_fs_verto_proxy_server).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([get_all/0, send_reply/2]).
@@ -79,7 +79,7 @@ conn_init(NkPort) ->
     ?LLOG(notice, "new connection (~p)", [self()], State),
     case nkmedia_fs_engine:get_all() of
         [{Name, FsPid}|_] ->
-            case nkmedia_verto_proxy_client:start(FsPid) of
+            case nkmedia_fs_verto_proxy_client:start(FsPid) of
                 {ok, ProxyPid} ->
                     ?LLOG(info, "connected to FS server ~s", [Name], State),
                     monitor(process, ProxyPid),
@@ -104,7 +104,7 @@ conn_parse(close, _NkPort, State) ->
     {ok, State};
 
 conn_parse({text, <<"#S", _/binary>>=Msg}, _NkPort, #state{proxy=Pid}=State) ->
-    nkmedia_verto_proxy_client:send(Pid, Msg),
+    nkmedia_fs_verto_proxy_client:send(Pid, Msg),
     {ok, State};
 
 conn_parse({text, Data}, _NkPort, #state{proxy=Pid}=State) ->
@@ -115,7 +115,7 @@ conn_parse({text, Data}, _NkPort, #state{proxy=Pid}=State) ->
         Json ->
             Json
     end,
-    nkmedia_verto_proxy_client:send(Pid, Msg),
+    nkmedia_fs_verto_proxy_client:send(Pid, Msg),
     {ok, State}.
 
 

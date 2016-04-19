@@ -31,7 +31,7 @@
 -define(SUPPORTED_FS, [<<"v1.6.5-r01">>]).
 
 
--define(VERTO_WS_TIMEOUT, 5*60*1000).
+-define(VERTO_WS_TIMEOUT, 60*60*1000).
 
 
 
