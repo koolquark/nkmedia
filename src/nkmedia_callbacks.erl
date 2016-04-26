@@ -25,7 +25,7 @@
 
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
 -export([nkmedia_call_init/2, nkmedia_call_terminate/2, 
-		 nkmedia_call_backend/2, nkmedia_call_resolve/2, nkmedia_call_out/4, 
+		 nkmedia_call_resolve/2, nkmedia_call_out/4, 
 		 nkmedia_call_notify/3, 
 		 nkmedia_call_handle_call/3, nkmedia_call_handle_cast/2, 
 		 nkmedia_call_handle_info/2]).
@@ -70,95 +70,7 @@ plugin_stop(Config, #{name:=Name}) ->
 
 
 
-%% ===================================================================
-%% Call Callbacks
-%% ===================================================================
 
--type call_id() :: nkmedia_call:id().
--type call() :: nkmedia_call:call().
-
-
-%% @doc Called when a new call starts
--spec nkmedia_call_init(call_id(), call()) ->
-	{ok, call()}.
-
-nkmedia_call_init(_Id, Call) ->
-	{ok, Call}.
-
-%% @doc Called when the call stops
--spec nkmedia_call_terminate(Reason::term(), call()) ->
-	{ok, call()}.
-
-nkmedia_call_terminate(_Reason, Call) ->
-	{ok, Call}.
-
-
-%% @doc Called when the status of the call changes
--spec nkmedia_call_notify(call_id(), nkmedia_call:event(), call()) ->
-	{ok, call()} | continue().
-
-nkmedia_call_notify(_CallId, _Event, Call) ->
-	{ok, Call}.
-
-
-%% @doc Called when a call specificatio must be resolved
--spec nkmedia_call_backend(nkmedia:offer(), call()) ->
-	{ok, nkmedia:backend(), call()} | 
-	{hangup, nkmedia:hangup_reason(), call()} |
-	continue().
-
-nkmedia_call_backend(_Offer, Call) ->
-	{hangup, <<"No Backend">>, Call}.
-
-
-%% @doc Called when a call specificatio must be resolved
--spec nkmedia_call_resolve(nkmedia:offer(), call()) ->
-	{ok, nkmedia_call:call_out_spec(), call()} | 
-	{hangup, nkmedia:hangup_reason(), call()} |
-	{error, binary(), call()} | 
-	continue().
-
-nkmedia_call_resolve(_Offer, Call) ->
-	{error, <<"Unknown Destination">>, Call}.
-
-
-%% @doc Called when an outbound call is scheduled to be sent
--spec nkmedia_call_out(call_id(), session_id(), 
-							nkmedia_session:call_dest(), call()) ->
-	{call, nkmedia_session:call_dest(), call()} | 
-	{retry, Secs::pos_integer(), call()} | 
-	{remove, call()} | 
-	continue().
-
-nkmedia_call_out(_CallId, _SessId, Dest, Call) ->
-	{call, Dest, Call}.
-
-
-%% @doc
--spec nkmedia_call_handle_call(term(), {pid(), term()}, call()) ->
-	{reply, term(), call()} | {noreply, call()} | continue().
-
-nkmedia_call_handle_call(Msg, _From, Call) ->
-	lager:error("Unexpected call at nkmedia_call: ~p", [Msg]),
-	{noreply, Call}.
-
-
-%% @doc
--spec nkmedia_call_handle_cast(term(), call()) ->
-	{noreply, call()} | continue().
-
-nkmedia_call_handle_cast(Msg, Call) ->
-	lager:error("Unexpected cast at nkmedia_call: ~p", [Msg]),
-	{noreply, Call}.
-
-
-%% @doc
--spec nkmedia_call_handle_info(term(), call()) ->
-	{noreply, call()} | continue().
-
-nkmedia_call_handle_info(Msg, Call) ->
-	lager:error("Unexpected info at nkmedia_call: ~p", [Msg]),
-	{noreply, Call}.
 
 
 
@@ -191,8 +103,8 @@ nkmedia_session_terminate(_Reason, Session) ->
 
 nkmedia_session_notify(SessId, Event, Session) ->
 	case Session of
-		#{notify:={nkmedia_call, _CallId, CallPid}} ->
-			nkmedia_call:session_event(CallPid, SessId, Event);
+		#{nkmedia_call_id:=CallId} ->
+			nkmedia_call:session_event(CallId, SessId, Event);
 		_ ->
 			ok
 	end,
@@ -219,7 +131,7 @@ nkmedia_session_out(_SessId, _CallDest, _Offer, Session) ->
 	{reply, term(), session()} | {noreply, session()} | continue().
 
 nkmedia_session_handle_call(Msg, _From, Session) ->
-	lager:error("Unexpected call at nkmedia_session: ~p", [Msg]),
+	lager:error("Module nkmedia_session received unexpected call: ~p", [Msg]),
 	{noreply, Session}.
 
 
@@ -228,7 +140,7 @@ nkmedia_session_handle_call(Msg, _From, Session) ->
 	{noreply, session()} | continue().
 
 nkmedia_session_handle_cast(Msg, Session) ->
-	lager:error("Unexpected cast at nkmedia_session: ~p", [Msg]),
+	lager:error("Module nkmedia_session received unexpected cast: ~p", [Msg]),
 	{noreply, Session}.
 
 
@@ -237,7 +149,7 @@ nkmedia_session_handle_cast(Msg, Session) ->
 	{noreply, session()} | continue().
 
 nkmedia_session_handle_info(Msg, Session) ->
-	lager:error("Unexpected info at nkmedia_session: ~p", [Msg]),
+	lager:warning("Module nkmedia_session received unexpected info: ~p", [Msg]),
 	{noreply, Session}.
 
 
@@ -261,6 +173,102 @@ nkmedia_session_get_mediaserver(Backend) ->
 	{error, {unknown_backend, Backend}}.
 
 
+
+%% ===================================================================
+%% Call Callbacks
+%% ===================================================================
+
+-type call_id() :: nkmedia_call:id().
+-type call() :: nkmedia_call:call().
+
+
+%% @doc Called when a new call starts
+-spec nkmedia_call_init(call_id(), call()) ->
+	{ok, call()}.
+
+nkmedia_call_init(_Id, Call) ->
+	{ok, Call}.
+
+%% @doc Called when the call stops
+-spec nkmedia_call_terminate(Reason::term(), call()) ->
+	{ok, call()}.
+
+nkmedia_call_terminate(_Reason, Call) ->
+	{ok, Call}.
+
+
+%% @doc Called when the status of the call changes
+-spec nkmedia_call_notify(call_id(), nkmedia_call:event(), call()) ->
+	{ok, call()} | continue().
+
+nkmedia_call_notify(CallId, Event, Call) ->
+	case Call of
+		#{session_id:=SessionId} ->
+			nkmedia_session:call_event(SessionId, CallId, Event);
+		_ ->
+			ok
+	end,
+	{ok, Call}.
+
+
+% %% @doc Called when a call specificatio must be resolved
+% -spec nkmedia_call_backend(nkmedia:offer(), call()) ->
+% 	{ok, nkmedia:backend(), call()} | 
+% 	{hangup, nkmedia:hangup_reason(), call()} |
+% 	continue().
+
+% nkmedia_call_backend(_Offer, Call) ->
+% 	{hangup, <<"No Backend">>, Call}.
+
+
+%% @doc Called when a call specificatio must be resolved
+-spec nkmedia_call_resolve(nkmedia:offer(), call()) ->
+	{ok, nkmedia_call:call_out_spec(), call()} | 
+	{hangup, nkmedia:hangup_reason(), call()} |
+	{error, binary(), call()} | 
+	continue().
+
+nkmedia_call_resolve(_Offer, Call) ->
+	{error, <<"Unknown Destination">>, Call}.
+
+
+%% @doc Called when an outbound call is scheduled to be sent
+-spec nkmedia_call_out(call_id(), session_id(), 
+							nkmedia_session:call_dest(), call()) ->
+	{call, nkmedia_session:call_dest(), call()} | 
+	{retry, Secs::pos_integer(), call()} | 
+	{remove, call()} | 
+	continue().
+
+nkmedia_call_out(_CallId, _SessId, Dest, Call) ->
+	{call, Dest, Call}.
+
+
+%% @doc
+-spec nkmedia_call_handle_call(term(), {pid(), term()}, call()) ->
+	{reply, term(), call()} | {noreply, call()} | continue().
+
+nkmedia_call_handle_call(Msg, _From, Call) ->
+	lager:error("Module nkmedia_call received unexpected call: ~p", [Msg]),
+	{noreply, Call}.
+
+
+%% @doc
+-spec nkmedia_call_handle_cast(term(), call()) ->
+	{noreply, call()} | continue().
+
+nkmedia_call_handle_cast(Msg, Call) ->
+	lager:error("Module nkmedia_call received unexpected call: ~p", [Msg]),
+	{noreply, Call}.
+
+
+%% @doc
+-spec nkmedia_call_handle_info(term(), call()) ->
+	{noreply, call()} | continue().
+
+nkmedia_call_handle_info(Msg, Call) ->
+	lager:warning("Module nkmedia_call received unexpected info: ~p", [Msg]),
+	{noreply, Call}.
 
 
 %% ===================================================================

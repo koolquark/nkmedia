@@ -31,6 +31,10 @@
 -define(SUPPORTED_FS, [<<"v1.6.5-r01">>]).
 
 
+-define(DEF_WAIT_TIMEOUT, 30).
+-define(DEF_RING_TIMEOUT, 30).
+-define(DEF_READY_TIMEOUT, 3000).
+-define(DEF_CALL_TIMEOUT, 3000).
 
 
 

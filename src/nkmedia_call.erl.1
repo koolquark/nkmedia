@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([start/1, get_status/1]).
+-export([start/2, get_status/1]).
 -export([hangup/1, hangup/2, hangup_all/0]).
 -export([session_event/3, find/1, get_all/0]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
@@ -53,18 +53,18 @@
         offer => nkmedia:offer(),
         session_id => nkmedia_session:id(),
         session_pid => pid(),
-        call_dest => term(),
+        notify => nkmedia_util:notify() | [nkmedia_util:notify()],
+        backend => freeswitch | janus | p2p,
         calling_timeout => integer(),          % Secs
         ring_timeout => integer(),          
         ready_timeout => integer(),
         call_timeout => integer(),
-        mediaserver => nkmedia_session:mediaserver(),
         term() => term()                         % User defined
     }.
 
 
 -type status() ::
-    calling | ringing | bridged | p2p | hangup.
+    calling | ringing | bridged | mcu | play | hangup | p2p.
 
 
 -type status_info() :: nkmedia_session:status_info().
@@ -104,10 +104,8 @@
 -spec start(config()) ->
     {ok, id(), pid()}.
 
-start(Config) ->
-    {CallId, Config2} = nkmedia_util:add_uuid(Config),
-    {ok, Pid} = gen_server:start(?MODULE, [Config2], []),
-    {ok, CallId, Pid}.
+start_link(Config) ->
+    gen_server:start_link(?MODULE, [Config], []).
 
 
 %% @private
@@ -151,8 +149,8 @@ get_all() ->
 %% Private
 %% ===================================================================
 
-session_event(CallId, SessId, Event) ->
-    do_cast(CallId, {session_event, SessId, Event}).
+session_event(CallPid, SessId, Event) ->
+    gen_server:cast(CallPid, {session_event, SessId, Event}).
 
 
 % ===================================================================
@@ -172,8 +170,8 @@ session_event(CallId, SessId, Event) ->
     srv_id :: nkservice:id(),
     call :: call(),
     status :: status(),
-    % answered :: boolean(),
-    % notify_refs :: nkmedia_util:notify_refs(),
+    answered :: boolean(),
+    notify_refs :: nkmedia_util:notify_refs(),
     session_in :: {nkmedia_session:id(), pid(), reference()},
     session_out :: {nkmedia_session:id(), pid(), reference()},
     outs = #{} :: #{nkmedia_session:id() => #session_out{}},
@@ -186,20 +184,22 @@ session_event(CallId, SessId, Event) ->
 -spec init(term()) ->
     {ok, tuple()}.
 
-init([#{id:=Id, srv_id:=SrvId, session_id:=SessId, session_pid:=SessPid}=Call]) ->
+init([#{id:=Id, srv_id:=SrvId}=Call]) ->
     true = nklib_proc:reg({?MODULE, Id}),
     nklib_proc:put(?MODULE, Id),
+    Notify = maps:get(notify, Call, []),
     State = #state{
         id = Id, 
         srv_id = SrvId, 
         status = init,
+        answered = false,
         call = Call,
-        session_in = {SessId, SessPid, monitor(process, SessPid)}
+        notify_refs = nkmedia_util:add_notifies(Notify, [])
     },
     lager:info("NkMEDIA Call ~s starting (~p)", [Id, self()]),
     {ok, State2} = handle(nkmedia_call_init, [Id], State),
-    gen_server:cast(self(), start),
-    {ok, status(calling, State2)}.
+    gen_server:cast(self(), get_inbound),
+    {ok, State2}.
 
 
 %% @private
@@ -215,30 +215,46 @@ handle_call(get_status, _From, State) ->
 handle_call({launch_outs, CallSpec}, _From, State) ->
     {reply, ok, launch_outs(CallSpec, State)};
 
+handle_call({out_answered, _SessId, _SessPid, _Answer}, _From, 
+        #state{answered=true}=State) ->
+    {reply, {error, already_answered}, State};
+
 handle_call(Msg, From, State) -> 
-    handle(nkmedia_call_handle_call, [Msg, From], State).
+    case handle(nkmedia_call_handle_call, [Msg, From], State) of
+        {continue, [Msg2, _From2, State2]} ->
+            lager:error("Module ~p received unexpected call ~p", [Msg2]),
+            {noreply, State2};
+        Other ->
+            Other
+    end.
 
 
 %% @private
 -spec handle_cast(term(), #state{}) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
-handle_cast(start, State) ->
-    {noreply, get_outbound(State)};
+handle_cast(get_inbound, State) ->
+    {noreply, get_inbound(State)};
 
 handle_cast({session_event, SessId, Event}, State) ->
-    #state{session_out=Out, outs=Outs} = State,
-    State2 = case Out of
+    #state{session_in=In, session_out=Out, outs=Outs} = State,
+    State2 = case In of
         {SessId, _, _} ->
-            ?LLOG(info, "event from outbound session: ~p", [Event], State),
-            process_out_event(Event, State);
+            ?LLOG(info, "event from inbound session: ~p", [Event], State),
+            process_in_event(Event, State);
         _ ->
-            case maps:find(SessId, Outs) of
-                {ok, CallOut}  ->
-                    process_call_out_event(Event, SessId, CallOut, State);
-                false ->
-                    ?LLOG(warning, "event from unknown session", [Event], State),
-                    State
+            case Out of
+                {SessId, _, _} ->
+                    ?LLOG(info, "event from outbound session: ~p", [Event], State),
+                    process_out_event(Event, State);
+                _ ->
+                    case maps:find(SessId, Outs) of
+                        {ok, CallOut}  ->
+                            process_call_out_event(Event, SessId, CallOut, State);
+                        false ->
+                            ?LLOG(warning, "event from unknown session", [Event], State),
+                            State
+                    end
             end
     end,
     {noreply, State2};
@@ -251,15 +267,20 @@ handle_cast(stop, State) ->
     {stop, normal, State};
 
 handle_cast(Msg, State) -> 
-    handle(nkmedia_call_handle_cast, [Msg], State).
+    case handle(nkmedia_call_handle_cast, [Msg], State) of
+        {continue, [Msg2, State2]} ->
+            lager:error("Module ~p received unexpected casr ~p", [Msg2]),
+            {noreply, State2};
+        Other ->
+            Other
+    end.
 
 
 %% @private
 -spec handle_info(term(), #state{}) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
-handle_info({launch_out, SessId}, #state{status=Status}=State)
-        when Status==calling; Status==ringing ->
+handle_info({launch_out, SessId}, #state{answered=false}=State) ->
     case find_out(SessId, State) of
         {ok, #session_out{launched=false, ring=Ring}=Out} ->
             erlang:send_after(1000*Ring, self(), {ring_timeout, SessId}),
@@ -271,7 +292,7 @@ handle_info({launch_out, SessId}, #state{status=Status}=State)
             {noreply, State}
     end;
 
-handle_info({launch_out, SessId}, State) ->
+handle_info({launch_out, SessId}, #state{answered=true}=State) ->
     {noreply, remove_out(SessId, State)};
 
 handle_info({ring_timeout, SessId}, State) ->
@@ -291,34 +312,39 @@ handle_info({ring_timeout, SessId}, State) ->
     end;
 
 handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{session_in={_, _, Ref}}=State) ->
-    ?LLOG(warning, "inbound session stopped: ~p", [Reason], State),
+    ?LLOG(warning, "inbound session process stopped: ~p", [Reason], State),
     %% Should enter into 'recovery' mode
     {stop, normal, State};
 
 handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{session_out={_, _, Ref}}=State) ->
-    ?LLOG(warning, "outbound session out stopped: ~p", [Reason], State),
+    ?LLOG(warning, "inbound session out stopped: ~p", [Reason], State),
     %% Should enter into 'recovery' mode
     {stop, normal, State};
 
-% handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{notify_refs=Refs}=State) ->
-%     case lists:keytake(Ref, 2, Refs) of
-%         {value, {Notify, Ref}, Refs2} ->
-%             ?LLOG(warning, "notify ~p stopped!: ~p", [Notify, Reason], State),
-%             %% Should call a callback and maybe enter into 'recovery' mode
-%             {stop, normal, State#state{notify_refs=Refs2}};
-%         false ->
-%             ?LLOG(warning, "unexpected DOWN: ~p", [Reason], State),
-%             {noreply, State}
-%     end;
+handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{notify_refs=Refs}=State) ->
+    case lists:keytake(Ref, 2, Refs) of
+        {value, {Notify, Ref}, Refs2} ->
+            ?LLOG(warning, "notify ~p stopped!: ~p", [Notify, Reason], State),
+            %% Should call a callback and maybe enter into 'recovery' mode
+            {stop, normal, State#state{notify_refs=Refs2}};
+        false ->
+            ?LLOG(warning, "unexpected DOWN: ~p", [Reason], State),
+            {noreply, State}
+    end;
 
 handle_info({timeout, _, status_timeout}, State) ->
     ?LLOG(info, "status timeout", [], State),
     hangup(self(), 607),
     {noreply, State};
 
-handle_info(Msg, #state{}=State) -> 
-    lager:warning("CALL INFO: ~p", [Msg]),
-    handle(nkmedia_call_handle_info, [Msg], State).
+handle_info(Msg, State) -> 
+    case handle(nkmedia_call_handle_info, [Msg], State) of
+        {continue, [Msg2, State2]} ->
+            lager:error("Module ~p received unexpected call ~p", [Msg2]),
+            {noreply, State2};
+        Other ->
+            Other
+    end.
 
 
 %% @private
@@ -344,21 +370,44 @@ terminate(Reason, State) ->
 %% Internal
 %% ===================================================================
 
+-spec get_inbound(#state{}) ->
+    #state{}.
+
+get_inbound(#state{id=CallId, srv_id=SrvId, call=#{offer:=Offer}}=State) ->
+    #{callee_id:=CalleeId} = Offer,
+    case handle(nkmedia_call_backend, [CalleeId], State) of
+        {ok, Backend, #state{call=Call2}=State2} ->
+            ?LLOG(info, "selected ~p backend", [Backend], State2),
+            Call3 = Call2#{backend=>Backend},
+            Sess = Call3#{notify => {?MODULE, CallId, self()}},
+            {ok, SessId, SessPid} = nkmedia_session:start_inbound(SrvId, Sess),
+            SessIn = {SessId, SessPid, monitor(process, SessPid)},
+            Call4 = Call3#{session_in=>SessId},
+            State3 = State2#state{call=Call4, session_in=SessIn},
+            State4 = notify({in_session_started, SessId, SessPid}, State3),
+            get_outbound(State4);
+        {hangup, Reason, State2} ->
+            ?LLOG(info, "nkmedia_call_resolve: hangup (~p)", [Reason], State),
+            hangup(self(), Reason),
+            State2
+    end.
+
 
 -spec get_outbound(#state{}) ->
     #state{}.
 
 get_outbound(#state{call=Call}=State) ->
-    #{offer:=Offer, mediaserver:=MS} = Call,
+    #{offer:=Offer, backend:=Backend} = Call,
     #{callee_id:=CalleeId} = Offer,
-    case handle(nkmedia_call_resolve, [CalleeId], State) of
+    State2 = status(calling, State),
+    case handle(nkmedia_call_resolve, [CalleeId], State2) of
         {ok, OutSpec, State3} ->
             #state{outs=Outs} = State4 = launch_outs(OutSpec, State3),
             ?LLOG(info, "resolved outs: ~p", [Outs], State4),
             case map_size(Outs) of
                 0 ->
                     hangup(self(), <<"No Destination">>);
-                Size when MS==none, Size>1 ->
+                Size when Backend==p2p, Size>1 ->
                     hangup(self(), <<"Multiple Calls Not Allowed">>);
                 _ ->
                     ok
@@ -403,24 +452,21 @@ launch_outs(Dest, State) ->
 
 %% @private
 launch_out(SessId, #session_out{dest=Dest, pos=Pos}=Out, State) ->
-    #state{
-        id = Id, 
-        call = Call, 
-        srv_id = SrvId, 
-        outs = Outs,
-        session_in = {SessIn, _, _}
-    } = State,
-    case handle(nkmedia_call_out, [Id, SessId, Dest], State) of
+    #state{id=CallId, call=Call, srv_id=SrvId, outs=Outs} = State,
+    case handle(nkmedia_call_out, [CallId, SessId, Dest], State) of
         {call, Dest2, State2} ->
+            #{backend:=Backend} = Call,
             ?LLOG(info, "launching out ~p (~p)", [Dest, Pos], State),
-            Opts = Call#{
+            Opts1 = case Backend of
+                p2p -> Call;
+                _ -> maps:remove(offer, Call)
+            end,
+            Opts2 = Opts1#{
                 id => SessId, 
-                monitor => self(),
-                nkmedia_call_id => Id,
-                nkmedia_session_id => SessIn,
+                notify => {nkmedia_call, CallId, self()}, 
                 call_dest => Dest2
             },
-            {ok, SessId, Pid} = nkmedia_session:start_outbound(SrvId, Opts),
+            {ok, SessId, Pid} = nkmedia_session:start_outbound(SrvId, Opts2),
             Out2 = Out#session_out{launched=true, pid=Pid},
             Outs2 = maps:put(SessId, Out2, Outs),
             State2#state{outs=Outs2};
@@ -443,18 +489,17 @@ find_out(SessId, #state{outs=Outs}) ->
 
 
 %% @private
-remove_out(SessId, #state{outs=Outs, status=Status}=State) ->
+remove_out(SessId, #state{outs=Outs, answered=Answered}=State) ->
     case maps:find(SessId, Outs) of
         {ok, #session_out{pos=Pos}} ->
+            ?LLOG(info, "removed out ~s (~p)", [SessId, Pos], State),
             Outs2 = maps:remove(SessId, Outs),
             case map_size(Outs2) of
-                0 when Status==calling; Status==ringing ->
+                0 when not Answered ->
                     ?LLOG(notice, "all outs removed", [], State),
                     hangup(self(), <<"No Answer">>),
                     State#state{outs=Outs2};
                 _ -> 
-                    ?LLOG(info, "removed out ~s (~p)", [SessId, Pos], State),
-                    %% We shouuld hibernate
                     State#state{outs=Outs2}
             end;
         error ->
@@ -463,41 +508,50 @@ remove_out(SessId, #state{outs=Outs, status=Status}=State) ->
 
 
 %% @private
-process_out_event({status, hangup, _Data}, State) ->
-    hangup(self(), <<"Callee Hangup">>),
+process_in_event({status, ready, _}, #state{status=calling}=State) ->
     State;
 
-process_out_event(_Event, State) ->
-    lager:warning("CALL EVENT: ~p", [_Event]),
+process_in_event(_Event, #state{status=calling}=State) ->
     State.
 
 
 %% @private
-process_call_out_event({status, calling, _Data}, _SessId, _Out, State) ->
-    State;
+process_out_event(_Event, State) ->
+    State.
 
-process_call_out_event({status, ringing, _Data}, _SessId, _Out, State) ->
-    status(ringing, State);
 
+%% @private
 process_call_out_event({status, p2p, _Data}, SessId, #session_out{pid=Pid}, State) ->
     out_answered(SessId, Pid, State);
 
 process_call_out_event({status, hangup, _Data}, SessId, _OutCall, State) ->
     remove_out(SessId, State);
     
-process_call_out_event(_Event, _SessId, _OutCall, State) ->
-    lager:warning("CALL OUT EVENT: ~p", [_Event]),
+process_call_out_event(_SessId, _OutCall, _Event, State) ->
+    lager:warning("OUT EVENT: ~p", [_Event]),
     State.
 
 
+% %% @private
+% out_ringing(SessId, SessPid, _Answer, #state{status=calling}=State) ->
+%     SessOut = {SessId, SessPid, monitor:process(SessPid)},
+%     State2 = remove_out(SessId, State#state{session_out=SessOut}),
+%     State3 = hangup_all_outs(State2),
+%     status(bridged, State3);
+
+% out_ringing(_SessId, _SessPid, _Answer, #state{answered=true}=State) ->
+%     State.
+
+
 %% @private
-out_answered(SessId, SessPid, #state{status=Status}=State)
-        when Status==calling; Status==ringing ->
+out_answered(SessId, SessPid, #state{answered=false, call=Call}=State) ->
     SessOut = {SessId, SessPid, monitor(process, SessPid)},
-    State2 = State#state{session_out=SessOut},
-    State3 = status(p2p, #{peer=>SessId}, State2),
+    Call2 = Call#{session_out=>SessId},
+    State2 = State#state{session_out=SessOut, answered=true, call=Call2},
+    State3 = notify({out_session_started, SessId, SessPid}, State2),
     State4 = remove_out(SessId, State3),
-    hangup_all_outs(State4);
+    State5 = hangup_all_outs(State4),
+    status(p2p, State5);
 
 out_answered(SessId, SessPid, State) ->
     nkmedia_session:hangup(SessPid, <<"Already Answered">>),

@@ -41,9 +41,9 @@
 
 -export([start_inbound/2, start_outbound/2, hangup_all/0]).
 -export([get_status/1, get_offer/1, get_answer/1]).
--export([hangup/1, hangup/2, to_mcu/2, to_park/1, to_join/2]).
+-export([hangup/1, hangup/2, to_call/2, to_mcu/2, to_park/1, to_join/2]).
 -export([ringing/2, answered/2]).
--export([event/3, get_all/0, find/1]).
+-export([event/3, call_event/3, get_all/0, find/1]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
 -export_type([id/0, config/0, status/0, session/0, event/0, notify/0]).
@@ -54,11 +54,7 @@
     lager:Type("NkMEDIA Session ~s (~p) "++Txt, 
                [State#state.id, State#state.status | Args])).
 
--define(DEF_WAIT_TIMEOUT, 10).
--define(DEF_RING_TIMEOUT, 30).
--define(DEF_READY_TIMEOUT, 3000).
--define(DEF_CALL_TIMEOUT, 3000).
-
+-include("nkmedia.hrl").
 
 %% ===================================================================
 %% Types
@@ -69,6 +65,7 @@
 
 -type config() :: 
     #{
+        id => id(),
         offer => nkmedia:offer(),
         notify => nkmedia:notify(),         % If supplied, call be monitorized
         backend => nkmedia:backend(),
@@ -102,7 +99,6 @@
 
 -type session() ::
     #{
-        id => id(),                     
         srv_id => nkservice:id(),
         type => inbound | outbound,
         status => status(),
@@ -218,6 +214,12 @@ hangup(SessId, Reason) ->
     do_cast(SessId, {hangup, Reason}).
 
 
+
+to_call(SessId, Dest) ->
+    do_cast(SessId, {to_call, Dest}).
+
+
+
 %% @private
 -spec to_mcu(id(), binary()) ->
     ok | {error, term()}.
@@ -291,6 +293,12 @@ event(SessId, MS, Event) ->
     end.
 
 
+%% @private
+call_event(SessPid, CallId, Event) ->
+    do_cast(SessPid, {call_event, CallId, Event}).
+
+
+
 % ===================================================================
 %% gen_server behaviour
 %% ===================================================================
@@ -304,6 +312,7 @@ event(SessId, MS, Event) ->
     ms :: mediaserver(),
     in_notify_mon :: reference(),  
     out_notify_mon :: reference(),  
+    call :: {nkmedia_call:id(), pid(), reference()},
     timer :: reference()
 }).
 
@@ -316,15 +325,19 @@ event(SessId, MS, Event) ->
 init([#{id:=Id, type:=Type, srv_id:=SrvId, mediaserver:=MS}=Session]) ->
     true = nklib_proc:reg({?MODULE, Id}),
     nklib_proc:reg(?MODULE, Id),
-    InNotify = maps:get(notify, Session, undefined),
+    % InNotify = maps:get(notify, Session, undefined),
     State = #state{
         id = Id, 
         srv_id = SrvId, 
         status = init,
         session = Session,
-        ms = MS,
-        in_notify_mon = nkmedia_util:notify_mon(InNotify)
+        ms = MS
+        % in_notify_mon = nkmedia_util:notify_mon(InNotify)
     },
+    case Session of
+        #{monitor:=Pid} -> monitor(process, Pid);
+        _ -> ok
+    end,
     lager:info("NkMEDIA Session ~s starting (~p, ~p) (~p)", 
                 [Id, Type, self(), MS]),
     gen_server:cast(self(), {start, Type}),
@@ -371,18 +384,15 @@ handle_call({to_mcu, Room}, _From, State) ->
     {reply, Reply, State};
 
 handle_call(Msg, From, State) -> 
-    case handle(nkmedia_session_handle_call, [Msg, From], State) of
-        {continue, [Msg2, _From2, State2]} ->
-            lager:error("Module ~p received unexpected call ~p", [Msg2]),
-            {noreply, State2};
-        Other ->
-            Other
-    end.
+    handle(nkmedia_session_handle_call, [Msg, From], State).
 
 
 %% @private
 -spec handle_cast(term(), #state{}) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
+
+handle_cast({start, inbound}, #state{ms=none}=State) ->
+    {noreply, status(wait, State)};
 
 handle_cast({start, inbound}, State) ->
     case send_to_ms(State) of
@@ -415,6 +425,17 @@ handle_cast({start, outbound}, State) ->
             {stop, normal, State2}
     end;
 
+handle_cast({to_call, Dest}, #state{id=Id, session=Session, ms=MS}=State) ->
+    Config1 = maps:remove(id, Session),
+    Config2 = case MS of
+        none -> Config1;
+        _ -> maps:remove(offer, Config1)
+    end,
+    Config3 = Config2#{session_id=>Id, session_pid=>self(), call_dest=>Dest}, 
+    {ok, CallId, CallPid} = nkmedia_call:start(Config3),
+    State2 = State#state{call={CallId, CallPid, monitor(process, CallPid)}},
+    {noreply, status(calling, State2)};
+
 handle_cast({ringing, Answer}, State) ->
     case do_ringing(Answer, State) of
         {ok, State2} ->
@@ -430,6 +451,9 @@ handle_cast({hangup, Reason}, State) ->
 
 handle_cast({info, Info}, State) ->
     {noreply, notify({info, Info}, State)};
+
+handle_cast({call_event, CallId, Event}, #state{call={CallId, _, _}}=State) ->
+    {noreply, call_event(Event, State)};
 
 handle_cast({ext_event, MS, stop}, #state{ms=MS}=State) ->
     ?LLOG(notice, "received status: stop", [], State),
@@ -448,13 +472,7 @@ handle_cast(stop, State) ->
     {stop, normal, State};
 
 handle_cast(Msg, State) -> 
-    case handle(nkmedia_session_handle_cast, [Msg], State) of
-        {continue, [Msg2, State2]} ->
-            lager:error("Module ~p received unexpected casr ~p", [Msg2]),
-            {noreply, State2};
-        Other ->
-            Other
-    end.
+    handle(nkmedia_session_handle_cast, [Msg], State).
 
 
 %% @private
@@ -465,6 +483,11 @@ handle_info({timeout, _, status_timeout}, State) ->
     ?LLOG(info, "status timeout", [], State),
     hangup(self(), 607),
     {noreply, State};
+
+handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{call={CallId, _, Ref}}=State) ->
+    ?LLOG(warning, "call ~s down: ~p", [CallId, Reason], State),
+    %% Should enter into 'recovery' mode
+    {stop, normal, State};
 
 handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{in_notify_mon=Ref}=State) ->
     ?LLOG(warning, "caller process stopped: ~p", [Reason], State),
@@ -477,13 +500,7 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{out_notify_mon=Ref}=Sta
     {stop, normal, State};
 
 handle_info(Msg, State) -> 
-    case handle(nkmedia_session_handle_info, [Msg], State) of
-        {continue, [Msg2, State2]} ->
-            lager:error("Module ~p received unexpected call ~p", [Msg2]),
-            {noreply, State2};
-        Other ->
-            Other
-    end.
+    handle(nkmedia_session_handle_info, [Msg], State).
 
 
 %% @private
@@ -555,18 +572,15 @@ get_from_ms(#state{ms={freeswitch, FsId}}=State) ->
 send_call(#state{id=Id, status=calling, session=Session}=State) ->
     #{call_dest:=Dest, offer:=Offer} = Session,
     case handle(nkmedia_session_out, [Id, Dest, Offer], State) of
-        {ringing, Notify, Answer, State2} ->
+        {ringing, Answer, State2} ->
             ?LLOG(info, "session ringing", [], State),
-            State3 = update_out_notify(Notify, State2),
-            do_ringing(Answer, status(ringing, State3));
-        {answer, Notify, Answer, State2} ->
+            do_ringing(Answer, status(ringing, State2));
+        {answer, Answer, State2} ->
             ?LLOG(info, "session answer", [], State),
-            State3 = update_out_notify(Notify, State2),
-            do_answer(Answer, status(ringing, State3));
-        {ok, Notify, State2} ->
+            do_answer(Answer, status(ringing, State2));
+        {ok, State2} ->
             ?LLOG(info, "session delayed", [], State),
-            State3 = update_out_notify(Notify, State2),
-            {ok, State3};
+            {ok, State2};
         {hangup, Reason, State2} ->
             ?LLOG(info, "session hangup: ~p", [Reason], State),
             hangup(self(), Reason),
@@ -703,10 +717,37 @@ process_event({mcu, McuInfo}, State) ->
 
 
 %% @private
+call_event({status, calling, _}, #state{status=calling}=State) ->
+    State;
+
+call_event({status, ringing, _}, #state{status=calling}=State) ->
+    status(ringing, State);
+
+call_event({status, p2p, #{peer:=SessId}}, #state{status=Status}=State)
+        when Status==calling; Status==ringing ->
+    status(p2p, #{peer=>SessId}, State);
+
+call_event(Event, State) ->
+    ?LLOG(warning, "call event: ~p", [Event], State),
+    State.
+
+
+
+
+
+
+
+%% @private
 do_hangup(_Reason, #state{status=hangup}=State) ->
     State;
 
-do_hangup(Reason, #state{id=SessId, ms=MS}=State) ->
+do_hangup(Reason, #state{id=SessId, ms=MS, call=Call}=State) ->
+    case Call of
+        {_CallId, CallPid, _} ->
+            nkmedia_call:hangup(CallPid, <<"Caller Stopped">>);
+        undefined ->
+            ok
+    end,
     case MS of
         {freeswitch, FsId} ->
             nkmedia_fs_cmd:hangup(FsId, SessId);
@@ -804,14 +845,7 @@ check_answer_sdp(_Answer, _State) ->
 
 
 
-%% @private
-update_out_notify(Notify, #state{session=Session}=State) ->
-    State#state{
-        out_notify_mon = nkmedia_util:notify_mon(Notify),
-        session = Session#{out_notify=>Notify}
-    }.
-
-
+%
 %% @private
 get_fs_mod(#state{session=Session}) ->
     case maps:get(sdp_type, Session, webrtc) of

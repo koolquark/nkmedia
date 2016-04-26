@@ -28,7 +28,7 @@
 
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
 -export([nkmedia_verto_login/4]).
--export([nkmedia_call_backend/2, nkmedia_call_resolve/2]).
+-export([nkmedia_call_resolve/2]).
 -export([nkmedia_call_notify/3, nkmedia_session_notify/3]).
 -export([sip_register/2]).
 
@@ -179,11 +179,9 @@ nkmedia_verto_login(VertoId, Login, Pass, Verto) ->
 
 
 
-nkmedia_call_backend(_CalleeId, Call) ->
-    {ok, p2p, Call}.
+nkmedia_call_resolve(CalleeId, Call) ->
+    lager:warning("Resolving ~s", [CalleeId]),
 
-
-nkmedia_call_resolve(CalleeId, #{backend:=p2p}=Call) ->
     case nkmedia_verto:find_user(CalleeId) of
         [Pid|_] ->
             {ok, {nkmedia_verto, Pid}, Call};
@@ -198,7 +196,7 @@ nkmedia_call_notify(CallId, Event, _Call) ->
 
 
 nkmedia_session_notify(SessId, Event, _Session) ->
-    lager:notice("Sample session notify (~s): ~pState#state{out_notify_mon = nkmedia_util:notify_mon(Notify)}", [SessId, Event]),
+    lager:notice("Sample session notify (~s): ~p", [SessId, Event]),
     continue.
 
 

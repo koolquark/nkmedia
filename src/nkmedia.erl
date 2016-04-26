@@ -25,7 +25,7 @@
 -export([start_fs/0, start_fs/1, stop_fs/0, stop_fs/1]).
 -export([nkdocker_event/2]).
 -export_type([backend/0, offer/0, answer/0, hangup_reason/0, fs_start_opts/0]).
--export_type([callee_id/0, notify/0]).
+-export_type([callee_id/0]).
 
 %% ===================================================================
 %% Types
@@ -68,10 +68,6 @@
 
 
 -type hangup_reason() :: nkmedia:hangup_reason().
-
-
--type notify() :: 
-	{Tag::term(), pid()} | {Tag::term(), Info::term(), pid()} | term().
 
 
 -type fs_start_opts() ::
