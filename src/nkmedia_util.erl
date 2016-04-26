@@ -21,36 +21,49 @@
 -module(nkmedia_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([q850_to_sip/1, q850_to_msg/1]).
--export_type([q850/0]).
+-export([get_q850/1, add_uuid/1, notify_mon/1]).
+-export_type([q850/0, hangup_reason/0]).
 
 -type q850() :: 0..609.
+-type hangup_reason() :: q850() | string() | binary().
 
 -include("nkmedia.hrl").
 
 
 %% @private
-q850_to_sip(Code) ->
-	case maps:find(Code, q850()) of
-		{ok, {Sip, _Msg}} -> Sip;
-		error -> none
-	end.
+add_uuid(#{id:=Id}=Config) when is_binary(Id) ->
+    {Id, Config};
+
+add_uuid(Config) ->
+    Id = nklib_util:uuid_4122(),
+    {Id, Config#{id=>Id}}.
 
 
 %% @private
-q850_to_msg(Code) when is_integer(Code) ->
-	case maps:find(Code, q850()) of
-		{ok, {_Sip, Msg}} -> Msg;
-		error -> <<>>
+-spec nkmedia:notify() -> 
+	reference() | undefined.
+
+notify_mon({_, Pid}) -> monitor(process, Pid);
+notify_mon({_, _, Pid}) -> monitor(process, Pid);
+notify_mon(_) -> undefined.
+
+
+%% @private
+-spec get_q850(hangup_reason()) ->
+	{q850(), binary()}.
+
+get_q850(Code) when is_integer(Code) ->
+	case maps:find(Code, q850_map()) of
+		{ok, {_Sip, Msg}} -> {Code, Msg};
+		error -> {Code, <<"UNKNOWN CODE">>}
 	end;
-
-q850_to_msg(Msg) ->
-	nklib_util:to_binary(Msg).
+get_q850(Msg) ->
+	{0, nklib_util:to_binary(Msg)}.
 
 
 
 %% @private
-q850() ->
+q850_map() ->
 	#{
 		0 => {none, <<"UNSPECIFIED">>},
 		1 => {404, <<"UNALLOCATED_NUMBER">>},
@@ -117,8 +130,6 @@ q850() ->
 		607 => {none, <<"PROGRESS_TIMEOUT">>},
 		609 => {none, <<"GATEWAY_DOWN">>}
 	}.
-
-
 
 
 

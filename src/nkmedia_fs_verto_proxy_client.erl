@@ -36,6 +36,8 @@
 -define(LLOG(Type, Txt, Args, State),
     lager:Type("NkMEDIA verto proxy client (~s) "++Txt, [State#state.remote | Args])).
 
+-define(VERTO_WS_TIMEOUT, 60*60*1000).
+
 
 %% ===================================================================
 %% Public

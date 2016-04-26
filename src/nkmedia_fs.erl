@@ -26,7 +26,7 @@
 -export([start/1, stop/1]).
 -export([start_inbound/3, start_outbound/2, channel_op/3, channel_op/4]).
 -export([config/1]).
--export_type([config/0, q850/0]).
+-export_type([config/0]).
 
 
 %% ===================================================================
@@ -76,7 +76,7 @@
     wait | park | {room, binary()} | {join, binary()} | stop | ping.
 
 
--type q850() :: nkmedia_util:q850().
+% -type q850() :: nkmedia_util:q850().
 
 
 %% @doc Called by the FS engine

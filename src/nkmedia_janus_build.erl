@@ -43,7 +43,7 @@ build_base_image() ->
 %% @doc 
 build_base_image(Config) ->
     Name = base_image_name(Config),
-    #{vsn:=Vsn} = nkmedia_fs_docker:defaults(Config),
+    #{vsn:=Vsn} = nkmedia_janus_docker:defaults(Config),
     Tar = nkdocker_util:make_tar([{"Dockerfile", base_image_dockerfile(Vsn)}]),
     nkdocker_util:build(Name, Tar).
 
@@ -98,7 +98,7 @@ remove_run_image() ->
 
 %% @doc 
 remove_run_image(Config) ->
-    Config2 = nkmedia_fs_docker:defaults(Config),
+    Config2 = nkmedia_janus_docker:defaults(Config),
     Name = run_image_name(Config2),
     case nkdocker:start_link() of
         {ok, Pid} ->
@@ -122,7 +122,7 @@ remove_run_image(Config) ->
 
 %% @private
 base_image_name(Config) ->
-    Config2 = nkmedia_fs_docker:defaults(Config),
+    Config2 = nkmedia_janus_docker:defaults(Config),
     #{comp:=Comp, vsn:=Vsn, rel:=Rel} = Config2,
     list_to_binary([Comp, "/nk_janus_base:", Vsn, "-", Rel]).
 
@@ -135,43 +135,47 @@ base_image_name(Config) ->
 base_image_dockerfile(Vsn) -> 
 <<"
 FROM debian:jessie
-RUN apt-get update && \
-  apt-get upgrade -y && \
-  apt-get install -y libmicrohttpd-dev libjansson-dev libnice-dev libssl-dev libsrtp-dev libsofia-sip-ua-dev libglib2.0-dev libopus-dev libogg-dev libini-config-dev libcollection-dev  pkg-config gengetopt libtool automake librabbitmq-dev git subversion make cmake && \
-  apt-get clean && \
-  cd /usr/src && \
-  git clone git://git.libwebsockets.org/libwebsockets && \
-  cd libwebsockets && \
-  mkdir build && \
-  cd build && \
-  cmake -DCMAKE_INSTALL_PREFIX:PATH=/usr .. && \
-  make && \
-  make install && \
-  make clean && \
-  cd /usr/src && \
-  svn co http://sctp-refimpl.googlecode.com/svn/trunk/KERN/usrsctp usrsctp && \
-  cd usrsctp && \
-  ./bootstrap && \
-  ./configure && \
-  make && \
-  make install && \
-  make clean && \
-  cd /usr/src && \
-  git clone --branch ", (nklib_util:to_binary(Vsn))/binary, 
-  " --depth 1 https://github.com/meetecho/janus-gateway && \
-  cd janus-gateway && \
-  ./autogen.sh && \
-  ./configure --disable-docs && \
-  make && \
-  make install && \
-  make configs && \
-  make clean && \
-  adduser --system janus && \
-  ldconfig
+ENV DEBIAN_FRONTEND noninteractive
+ENV APT_LISTCHANGES_FRONTEND noninteractive
+
+RUN echo \"deb http://" ?DEBIAN "/debian jessie main\\n \\
+           deb http://" ?DEBIAN "/debian jessie-updates main\\n \\
+           deb http://security.debian.org jessie/updates main \\
+        \" > /etc/apt/sources.list
+RUN apt-get update
+RUN apt-get install -y \\
+        wget vim nano telnet git build-essential libmicrohttpd-dev libjansson-dev \\
+        libnice-dev libssl-dev libsrtp-dev libsofia-sip-ua-dev libglib2.0-dev \\
+        libopus-dev libogg-dev libini-config-dev libcollection-dev pkg-config \\
+        gengetopt libtool automake librabbitmq-dev subversion make cmake && \\
+        apt-get clean
+
+WORKDIR /root
+RUN git clone git://git.libwebsockets.org/libwebsockets && \\
+    cd libwebsockets && \\
+    git checkout v1.5-chrome47-firefox41 && \\
+    mkdir build && cd build && \\
+    cmake -DCMAKE_INSTALL_PREFIX:PATH=/usr .. && \\
+    make && make install && make clean
+
+WORKDIR /root
+RUN svn co http://sctp-refimpl.googlecode.com/svn/trunk/KERN/usrsctp usrsctp && \\
+    cd usrsctp && \\
+    ./bootstrap && ./configure && make && make install && make clean
+
+WORKDIR /root
+RUN git clone --branch ", (nklib_util:to_binary(Vsn))/binary, 
+      " --depth 1 https://github.com/meetecho/janus-gateway && \\
+    cd janus-gateway && \\
+    ./autogen.sh && ./configure --prefix=/opt/janus --disable-docs && \\
+    make && make install && \\
+    make configs && make clean
+
+RUN ldconfig
+
 #EXPOSE 7088 8088 8188
-USER janus
-WORKDIR /home/janus
-ENTRYPOINT [\"janus\"]
+#USER janus
+WORKDIR /opt/janus
 ">>.
 
 
@@ -183,15 +187,9 @@ ENTRYPOINT [\"janus\"]
 
 %% @private
 run_image_name(Config) -> 
-    Config2 = nkmedia_fs_docker:defaults(Config),
+    Config2 = nkmedia_janus_docker:defaults(Config),
     #{comp:=Comp, vsn:=Vsn, rel:=Rel} = Config2,
     list_to_binary([Comp, "/nk_janus_run:", Vsn, "-", Rel]).
-
-
--define(VAR(Name), "\\\\$\\\\$\\\\{" ++ nklib_util:to_list(Name) ++ "}").
-
-%% @private
-%% Uses 
 
 
 
@@ -199,63 +197,284 @@ run_image_dockerfile(Config) ->
     list_to_binary([
 "FROM ", base_image_name(Config), "\n"
 "WORKDIR /usr/local/janus/\n"
+"ADD start.sh /usr/local/bin/"
 ]).
 
 
 
+%% Variables
 
 
-
-%% ===================================================================
-%% Utilities
-%% ===================================================================
-
-
-% replace(Text, Rep, File) ->
-%     list_to_binary([
-%         "perl -i -pe \"s/",
-%         replace_escape(Text),
-%         "/",
-%         replace_escape(Rep),
-%         "/g\""
-%         " ",
-%         File
-%     ]).
-
-
-% replace_escape(List) ->
-%     replace_escape(List, []).
-
-% replace_escape([$/|Rest], Acc) ->
-%     replace_escape(Rest, [$/, $\\|Acc]);
-
-% replace_escape([$"|Rest], Acc) ->
-%     replace_escape(Rest, [$", $\\|Acc]);
-
-% replace_escape([Ch|Rest], Acc) ->
-%     replace_escape(Rest, [Ch|Acc]);
-
-% replace_escape([], Acc) ->
-%     lists:reverse(Acc).
-
-
-
-%% Expects:
-%% - NK_FS_IP
-%% - NK_RTP_IP
-%% - NK_ERLANG_IP
-%% - NK_EXT_IP
-%% - NK_PASS
 
 run_image_start() ->
+    Base = config_base(),
+    Audiobridge = config_audiobridge(),
+    RecordPlay = config_recordplay(),
+    Sip = config_sip(),
+    Streaming = config_streaming(),
+    VideoRoom = config_videoroom(),
+    Voicemail = config_voicemail(),
 <<"
-#!/bin/bash\n
-set -e\n
+#!/bin/bash
+set -e
 export LOCAL_IP_V4=\"\\$\\${local_ip_v4}\"
 export FS_IP=\"${NK_FS_IP-$LOCAL_IP_V4}\"
 export RTP_IP=\"${NK_RTP_IP-$LOCAL_IP_V4}\"
 export ERLANG_IP=\"${NK_ERLANG_IP-127.0.0.1}\"
 export EXT_IP=\"${NK_EXT_IP-stun:stun.freeswitch.org}\"
 export PASS=\"${NK_PASS-6666}\"
-exec /usr/local/freeswitch/bin/freeswitch -nf -nonat
+
+cat > /usr/local/etc/janus/janus.cgf <<EOF", Base/binary, "EOF
+cat > /usr/local/etc/janus/janus.plugin.audiobridge.cgf <<EOF", Audiobridge/binary, "EOF
+cat > /usr/local/etc/janus/janus.plugin.echotest.cgf <<EOF ; EOF
+cat > /usr/local/etc/janus/janus.plugin.recordplay.cgf <<EOF", RecordPlay/binary, "EOF
+cat > /usr/local/etc/janus/janus.plugin.sip.cgf <<EOF", Sip/binary, "EOF
+cat > /usr/local/etc/janus/janus.plugin.streaming.cgf <<EOF", Streaming/binary, "EOF
+cat > /usr/local/etc/janus/janus.plugin.videocall.cgf <<EOF ; EOF
+cat > /usr/local/etc/janus/janus.plugin.videocall.cgf <<EOF", VideoRoom/binary, "EOF
+cat > /usr/local/etc/janus/janus.plugin.voicemail.cgf <<EOF", Voicemail/binary, "EOF
 ">>.
+
+
+%% @private
+config_base() ->
+<<"
+[general]
+configs_folder = /usr/local/etc/janus
+plugins_folder = /usr/local/lib/janus/plugins
+;interface = 1.2.3.4        ; Interface to use (will be used in SDP)
+debug_level = 4             ; Debug/logging level, valid values are 0-7
+;debug_timestamps = yes
+;debug_colors = no
+;api_secret = janusrocks
+;token_auth = yes           ; Admin API MUST be enabled
+
+[webserver]
+base_path = /janus
+threads = unlimited
+http = yes
+port = 8088
+https = no
+;secure_port = 8889
+ws = yes
+ws_port = 8188
+ws_ssl = no
+;ws_secure_port = 8989
+
+[admin]
+admin_base_path = /admin
+admin_threads = unlimited
+admin_http = no
+admin_port = 7088
+admin_https = no
+;admin_secure_port = 7889
+admin_secret = janusoverlord
+;admin_acl = 127.,192.168.0.
+
+[certificates]
+cert_pem = /usr/local/share/janus/certs/mycert.pem
+cert_key = /usr/local/share/janus/certs/mycert.key
+
+[media]
+;ipv6 = true
+;max_nack_queue = 300
+;rtp_port_range = 20000-40000
+;dtls_mtu = 1200
+
+[nat]
+;stun_server = stun.voip.eutelia.it
+;stun_port = 3478
+nice_debug = false
+;ice_lite = true        ; Default false
+;ice_tcp = true
+;nat_1_1_mapping = 1.2.3.4      ; All host candidates will have this
+;turn_server = myturnserver.com
+;turn_port = 3478
+;turn_type = udp
+;turn_user = myuser
+;turn_pwd = mypassword
+;turn_rest_api = http://yourbackend.com/path/to/api ; rfc5766-turn-server and coturn
+;turn_rest_api_key = anyapikeyyoumayhaveset
+;ice_enforce_list = eth0   ; Also 'eth0,192.168.', etc.
+ice_ignore_list = vmnet
+
+[plugins]
+; disable = libjanus_voicemail.so,libjanus_recordplay.so
+">>.
+
+
+%% @private
+config_audiobridge() -> <<"
+[1234]
+description = Demo Room
+secret = adminpwd
+sampling_rate = 16000
+record = false
+;record_file = /tmp/janus-audioroom-1234.wav
+">>.
+
+
+%% @private
+config_recordplay() -> <<"
+[general]
+path = /usr/local/share/janus/recordings
+">>.
+
+
+%% @private
+config_sip() -> <<"
+[general]
+; local_ip = 1.2.3.4        ; Guessed if omitted
+keepalive_interval = 120    ; OPTIONS, 0 to disable
+behind_nat = no         ; Use STUN
+; user_agent = Cool WebRTC Gateway
+register_ttl = 3600
+">>.
+
+
+%% @private
+config_streaming() -> <<"
+; [stream-name]
+; type = rtp|live|ondemand|rtsp
+;        rtp = stream originated by an external tool (e.g., gstreamer or
+;              ffmpeg) and sent to the plugin via RTP
+;        live = local file streamed live to multiple listeners
+;               (multiple listeners = same streaming context)
+;        ondemand = local file streamed on-demand to a single listener
+;                   (multiple listeners = different streaming contexts)
+;        rtsp = stream originated by an external RTSP feed (only
+;               available if libcurl support was compiled)
+; id = <unique numeric ID> (if missing, a random one will be generated)
+; description = This is my awesome stream
+; is_private = yes|no (private streams don't appear when you do a 'list'
+;           request)
+; secret = <optional password needed for manipulating (e.g., destroying
+;           or enabling/disabling) the stream>
+; pin = <optional password needed for watching the stream>
+; filename = path to the local file to stream (only for live/ondemand)
+; audio = yes|no (do/don't stream audio)
+; video = yes|no (do/don't stream video)
+;    The following options are only valid for the 'rtp' type:
+; audioport = local port for receiving audio frames
+; audiomcast = multicast group port for receiving audio frames, if any
+; audiocodec = <audio RTP payload type> (e.g., 111)
+; audiortpmap = RTP map of the audio codec (e.g., opus/48000/2)
+; videoport = local port for receiving video frames
+; videomcast = multicast group port for receiving video frames, if any
+; videocodec = <video RTP payload type> (e.g., 100)
+; videortpmap = RTP map of the video codec (e.g., VP8/90000)
+; url = RTSP stream URL (only for restreaming RTSP)
+;
+; To test the [gstreamer-sample] example, check the test_gstreamer.sh
+; script in the plugins/streams folder. To test the live and on-demand
+; audio file streams, instead, the install.sh installation script
+; automatically downloads a couple of files (radio.alaw, music.mulaw)
+; to the plugins/streams folder. 
+
+[gstreamer-sample]
+type = rtp
+id = 1
+description = Opus/VP8 live stream coming from gstreamer
+audio = yes
+video = yes
+audioport = 5002
+audiopt = 111
+audiortpmap = opus/48000/2
+videoport = 5004
+videopt = 100
+videortpmap = VP8/90000
+secret = adminpwd
+
+[file-live-sample]
+type = live
+id = 2
+description = a-law file source (radio broadcast)
+filename = /usr/local/share/janus/streams/radio.alaw        ; See install.sh
+audio = yes
+video = no
+secret = adminpwd
+
+[file-ondemand-sample]
+type = ondemand
+id = 3
+description = mu-law file source (music)
+filename = /usr/local/share/janus/streams/music.mulaw   ; See install.sh
+audio = yes
+video = no
+secret = adminpwd
+
+;
+; Firefox Nightly supports H.264 through Cisco's OpenH264 plugin. The only
+; supported profile is the baseline one. This is an example of how to create
+; a H.264 mountpoint: you can feed it an x264enc+rtph264pay pipeline in
+; gstreamer.
+;
+;[h264-sample]
+;type = rtp
+;id = 10
+;description = H.264 live stream coming from gstreamer
+;audio = no
+;video = yes
+;videoport = 8004
+;videopt = 126
+;videortpmap = H264/90000
+;videofmtp = profile-level-id=42e01f\;packetization-mode=1
+
+;
+; This is a sample configuration for Opus/VP8 multicast streams
+;
+;[gstreamer-multicast]
+;type = rtp
+;id = 20
+;description = Opus/VP8 live multicast stream coming from gstreamer 
+;audio = yes
+;video = yes
+;audioport = 5002
+;audiomcast = 232.3.4.5
+;audiopt = 111
+;audiortpmap = opus/48000/2
+;videoport = 5004
+;videomcast = 232.3.4.5
+;videopt = 100
+;videortpmap = VP8/90000
+
+;
+; This is a sample configuration for an RTSP stream
+; NOTE WELL: the plugin does NOT transcode, so the RTSP stream MUST be
+; in a format the browser can digest (e.g., VP8 or H.264 for video)
+;
+;[rtsp-test]
+;type = rtsp
+;id = 99
+;description = RTSP Test
+;audio = no
+;video = yes
+;url=rtsp://127.0.0.1:8554/unicast
+">>.
+
+
+%% @private
+config_videoroom() -> <<"
+[1234]
+description = Demo Room
+secret = adminpwd
+publishers = 6
+bitrate = 128000
+fir_freq = 10
+record = false
+;rec_dir = /tmp/janus-videoroom
+">>.
+
+
+%% @private
+config_voicemail() -> <<"
+[general]
+path = /tmp/voicemail/      ; In the webserver
+base = /voicemail/          ; Path to the webserver
+">>.
+
+
+%% ===================================================================
+%% Utilities
+%% ===================================================================
+

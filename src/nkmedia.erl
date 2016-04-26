@@ -24,89 +24,54 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([start_fs/0, start_fs/1, stop_fs/0, stop_fs/1]).
 -export([nkdocker_event/2]).
-
--export([t1/0, t2/0, t3/0]).
-t1() ->
-	{ok, _} = enm:start_link(),
-	Url = "ipc:///var/run/docker.sock",
-	{ok, S} = enm:req([{active, false}]),
-	{ok, _A} = enm:connect(S, Url),	
-	ok = enm:send(S, <<"GET /containers/json HTTP/1.1\r\ncontent-length: 0\r\nconnection: keep-alive\r\n\r\n">>),
-	{ok, _} = enm:recv(S, 4000),
-	receive
-        {nnrep, S, Data} ->
-        	lager:error("RECV ~p", [Data]);
-        Other ->
-        	lager:error("RECV O ~p", [Other])
-       	after 2000 ->
-       		lager:error("NOTHING")
-    end,
-    enm:close(S),
-    enm:stop().
-
-
-t2() ->
-    {ok, _} = enm:start_link(),
-    Url = "ipc:///tmp/a.ipc",
-    {ok,Rep} = enm:rep([{bind,Url}, raw]),
-    {ok,Req} = enm:req([{connect,Url}, raw]),
-
-    DateReq = <<"DATE">>,
-    io:format("sending date request~n"),
-    ok = enm:send(Req, DateReq),
-    receive
-        {nnrep,Rep,DateReq} ->
-            io:format("received date request~n"),
-            Now = httpd_util:rfc1123_date(),
-            io:format("sending date ~s~n", [Now]),
-            ok = enm:send(Rep, Now);
-        Other ->
-        	lager:error("RECV O ~p", [Other])
-       	after 2000 ->
-       		error("NOTHING")
-    end,
-    receive
-        {nnreq,Req,Date} ->
-            io:format("received date ~s~n", [Date])
-    end,
-    enm:close(Req),
-    enm:close(Rep),
-    enm:stop().
-
-
-t3() ->
-    {ok, _} = enm:start_link(),
-    Url = "ipc:///tmp/a.ipc",
-    {ok, S} = enm:pair([{active, false}]),
-    {ok, _N1} = enm:bind(S, Url),
-    {ok, _N2} = enm:connect(S, Url),
-
-    DateReq = <<"DATEDATEDATEDATEDATEDATEDATEDATEDATE">>,
-    io:format("sending date request~n"),
-    ok = enm:send(S, DateReq),
-    ok = enm:recv(S, 4000),
-    receive
-        % {nnrep,Rep,DateReq} ->
-        %     io:format("received date request~n"),
-        %     Now = httpd_util:rfc1123_date(),
-        %     io:format("sending date ~s~n", [Now]),
-        %     ok = enm:send(Rep, Now);
-        Other ->
-        	lager:error("RECV O ~p", [Other])
-       	after 2000 ->
-       		error("NOTHING")
-    end,
-    % receive
-    %     {nnreq,Req,Date} ->
-    %         io:format("received date ~s~n", [Date])
-    % end,
-    enm:close(S),
-    % enm:close(Rep),
-    enm:stop().
+-export_type([backend/0, offer/0, answer/0, hangup_reason/0, fs_start_opts/0]).
+-export_type([callee_id/0, notify/0]).
 
 %% ===================================================================
 %% Types
 %% ===================================================================
+
+
+-type backend() :: p2p | freeswitch | janus.
+
+
+-type offer() ::
+	#{
+		sdp => binary(),
+		sdp_type => sip | webrtc,
+        caller_name => binary(),
+        caller_id => binary(),
+        callee_name => binary(),
+        callee_id => callee_id(),
+        use_audio => boolean(),
+        use_stereo => boolean(),
+        use_video => boolean(),
+        use_screen => boolean(),
+        use_data => boolean(),
+        in_bw => integer(),
+        out_bw => integer(),
+		verto_params => map()
+	}.
+
+-type callee_id() :: binary().
+
+
+-type answer() ::
+	#{
+		sdp => binary(),
+		sdp_type => sip | webrtc,
+		verto_params => map(),
+        use_audio => boolean(),
+        use_video => boolean(),
+        use_data => boolean()
+	}.
+
+
+-type hangup_reason() :: nkmedia:hangup_reason().
+
+
+-type notify() :: 
+	{Tag::term(), pid()} | {Tag::term(), Info::term(), pid()} | term().
 
 
 -type fs_start_opts() ::
@@ -117,6 +82,8 @@ t3() ->
 		password => binary(),
 		docker_company => binary()
 	}.
+
+
 
 
 

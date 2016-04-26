@@ -1,6 +1,6 @@
 %% -------------------------------------------------------------------
 %%
-%% Copyright (c) 2015 Carlos Gonzalez Florido.  All Rights Reserved.
+%% Copyright (c) 2016 Carlos Gonzalez Florido.  All Rights Reserved.
 %%
 %% This file is provided to you under the Apache License,
 %% Version 2.0 (the "License"); you may not use this file
@@ -18,28 +18,31 @@
 %%
 %% -------------------------------------------------------------------
 
--ifndef(NKMEDIA_HRL_).
--define(NKMEDIA_HRL_, 1).
+%% @doc 
+-module(nkmedia_janus_demo).
+-author('Carlos Gonzalez <carlosj.gf@gmail.com>').
+
+
+-define(LLOG(Type, Txt, Args, State),
+    lager:Type("NkMEDIA Janus Demo Plugin (~s) "++Txt, [State#state.user | Args])).
+
+-define(PRINT(Txt, Args, State), 
+        print(Txt, Args, State),    % Uncomment this for detailed logs
+        ok).
+
+
+-define(OP_TIME, 15000).            % Maximum operation time
+-define(CALL_TIMEOUT, 30000).       % 
+
 
 %% ===================================================================
-%% Defines
-%% ===================================================================
-
-
-% -define(WS_TIMEOUT, 60*60*1000).
-
--define(SUPPORTED_FS, [<<"v1.6.5-r01">>]).
-
-
-
-
-
-
-%% ===================================================================
-%% Records
+%% Public
 %% ===================================================================
 
 
 
--endif.
+%% ===================================================================
+%% Public
+%% ===================================================================
+
 

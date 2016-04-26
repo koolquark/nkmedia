@@ -56,6 +56,8 @@ start(_Type, _Args) ->
         fs_version => binary,
         fs_release => binary,
         fs_password => binary,
+        janus_version => binary,
+        janus_release => binary,
         sip_port => integer,        
         no_docker => boolean
 
@@ -65,6 +67,8 @@ start(_Type, _Args) ->
         fs_version => <<"v1.6.5">>,
         fs_release => <<"r01">>,
         fs_password => <<"764123">>,
+        janus_version => <<"v0.0.9">>,
+        janus_release => <<"r01">>,
         sip_port => 0,
         no_docker => false
     },
@@ -109,7 +113,7 @@ start(_Type, _Args) ->
                     lager:warning("No docker support in config")
             end,
             {ok, Pid} = nkmedia_sup:start_link(),
-            nkmedia_sip:start(),
+            nkmedia_core_sip:start(),
             {ok, Pid};
         {error, Error} ->
             lager:error("Error parsing config: ~p", [Error]),

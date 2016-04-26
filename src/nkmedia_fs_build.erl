@@ -169,54 +169,12 @@ RUN ./bootstrap.sh -j && ./configure -C && \\
     perl -i -pe 's/#codecs\\/mod_mp4v/codecs\\/mod_mp4v/g' modules.conf && \\
     perl -i -pe 's/#formats\\/mod_vlc/formats\\/mod_vlc/g' modules.conf && \\
     perl -i -pe 's/#say\\/mod_say_es/say\\/mod_say_es/g' modules.conf && \\
-    make && make install && make megaclean && rm -rf .
+    make && make install && make megaclean
 RUN make cd-sounds-install && make cd-moh-install && make samples
 RUN ln -s /usr/local/freeswitch/bin/fs_cli /usr/local/bin/fs_cli
 ">>.
 
 
-
-
-% FROM debian:jessie
-% ENV DEBIAN_FRONTEND noninteractive
-% ENV APT_LISTCHANGES_FRONTEND noninteractive
-% WORKDIR /root
-% RUN echo \"deb http://" ?DEBIAN "/debian jessie main\\n \\
-%            deb http://" ?DEBIAN "/debian jessie-updates main\\n \\
-%            deb http://security.debian.org jessie/updates main \\
-%         \" > /etc/apt/sources.list
-% RUN apt-get update && \\
-%     apt-get install -y git wget vim nano telnet build-essential && \\
-%     echo \"deb http://files.freeswitch.org/repo/deb/freeswitch-1.6/ jessie main\" > /etc/apt/sources.list.d/99FreeSWITCH.list && \\
-%     wget http://files.freeswitch.org/repo/deb/freeswitch-1.6/key.gpg && \\
-%     apt-key add key.gpg && \\
-%     echo \"deb http://packages.erlang-solutions.com/debian jessie contrib\" > /etc/apt/sources.list.d/99ErlangSolutions.list && \\
-%     wget http://packages.erlang-solutions.com/debian/erlang_solutions.asc && \\
-%     apt-key add erlang_solutions.asc && \\
-%     apt-get update && \\
-%     apt-get install -y -o Retry=5 freeswitch-video-deps-most esl-erlang=1:17.5.3 && \\
-%     apt-get clean
-% WORKDIR /usr/src
-% RUN git clone --branch ", (nklib_util:to_binary(Vsn))/binary, 
-%     " --depth 1 https://freeswitch.org/stash/scm/fs/freeswitch.git
-% WORKDIR /usr/src/freeswitch
-% #RUN ./bootstrap.sh -j && ./configure -C && \\
-% #    perl -i -pe 's/#applications\\/mod_av/applications\\/mod_av/g' modules.conf && \\
-% #    perl -i -pe 's/#applications\\/mod_curl/applications\\/mod_curl/g' modules.conf && \\
-% #    perl -i -pe 's/#applications\\/mod_http_cache/applications\\/mod_http_cache/g' modules.conf && \\
-% #    perl -i -pe 's/#applications\\/mod_mp4/applications\\/mod_mp4/g' modules.conf && \\
-% #    perl -i -pe 's/#applications\\/mod_mp4v2/applications\\/mod_mp4v2/g' modules.conf && \\
-% #    perl -i -pe 's/#codecs\\/mod_mp4v/codecs\\/mod_mp4v/g' modules.conf && \\
-% #    perl -i -pe 's/#formats\\/mod_vlc/formats\\/mod_vlc/g' modules.conf && \\
-% #    perl -i -pe 's/#say\\/mod_say_es/say\\/mod_say_es/g' modules.conf
-% # RUN make && make install && make megaclean
-% # RUN make cd-sounds-install && make cd-moh-install && make samples
-% # RUN ln -s /usr/local/freeswitch/bin/fs_cli /usr/local/bin/fs_cli
-
-% # Demo videos
-% # WORKDIR /var/www/html/vid/
-% # RUN wget -o /dev/null -O - http://demo.freeswitch.org/vid.tgz | tar zxfv -
-% ">>.
 
 
 %% ===================================================================
@@ -586,36 +544,3 @@ replace_escape([Ch|Rest], Acc) ->
 replace_escape([], Acc) ->
     lists:reverse(Acc).
 
-
-
-% FROM debian:jessie
-% ENV DEBIAN_FRONTEND noninteractive
-% ENV APT_LISTCHANGES_FRONTEND noninteractive
-% WORKDIR /root
-% RUN apt-get update
-% RUN apt-get install -y wget git build-essential
-% RUN echo "deb http://files.freeswitch.org/repo/deb/debian/ jessie main" > /etc/apt/sources.list.d/99FreeSWITCH.list
-% RUN wget http://files.freeswitch.org/repo/deb/debian/key.gpg
-% RUN apt-key add key.gpg
-% RUN echo "deb http://packages.erlang-solutions.com/debian jessie contrib" > /etc/apt/sources.list.d/99ErlangSolutions.list
-% RUN wget http://packages.erlang-solutions.com/debian/erlang_solutions.asc
-% RUN apt-key add erlang_solutions.asc
-% RUN apt-get update
-% RUN apt-get install -y --force-yes freeswitch-video-deps-most esl-erlang=1:17.5.3 || echo "We continue with some fails ..."
-% RUN git config --global pull.rebase true
-% WORKDIR /usr/src
-% RUN git clone --depth 1 --branch v1.6.7 https://freeswitch.org/stash/scm/fs/freeswitch.git
-% WORKDIR /usr/src/freeswitch
-% RUN ./bootstrap.sh -j
-% RUN ./configure -C
-% RUN perl -i -pe 's/#applications\/mod_av/applications\/mod_av/g' modules.conf
-% RUN perl -i -pe 's/#applications\/mod_curl/applications\/mod_curl/g' modules.conf
-% RUN perl -i -pe 's/#applications\/mod_http_cache/applications\/mod_http_cache/g' modules.conf
-% RUN perl -i -pe 's/#applications\/mod_mp4/applications\/mod_mp4/g' modules.conf
-% RUN perl -i -pe 's/#applications\/mod_mp4v2/applications\/mod_mp4v2/g' modules.conf
-% RUN perl -i -pe 's/#codecs\/mod_mp4v/codecs\/mod_mp4v/g' modules.conf
-% RUN perl -i -pe 's/#formats\/mod_vlc/formats\/mod_vlc/g' modules.conf
-% RUN perl -i -pe 's/#say\/mod_say_es/say\/mod_say_es/g' modules.conf
-% RUN make && make install && make megaclean
-% RUN make cd-sounds-install && make cd-moh-install && make samples
-% RUN ln -s /usr/local/freeswitch/bin/fs_cli /usr/local/bin/fs_cli

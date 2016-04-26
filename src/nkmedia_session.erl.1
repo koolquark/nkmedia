@@ -39,8 +39,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([start_inbound/2, start_outbound/2, hangup_all/0]).
--export([get_status/1, get_offer/1, get_answer/1]).
+-export([start_inbound/2, start_outbound/2, hangup_all/0, get_offer/1, get_answer/1]).
 -export([hangup/1, hangup/2, to_mcu/2, to_park/1, to_join/2]).
 -export([ringing/2, answered/2]).
 -export([event/3, get_all/0, find/1]).
@@ -86,7 +85,7 @@
 %% Outcoming: calling | ringing
 
 -type status() ::
-    calling | ringing | ready | mcu | bridged | play | hangup | p2p.
+    calling | ringing | ready | mcu | bridged | play | hangup.
 
 -type status_info() ::
     #{
@@ -108,8 +107,7 @@
         status => status(),
         status_info => status_info(),
         answer => nkmedia:answer(),
-        mediaserver => mediaserver(),
-        out_notify => nkmedia:notify()
+        mediaserver => mediaserver()
     }.
 
 -type event() ::
@@ -187,14 +185,6 @@ get_offer(SessId) ->
 
 get_answer(SessId) ->
     do_call(SessId, get_answer).
-
-
-%% @doc
--spec get_status(id()) ->
-    {ok, status(), status_info(), integer()}.
-
-get_status(SessId) ->
-    do_call(SessId, get_status).
 
 
 %% @private
@@ -302,7 +292,8 @@ event(SessId, MS, Event) ->
     session :: session(),
     status :: status(),
     ms :: mediaserver(),
-    in_notify_mon :: reference(),  
+    notify :: [{notify(), reference()}],
+    out_notify :: notify(),
     out_notify_mon :: reference(),  
     timer :: reference()
 }).
@@ -315,7 +306,6 @@ event(SessId, MS, Event) ->
 
 init([#{id:=Id, type:=Type, srv_id:=SrvId, mediaserver:=MS}=Session]) ->
     true = nklib_proc:reg({?MODULE, Id}),
-    nklib_proc:reg(?MODULE, Id),
     InNotify = maps:get(notify, Session, undefined),
     State = #state{
         id = Id, 
@@ -323,6 +313,7 @@ init([#{id:=Id, type:=Type, srv_id:=SrvId, mediaserver:=MS}=Session]) ->
         status = init,
         session = Session,
         ms = MS,
+        in_notify = InNotify,
         in_notify_mon = nkmedia_util:notify_mon(InNotify)
     },
     lager:info("NkMEDIA Session ~s starting (~p, ~p) (~p)", 
@@ -336,21 +327,6 @@ init([#{id:=Id, type:=Type, srv_id:=SrvId, mediaserver:=MS}=Session]) ->
 -spec handle_call(term(), {pid(), term()}, #state{}) ->
     {noreply, #state{}} | {reply, term(), #state{}} |
     {stop, Reason::term(), #state{}} | {stop, Reason::term(), Reply::term(), #state{}}.
-
-handle_call({answered, Answer}, _From, State) ->
-    case do_answer(Answer, State) of
-        {ok, State2} ->
-            ?LLOG(notice, "call answered", [], State),
-            {reply, ok, State2};
-        {error, Error, State2} ->
-            ?LLOG(notice, "call answer failed: ~p", [Error], State),
-            {stop, normal, {error, call_failed}, State2}
-    end;
-
-handle_call(get_status, _From, State) ->
-    #state{status=Status, timer=Timer, session=Session} = State,
-    #{status_info:=Info} = Session,
-    {reply, {ok, Status, Info, erlang:read_timer(Timer) div 1000}, State};
 
 handle_call(get_offer, _From, #state{session=Session}=State) ->
     {reply, {ok, maps:get(offer, Session, undefined)}, State};
@@ -424,8 +400,27 @@ handle_cast({ringing, Answer}, State) ->
             {stop, normal, State}
     end;
 
+handle_cast({pre_answer, Answer}, State) ->
+    case do_answer(Answer, State) of
+        {ok, State2} ->
+            ?LLOG(notice, "call pre answered", [], State),
+            {noreply, State2};
+        {error, Error, State2} ->
+            ?LLOG(notice, "call pre answer failed: ~p", [Error], State),
+            {noreply, normal, State2}
+    end;
+
+handle_cast({answer, Answer}, State) ->
+    case do_answer(Answer, State) of
+        {ok, State2} ->
+            ?LLOG(notice, "call answered", [], State),
+            {noreply, State2};
+        {error, Error, State2} ->
+            ?LLOG(notice, "call answer failed: ~p", [Error], State),
+            {stop, normal, State2}
+    end;
+
 handle_cast({hangup, Reason}, State) ->
-    ?LLOG(notice, "ordered hangup: ~p", [Reason], State),
     process_event({hangup, Reason}, State);
 
 handle_cast({info, Info}, State) ->
@@ -585,8 +580,6 @@ do_ringing(Answer, #state{session=Session}=State) ->
             case set_answer(Answer, State) of
                 {ok, State2} -> 
                     {ok, status(ringing, State2)};
-                {p2p, State2} -> 
-                    {ok, status(ringing, State2)};
                 {error, Error} ->
                     {error, Error, State}
             end;
@@ -606,10 +599,8 @@ do_answer(Answer, #state{session=Session}=State) ->
     case {maps:is_key(sdp, Answer), maps:is_key(answer, Session)} of
         {true, false} ->
             case set_answer(Answer, State) of
-                {ok, State2} ->
+                {ok, State2} -> 
                     {ok, status(ready, State2)};
-                {p2p, State2} ->
-                    {ok, status(p2p, State2)};
                 {error, Error, State2} ->
                     {error, Error, State2}
             end;
@@ -625,7 +616,7 @@ do_answer(Answer, #state{session=Session}=State) ->
 
 %% @private
 set_answer(Answer, #state{ms=none, session=Session}=State) ->
-    {p2p, State#state{session=Session#{answer=>Answer}}};
+    {ok, State#state{session=Session#{answer=>Answer}}};
 
 set_answer(Answer, #state{ms={freeswitch, _}}=State) ->
     #state{id=SessId, session=Session} = State,
@@ -637,6 +628,7 @@ set_answer(Answer, #state{ms={freeswitch, _}}=State) ->
         {error, Error} ->
             {error, Error, State}
     end.
+
 
 
 %% @private
@@ -735,9 +727,16 @@ status(NewStatus, Info, #state{status=OldStatus, session=Session}=State) ->
 
 
 %% @private
-notify(Event, #state{id=Id}=State) ->
-    {ok, State2} = handle(nkmedia_session_notify, [Id, Event], State),
-    State2.
+notify(Event, #state{id=Id, in_notify=InNotify, out_notify=OutNotify}=State) ->
+    {ok, State2} = handle(nkmedia_session_notify, [Id, Event, InNotify], State),
+    case OutNotify of
+        undefined -> 
+            State2;
+        _ ->
+            {ok, State3} = 
+                handle(nkmedia_session_out_notify, [Id, Event, OutNotify], State2),
+            State3
+    end.
 
 
 %% @private
@@ -805,10 +804,10 @@ check_answer_sdp(_Answer, _State) ->
 
 
 %% @private
-update_out_notify(Notify, #state{session=Session}=State) ->
+update_out_notify(Notify, State) ->
     State#state{
-        out_notify_mon = nkmedia_util:notify_mon(Notify),
-        session = Session#{out_notify=>Notify}
+        out_notify = Notify,
+        out_notify_mon = nkmedia_util:notify_mon(Notify)
     }.
 
 

@@ -20,10 +20,10 @@
 
 %% @doc NkMEDIA SIP utilities
 
--module(nkmedia_sip).
+-module(nkmedia_core_sip).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/0, stop/0, register_call_id/2]).
+-export([start/0, stop/0, register_session/2]).
 -export([sip_invite/2, sip_reinvite/2, sip_bye/2]).
 
 
@@ -39,7 +39,7 @@
 
 
 %% @private
-%% Starts a nkservice called 'nkmedia_sip', listening for sip
+%% Starts a nkservice called 'nkmedia_core_sip', listening for sip
 start() ->
     Port = nkmedia_app:get(sip_port),
     Dummy = case Port of
@@ -53,29 +53,29 @@ start() ->
             false
     end,
     Opts = #{
-        class => nkmedia_sip,
-        plugins => [nkmedia_sip, nksip, nksip_trace, nksip_uac_auto_auth],
-        nksip_trace => {console, all},
+        class => nkmedia_core_sip,
+        plugins => [?MODULE, nksip, nksip_uac_auto_auth],
+        % nksip_trace => {console, all},
         sip_listen => <<"sip:all:", (nklib_util:to_binary(Port))/binary>>
     },
-    {ok, bnulhwa} = nkservice:start(nkmedia_sip, Opts),
+    {ok, SrvId} = nkservice:start(nkmedia_core_sip, Opts),
     case Dummy of
         false -> ok;
         _ -> gen_udp:close(Dummy)
     end,
-    [Listener] = nkservice:get_listeners(bnulhwa, nksip),
+    [Listener] = nkservice:get_listeners(SrvId, nksip),
     {ok, {nksip_protocol, udp, _Ip, Port2}} = nkpacket:get_local(Listener),
     nkmedia_app:put(sip_port, Port2).
 
 
 %% @private
 stop() ->
-	nkservice:stop(nkmedia_sip).
+	nkservice:stop(nkmedia_core_sip).
 
 
 %% @private
-register_call_id(Module, CallId) ->
-    nklib_proc:put({?MODULE, call, CallId}, Module).
+register_session(SessId, Module) ->
+    nklib_proc:put({?MODULE, session, SessId}, Module).
 
 
 
@@ -92,22 +92,23 @@ sip_invite(Req, Call) ->
     {ok, AOR} = nksip_request:meta(aor, Req),
     {ok, Dialog} = nksip_dialog:get_handle(Req),
     case AOR of
-        {sip, <<"nkmedia-", CallId/binary>>, _Domain} ->
-            case nklib_proc:values({?MODULE, call, CallId}) of
+        {sip, <<"nkmedia-", SessId/binary>>, _Domain} ->
+            case nklib_proc:values({?MODULE, session, SessId}) of
                 [{Module, Pid}|_] ->
                     nklib_proc:put({?MODULE, dialog, Dialog}, Module, Pid),
                     case erlang:function_exported(Module, sip_invite, 3) of
                         true ->
                             Module:sip_invite(Pid, Req, Call);
                         false ->
-                            lager:error("Unrecognized NkMEDIA SIP Call"),
+                            lager:notice("Unmanaged NkMEDIA Core SIP INVITE"),
                             {reply, decline}
                     end;
                 [] ->
-                    lager:error("Error decoding SIP PID"),
+                    lager:notice("Unmanaged NkMEDIA Core SIP INVITE"),
                     {reply, internal_error}
             end;
         _ ->
+            lager:warning("Unexpected NkMEDIA Core SIP: ~p", [AOR]),
             {reply, decline}
     end.
 
@@ -120,11 +121,11 @@ sip_reinvite(Req, Call) ->
                 true ->
                     Module:sip_reinvite(Pid, Req, Call);
                 false ->
-                    lager:warning("NcsMEDIA ignoring REINVITE"),
+                    lager:notice("Unmanaged NkMEDIA Core SIP ReINVITE"),
                     {reply, decline}
             end;
         [] ->
-            lager:warning("NcsMEDIA ignoring REINVITE"),
+            lager:notice("Unmanaged NkMEDIA Core SIP ReINVITE"),
             {reply, decline}
     end.
 
@@ -137,11 +138,10 @@ sip_bye(Req, Call) ->
                 true ->
                     Module:sip_bye(Pid, Req, Call);
                 false ->
-                    lager:warning("NcsMEDIA ignoring BYE"),
+                    lager:info("Unmanaged NkMEDIA Core SIP BYE"),
                     {reply, ok}
             end;
         [] ->
-            lager:warning("NcsMEDIA ignoring BYE"),
             {reply, ok}
     end.
     
