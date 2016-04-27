@@ -130,23 +130,29 @@ nkmedia_verto_login(_VertoId, _Login, _Pass, Verto) ->
 
 
 %% @doc Called when the client sends an INVITE
-%% If {ok, verto()} is returned, we must call nkmedia_verto:answer/3 ourselves
+%% If {ok, verto(), pid()} is returned, we must call nkmedia_verto:answer/3 ourselves
+%% A call will be added. If pid() is included, it will associated to it
 -spec nkmedia_verto_invite(call_id(), nkmedia_verto:offer(), verto()) ->
-    {ok, verto()} | {answer, nkmedia_verto:answer(), verto()} | 
+    {ok, pid()|undefined, verto()} | 
+    {answer, nkmedia_verto:answer(), pid()|undefined, verto()} | 
     {hangup, nkmedia:hangup_reason(), verto()} | continue().
 
 nkmedia_verto_invite(SessId, Offer, #{srv_id:=SrvId}=Verto) ->
-    #{callee_id:=Dest} = Offer,
+    #{dest:=Dest} = Offer,
     Spec = #{
         id => SessId, 
         offer => Offer, 
         monitor => self(),
-        nkmedia_verto => self(),    % We use it to monitor status from session
-        backend => p2p
+        nkmedia_verto => self()    % We use it to monitor status from session
     },
-    {ok, SessId, SessPid} = nkmedia_session:start_inbound(SrvId, Spec),
-    ok = nkmedia_session:to_call(SessPid, Dest),
-    {ok, Verto}.
+    case nkmedia_session:start_inbound(SrvId, Spec) of
+        {ok, SessId, SessPid} -> 
+            nkmedia_session:to_call(SessPid, Dest),
+            {ok, SessPid, Verto};
+        {error, Error} ->
+            lager:warning("Verto start_inbound error: ~p", [Error]),
+            {hangup, <<"MediaServer Error">>, Verto}
+    end.
 
 
 %% @doc Called when the client sends an ANSWER
@@ -162,7 +168,7 @@ nkmedia_verto_answer(_CallId, _Answer, Verto) ->
     {ok, verto()} | continue().
 
 nkmedia_verto_bye(CallId, Verto) ->
-    nkmedia_session:hangup(CallId, <<"User Bye">>),
+    nkmedia_session:hangup(CallId, <<"User Hangup">>),
     {ok, Verto}.
 
 
@@ -221,14 +227,19 @@ nkmedia_session_event(SessId, {status, hangup, _}, #{nkmedia_verto:=Pid}) ->
     nkmedia_verto:hangup(Pid, SessId),
     continue;
 
+
+%% The 'ready' event is launched by both sessions
 nkmedia_session_event(SessId, {status, ready, #{answer:=Answer}}, 
-                      #{nkmedia_verto:=Pid}) ->
+                      #{type:=inbound, nkmedia_verto:=Pid}) ->
     ok = nkmedia_verto:answer(Pid, SessId, Answer#{monitor=>self()}),
     continue;
 
-% nkmedia_session_event(SessId, {status, Status, _}, #{nkmedia_verto:=_Pid}) ->
-%     lager:notice("Verto status (~s): ~p", [SessId, Status]),
-%     continue;
+nkmedia_session_event(_SessId, {status, ready, _}, _Session) ->
+    continue;
+
+nkmedia_session_event(SessId, {status, Status, Data}, #{nkmedia_verto:=_}) ->
+    lager:notice("Verto status (~s): ~p, ~p", [SessId, Status, Data]),
+    continue;
 
 nkmedia_session_event(_SessId, _Event, _Session) ->
     continue.
@@ -241,7 +252,7 @@ nkmedia_session_out(SessId, {nkmedia_verto, Pid}, Offer, Session) ->
         fun() ->
             case nkmedia_verto:invite(Pid, SessId, Offer#{monitor=>Self}) of
                 {answered, Answer} ->
-                    ok = nkmedia_session:answered(SessId, Answer);
+                    ok = nkmedia_session:reply_answered(SessId, Answer);
                 hangup ->
                     nkmedia_session:hangup(SessId, <<"Verto User Hangup">>);
                 {error, Error} ->
@@ -249,18 +260,19 @@ nkmedia_session_out(SessId, {nkmedia_verto, Pid}, Offer, Session) ->
                     nkmedia_session:hangup(SessId, <<"Verto Invite Error">>)
             end
         end),
-    {ringing, #{}, Session#{nkmedia_verto=>Pid}};
+    {ringing, #{}, Pid, Session#{nkmedia_verto=>Pid}};
 
 nkmedia_session_out(_SessId, _Dest, _Offer, _Session) ->
     continue.
 
 
 %% @private
-nkmedia_call_resolve(CalleeId, Call) ->
-    case nkmedia_verto:find_user(CalleeId) of
+nkmedia_call_resolve(#{dest:=Dest}, Call) ->
+    case nkmedia_verto:find_user(Dest) of
         [Pid|_] ->
             {ok, {nkmedia_verto, Pid}, Call};
         [] ->
+            lager:notice("Verto: user ~s not found", [Dest]),
             {hangup, <<"Verto No User">>, Call}
     end.
 

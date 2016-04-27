@@ -30,6 +30,9 @@ eunit:
 shell:
 	erl -config util/shell_app.config -args_file util/shell_vm.args -s nkmedia_app $(RELOADER)
 
+sample:
+	erl -config util/shell_app.config -args_file util/shell_vm.args -s nkmedia_app -s nkmedia_sample $(RELOADER)
+
 shell2:
 	erl -config util/shell_app.config -args_file util/shell_vm.args $(RELOADER)
 

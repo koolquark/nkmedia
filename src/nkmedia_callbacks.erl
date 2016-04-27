@@ -24,16 +24,16 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
+-export([nkmedia_session_init/2, nkmedia_session_terminate/2, 
+		 nkmedia_session_event/3, nkmedia_session_out/4, 
+		 nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2, 
+		 nkmedia_session_handle_info/2]).
+-export([nkmedia_session_get_backend/1, nkmedia_session_get_mediaserver/2]).
 -export([nkmedia_call_init/2, nkmedia_call_terminate/2, 
 		 nkmedia_call_resolve/2, nkmedia_call_out/3, 
 		 nkmedia_call_event/3, 
 		 nkmedia_call_handle_call/3, nkmedia_call_handle_cast/2, 
 		 nkmedia_call_handle_info/2]).
--export([nkmedia_session_init/2, nkmedia_session_terminate/2, 
-		 nkmedia_session_event/3, nkmedia_session_out/4, 
-		 nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2, 
-		 nkmedia_session_handle_info/2]).
--export([nkmedia_session_get_mediaserver/1]).
 
 -export([nkdocker_notify/2]).
 
@@ -97,6 +97,14 @@ nkmedia_session_terminate(_Reason, Session) ->
 	{ok, Session}.
 
 
+%% @doc Called to select the backend for this session
+-spec nkmedia_session_get_backend(session()) ->
+	{ok, nkmedia:backend(), session()}.
+
+nkmedia_session_get_backend(Config) ->
+	{ok, p2p, Config}.
+
+
 %% @doc Called when the status of the session changes
 -spec nkmedia_session_event(nkmedia_session:id(), nkmedia_session:event(), session()) ->
 	{ok, session()} | continue().
@@ -117,9 +125,9 @@ nkmedia_session_event(SessId, Event, Session) ->
 %% session
 -spec nkmedia_session_out(session_id(), nkmedia_session:call_dest(), 
 						  nkmedia:offer(), session()) ->
-	{ringing, nkmedia:notify(), nkmedia:answer()|#{}, session()} |	% Answer optional
-	{answer, nkmedia:notify(), nkmedia:answer()|#{}, session()} |   % Answer optional
-	{ok, nkmedia:notify(), session()} | 			     		    % (if not in ringing)
+	{ringing, nkmedia:answer(), pid()|undefined,  session()} |	% Answer optional
+	{answer, nkmedia:answer(), pid()|undefined, session()} |    % Answer optional
+	{async, pid()|undefined, session()} | 			     	    %   (if not in ringing)
 	{hangup, nkmedia:hangup_reason(), session()}.
 
 nkmedia_session_out(_SessId, _CallDest, _Offer, Session) ->
@@ -153,23 +161,22 @@ nkmedia_session_handle_info(Msg, Session) ->
 	{noreply, Session}.
 
 
-
 %% @private
--spec nkmedia_session_get_mediaserver(nkmedia:backend()) ->
-	{ok, nkmedia_session:mediaserver()} | {error, term()}.
+-spec nkmedia_session_get_mediaserver(nkmedia:backend(), session()) ->
+	{ok, nkmedia_session:mediaserver(), session()} | {error, term()}.
 
-nkmedia_session_get_mediaserver(p2p) ->
-	{ok, none};
+nkmedia_session_get_mediaserver(p2p, Session) ->
+	{ok, none, Session};
 
-nkmedia_session_get_mediaserver(freeswitch) ->
+nkmedia_session_get_mediaserver(freeswitch, Session) ->
 	case nkmedia_fs_engine:get_all() of
         [{FsId, _}|_] ->
-			{ok, {freeswitch, FsId}};
+			{ok, {freeswitch, FsId}, Session};
        	[] ->
-       		{error, no_mediaserver_avialable}
+       		{error, no_mediaserver_available}
     end;
 
-nkmedia_session_get_mediaserver(Backend) ->
+nkmedia_session_get_mediaserver(Backend, _Session) ->
 	{error, {unknown_backend, Backend}}.
 
 

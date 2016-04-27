@@ -28,6 +28,7 @@
 
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
 -export([nkmedia_verto_login/4]).
+-export([nkmedia_session_get_backend/1, nkmedia_call_resolve/2]).
 % -export([nkmedia_call_event/3, nkmedia_session_event/3]).
 -export([sip_register/2]).
 
@@ -177,21 +178,25 @@ nkmedia_verto_login(VertoId, Login, Pass, Verto) ->
     end.
 
 
-% nkmedia_call_event(CallId, Event, _Call) ->
-%     lager:notice("Sample call notify (~s): ~p", [CallId, Event]),
-%     continue.
+nkmedia_session_get_backend(#{offer:=#{dest:=Dest}}=Session) ->
+    case Dest of
+        <<"d", _/binary>> -> 
+            {ok, p2p, Session};
+        <<"j", _/binary>> -> 
+            {ok, janus, Session};
+        _ -> 
+            {ok, freeswitch, Session}
+    end.
 
 
-
-% nkmedia_session_event(SessId, Event, _Session) ->
-%     lager:notice("Sample session notify (~s): ~p", [SessId, Event]),
-%     continue.
-
-% nkmedia_verto_dtmf(CallId, DTMF, #{user:=User}=State) ->
-%     lager:notice("DTMF: ~s, ~s", [User, CallId, DTMF]),
-%     {ok, State}.
-
-
+%% @private
+nkmedia_call_resolve(#{dest:=Dest}=Offer, Call) ->
+    Offer2 = case Dest of
+        <<"d", Rest/binary>> -> Offer#{dest:=Rest};
+        <<"j", Rest/binary>> -> Offer#{dest:=Rest};
+        _ -> Offer
+    end,
+    {continue, [Offer2, Call]}.
 
 
 

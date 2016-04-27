@@ -65,17 +65,12 @@
 %% @doc Starts a new verto session and place an inbound call with the same 
 %% CallId as the SessId.
 -spec start_in(id(), nkmedia_fs_engine:id(), nkmedia:offer()) ->
-    {ok, SDP::binary(), pid()} | {error, term()}.
+    {ok, SDP::binary()} | {error, term()}.
 
 start_in(SessId, FsId, Offer) ->
     case start(SessId, FsId) of
         {ok, SessPid} ->
-            case invite(SessPid, SessId, Offer#{callee_id=><<"nkmedia_in">>}) of
-                {ok, Answer} ->
-                    {ok, Answer, SessPid};
-                {error, Error} ->
-                    {error, Error}
-            end;
+            invite(SessPid, SessId, Offer#{callee_id=><<"nkmedia_in">>});
         {error, Error} ->
             {error, Error}
     end.

@@ -29,7 +29,7 @@
 %% - Creates an outbound session for each destination
 %% - The first on that replies 'ringing' switches state to 'ringing'
 %% - The first that answers is selected as outbound sessions, and the rest
-%%   ringin are stopped. Status changes to 'bridged' or 'p2p'
+%%   ringin are stopped. Status changes to 'bridged'
 %% - If the caller or the outbound sessions stops, the call stops and 
 %%   hangups the outbound session.
 
@@ -67,15 +67,17 @@
         offer => nkmedia:offer(),               % Must include sdp and callee_id
         session_id => nkmedia_session:id(),
         session_pid => pid(),
+        offer => nkmedia:offer(),
         mediaserver => nkmedia_session:mediaserver(),
+        wait_timeout => integer(),              % For outbound call
         ring_timeout => integer(),          
         call_timeout => integer(),
-        term() => term()                         % User defined
+        term() => term()                        % User defined
     }.
 
 
 -type status() ::
-    calling | ringing | bridged | p2p | hangup.
+    calling | ringing | ready | hangup.
 
 
 -type status_info() :: nkmedia_session:status_info().
@@ -155,10 +157,10 @@ get_status(SessId) ->
 
 %% @private
 -spec get_all() ->
-    [{id(), pid()}].
+    [{id(), nkmedia_session:id(), pid()}].
 
 get_all() ->
-    nklib_proc:values(?MODULE).
+    [{Id, SessId, Pid} || {{Id, SessId}, Pid} <- nklib_proc:values(?MODULE)].
 
 
 %% ===================================================================
@@ -200,7 +202,7 @@ session_event(CallId, SessId, Event) ->
 
 init([#{id:=Id, srv_id:=SrvId, session_id:=SessId, session_pid:=SessPid}=Call]) ->
     true = nklib_proc:reg({?MODULE, Id}),
-    nklib_proc:put(?MODULE, Id),
+    nklib_proc:put(?MODULE, {Id, SessId}),
     State = #state{
         id = Id, 
         srv_id = SrvId, 
@@ -302,7 +304,7 @@ handle_info({launch_out, SessId}, State) ->
 handle_info({ring_timeout, SessId}, State) ->
     case find_out(SessId, State) of
         {ok, #session_out{dest=Dest, pos=Pos, launched=Launched}} ->
-            ?LLOG(notice, "call ring timeout for ~p (~p, ~s)", 
+            ?LLOG(info, "call ring timeout for ~p (~p, ~s)", 
                   [Dest, Pos, SessId], State),
             case Launched of
                 true -> 
@@ -347,7 +349,7 @@ code_change(OldVsn, State, Extra) ->
     ok.
 
 terminate(Reason, State) ->
-    ?LLOG(info, "stopped (~p)", [Reason], State),
+    ?LLOG(info, "stopped: ~p", [Reason], State),
     catch handle(nkmedia_call_terminate, [Reason], State),
     % Probably it is already
     _ = stop_hangup(<<"Session Stop">>, State). 
@@ -391,7 +393,7 @@ launch_outs(Dest, State) ->
 launch_out(SessId, #session_out{dest=Dest, pos=Pos}=Out, State) ->
     #state{
         id = Id, 
-        call = Call, 
+        call = #{mediaserver:=MS} = Call, 
         srv_id = SrvId, 
         outs = Outs
         % session_in = {SessIn, _, _}
@@ -405,7 +407,11 @@ launch_out(SessId, #session_out{dest=Dest, pos=Pos}=Out, State) ->
                 call_dest => Dest2,
                 nkmedia_call_id => Id
             },
-            {ok, SessId, Pid} = nkmedia_session:start_outbound(SrvId, Opts),
+            Opts2 = case MS of
+                none -> Opts;
+                _ -> maps:remove(offer, Opts)
+            end,
+            {ok, SessId, Pid} = nkmedia_session:start_outbound(SrvId, Opts2),
             Out2 = Out#session_out{launched=true, pid=Pid},
             Outs2 = maps:put(SessId, Out2, Outs),
             {noreply, State2#state{outs=Outs2}};
@@ -451,7 +457,7 @@ process_out_event({status, hangup, _Data}, State) ->
     stop_hangup(<<"Callee Hangup">>, State);
 
 process_out_event(Event, State) ->
-    ?LLOG(warning, "outbound sesion event: ~p", [Event], State),
+    ?LLOG(warning, "outbound session event: ~p", [Event], State),
     {noreply, State}.
 
 
@@ -462,14 +468,14 @@ process_call_out_event({status, calling, _Data}, _SessId, _Out, State) ->
 process_call_out_event({status, ringing, Data}, _SessId, _Out, State) ->
     {noreply, status(ringing, Data, State)};
 
-process_call_out_event({status, p2p, Data}, SessId, #session_out{pid=Pid}, State) ->
+process_call_out_event({status, ready, Data}, SessId, #session_out{pid=Pid}, State) ->
     out_answered(SessId, Pid, Data, State);
 
 process_call_out_event({status, hangup, _Data}, SessId, _OutCall, State) ->
     remove_out(SessId, State);
     
 process_call_out_event(Event, _SessId, _OutCall, State) ->
-    ?LLOG(warning, "out sesion event: ~p", [Event], State),
+    ?LLOG(warning, "out session event: ~p", [Event], State),
     {noreply, State}.
 
 
@@ -479,7 +485,7 @@ out_answered(SessId, SessPid, Data, #state{status=Status}=State)
     SessOut = {SessId, SessPid, monitor(process, SessPid)},
     State2 = State#state{session_out=SessOut},
     State3 = hangup_all_outs(State2),
-    {noreply, status(p2p, Data#{peer=>SessId}, State3)};
+    {noreply, status(ready, Data#{peer_id=>SessId}, State3)};
 
 out_answered(SessId, _SessPid, _Data, State) ->
     nkmedia_session:hangup(SessId, <<"Already Answered">>),
@@ -526,35 +532,21 @@ status(Status, State) ->
 
 %% @private
 status(Status, _Info, #state{status=Status}=State) ->
-    restart_timer(State);
+    State;
 
 status(NewStatus, Info, #state{call=Call}=State) ->
-    State2 = restart_timer(State#state{status=NewStatus}),
-    State3 = State2#state{call=Call#{status=>NewStatus, status_info=>Info}},
-    ?LLOG(info, "status changes to ~p", [NewStatus], State3),
-    event({status, NewStatus, Info}, State3).
+    ?LLOG(info, "status changed to ~p", [NewStatus], State),
+    State2 = State#state{
+        status = NewStatus,
+        call= Call#{status=>NewStatus, status_info=>Info}
+    },
+    event({status, NewStatus, Info}, State2).
 
 
 %% @private
 event(Event, #state{id=Id}=State) ->
     {ok, State2} = handle(nkmedia_call_event, [Id, Event], State),
     State2.
-
-
-%% @private
-restart_timer(#state{status=hangup, timer=Timer}=State) ->
-    nklib_util:cancel_timer(Timer),
-    State;
-
-restart_timer(#state{status=Status, timer=Timer, call=Call}=State) ->
-    nklib_util:cancel_timer(Timer),
-    Time = case Status of
-        calling -> maps:get(ring_timeout, Call, ?DEF_RING_TIMEOUT);
-        ringing -> maps:get(ring_timeout, Call, ?DEF_RING_TIMEOUT);
-        _ -> maps:get(call_timeout, Call, ?DEF_CALL_TIMEOUT)
-    end,
-    NewTimer = erlang:start_timer(1000*Time, self(), status_timeout),
-    State#state{timer=NewTimer}.
 
 
 %% @private

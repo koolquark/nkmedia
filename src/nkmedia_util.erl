@@ -21,16 +21,16 @@
 -module(nkmedia_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([get_q850/1, add_uuid/1, notify_refs/2]).
--export_type([q850/0, hangup_reason/0, notify/0, notify_refs/0]).
+-export([get_q850/1, add_uuid/1]).
+-export_type([q850/0, hangup_reason/0]).
 
 -type q850() :: 0..609.
 -type hangup_reason() :: q850() | string() | binary().
 
--type notify() :: 
-	{Tag::term(), pid()} | {Tag::term(), Info::term(), pid()} | term().
+% -type notify() :: 
+% 	{Tag::term(), pid()} | {Tag::term(), Info::term(), pid()} | term().
 
--type notify_refs() :: [{notify(), reference()|undefined}].
+% -type notify_refs() :: [{notify(), reference()|undefined}].
 
 -include("nkmedia.hrl").
 
@@ -45,23 +45,23 @@ add_uuid(Config) ->
 
 
 
-%% @private
--spec notify_refs(notify()|[notify()], notify_refs()) ->
-	notify_refs().
+% %% @private
+% -spec notify_refs(notify()|[notify()], notify_refs()) ->
+% 	notify_refs().
 
-notify_refs([], Notifies) ->
-	Notifies;
+% notify_refs([], Notifies) ->
+% 	Notifies;
 
-notify_refs([Notify|Rest], Notifies) ->
-	Term = case Notify of
-		{_, Pid} when is_pid(Pid) -> {Notify, monitor(process, Pid)};
-		{_, _, Pid} when is_pid(Pid) -> {Notify, monitor(process, Pid)};
-		_ -> {Notify, undefined}
-	end,
-	notify_refs(Rest, [Term|Notifies]);
+% notify_refs([Notify|Rest], Notifies) ->
+% 	Term = case Notify of
+% 		{_, Pid} when is_pid(Pid) -> {Notify, monitor(process, Pid)};
+% 		{_, _, Pid} when is_pid(Pid) -> {Notify, monitor(process, Pid)};
+% 		_ -> {Notify, undefined}
+% 	end,
+% 	notify_refs(Rest, [Term|Notifies]);
 
-notify_refs(Other, Notifies) ->
-	notify_refs([Other], Notifies).
+% notify_refs(Other, Notifies) ->
+% 	notify_refs([Other], Notifies).
 
 
 

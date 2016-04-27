@@ -22,7 +22,7 @@
 -module(nkmedia_verto).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([invite/3, answer/3, hangup/2, hangup/3, set_monitor/3, del_monitor/2]).
+-export([invite/3, answer/3, hangup/2, hangup/3]).
 -export([find_user/1, find_call_id/1, get_all/0]).
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_handle_call/4, 
@@ -38,8 +38,8 @@
         ok).
 
 
--define(OP_TIME, 15000).            % Maximum operation time
--define(CALL_TIMEOUT, 30000).       % 
+-define(OP_TIMEOUT, 15).            % Maximum operation time (not for invite)
+-define(CALL_TIMEOUT, 180).         % 
 
 
 
@@ -87,9 +87,6 @@ invite(Pid, CallId, Offer) ->
 
 
 %% @doc Sends an ANSWER (only sdp is used in answer())
-%% A new call will be added (see find_call_id/1)
-%% If 'monitor' is used, this process will be monitorized 
-%% and the call will be hangup if it fails before a hangup is sent or received
 -spec answer(pid(), call_id(), answer()) ->
     ok | {error, term()}.
 
@@ -112,16 +109,6 @@ hangup(Pid, CallId) ->
 
 hangup(Pid, CallId, Reason) ->
     gen_server:cast(Pid, {hangup, CallId, Reason}).
-
-
-%% @private
-set_monitor(Pid, CallId, CallPid) ->
-    gen_server:cast(Pid, {set_monitor, CallId, CallPid}).
-
-
-%% @private
-del_monitor(Pid, CallId) ->
-    gen_server:cast(Pid, {del_monitor, CallId}).
 
 
 %% @doc Gets the pids() for currently logged user
@@ -199,7 +186,7 @@ conn_init(NkPort) ->
     Verto = #{remote=>Remote, srv_id=>SrvId},
     State1 = #state{srv_id=SrvId, session_ops=#{}, verto=Verto},
     nklib_proc:put(?MODULE, <<>>),
-    ?LLOG(info, "new connection (~p, ~p)", [SrvId, self()], State1),
+    lager:info("NkMEDIA Verto new connection (~s, ~p)", [Remote, self()]),
     {ok, State2} = handle(nkmedia_verto_init, [NkPort], State1),
     {ok, State2}.
 
@@ -365,16 +352,21 @@ conn_stop(Reason, _NkPort, State) ->
 
 %% @private
 handle_op({invite, CallId, Opts}, From, NkPort, State) ->
-    State2 = add_call(CallId, Opts, State),
+    Pid = maps:get(monitor, Opts, undefined),
+    State2 = add_call(CallId, Pid, State),
     send_client_req({invite, CallId, Opts}, From, NkPort, State2);
 
 handle_op({answer, CallId, Opts}, From, NkPort, State) ->
-    State2 = add_call(CallId, Opts, State),
-    send_client_req({answer, CallId, Opts}, From, NkPort, State2);
+    send_client_req({answer, CallId, Opts}, From, NkPort, State);
 
-handle_op({hangup, CallId, Reason}, From, NkPort, State) ->
-    State2 = del_call(CallId, State),
-    send_client_req({hangup, CallId, Reason}, From, NkPort, State2);
+handle_op({hangup, CallId, Reason}, From, NkPort, #state{calls=Calls}=State) ->
+    case maps:is_key(CallId, Calls) of
+        true ->
+            State2 = del_call(CallId, State),
+            send_client_req({hangup, CallId, Reason}, From, NkPort, State2);
+        false ->
+            {ok, State}
+    end;
 
 handle_op(_Op, _From, _NkPort, _State) ->
     unknown_op.
@@ -455,20 +447,22 @@ process_client_req(<<"verto.invite">>, Msg, NkPort, State) ->
         verto_params => Params
     },
     case handle(nkmedia_verto_invite, [CallId, Offer], State) of
-        {ok, State2} -> 
+        {ok, Pid, State2} -> 
             ok;
-        {answer, Answer, State2} -> 
+        {answer, Answer, Pid, State2} -> 
             gen_server:cast(self(), {answer, CallId, Answer});
         {hangup, Reason, State2} -> 
+            Pid = undefined,
             hangup(self(), CallId, Reason)
     end,
+    State3 = add_call(CallId, Pid, State2),
     Data = #{
         <<"callID">> => CallId,
         <<"message">> => <<"CALL CREATED">>,
         <<"sessid">> => SessionId
     },
     Resp = nkmedia_fs_util:verto_resp(Data, Msg),
-    send(Resp, NkPort, State2);
+    send(Resp, NkPort, State3);
 
 process_client_req(<<"verto.answer">>, Msg, NkPort, State) ->
     #{<<"params">> := #{
@@ -500,7 +494,6 @@ process_client_req(<<"verto.answer">>, Msg, NkPort, State) ->
 process_client_req(<<"verto.bye">>, Msg, NkPort, State) ->
     #{<<"params">> := #{<<"dialogParams">>:=Params,  <<"sessid">>:=SessId}} = Msg,
     #{<<"callID">> := CallId} = Params,
-    nklib_proc:del({?MODULE, call, CallId}),
     case extract_op({wait_answer, CallId}, State) of
         not_found ->
             State2 = State;
@@ -566,7 +559,7 @@ process_client_resp(#session_op{from=From}, Resp, _Msg, _NkPort, State) ->
 
 %% @private
 call(VertoPid, Msg) ->
-    nklib_util:call(VertoPid, Msg, ?CALL_TIMEOUT).
+    nklib_util:call(VertoPid, Msg, 1000*?CALL_TIMEOUT).
 
 
 %% @private
@@ -603,10 +596,14 @@ make_msg(Id, {hangup, CallId, Reason}, _State) ->
 
 %% @private
 insert_op(OpId, Type, From, #state{session_ops=AllOps}=State) ->
+    Time = case OpId of
+        {wait_answer, _} -> ?CALL_TIMEOUT;
+        _ -> ?OP_TIMEOUT
+    end,
     NewOp = #session_op{
         type = Type,
         from = From,
-        timer = erlang:start_timer(?OP_TIME, self(), {op_timeout, OpId})
+        timer = erlang:start_timer(1000*Time, self(), {op_timeout, OpId})
     },
     State#state{session_ops=maps:put(OpId, NewOp, AllOps)}.
 
@@ -624,14 +621,20 @@ extract_op(OpId, #state{session_ops=AllOps}=State) ->
 
 
 %% @private
-add_call(CallId, Opts, #state{calls=Calls}=State) ->
+add_call(CallId, Pid, #state{calls=Calls}=State) ->
     nklib_proc:put({?MODULE, call, CallId}),
-    Call = case maps:get(monitor, Opts, undefined) of
-        Pid when is_pid(Pid) -> monitor(process, Pid);
-        _ -> undefined
-    end,
-    Calls2 = maps:put(CallId, Call, Calls),
-    State#state{calls=Calls2}.
+    case maps:is_key(CallId, Calls) of
+        false ->
+            Ref = case is_pid(Pid) of
+                true -> monitor(process, Pid);
+                _ -> undefined
+            end,
+            Calls2 = maps:put(CallId, Ref, Calls),
+            State#state{calls=Calls2};
+        true ->
+            ?LLOG(notice, "duplicated reg!", [], State),
+            State
+    end.
 
 
 %% @private
