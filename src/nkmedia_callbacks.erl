@@ -25,12 +25,12 @@
 
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
 -export([nkmedia_call_init/2, nkmedia_call_terminate/2, 
-		 nkmedia_call_resolve/2, nkmedia_call_out/4, 
-		 nkmedia_call_notify/3, 
+		 nkmedia_call_resolve/2, nkmedia_call_out/3, 
+		 nkmedia_call_event/3, 
 		 nkmedia_call_handle_call/3, nkmedia_call_handle_cast/2, 
 		 nkmedia_call_handle_info/2]).
 -export([nkmedia_session_init/2, nkmedia_session_terminate/2, 
-		 nkmedia_session_notify/3, nkmedia_session_out/4, 
+		 nkmedia_session_event/3, nkmedia_session_out/4, 
 		 nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2, 
 		 nkmedia_session_handle_info/2]).
 -export([nkmedia_session_get_mediaserver/1]).
@@ -98,10 +98,10 @@ nkmedia_session_terminate(_Reason, Session) ->
 
 
 %% @doc Called when the status of the session changes
--spec nkmedia_session_notify(nkmedia_session:id(), nkmedia_session:event(), session()) ->
+-spec nkmedia_session_event(nkmedia_session:id(), nkmedia_session:event(), session()) ->
 	{ok, session()} | continue().
 
-nkmedia_session_notify(SessId, Event, Session) ->
+nkmedia_session_event(SessId, Event, Session) ->
 	case Session of
 		#{nkmedia_call_id:=CallId} ->
 			nkmedia_call:session_event(CallId, SessId, Event);
@@ -198,10 +198,10 @@ nkmedia_call_terminate(_Reason, Call) ->
 
 
 %% @doc Called when the status of the call changes
--spec nkmedia_call_notify(call_id(), nkmedia_call:event(), call()) ->
+-spec nkmedia_call_event(call_id(), nkmedia_call:event(), call()) ->
 	{ok, call()} | continue().
 
-nkmedia_call_notify(CallId, Event, Call) ->
+nkmedia_call_event(CallId, Event, Call) ->
 	case Call of
 		#{session_id:=SessionId} ->
 			nkmedia_session:call_event(SessionId, CallId, Event);
@@ -211,36 +211,24 @@ nkmedia_call_notify(CallId, Event, Call) ->
 	{ok, Call}.
 
 
-% %% @doc Called when a call specificatio must be resolved
-% -spec nkmedia_call_backend(nkmedia:offer(), call()) ->
-% 	{ok, nkmedia:backend(), call()} | 
-% 	{hangup, nkmedia:hangup_reason(), call()} |
-% 	continue().
-
-% nkmedia_call_backend(_Offer, Call) ->
-% 	{hangup, <<"No Backend">>, Call}.
-
-
 %% @doc Called when a call specificatio must be resolved
 -spec nkmedia_call_resolve(nkmedia:offer(), call()) ->
 	{ok, nkmedia_call:call_out_spec(), call()} | 
 	{hangup, nkmedia:hangup_reason(), call()} |
-	{error, binary(), call()} | 
 	continue().
 
 nkmedia_call_resolve(_Offer, Call) ->
-	{error, <<"Unknown Destination">>, Call}.
+	{hangup,  <<"Unknown Destination">>, Call}.
 
 
 %% @doc Called when an outbound call is scheduled to be sent
--spec nkmedia_call_out(call_id(), session_id(), 
-							nkmedia_session:call_dest(), call()) ->
+-spec nkmedia_call_out(session_id(), nkmedia_session:call_dest(), call()) ->
 	{call, nkmedia_session:call_dest(), call()} | 
 	{retry, Secs::pos_integer(), call()} | 
 	{remove, call()} | 
 	continue().
 
-nkmedia_call_out(_CallId, _SessId, Dest, Call) ->
+nkmedia_call_out(_SessId, Dest, Call) ->
 	{call, Dest, Call}.
 
 

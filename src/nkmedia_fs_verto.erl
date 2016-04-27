@@ -578,7 +578,7 @@ process_server_event(_Event, _NkPort, State) ->
 
 %% @private
 session_event(Status, #state{sess_id=SessId, fs_id=FsId}=State) ->
-   nkmedia_session:event(SessId, {freeswitch, FsId}, Status),
+   nkmedia_session:ms_event(SessId, {freeswitch, FsId}, Status),
    State.
 
 

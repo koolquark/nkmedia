@@ -29,7 +29,8 @@
          nkmedia_verto_dtmf/3, nkmedia_verto_terminate/2,
          nkmedia_verto_handle_call/3, nkmedia_verto_handle_cast/2,
          nkmedia_verto_handle_info/2]).
--export([nkmedia_session_out/4, nkmedia_session_notify/3]).
+-export([nkmedia_session_out/4, nkmedia_session_event/3]).
+-export([nkmedia_call_resolve/2]).
 
 
 -define(VERTO_WS_TIMEOUT, 60*60*1000).
@@ -116,7 +117,7 @@ plugin_stop(Config, #{name:=Name}) ->
     {ok, verto()}.
 
 nkmedia_verto_init(_NkPort, Verto) ->
-    {ok, Verto#{calls=>#{}}}.
+    {ok, Verto}.
 
 
 %% @doc Called when a login request is received
@@ -135,19 +136,17 @@ nkmedia_verto_login(_VertoId, _Login, _Pass, Verto) ->
     {hangup, nkmedia:hangup_reason(), verto()} | continue().
 
 nkmedia_verto_invite(SessId, Offer, #{srv_id:=SrvId}=Verto) ->
+    #{callee_id:=Dest} = Offer,
     Spec = #{
         id => SessId, 
         offer => Offer, 
         monitor => self(),
-        nkmedia_verto => self()
+        nkmedia_verto => self(),    % We use it to monitor status from session
+        backend => p2p
     },
     {ok, SessId, SessPid} = nkmedia_session:start_inbound(SrvId, Spec),
-    #{callee_id:=Dest} = Offer,
-    nkmedia_session:to_call(SessPid, Dest),
+    ok = nkmedia_session:to_call(SessPid, Dest),
     {ok, Verto}.
-
-    % Sess = #call{type=call, mon=monitor(process, SessPid)},
-    % {ok, Verto#{calls:=maps:put(calls, Call, Calls)}}.
 
 
 %% @doc Called when the client sends an ANSWER
@@ -217,42 +216,53 @@ nkmedia_verto_handle_info(Msg, Verto) ->
 %% ===================================================================
 
 
-nkmedia_session_notify(SessId, {status, hangup, _}, #{nkmedia_verto:=Pid}) ->
+%% @private
+nkmedia_session_event(SessId, {status, hangup, _}, #{nkmedia_verto:=Pid}) ->
     nkmedia_verto:hangup(Pid, SessId),
     continue;
 
-nkmedia_session_notify(SessId, {status, p2p, #{peer:=PeerId}}, #{nkmedia_verto:=Pid}) ->
-    {ok, Answer} = nkmedia_session:get_answer(PeerId),
-    nkmedia_verto:answer(Pid, SessId, Answer),
+nkmedia_session_event(SessId, {status, ready, #{answer:=Answer}}, 
+                      #{nkmedia_verto:=Pid}) ->
+    ok = nkmedia_verto:answer(Pid, SessId, Answer#{monitor=>self()}),
     continue;
 
-nkmedia_session_notify(SessId, {status, Status, _}, #{nkmedia_verto:=_Pid}) ->
-    lager:notice("Verto status (~s): ~p", [SessId, Status]),
-    continue;
+% nkmedia_session_event(SessId, {status, Status, _}, #{nkmedia_verto:=_Pid}) ->
+%     lager:notice("Verto status (~s): ~p", [SessId, Status]),
+%     continue;
 
-nkmedia_session_notify(_SessId, _Event, _Session) ->
+nkmedia_session_event(_SessId, _Event, _Session) ->
     continue.
 
 
+%% @private
 nkmedia_session_out(SessId, {nkmedia_verto, Pid}, Offer, Session) ->
     Self = self(),
     spawn_link(
         fun() ->
             case nkmedia_verto:invite(Pid, SessId, Offer#{monitor=>Self}) of
                 {answered, Answer} ->
-                    nkmedia_session:answered(SessId, Answer);
+                    ok = nkmedia_session:answered(SessId, Answer);
                 hangup ->
-                    lager:info("Verto user hangup"),
-                    nkmedia_session:hangup(SessId);
+                    nkmedia_session:hangup(SessId, <<"Verto User Hangup">>);
                 {error, Error} ->
                     lager:warning("Error calling invite: ~p", [Error]),
-                    nkmedia_session:hangup(SessId)
+                    nkmedia_session:hangup(SessId, <<"Verto Invite Error">>)
             end
         end),
     {ringing, #{}, Session#{nkmedia_verto=>Pid}};
 
 nkmedia_session_out(_SessId, _Dest, _Offer, _Session) ->
     continue.
+
+
+%% @private
+nkmedia_call_resolve(CalleeId, Call) ->
+    case nkmedia_verto:find_user(CalleeId) of
+        [Pid|_] ->
+            {ok, {nkmedia_verto, Pid}, Call};
+        [] ->
+            {hangup, <<"Verto No User">>, Call}
+    end.
 
 
 

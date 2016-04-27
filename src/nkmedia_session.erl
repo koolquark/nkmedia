@@ -23,17 +23,19 @@
 % There are two types of sessions:
 
 %  - inbound sessions: 
-%     You MUST supply an sdp_offer. Will start in 'wait' state.
+%     You MUST supply an offer. 
 %     If you supply a backend, it wil be placed there, and enter the 'ready'
 %     state. You can call get_answer/1 to get the answering SDP.
 %     You can send them to an mcu, bridge, etc.
+%     If you don't supply a mediaserver, will stay in 'wait' state
 %
 % - oubound sessions:
-%     You MUST supply a 'call_to' parameter
+%     You MUST supply a 'call_dest' parameter
 %     If you supply an sdp_offer, it will be used.
 %     If you don't supply an sdp_offer. You MUST supply a backend.
 %     The backend will make an sdp_offer, and send the call
 %     The session will start in 'ready' state.
+
 
 -module(nkmedia_session).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
@@ -42,11 +44,11 @@
 -export([start_inbound/2, start_outbound/2, hangup_all/0]).
 -export([get_status/1, get_offer/1, get_answer/1]).
 -export([hangup/1, hangup/2, to_call/2, to_mcu/2, to_park/1, to_join/2]).
--export([ringing/2, answered/2]).
--export([event/3, call_event/3, get_all/0, find/1]).
+-export([reply_ringing/2, reply_answered/2]).
+-export([ms_event/3, call_event/3, get_all/0, find/1]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
--export_type([id/0, config/0, status/0, session/0, event/0, notify/0]).
+-export_type([id/0, config/0, status/0, session/0, event/0]).
 -export_type([call_dest/0]).
 
 
@@ -67,60 +69,55 @@
     #{
         id => id(),
         offer => nkmedia:offer(),
-        notify => nkmedia:notify(),         % If supplied, call be monitorized
+        monitor => pid(), 
         backend => nkmedia:backend(),
-        call_dest => call_dest(),
-        calling_timeout => integer(),          % Secs
-        ring_timeout => integer(),          
+        call_dest => call_dest(),              % For outbound sessions 
+        wait_timeout => integer(),             % Secs
         ready_timeout => integer(),
-        call_timeout => integer()
+        calling_timeout => integer(),          
+        ring_timeout => integer(),          
+        call_timeout => integer(),
+        term() => term()
 }.
 
 -type call_dest() :: term().
 
 
-%% Common: ready | mcu | bridged | play | hangup
-%% Outcoming: calling | ringing
-
 -type status() ::
-    calling | ringing | ready | mcu | bridged | play | hangup | p2p.
+    wait | calling | ringing | ready | bridged | mcu | play | hangup.
+
 
 -type status_info() ::
     #{
-        peer => id(),
-
-        room_name => binary(),
+        dest => binary(),                       % For calling
+        answer => nkmedia:answer(),             % For ringing, ready, p2p
+        peer => id(),                           % Bridged, p2p
+        room_name => binary(),                  % For mcu
         room_member => binary(),
-
-        hangup_code => nkmedia_util:q850(),
-        hangup_reson => binary()
+        hangup_reason => nkmedia_util:hangup_reason()
     }.
 
 
 -type session() ::
+    config () | 
     #{
         srv_id => nkservice:id(),
         type => inbound | outbound,
         status => status(),
         status_info => status_info(),
         answer => nkmedia:answer(),
-        mediaserver => mediaserver(),
-        out_notify => nkmedia:notify()
+        mediaserver => mediaserver()
     }.
 
 -type event() ::
-    {status, status(), status_info()} | {info, term()} |
-    {session_linked, id()}.
-
-
--type notify() :: {Tag::term(), pid()} | {Tag::term(), pid(), term()}.
+    {status, status(), status_info()} | {info, term()}.
 
 
 -type mediaserver() :: 
     {freeswitch, binary()} | {janus, binary()} | none.
 
 
--type ext_event() ::
+-type ms_event() ::
     parked | {hangup, term()} | {bridge, id()} | {mcu, map()}.
 
 
@@ -214,10 +211,12 @@ hangup(SessId, Reason) ->
     do_cast(SessId, {hangup, Reason}).
 
 
+%% @doc Starts a new call inside the session
+-spec to_call(id(), binary()) ->
+    ok | {error, term()}.
 
 to_call(SessId, Dest) ->
     do_cast(SessId, {to_call, Dest}).
-
 
 
 %% @private
@@ -244,20 +243,20 @@ to_join(SessId, OtherSessId) ->
     do_call(SessId, {to_join, OtherSessId}).
 
 
-%% @private Inform to the session that the call is ringing, maybe with early media
--spec ringing(id(), nkmedia:answer()) ->
+%% @private Called when an outbound process delayed the response
+-spec reply_ringing(id(), nkmedia:answer()) ->
     ok | {error, term()}.
 
-ringing(SessId, Answer) ->
-    do_cast(SessId, {ringing, Answer}).
+reply_ringing(SessId, Data) ->
+    do_cast(SessId, {reply_ringing, Data}).
 
 
-%% @private Inform to the session that the call is answered
--spec answered(id(), nkmedia:answer()) ->
+%% @private Called when an outbound process delayed the response
+-spec reply_answered(id(), nkmedia:answer()) ->
     ok | {error, term()}.
 
-answered(SessId, Answer) ->
-    do_call(SessId, {answered, Answer}).
+reply_answered(SessId, Data) ->
+    do_cast(SessId, {reply_answered, Data}).
 
 
 %% @private
@@ -278,11 +277,11 @@ get_all() ->
 
 %% @private Called from nkmedia_fs_engine and nkmedia_fs_verto
 
--spec event(id(), mediaserver(), ext_event()) ->
+-spec ms_event(id(), mediaserver(), ms_event()) ->
     ok.
 
-event(SessId, MS, Event) ->
-    case do_cast(SessId, {ext_event, MS, Event}) of
+ms_event(SessId, MS, Event) ->
+    case do_cast(SessId, {ms_event, MS, Event}) of
         ok -> 
             ok;
         {error, _} when Event==stop ->
@@ -310,8 +309,6 @@ call_event(SessPid, CallId, Event) ->
     session :: session(),
     status :: status(),
     ms :: mediaserver(),
-    in_notify_mon :: reference(),  
-    out_notify_mon :: reference(),  
     call :: {nkmedia_call:id(), pid(), reference()},
     timer :: reference()
 }).
@@ -325,14 +322,12 @@ call_event(SessPid, CallId, Event) ->
 init([#{id:=Id, type:=Type, srv_id:=SrvId, mediaserver:=MS}=Session]) ->
     true = nklib_proc:reg({?MODULE, Id}),
     nklib_proc:reg(?MODULE, Id),
-    % InNotify = maps:get(notify, Session, undefined),
     State = #state{
         id = Id, 
         srv_id = SrvId, 
         status = init,
         session = Session,
         ms = MS
-        % in_notify_mon = nkmedia_util:notify_mon(InNotify)
     },
     case Session of
         #{monitor:=Pid} -> monitor(process, Pid);
@@ -349,16 +344,6 @@ init([#{id:=Id, type:=Type, srv_id:=SrvId, mediaserver:=MS}=Session]) ->
 -spec handle_call(term(), {pid(), term()}, #state{}) ->
     {noreply, #state{}} | {reply, term(), #state{}} |
     {stop, Reason::term(), #state{}} | {stop, Reason::term(), Reply::term(), #state{}}.
-
-handle_call({answered, Answer}, _From, State) ->
-    case do_answer(Answer, State) of
-        {ok, State2} ->
-            ?LLOG(notice, "call answered", [], State),
-            {reply, ok, State2};
-        {error, Error, State2} ->
-            ?LLOG(notice, "call answer failed: ~p", [Error], State),
-            {stop, normal, {error, call_failed}, State2}
-    end;
 
 handle_call(get_status, _From, State) ->
     #state{status=Status, timer=Timer, session=Session} = State,
@@ -404,22 +389,12 @@ handle_cast({start, inbound}, State) ->
     end;
 
 handle_cast({start, outbound}, #state{session=#{offer:=_Offer}}=State) ->
-    case send_call(status(calling, State)) of
-        {ok, State2} ->
-            {noreply, State2};
-        {error, Error} ->
-            {error, Error}
-    end;
+    send_call(State);
 
 handle_cast({start, outbound}, State) ->
     case get_from_ms(State) of
         {ok, State2} ->
-            case send_call(status(calling, State2)) of
-                {ok, State3} ->
-                    {noreply, State3};
-                {error, Error} ->
-                    {error, Error}
-            end;
+            send_call(State2);
         {error, Error, State2} ->
             ?LLOG(warning, "could not place outcoming call in ms: ~p", [Error], State),
             {stop, normal, State2}
@@ -431,41 +406,43 @@ handle_cast({to_call, Dest}, #state{id=Id, session=Session, ms=MS}=State) ->
         none -> Config1;
         _ -> maps:remove(offer, Config1)
     end,
-    Config3 = Config2#{session_id=>Id, session_pid=>self(), call_dest=>Dest}, 
-    {ok, CallId, CallPid} = nkmedia_call:start(Config3),
+    Config3 = Config2#{session_id=>Id, session_pid=>self()}, 
+    {ok, CallId, CallPid} = nkmedia_call:start(Dest, Config3),
     State2 = State#state{call={CallId, CallPid, monitor(process, CallPid)}},
-    {noreply, status(calling, State2)};
-
-handle_cast({ringing, Answer}, State) ->
-    case do_ringing(Answer, State) of
-        {ok, State2} ->
-            {noreply, State2};
-        {error, Error} ->
-            ?LLOG(warning, "error processing ringing: ", [Error], State),
-            {stop, normal, State}
-    end;
+    {noreply, status(calling, #{dest=>Dest}, State2)};
 
 handle_cast({hangup, Reason}, State) ->
-    ?LLOG(notice, "ordered hangup: ~p", [Reason], State),
-    process_event({hangup, Reason}, State);
+    ?LLOG(info, "external hangup: ~p", [Reason], State),
+    stop_hangup(Reason, State);
 
 handle_cast({info, Info}, State) ->
-    {noreply, notify({info, Info}, State)};
+    {noreply, event({info, Info}, State)};
 
 handle_cast({call_event, CallId, Event}, #state{call={CallId, _, _}}=State) ->
-    {noreply, call_event(Event, State)};
+    do_call_event(Event, State);
 
-handle_cast({ext_event, MS, stop}, #state{ms=MS}=State) ->
+handle_cast({call_event, CallId, Event}, State) ->
+    ?LLOG(warning, "received unexpected call event from ~s (~p)", 
+          [CallId, Event], State),
+    {noreply, State};
+
+handle_cast({ms_event, MS, stop}, #state{ms=MS}=State) ->
     ?LLOG(notice, "received status: stop", [], State),
     {stop, normal, State};
 
-handle_cast({ext_event, MS, Event}, #state{ms=MS}=State) ->
+handle_cast({ms_event, MS, Event}, #state{ms=MS}=State) ->
     ?LLOG(notice, "received event: ~p", [Event], State),
-    process_event(Event, State);
+    do_ms_event(Event, State);
 
-handle_cast({ext_event, StatusMS, _Status}, #state{ms=MS}=State) ->
+handle_cast({ms_event, StatusMS, _Status}, #state{ms=MS}=State) ->
     ?LLOG(warning, "received status from ms ~p (current is ~p)", [StatusMS, MS], State),
     {noreply, State};
+
+handle_cast({reply_ringing, Answer}, State) ->
+    do_ringing(Answer, State);
+
+handle_cast({reply_answered, Answer}, State) ->
+    do_answer(Answer, State);
 
 handle_cast(stop, State) ->
     ?LLOG(notice, "user stop", [], State),
@@ -481,21 +458,17 @@ handle_cast(Msg, State) ->
 
 handle_info({timeout, _, status_timeout}, State) ->
     ?LLOG(info, "status timeout", [], State),
-    hangup(self(), 607),
-    {noreply, State};
+    stop_hangup(607, State);
 
-handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{call={CallId, _, Ref}}=State) ->
+handle_info({'DOWN', _Ref, process, Pid, Reason}, 
+            #state{session=#{monitor:=Pid}}=State) ->
+    ?LLOG(warning, "monitor down!: ~p", [Reason], State),
+    %% Should enter into 'recovery' mode
+    {stop, normal, State};
+
+handle_info({'DOWN', Ref, process, _Pid, Reason}, 
+            #state{call={CallId, _, Ref}}=State) ->
     ?LLOG(warning, "call ~s down: ~p", [CallId, Reason], State),
-    %% Should enter into 'recovery' mode
-    {stop, normal, State};
-
-handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{in_notify_mon=Ref}=State) ->
-    ?LLOG(warning, "caller process stopped: ~p", [Reason], State),
-    %% Should enter into 'recovery' mode
-    {stop, normal, State};
-
-handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{out_notify_mon=Ref}=State) ->
-    ?LLOG(warning, "outbound call process stopped: ~p", [Reason], State),
     %% Should enter into 'recovery' mode
     {stop, normal, State};
 
@@ -517,9 +490,9 @@ code_change(OldVsn, State, Extra) ->
     ok.
 
 terminate(Reason, State) ->
+    ?LLOG(info, "stopped (~p)", [Reason], State),
     catch handle(nkmedia_session_terminate, [Reason], State),
-    State2 = do_hangup("Session Stop", State), % Probably it is already
-    ?LLOG(info, "stopped (~p)", [Reason], State2).
+    _ = stop_hangup(<<"Session Stop">>, State).
 
 
 % ===================================================================
@@ -547,7 +520,7 @@ send_to_ms(#state{ms={freeswitch, FsId}}=State) ->
         {ok, Answer} ->
             %% TODO Send and receive pings
             Session2 = Session#{answer:=Answer},
-            {ok, status(ready, State#state{session=Session2})};
+            {ok, status(ready, Answer, State#state{session=Session2})};
         {error, Error} ->
             {error, {backend_start_error, Error}, State}
     end.
@@ -569,87 +542,83 @@ get_from_ms(#state{ms={freeswitch, FsId}}=State) ->
 
 
 %% @private
-send_call(#state{id=Id, status=calling, session=Session}=State) ->
+send_call(#state{id=Id, session=Session}=State) ->
     #{call_dest:=Dest, offer:=Offer} = Session,
+    State2 = status(calling, State),
     case handle(nkmedia_session_out, [Id, Dest, Offer], State) of
         {ringing, Answer, State2} ->
-            ?LLOG(info, "session ringing", [], State),
-            do_ringing(Answer, status(ringing, State2));
+            do_ringing(Answer, State2);
         {answer, Answer, State2} ->
             ?LLOG(info, "session answer", [], State),
-            do_answer(Answer, status(ringing, State2));
+            do_answer(Answer, State2);
         {ok, State2} ->
             ?LLOG(info, "session delayed", [], State),
-            {ok, State2};
+            {noreply, State2};
         {hangup, Reason, State2} ->
             ?LLOG(info, "session hangup: ~p", [Reason], State),
-            hangup(self(), Reason),
-            {ok, State2}
+            stop_hangup(Reason, State2)
     end.
 
 
 %% @private
-do_ringing(_Answer, #state{status=Status}=State) 
-        when Status/=calling, Status/=ringing ->
-    {error, {invalid_status, Status}, State};
-
-do_ringing(Answer, #state{session=Session}=State) ->
-    case {maps:is_key(sdp, Answer), maps:is_key(answer, Session)} of
-        {true, false} ->
+do_ringing(Answer, #state{status=calling}=State) ->
+    case Answer of
+        #{sdp:=_} ->
             case set_answer(Answer, State) of
                 {ok, State2} -> 
-                    {ok, status(ringing, State2)};
-                {p2p, State2} -> 
-                    {ok, status(ringing, State2)};
+                    {noreply, status(ringing, Answer, State2)};
                 {error, Error} ->
-                    {error, Error, State}
+                    stop_hangup(Error, State)
             end;
-        {true, true} ->
-            check_answer_sdp(Answer, Session),
-            {ok, status(ringing, State)};
-        {false, _} ->
-            {ok, status(ringing, State)}
-    end.
+        _ ->
+            {noreply, status(ringing, Answer, State)}
+    end;
+
+do_ringing(_Answer, State) ->
+    {noreply, State}.
 
 
 %% @private
 do_answer(_Answer, #state{status=Status}=State) when Status/=calling, Status/=ringing ->
-    {error, {invalid_status, Status}, State};
+    ?LLOG(warning, "received unexpected answer", [], State),
+    {noreply, State};
 
-do_answer(Answer, #state{session=Session}=State) ->
-    case {maps:is_key(sdp, Answer), maps:is_key(answer, Session)} of
-        {true, false} ->
-            case set_answer(Answer, State) of
-                {ok, State2} ->
-                    {ok, status(ready, State2)};
-                {p2p, State2} ->
-                    {ok, status(p2p, State2)};
-                {error, Error, State2} ->
-                    {error, Error, State2}
-            end;
-        {true, true} ->
-            check_answer_sdp(Answer, Session),
-            {ok, status(ready, State)};
-        {false, true} ->
-            {ok, status(ready, State)};
-        {false, false} ->
-            {error, missing_sdp, State}
-    end.
+do_answer(#{sdp:=SDP}=New, #state{session=#{answer:=Answer}}=State) ->
+    case Answer of
+        #{sdp:=SDP} ->
+            {noreply, status(ready, #{answer=>New}, State)};
+        _ ->
+            ?LLOG(warning, "ignoring updated SDP!", [], State),
+            {noreply, status(ready, #{answer=>Answer}, State)}
+    end;
+
+do_answer(#{sdp:=_}=Answer, State) ->
+    case set_answer(Answer, State) of
+        {ok, State2} ->
+            {noreply, status(ready, Answer, State2)};
+        {error, Error} ->
+            stop_hangup(Error, State)
+    end;
+
+do_answer(_Answer, State) ->
+    stop_hangup(<<"Missing SDP">>, State).
 
 
 %% @private
 set_answer(Answer, #state{ms=none, session=Session}=State) ->
-    {p2p, State#state{session=Session#{answer=>Answer}}};
+    Session2 = Session#{answer:=Answer},
+    {ok, State#state{session=Session2}};
 
 set_answer(Answer, #state{ms={freeswitch, _}}=State) ->
     #state{id=SessId, session=Session} = State,
     Mod = get_fs_mod(State),
     case Mod:answer_out(SessId, Answer) of
         ok ->
-            Session2 = Session#{answer:=Answer},
+            Session2 = Session#{answer=>Answer},
             {ok, State#state{session=Session2}};
         {error, Error} ->
-            {error, Error, State}
+            ?LLOG(warning, "mediaserver error in set_answer: ~p", [Error], State),
+            {error, <<"Mediaserver Error">>}
     end.
 
 
@@ -684,7 +653,6 @@ send_to_bridge(_SessIdB, #state{ms=MS}) ->
     {error, {invalid_backend, MS}}.
 
 
-
 %% @private
 send_to_park(#state{status=Status}=State) 
         when Status==wait; Status==ringing ->
@@ -699,49 +667,55 @@ send_to_park(#state{ms=MS}) ->
 
 
 %% @private
-process_event(parked, #state{status=ready}=State) ->
+do_ms_event(parked, #state{status=ready}=State) ->
     {noreply, State};
 
-process_event(parked, #state{status=Status}=State) ->
+do_ms_event(parked, #state{status=Status}=State) ->
     ?LLOG(notice, "received parked in '~p'", [Status], State),
     {noreply, status(ready, State)};
 
-process_event({hangup, Reason}, State) ->
-    {stop, normal, do_hangup(Reason, State)};
+do_ms_event({hangup, Reason}, State) ->
+    stop_hangup(Reason, State);
 
-process_event({bridge, Remote}, State) ->
+do_ms_event({bridge, Remote}, State) ->
     {noreply, status(bridged, #{peer=>Remote}, State)};
 
-process_event({mcu, McuInfo}, State) ->
-    {noreply, status(mcu, McuInfo, State)}.
+do_ms_event({mcu, McuInfo}, State) ->
+    {noreply, status(mcu, McuInfo, State)};
+
+do_ms_event(Event, State) ->
+    ?LLOG(warning, "unexpected ms event: ~p", [Event], State),
+    {noreply, State}.
 
 
 %% @private
-call_event({status, calling, _}, #state{status=calling}=State) ->
-    State;
+do_call_event({status, calling, _}, #state{status=calling}=State) ->
+    {noreply, State};
 
-call_event({status, ringing, _}, #state{status=calling}=State) ->
-    status(ringing, State);
+do_call_event({status, ringing, Data}, #state{status=calling}=State) ->
+    {noreply, status(ringing, Data, State)};
 
-call_event({status, p2p, #{peer:=SessId}}, #state{status=Status}=State)
+do_call_event({status, ringing, _Data}, #state{status=ringig}=State) ->
+    {noreply, State};
+
+do_call_event({status, ready, Data}, #state{status=Status}=State)
         when Status==calling; Status==ringing ->
-    status(p2p, #{peer=>SessId}, State);
+    {noreply, status(ready, Data, State)};
 
-call_event(Event, State) ->
-    ?LLOG(warning, "call event: ~p", [Event], State),
-    State.
+do_call_event({status, hangup, #{hangup_reason:=Reason}}, #state{status=Status}=State)
+        when Status==calling; Status==ringing; Status==p2p ->
+    stop_hangup(Reason, State);
 
-
-
-
-
+do_call_event(Event, State) ->
+    ?LLOG(warning, "unexpected call event: ~p", [Event], State),
+    {noreply, State}.
 
 
 %% @private
-do_hangup(_Reason, #state{status=hangup}=State) ->
-    State;
+stop_hangup(_Reason, #state{status=hangup}=State) ->
+    {stop, normal, State};
 
-do_hangup(Reason, #state{id=SessId, ms=MS, call=Call}=State) ->
+stop_hangup(Reason, #state{id=SessId, ms=MS, call=Call}=State) ->
     case Call of
         {_CallId, CallPid, _} ->
             nkmedia_call:hangup(CallPid, <<"Caller Stopped">>);
@@ -754,8 +728,7 @@ do_hangup(Reason, #state{id=SessId, ms=MS, call=Call}=State) ->
         _ ->
             ok
     end,
-    Info = #{q850=>nkmedia_util:get_q850(Reason)},
-    status(hangup, Info, State).
+    {stop, normal, status(hangup, #{hangup_reason=>Reason}, State)}.
 
 
 %% @private
@@ -768,16 +741,16 @@ status(Status, _Info, #state{status=Status}=State) ->
     restart_timer(State);
 
 %% @private
-status(NewStatus, Info, #state{status=OldStatus, session=Session}=State) ->
+status(NewStatus, Info, #state{session=Session}=State) ->
     State2 = restart_timer(State#state{status=NewStatus}),
     State3 = State2#state{session=Session#{status=>NewStatus, status_info=>Info}},
-    ?LLOG(info, "status ~p -> ~p", [OldStatus, NewStatus], State3),
-    notify({status, NewStatus, Info}, State3).
+    ?LLOG(info, "status changed to ~p", [NewStatus], State3),
+    event({status, NewStatus, Info}, State3).
 
 
 %% @private
-notify(Event, #state{id=Id}=State) ->
-    {ok, State2} = handle(nkmedia_session_notify, [Id, Event], State),
+event(Event, #state{id=Id}=State) ->
+    {ok, State2} = handle(nkmedia_session_event, [Id, Event], State),
     State2.
 
 
@@ -789,10 +762,10 @@ restart_timer(#state{status=hangup, timer=Timer}=State) ->
 restart_timer(#state{status=Status, timer=Timer, session=Session}=State) ->
     nklib_util:cancel_timer(Timer),
     Time = case Status of
-        wait -> maps:get(ait_timeout, Session, ?DEF_WAIT_TIMEOUT);
+        wait -> maps:get(wait_timeout, Session, ?DEF_WAIT_TIMEOUT);
+        ready -> maps:get(ready_timeout, Session, ?DEF_READY_TIMEOUT);
         calling -> maps:get(calling_timeout, Session, ?DEF_RING_TIMEOUT);
         ringing -> maps:get(ring_timeout, Session, ?DEF_RING_TIMEOUT);
-        ready -> maps:get(ready_timeout, Session, ?DEF_READY_TIMEOUT);
         _ -> maps:get(call_timeout, Session, ?DEF_CALL_TIMEOUT)
     end,
     NewTimer = erlang:start_timer(1000*Time, self(), status_timeout),
@@ -836,16 +809,6 @@ do_cast(SessId, Msg) ->
     end.
 
 
-%% @private
-check_answer_sdp(#{sdp:=SDP1}, #state{session=#{answer:=#{sdp:=SDP2}}}=State) 
-        when SDP1 /= SDP2 ->
-    ?LLOG(warning, "ignoring updated SDP!", [], State);
-check_answer_sdp(_Answer, _State) ->
-    ok. 
-
-
-
-%
 %% @private
 get_fs_mod(#state{session=Session}) ->
     case maps:get(sdp_type, Session, webrtc) of

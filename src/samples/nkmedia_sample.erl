@@ -28,8 +28,7 @@
 
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
 -export([nkmedia_verto_login/4]).
--export([nkmedia_call_resolve/2]).
--export([nkmedia_call_notify/3, nkmedia_session_notify/3]).
+% -export([nkmedia_call_event/3, nkmedia_session_event/3]).
 -export([sip_register/2]).
 
 -include("nkmedia.hrl").
@@ -178,28 +177,15 @@ nkmedia_verto_login(VertoId, Login, Pass, Verto) ->
     end.
 
 
-
-nkmedia_call_resolve(CalleeId, Call) ->
-    lager:warning("Resolving ~s", [CalleeId]),
-
-    case nkmedia_verto:find_user(CalleeId) of
-        [Pid|_] ->
-            {ok, {nkmedia_verto, Pid}, Call};
-        [] ->
-            {hangup, <<"No User">>, Call}
-    end.
-
-nkmedia_call_notify(CallId, Event, _Call) ->
-    lager:notice("Sample call notify (~s): ~p", [CallId, Event]),
-    continue.
+% nkmedia_call_event(CallId, Event, _Call) ->
+%     lager:notice("Sample call notify (~s): ~p", [CallId, Event]),
+%     continue.
 
 
 
-nkmedia_session_notify(SessId, Event, _Session) ->
-    lager:notice("Sample session notify (~s): ~p", [SessId, Event]),
-    continue.
-
-
+% nkmedia_session_event(SessId, Event, _Session) ->
+%     lager:notice("Sample session notify (~s): ~p", [SessId, Event]),
+%     continue.
 
 % nkmedia_verto_dtmf(CallId, DTMF, #{user:=User}=State) ->
 %     lager:notice("DTMF: ~s, ~s", [User, CallId, DTMF]),

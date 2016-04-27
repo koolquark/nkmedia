@@ -18,12 +18,26 @@
 %%
 %% -------------------------------------------------------------------
 
+%% @doc Call management
+%%
+%% Calls are stared from sessions (nkmedia_session:to_call/2)
+%% - Starts in 'calling' state
+%% - Calls nkmedia_call_resolve/2 to resolve destinations (from offer)
+%%   to get the list of destina
+%% - For each destination (nkmedia_session:call_dest()) calls 
+%%   nkmedia_call_out/2 to decide if must lanch the call or wait
+%% - Creates an outbound session for each destination
+%% - The first on that replies 'ringing' switches state to 'ringing'
+%% - The first that answers is selected as outbound sessions, and the rest
+%%   ringin are stopped. Status changes to 'bridged' or 'p2p'
+%% - If the caller or the outbound sessions stops, the call stops and 
+%%   hangups the outbound session.
 
 -module(nkmedia_call).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([start/1, get_status/1]).
+-export([start/2, get_status/1]).
 -export([hangup/1, hangup/2, hangup_all/0]).
 -export([session_event/3, find/1, get_all/0]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
@@ -50,15 +64,12 @@
     #{
         id => id(),       
         srv_id => nkservice:id(),              
-        offer => nkmedia:offer(),
+        offer => nkmedia:offer(),               % Must include sdp and callee_id
         session_id => nkmedia_session:id(),
         session_pid => pid(),
-        call_dest => term(),
-        calling_timeout => integer(),          % Secs
-        ring_timeout => integer(),          
-        ready_timeout => integer(),
-        call_timeout => integer(),
         mediaserver => nkmedia_session:mediaserver(),
+        ring_timeout => integer(),          
+        call_timeout => integer(),
         term() => term()                         % User defined
     }.
 
@@ -101,12 +112,15 @@
 %% ===================================================================
 
 %% @doc Starts a new call
--spec start(config()) ->
+%% MUST have the fields: srv_id, offer (with sdp and callee_id), 
+%% session_id, session_pid, and mediaserver
+-spec start(term(), config()) ->
     {ok, id(), pid()}.
 
-start(Config) ->
+start(Dest, Config) ->
     {CallId, Config2} = nkmedia_util:add_uuid(Config),
-    {ok, Pid} = gen_server:start(?MODULE, [Config2], []),
+    Config3 = Config2#{call_dest=>Dest},
+    {ok, Pid} = gen_server:start(?MODULE, [Config3], []),
     {ok, CallId, Pid}.
 
 
@@ -172,8 +186,6 @@ session_event(CallId, SessId, Event) ->
     srv_id :: nkservice:id(),
     call :: call(),
     status :: status(),
-    % answered :: boolean(),
-    % notify_refs :: nkmedia_util:notify_refs(),
     session_in :: {nkmedia_session:id(), pid(), reference()},
     session_out :: {nkmedia_session:id(), pid(), reference()},
     outs = #{} :: #{nkmedia_session:id() => #session_out{}},
@@ -196,7 +208,7 @@ init([#{id:=Id, srv_id:=SrvId, session_id:=SessId, session_pid:=SessPid}=Call]) 
         call = Call,
         session_in = {SessId, SessPid, monitor(process, SessPid)}
     },
-    lager:info("NkMEDIA Call ~s starting (~p)", [Id, self()]),
+    lager:info("NkMEDIA Call ~s starting (~p, ~s)", [Id, self(), SessId]),
     {ok, State2} = handle(nkmedia_call_init, [Id], State),
     gen_server:cast(self(), start),
     {ok, status(calling, State2)}.
@@ -212,9 +224,6 @@ handle_call(get_status, _From, State) ->
     #{status_info:=Info} = Call,
     {reply, {ok, Status, Info, erlang:read_timer(Timer) div 1000}, State};
 
-handle_call({launch_outs, CallSpec}, _From, State) ->
-    {reply, ok, launch_outs(CallSpec, State)};
-
 handle_call(Msg, From, State) -> 
     handle(nkmedia_call_handle_call, [Msg, From], State).
 
@@ -223,14 +232,30 @@ handle_call(Msg, From, State) ->
 -spec handle_cast(term(), #state{}) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
-handle_cast(start, State) ->
-    {noreply, get_outbound(State)};
+handle_cast(start, #state{call=Call}=State) ->
+    #{call_dest:=Dest, offer:=Offer, mediaserver:=MS} = Call,
+    Offer2 = Offer#{dest=>Dest},
+    case handle(nkmedia_call_resolve, [Offer2], State) of
+        {ok, OutSpec, State3} ->
+            #state{outs=Outs} = State4 = launch_outs(OutSpec, State3),
+            ?LLOG(info, "resolved outs: ~p", [Outs], State4),
+            case map_size(Outs) of
+                0 ->
+                    stop_hangup(<<"No Destination">>, State);
+                Size when MS==none, Size>1 ->
+                    stop_hangup(<<"Multiple Calls Not Allowed">>, State);
+                _ ->
+                    {noreply, State4}
+            end;
+        {hangup, Reason, State3} ->
+            ?LLOG(info, "nkmedia_call_resolve: hangup (~p)", [Reason], State3),
+            stop_hangup(Reason, State3)
+    end;
 
 handle_cast({session_event, SessId, Event}, State) ->
     #state{session_out=Out, outs=Outs} = State,
-    State2 = case Out of
+    case Out of
         {SessId, _, _} ->
-            ?LLOG(info, "event from outbound session: ~p", [Event], State),
             process_out_event(Event, State);
         _ ->
             case maps:find(SessId, Outs) of
@@ -238,16 +263,16 @@ handle_cast({session_event, SessId, Event}, State) ->
                     process_call_out_event(Event, SessId, CallOut, State);
                 false ->
                     ?LLOG(warning, "event from unknown session", [Event], State),
-                    State
+                    {noreply, State}
             end
-    end,
-    {noreply, State2};
+    end;
 
 handle_cast({hangup, Reason}, State) ->
-    {stop, normal, do_hangup(Reason, State)};
+    ?LLOG(info, "external hangup: ~p", [Reason], State),
+    stop_hangup(Reason, State);
 
 handle_cast(stop, State) ->
-    ?LLOG(notice, "user stop", [], State),
+    ?LLOG(info, "external stop", [], State),
     {stop, normal, State};
 
 handle_cast(Msg, State) -> 
@@ -263,16 +288,16 @@ handle_info({launch_out, SessId}, #state{status=Status}=State)
     case find_out(SessId, State) of
         {ok, #session_out{launched=false, ring=Ring}=Out} ->
             erlang:send_after(1000*Ring, self(), {ring_timeout, SessId}),
-            {noreply, launch_out(SessId, Out, State)};
+            launch_out(SessId, Out, State);
         {ok, Out} ->
-            {noreply, launch_out(SessId, Out, State)};
+            launch_out(SessId, Out, State);
         not_found ->
             % The call can have been removed because of timeout
             {noreply, State}
     end;
 
 handle_info({launch_out, SessId}, State) ->
-    {noreply, remove_out(SessId, State)};
+    remove_out(SessId, State);
 
 handle_info({ring_timeout, SessId}, State) ->
     case find_out(SessId, State) of
@@ -285,7 +310,7 @@ handle_info({ring_timeout, SessId}, State) ->
                 false ->
                     ok
             end,
-            {noreply, remove_out(SessId, State)};
+            remove_out(SessId, State);
         not_found ->
             {noreply, State}
     end;
@@ -300,24 +325,11 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{session_out={_, _, Ref}
     %% Should enter into 'recovery' mode
     {stop, normal, State};
 
-% handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{notify_refs=Refs}=State) ->
-%     case lists:keytake(Ref, 2, Refs) of
-%         {value, {Notify, Ref}, Refs2} ->
-%             ?LLOG(warning, "notify ~p stopped!: ~p", [Notify, Reason], State),
-%             %% Should call a callback and maybe enter into 'recovery' mode
-%             {stop, normal, State#state{notify_refs=Refs2}};
-%         false ->
-%             ?LLOG(warning, "unexpected DOWN: ~p", [Reason], State),
-%             {noreply, State}
-%     end;
-
 handle_info({timeout, _, status_timeout}, State) ->
     ?LLOG(info, "status timeout", [], State),
-    hangup(self(), 607),
-    {noreply, State};
+    stop_hangup(607, State);
 
 handle_info(Msg, #state{}=State) -> 
-    lager:warning("CALL INFO: ~p", [Msg]),
     handle(nkmedia_call_handle_info, [Msg], State).
 
 
@@ -335,41 +347,15 @@ code_change(OldVsn, State, Extra) ->
     ok.
 
 terminate(Reason, State) ->
+    ?LLOG(info, "stopped (~p)", [Reason], State),
     catch handle(nkmedia_call_terminate, [Reason], State),
-    State2 = do_hangup("Session Stop", State), % Probably it is already
-    ?LLOG(info, "stopped (~p)", [Reason], State2).
+    % Probably it is already
+    _ = stop_hangup(<<"Session Stop">>, State). 
 
 
 % ===================================================================
 %% Internal
 %% ===================================================================
-
-
--spec get_outbound(#state{}) ->
-    #state{}.
-
-get_outbound(#state{call=Call}=State) ->
-    #{offer:=Offer, mediaserver:=MS} = Call,
-    #{callee_id:=CalleeId} = Offer,
-    case handle(nkmedia_call_resolve, [CalleeId], State) of
-        {ok, OutSpec, State3} ->
-            #state{outs=Outs} = State4 = launch_outs(OutSpec, State3),
-            ?LLOG(info, "resolved outs: ~p", [Outs], State4),
-            case map_size(Outs) of
-                0 ->
-                    hangup(self(), <<"No Destination">>);
-                Size when MS==none, Size>1 ->
-                    hangup(self(), <<"Multiple Calls Not Allowed">>);
-                _ ->
-                    ok
-            end,
-            State4;
-        {hangup, Reason, State3} ->
-            ?LLOG(info, "nkmedia_call_resolve: hangup (~p)", [Reason], State),
-            hangup(self(), Reason),
-            State3
-    end.
-
 
 %% @private Generate data and launch messages
 -spec launch_outs(call_out_spec(), State) ->
@@ -407,27 +393,26 @@ launch_out(SessId, #session_out{dest=Dest, pos=Pos}=Out, State) ->
         id = Id, 
         call = Call, 
         srv_id = SrvId, 
-        outs = Outs,
-        session_in = {SessIn, _, _}
+        outs = Outs
+        % session_in = {SessIn, _, _}
     } = State,
-    case handle(nkmedia_call_out, [Id, SessId, Dest], State) of
+    case handle(nkmedia_call_out, [SessId, Dest], State) of
         {call, Dest2, State2} ->
-            ?LLOG(info, "launching out ~p (~p)", [Dest, Pos], State),
+            ?LLOG(info, "launching out ~p (~p)", [Dest2, Pos], State),
             Opts = Call#{
                 id => SessId, 
                 monitor => self(),
-                nkmedia_call_id => Id,
-                nkmedia_session_id => SessIn,
-                call_dest => Dest2
+                call_dest => Dest2,
+                nkmedia_call_id => Id
             },
             {ok, SessId, Pid} = nkmedia_session:start_outbound(SrvId, Opts),
             Out2 = Out#session_out{launched=true, pid=Pid},
             Outs2 = maps:put(SessId, Out2, Outs),
-            State2#state{outs=Outs2};
+            {noreply, State2#state{outs=Outs2}};
         {retry, Secs, State2} ->
             ?LLOG(info, "retrying out ~p (~p, ~p secs)", [Dest, Pos, Secs], State),
             erlang:send_after(1000*Secs, self(), {launch_out, SessId}),
-            State2;
+            {noreply, State2};
         {remove, State2} ->
             ?LLOG(info, "removing out ~p (~p)", [Dest, Pos], State),
             remove_out(SessId, State2)
@@ -449,85 +434,83 @@ remove_out(SessId, #state{outs=Outs, status=Status}=State) ->
             Outs2 = maps:remove(SessId, Outs),
             case map_size(Outs2) of
                 0 when Status==calling; Status==ringing ->
-                    ?LLOG(notice, "all outs removed", [], State),
-                    hangup(self(), <<"No Answer">>),
-                    State#state{outs=Outs2};
+                    ?LLOG(info, "all outs removed", [], State),
+                    stop_hangup(<<"No Answer">>, State#state{outs=#{}});
                 _ -> 
                     ?LLOG(info, "removed out ~s (~p)", [SessId, Pos], State),
                     %% We shouuld hibernate
-                    State#state{outs=Outs2}
+                    {noreply, State#state{outs=Outs2}}
             end;
         error ->
-            State
+            {noreply, State}
     end.
 
 
 %% @private
 process_out_event({status, hangup, _Data}, State) ->
-    hangup(self(), <<"Callee Hangup">>),
-    State;
+    stop_hangup(<<"Callee Hangup">>, State);
 
-process_out_event(_Event, State) ->
-    lager:warning("CALL EVENT: ~p", [_Event]),
-    State.
+process_out_event(Event, State) ->
+    ?LLOG(warning, "outbound sesion event: ~p", [Event], State),
+    {noreply, State}.
 
 
 %% @private
 process_call_out_event({status, calling, _Data}, _SessId, _Out, State) ->
-    State;
+    {noreply, State};
 
-process_call_out_event({status, ringing, _Data}, _SessId, _Out, State) ->
-    status(ringing, State);
+process_call_out_event({status, ringing, Data}, _SessId, _Out, State) ->
+    {noreply, status(ringing, Data, State)};
 
-process_call_out_event({status, p2p, _Data}, SessId, #session_out{pid=Pid}, State) ->
-    out_answered(SessId, Pid, State);
+process_call_out_event({status, p2p, Data}, SessId, #session_out{pid=Pid}, State) ->
+    out_answered(SessId, Pid, Data, State);
 
 process_call_out_event({status, hangup, _Data}, SessId, _OutCall, State) ->
     remove_out(SessId, State);
     
-process_call_out_event(_Event, _SessId, _OutCall, State) ->
-    lager:warning("CALL OUT EVENT: ~p", [_Event]),
-    State.
+process_call_out_event(Event, _SessId, _OutCall, State) ->
+    ?LLOG(warning, "out sesion event: ~p", [Event], State),
+    {noreply, State}.
 
 
 %% @private
-out_answered(SessId, SessPid, #state{status=Status}=State)
+out_answered(SessId, SessPid, Data, #state{status=Status}=State)
         when Status==calling; Status==ringing ->
     SessOut = {SessId, SessPid, monitor(process, SessPid)},
     State2 = State#state{session_out=SessOut},
-    State3 = status(p2p, #{peer=>SessId}, State2),
-    State4 = remove_out(SessId, State3),
-    hangup_all_outs(State4);
+    State3 = hangup_all_outs(State2),
+    {noreply, status(p2p, Data#{peer=>SessId}, State3)};
 
-out_answered(SessId, SessPid, State) ->
-    nkmedia_session:hangup(SessPid, <<"Already Answered">>),
-    remove_out(SessId, State).
+out_answered(SessId, _SessPid, _Data, State) ->
+    nkmedia_session:hangup(SessId, <<"Already Answered">>),
+    {noreply, State}.
 
 
 %% @private Use this to generate hangup code, otherwise terminate will call it
-do_hangup(_Reason, #state{status=hangup}=State) ->
-    State;
+stop_hangup(_Reason, #state{status=hangup}=State) ->
+    {stop, normal, State};
 
-do_hangup(Reason, State) ->
-    #state{session_in=SessIn, session_out=SessOut} = State,
+stop_hangup(Reason, State) ->
+    #state{session_out=SessOut} = State,
     State2 = hangup_all_outs(State),
-    case SessIn of 
-        {In, _, _} -> lager:warning("HANGUP3"), nkmedia_session:hangup(In, Reason);
-        undefined -> ok
-    end,
     case SessOut of 
-        {Out, _, _} ->  lager:warning("HANGUP3"), nkmedia_session:hangup(Out, Reason);
-        undefined -> ok
+        {Out, _, _} ->  
+            nkmedia_session:hangup(Out, Reason);
+        undefined -> 
+            ok
     end,
-    Info = #{q850=>nkmedia_util:get_q850(Reason)},
-    status(hangup, Info, State2).
+    {stop, normal, status(hangup, #{hangup_reason=>Reason}, State2)}.
 
 
 %% @private
-hangup_all_outs(#state{outs=Outs}=State) ->
+hangup_all_outs(#state{session_out=SessOut, outs=Outs}=State) ->
+    case SessOut of
+        {SessOutId, _, _} -> ok;
+        undefined -> SessOutId = undefined
+    end,
     lists:foreach(
         fun
-            ({SessId, #session_out{launched=true}}) ->
+            ({SessId, #session_out{launched=true}}) when SessId /= SessOutId ->
                 nkmedia_session:hangup(SessId, <<"User Canceled">>);
             ({_, _}) ->
                 ok
@@ -545,16 +528,16 @@ status(Status, State) ->
 status(Status, _Info, #state{status=Status}=State) ->
     restart_timer(State);
 
-status(NewStatus, Info, #state{status=OldStatus, call=Call}=State) ->
+status(NewStatus, Info, #state{call=Call}=State) ->
     State2 = restart_timer(State#state{status=NewStatus}),
     State3 = State2#state{call=Call#{status=>NewStatus, status_info=>Info}},
-    ?LLOG(info, "status ~p -> ~p", [OldStatus, NewStatus], State3),
-    notify({status, NewStatus, Info}, State3).
+    ?LLOG(info, "status changes to ~p", [NewStatus], State3),
+    event({status, NewStatus, Info}, State3).
 
 
 %% @private
-notify(Event, #state{id=Id}=State) ->
-    {ok, State2} = handle(nkmedia_call_notify, [Id, Event], State),
+event(Event, #state{id=Id}=State) ->
+    {ok, State2} = handle(nkmedia_call_event, [Id, Event], State),
     State2.
 
 
@@ -568,7 +551,6 @@ restart_timer(#state{status=Status, timer=Timer, call=Call}=State) ->
     Time = case Status of
         calling -> maps:get(ring_timeout, Call, ?DEF_RING_TIMEOUT);
         ringing -> maps:get(ring_timeout, Call, ?DEF_RING_TIMEOUT);
-        ready -> maps:get(ready_timeout, Call, ?DEF_READY_TIMEOUT);
         _ -> maps:get(call_timeout, Call, ?DEF_CALL_TIMEOUT)
     end,
     NewTimer = erlang:start_timer(1000*Time, self(), status_timeout),

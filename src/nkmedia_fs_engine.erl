@@ -423,7 +423,7 @@ parse_event(Name, _Data, State) ->
 
 %% @private
 send_event(ChId, Status, #state{name=FsId}) ->
-    nkmedia_session:event(ChId, {freeswitch, FsId}, Status).
+    nkmedia_session:ms_event(ChId, {freeswitch, FsId}, Status).
 
 
 %% @private

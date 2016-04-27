@@ -65,6 +65,7 @@
         user => binary()
     }.
 
+
 %% ===================================================================
 %% Public
 %% ===================================================================
@@ -74,6 +75,9 @@
 %% If async=true, the pid() of the process and a reference() will be returned,
 %% and a message {?MODULE, Ref, {ok, answer()}} or {?MODULE, Ref, {error, Error}}
 %% will be sent to the calling process
+%% A new call will be added (see find_call_id/1)
+%% If 'monitor' is used, this process will be monitorized 
+%% and the call will be hangup if it fails before a hangup is sent or received
 -spec invite(pid(), call_id(), offer()) ->
     {answer, answer()} | rejected | {async, pid(), reference()} |
     {error, term()}.
@@ -83,6 +87,9 @@ invite(Pid, CallId, Offer) ->
 
 
 %% @doc Sends an ANSWER (only sdp is used in answer())
+%% A new call will be added (see find_call_id/1)
+%% If 'monitor' is used, this process will be monitorized 
+%% and the call will be hangup if it fails before a hangup is sent or received
 -spec answer(pid(), call_id(), answer()) ->
     ok | {error, term()}.
 
@@ -98,7 +105,8 @@ hangup(Pid, CallId) ->
     hangup(Pid, CallId, 16).
 
 
-%% @doc Sends a BYE. It is non-blocking
+%% @doc Sends a BYE (non-blocking)
+%% The call will be removed and demonitorized
 -spec hangup(pid(), binary(), nkmedia:hangup_reason()) ->
     ok | {error, term()}.
 
@@ -304,27 +312,6 @@ conn_handle_call(Msg, From, NkPort, State) ->
 -spec conn_handle_cast(term(), nkpacket:nkport(), #state{}) ->
     {ok, #state{}} | {stop, Reason::term(), #state{}}.
 
-% conn_handle_cast({set_monitor, CallId, CallPid}, _NkPort, State) ->
-%     #state{monitors=Monitors} = State,
-%     case lists:keymember(CallId, 1, Monitors) of
-%         false ->
-%             Monitors2 = [{CallId, monitor(process, CallPid)}|Monitors],
-%             {ok, State#state{monitors=Monitors2}};
-%         true ->
-%             {ok, State}
-%     end;
-
-% conn_handle_cast({del_monitor, CallId}, _NkPort, State) ->
-%     #state{monitors=Monitors} = State,
-%     case lists:keyfind(CallId, 1, Monitors) of
-%         {CallId, Ref} ->
-%             demonitor(Ref),
-%             Monitors2 = lists:keydelete(CallId, 1, Monitors),
-%             {ok, State#state{monitors=Monitors2}};
-%         true ->
-%             {ok, State}
-%     end;
-
 conn_handle_cast(Msg, NkPort, State) ->
     case handle_op(Msg, undefined, NkPort, State) of
         unknown_op ->
@@ -444,7 +431,7 @@ process_client_req(<<"verto.invite">>, Msg, NkPort, State) ->
         <<"incomingBandwidth">> := InBW,
         <<"outgoingBandwidth">> := OutBW,
         <<"remote_caller_id_name">> := CalleeName,
-        <<"remote_caller_id_number">> := _CalleeId,
+        <<"remote_caller_id_number">> := CalleeId,
         <<"screenShare">> := UseScreen,
         <<"useStereo">> := UseStereo,
         <<"useVideo">> :=  UseVideo
@@ -463,7 +450,8 @@ process_client_req(<<"verto.invite">>, Msg, NkPort, State) ->
         caller_name => CallerName,
         caller_id => CallerId,
         callee_name => CalleeName,
-        callee_id => Dest,
+        callee_id => CalleeId,
+        dest => Dest,
         verto_params => Params
     },
     case handle(nkmedia_verto_invite, [CallId, Offer], State) of
@@ -650,8 +638,7 @@ add_call(CallId, Opts, #state{calls=Calls}=State) ->
 del_call(CallId, #state{calls=Calls}=State) ->
     nklib_proc:del({?MODULE, call, CallId}),
     case maps:find(CallId, Calls) of
-        {ok, Ref} when is_reference(Ref)-> demonitor(Ref);
-        {ok, undefined} -> ok;
+        {ok, Ref} -> nklib_util:demonitor(Ref);
         error -> ok
     end,
     State#state{calls=maps:remove(CallId, Calls)}.

@@ -25,7 +25,6 @@
 -export([start_fs/0, start_fs/1, stop_fs/0, stop_fs/1]).
 -export([nkdocker_event/2]).
 -export_type([backend/0, offer/0, answer/0, hangup_reason/0, fs_start_opts/0]).
--export_type([callee_id/0]).
 
 %% ===================================================================
 %% Types
@@ -39,10 +38,11 @@
 	#{
 		sdp => binary(),
 		sdp_type => sip | webrtc,
+		dest => binary(),
         caller_name => binary(),
         caller_id => binary(),
         callee_name => binary(),
-        callee_id => callee_id(),
+        callee_id => binary(),
         use_audio => boolean(),
         use_stereo => boolean(),
         use_video => boolean(),
@@ -52,8 +52,6 @@
         out_bw => integer(),
 		verto_params => map()
 	}.
-
--type callee_id() :: binary().
 
 
 -type answer() ::
