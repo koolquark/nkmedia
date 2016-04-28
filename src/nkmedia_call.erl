@@ -19,20 +19,6 @@
 %% -------------------------------------------------------------------
 
 %% @doc Call management
-%%
-%% Calls are stared from sessions (nkmedia_session:to_call/2)
-%% - Starts in 'calling' state
-%% - Calls nkmedia_call_resolve/2 to resolve destinations (from offer)
-%%   to get the list of destina
-%% - For each destination (nkmedia_session:call_dest()) calls 
-%%   nkmedia_call_out/2 to decide if must lanch the call or wait
-%% - Creates an outbound session for each destination
-%% - The first on that replies 'ringing' switches state to 'ringing'
-%% - The first that answers is selected as outbound sessions, and the rest
-%%   ringin are stopped. Status changes to 'bridged'
-%% - If the caller or the outbound sessions stops, the call stops and 
-%%   hangups the outbound session.
-
 -module(nkmedia_call).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
@@ -64,15 +50,14 @@
     #{
         id => id(),       
         srv_id => nkservice:id(),              
-        offer => nkmedia:offer(),               % Must include sdp and callee_id
         session_id => nkmedia_session:id(),
         session_pid => pid(),
-        offer => nkmedia:offer(),
-        mediaserver => nkmedia_session:mediaserver(),
-        wait_timeout => integer(),              % For outbound call
+        term() => term(),                              % User defined
+        offer => nkmedia:offer(),                      % From this option on are
+        mediaserver => nkmedia_session:mediaserver(),  % for the outbound call
+        wait_timeout => integer(),                     
         ring_timeout => integer(),          
-        call_timeout => integer(),
-        term() => term()                        % User defined
+        call_timeout => integer()
     }.
 
 
@@ -86,6 +71,7 @@
 -type call() ::
     config() |
     #{
+        call_dest => nkmedia:call_dest(),
         status => status(),
         status_info => map(),
         answer => nkmedia:answer()
@@ -114,9 +100,9 @@
 %% ===================================================================
 
 %% @doc Starts a new call
-%% MUST have the fields: srv_id, offer (with sdp and callee_id), 
-%% session_id, session_pid, and mediaserver
--spec start(term(), config()) ->
+%% MUST have the fields: srv_id, offer (with sdp if p2p), 
+%% session_id, session_pid.
+-spec start(nkmedia:call_dest(), config()) ->
     {ok, id(), pid()}.
 
 start(Dest, Config) ->
@@ -235,16 +221,16 @@ handle_call(Msg, From, State) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
 handle_cast(start, #state{call=Call}=State) ->
-    #{call_dest:=Dest, offer:=Offer, mediaserver:=MS} = Call,
-    Offer2 = Offer#{dest=>Dest},
-    case handle(nkmedia_call_resolve, [Offer2], State) of
+    #{call_dest:=Dest, offer:=Offer} = Call,
+    IsP2P = maps:is_key(sdp, Offer),
+    case handle(nkmedia_call_resolve, [Dest], State) of
         {ok, OutSpec, State3} ->
             #state{outs=Outs} = State4 = launch_outs(OutSpec, State3),
             ?LLOG(info, "resolved outs: ~p", [Outs], State4),
             case map_size(Outs) of
                 0 ->
                     stop_hangup(<<"No Destination">>, State);
-                Size when MS==none, Size>1 ->
+                Size when IsP2P, Size>1 ->
                     stop_hangup(<<"Multiple Calls Not Allowed">>, State);
                 _ ->
                     {noreply, State4}
@@ -393,7 +379,7 @@ launch_outs(Dest, State) ->
 launch_out(SessId, #session_out{dest=Dest, pos=Pos}=Out, State) ->
     #state{
         id = Id, 
-        call = #{mediaserver:=MS} = Call, 
+        call = Call, 
         srv_id = SrvId, 
         outs = Outs
         % session_in = {SessIn, _, _}
@@ -407,11 +393,7 @@ launch_out(SessId, #session_out{dest=Dest, pos=Pos}=Out, State) ->
                 call_dest => Dest2,
                 nkmedia_call_id => Id
             },
-            Opts2 = case MS of
-                none -> Opts;
-                _ -> maps:remove(offer, Opts)
-            end,
-            {ok, SessId, Pid} = nkmedia_session:start_outbound(SrvId, Opts2),
+            {ok, SessId, Pid} = nkmedia_session:start_outbound(SrvId, Opts),
             Out2 = Out#session_out{launched=true, pid=Pid},
             Outs2 = maps:put(SessId, Out2, Outs),
             {noreply, State2#state{outs=Outs2}};
@@ -456,6 +438,9 @@ remove_out(SessId, #state{outs=Outs, status=Status}=State) ->
 process_out_event({status, hangup, _Data}, State) ->
     stop_hangup(<<"Callee Hangup">>, State);
 
+process_out_event({status, bridged, _}, State) ->
+    {noreply, State};
+
 process_out_event(Event, State) ->
     ?LLOG(warning, "outbound session event: ~p", [Event], State),
     {noreply, State}.
@@ -466,29 +451,32 @@ process_call_out_event({status, calling, _Data}, _SessId, _Out, State) ->
     {noreply, State};
 
 process_call_out_event({status, ringing, Data}, _SessId, _Out, State) ->
-    {noreply, status(ringing, Data, State)};
+    % If we sent several call, we won't accept sdp in ringing
+    Data2 = case State of
+        #state{out_pos=1} -> Data;
+        _ -> #{}
+    end,
+    {noreply, status(ringing, Data2, State)};
 
-process_call_out_event({status, ready, Data}, SessId, #session_out{pid=Pid}, State) ->
-    out_answered(SessId, Pid, Data, State);
+process_call_out_event({status, ready, Data}, SessId, Out, State) ->
+    case State of
+        #state{status=Status} when Status==calling; Status==ringing ->
+            #session_out{pid=SessPid} = Out,
+            SessOut = {SessId, SessPid, monitor(process, SessPid)},
+            State2 = State#state{session_out=SessOut},
+            State3 = hangup_all_outs(State2),
+            Data2 = Data#{session_peer_id=>SessId},
+            {noreply, status(ready, Data2, State3)};
+        _ ->
+            nkmedia_session:hangup(SessId, <<"Already Answered">>),
+            {noreply, State}
+    end;
 
 process_call_out_event({status, hangup, _Data}, SessId, _OutCall, State) ->
     remove_out(SessId, State);
     
 process_call_out_event(Event, _SessId, _OutCall, State) ->
     ?LLOG(warning, "out session event: ~p", [Event], State),
-    {noreply, State}.
-
-
-%% @private
-out_answered(SessId, SessPid, Data, #state{status=Status}=State)
-        when Status==calling; Status==ringing ->
-    SessOut = {SessId, SessPid, monitor(process, SessPid)},
-    State2 = State#state{session_out=SessOut},
-    State3 = hangup_all_outs(State2),
-    {noreply, status(ready, Data#{peer_id=>SessId}, State3)};
-
-out_answered(SessId, _SessPid, _Data, State) ->
-    nkmedia_session:hangup(SessId, <<"Already Answered">>),
     {noreply, State}.
 
 

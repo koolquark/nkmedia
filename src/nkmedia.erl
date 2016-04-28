@@ -24,7 +24,8 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([start_fs/0, start_fs/1, stop_fs/0, stop_fs/1]).
 -export([nkdocker_event/2]).
--export_type([backend/0, offer/0, answer/0, hangup_reason/0, fs_start_opts/0]).
+-export_type([backend/0, offer/0, answer/0, call_dest/0]).
+-export_type([hangup_reason/0, fs_start_opts/0]).
 
 %% ===================================================================
 %% Types
@@ -63,6 +64,8 @@
         use_video => boolean(),
         use_data => boolean()
 	}.
+
+-type call_dest() :: binary().
 
 
 -type hangup_reason() :: nkmedia:hangup_reason().

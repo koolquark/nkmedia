@@ -219,16 +219,16 @@ nkmedia_call_event(CallId, Event, Call) ->
 
 
 %% @doc Called when a call specificatio must be resolved
--spec nkmedia_call_resolve(nkmedia:offer(), call()) ->
+-spec nkmedia_call_resolve(nkmedia:call_dest(), call()) ->
 	{ok, nkmedia_call:call_out_spec(), call()} | 
 	{hangup, nkmedia:hangup_reason(), call()} |
 	continue().
 
-nkmedia_call_resolve(_Offer, Call) ->
+nkmedia_call_resolve(_Dest, Call) ->
 	{hangup,  <<"Unknown Destination">>, Call}.
 
 
-%% @doc Called when an outbound call is scheduled to be sent
+%% @doc Called when an outbound call is to be sent
 -spec nkmedia_call_out(session_id(), nkmedia_session:call_dest(), call()) ->
 	{call, nkmedia_session:call_dest(), call()} | 
 	{retry, Secs::pos_integer(), call()} | 

@@ -317,8 +317,7 @@ conn_handle_info({'DOWN', Ref, process, _Pid, _Reason}=Info, _NkPort, State) ->
         {CallId, Ref} ->
             ?LLOG(notice, "monitor process down for ~s", [CallId], State),
             hangup(self(), CallId, <<"Process Down">>),
-            Calls2 = maps:remove(CallId, Calls),
-            {ok, State#state{calls=Calls2}};
+            {ok, State};
         false ->
             handle(nkmedia_verto_handle_info, [Info], State)
     end;

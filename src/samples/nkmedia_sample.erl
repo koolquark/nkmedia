@@ -27,7 +27,7 @@
 -export([call/1, call_sip_user/1]).
 
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
--export([nkmedia_verto_login/4]).
+-export([nkmedia_verto_login/4, nkmedia_verto_call/3]).
 -export([nkmedia_session_get_backend/1, nkmedia_call_resolve/2]).
 % -export([nkmedia_call_event/3, nkmedia_session_event/3]).
 -export([sip_register/2]).
@@ -178,6 +178,15 @@ nkmedia_verto_login(VertoId, Login, Pass, Verto) ->
     end.
 
 
+nkmedia_verto_call(SessId, Dest, Verto) ->
+    case Dest of 
+        <<"0">> -> ok;
+        <<"1">> -> ok = nkmedia_session:to_mcu(SessId, <<"1">>);
+        _ -> ok = nkmedia_session:to_call(SessId, Dest)
+    end,
+    {ok, Verto}.
+
+
 nkmedia_session_get_backend(#{offer:=#{dest:=Dest}}=Session) ->
     case Dest of
         <<"d", _/binary>> -> 
@@ -190,13 +199,13 @@ nkmedia_session_get_backend(#{offer:=#{dest:=Dest}}=Session) ->
 
 
 %% @private
-nkmedia_call_resolve(#{dest:=Dest}=Offer, Call) ->
-    Offer2 = case Dest of
-        <<"d", Rest/binary>> -> Offer#{dest:=Rest};
-        <<"j", Rest/binary>> -> Offer#{dest:=Rest};
-        _ -> Offer
+nkmedia_call_resolve(Dest, Call) ->
+    Dest2 = case Dest of
+        <<"d", Rest/binary>> -> Rest;
+        <<"j", Rest/binary>> -> Rest;
+        _ -> Dest
     end,
-    {continue, [Offer2, Call]}.
+    {continue, [Dest2, Call]}.
 
 
 

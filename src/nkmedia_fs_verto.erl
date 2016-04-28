@@ -41,9 +41,7 @@
         ok).
 
 
--define(IN_BW, 12800).
--define(OUT_BW, 4800).
--define(OP_TIME, 15000).    % Maximum operation time
+-define(OP_TIME, 5*60*1000).    % Maximum operation time
 -define(CALL_TIMEOUT, 5*60*1000).
 -define(CODECS, [opus,vp8,speex,iLBC,'GSM','PCMU','PCMA']).
 
@@ -656,7 +654,7 @@ make_msg(Id, cmd, Cmd, _State) ->
 originate(CallId, Opts, #state{fs_id=FsId, sess_id=SessId, originates=Pids}=State) ->
     Dest = <<"verto.rtc/u:", SessId/binary>>,
     Vars = [{<<"nkstatus">>, <<"outbound">>}], 
-    Opts2 = Opts#{vars => Vars, call_id=>CallId},
+    Opts2 = Opts#{vars => Vars, call_id=>CallId, timeout=>5*60},
     Self = self(),
     Pid = spawn_link(
         fun() ->

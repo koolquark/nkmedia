@@ -22,6 +22,8 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([get_q850/1, add_uuid/1]).
+-export([kill/1]).
+
 -export_type([q850/0, hangup_reason/0]).
 
 -type q850() :: 0..609.
@@ -147,6 +149,18 @@ q850_map() ->
 		607 => {none, <<"PROGRESS_TIMEOUT">>},
 		609 => {none, <<"GATEWAY_DOWN">>}
 	}.
+
+
+kill(Type) ->
+	Pids = case Type of
+		in -> [Pid || {_, inbound, Pid} <- nkmedia_session:get_all()];
+		out -> [Pid || {_, outbound, Pid} <- nkmedia_session:get_all()];
+		calls -> [Pid || {_, _, Pid} <- nkmedia_call:get_all()]
+	end,
+	lists:foreach(fun(Pid) -> exit(Pid, kill) end, Pids).
+
+
+
 
 
 
