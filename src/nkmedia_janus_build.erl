@@ -77,11 +77,6 @@ build_run_image() ->
 
 %% @doc Builds run image (netcomposer/nk_janus_run:v1.6.5-r01)
 %% Environment variables:
-%% - NK_FS_IP: Default "$${local_ip_v4}". Maps to local_ip_v4 inside janus
-%% - NK_RTP_IP: Default "$${local_ip_v4}".
-%% - NK_ERLANG_IP: Host for FS to connect to. Used in rtp-ip
-%% - NK_EXT_IP: Default "stun:stun.janus.org". Used in ext-rtp-ip
-%% - NK_PASS: Default "6666"
 build_run_image(Config) ->
     Name = run_image_name(Config),
     Tar = nkdocker_util:make_tar([
@@ -167,7 +162,7 @@ WORKDIR /root
 RUN git clone --branch ", (nklib_util:to_binary(Vsn))/binary, 
       " --depth 1 https://github.com/meetecho/janus-gateway && \\
     cd janus-gateway && \\
-    ./autogen.sh && ./configure --prefix=/opt/janus --disable-docs && \\
+    ./autogen.sh && ./configure --disable-docs && \\
     make && make install && \\
     make configs && make clean
 
@@ -175,7 +170,7 @@ RUN ldconfig
 
 #EXPOSE 7088 8088 8188
 #USER janus
-WORKDIR /opt/janus
+WORKDIR /usr/local/
 ">>.
 
 
@@ -196,8 +191,9 @@ run_image_name(Config) ->
 run_image_dockerfile(Config) ->
     list_to_binary([
 "FROM ", base_image_name(Config), "\n"
-"WORKDIR /usr/local/janus/\n"
-"ADD start.sh /usr/local/bin/"
+"ADD start.sh /usr/local/bin/\n"
+"WORKDIR /usr/local/\n"
+"ENTRYPOINT [\"sh\", \"/usr/local/bin/start.sh\"]"
 ]).
 
 
@@ -214,25 +210,26 @@ run_image_start() ->
     Streaming = config_streaming(),
     VideoRoom = config_videoroom(),
     Voicemail = config_voicemail(),
-<<"
-#!/bin/bash
+<<"#!/bin/bash
 set -e
-export LOCAL_IP_V4=\"\\$\\${local_ip_v4}\"
-export FS_IP=\"${NK_FS_IP-$LOCAL_IP_V4}\"
-export RTP_IP=\"${NK_RTP_IP-$LOCAL_IP_V4}\"
+export JANUS_IP=\"${NK_JANUS_IP-127.0.0.1}\"
+export RTP_IP=\"${NK_RTP_IP-$JANUS_IP}\"
 export ERLANG_IP=\"${NK_ERLANG_IP-127.0.0.1}\"
 export EXT_IP=\"${NK_EXT_IP-stun:stun.freeswitch.org}\"
-export PASS=\"${NK_PASS-6666}\"
+export PASS=\"${NK_PASS-nkmedia_janus}\"
+export CONF=\"/usr/local/etc/janus\"
 
-cat > /usr/local/etc/janus/janus.cgf <<EOF", Base/binary, "EOF
-cat > /usr/local/etc/janus/janus.plugin.audiobridge.cgf <<EOF", Audiobridge/binary, "EOF
-cat > /usr/local/etc/janus/janus.plugin.echotest.cgf <<EOF ; EOF
-cat > /usr/local/etc/janus/janus.plugin.recordplay.cgf <<EOF", RecordPlay/binary, "EOF
-cat > /usr/local/etc/janus/janus.plugin.sip.cgf <<EOF", Sip/binary, "EOF
-cat > /usr/local/etc/janus/janus.plugin.streaming.cgf <<EOF", Streaming/binary, "EOF
-cat > /usr/local/etc/janus/janus.plugin.videocall.cgf <<EOF ; EOF
-cat > /usr/local/etc/janus/janus.plugin.videocall.cgf <<EOF", VideoRoom/binary, "EOF
-cat > /usr/local/etc/janus/janus.plugin.voicemail.cgf <<EOF", Voicemail/binary, "EOF
+cat > $CONF/janus.cfg <<EOF\n", Base/binary, "\nEOF
+cat > $CONF/janus.plugin.audiobridge.cfg <<EOF\n", Audiobridge/binary, "\nEOF
+cat > $CONF/janus.plugin.echotest.cfg <<EOF\n", ";", "\nEOF
+cat > $CONF/janus.plugin.recordplay.cfg <<EOF\n", RecordPlay/binary, "\nEOF
+cat > $CONF/janus.plugin.sip.cfg <<EOF\n", Sip/binary, "\nEOF
+cat > $CONF/janus.plugin.streaming.cfg <<EOF\n", Streaming/binary, "\nEOF
+cat > $CONF/janus.plugin.videocall.cfg <<EOF\n", ";", "\nEOF
+cat > $CONF/janus.plugin.videoroom.cfg <<EOF\n", VideoRoom/binary, "\nEOF
+cat > $CONF/janus.plugin.voicemail.cfg <<EOF\n", Voicemail/binary, "\nEOF
+
+exec /usr/local/bin/janus
 ">>.
 
 
@@ -242,11 +239,11 @@ config_base() ->
 [general]
 configs_folder = /usr/local/etc/janus
 plugins_folder = /usr/local/lib/janus/plugins
-;interface = 1.2.3.4        ; Interface to use (will be used in SDP)
+interface = 192.168.0.102        ; Interface to use (will be used in SDP)
 debug_level = 4             ; Debug/logging level, valid values are 0-7
 ;debug_timestamps = yes
 ;debug_colors = no
-;api_secret = janusrocks
+;api_secret = $PASS
 ;token_auth = yes           ; Admin API MUST be enabled
 
 [webserver]
@@ -258,8 +255,8 @@ https = no
 ;secure_port = 8889
 ws = yes
 ws_port = 8188
-ws_ssl = no
-;ws_secure_port = 8989
+ws_ssl = yes
+ws_secure_port = 8989
 
 [admin]
 admin_base_path = /admin
@@ -268,7 +265,7 @@ admin_http = no
 admin_port = 7088
 admin_https = no
 ;admin_secure_port = 7889
-admin_secret = janusoverlord
+admin_secret = $PASS
 ;admin_acl = 127.,192.168.0.
 
 [certificates]
@@ -282,8 +279,8 @@ cert_key = /usr/local/share/janus/certs/mycert.key
 ;dtls_mtu = 1200
 
 [nat]
-;stun_server = stun.voip.eutelia.it
-;stun_port = 3478
+stun_server = stun.voip.eutelia.it
+stun_port = 3478
 nice_debug = false
 ;ice_lite = true        ; Default false
 ;ice_tcp = true

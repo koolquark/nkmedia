@@ -20,7 +20,7 @@
 %% -------------------------------------------------------------------
 
 %% @doc 
--module(nkmedia_fs_verto_proxy_server).
+-module(nkmedia_janus_proxy_server).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([get_all/0, send_reply/2]).
@@ -30,7 +30,7 @@
 
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkMEDIA verto proxy server (~s) "++Txt, [State#state.remote | Args])).
+    lager:Type("NkMEDIA Janus proxy server (~s) "++Txt, [State#state.remote | Args])).
 
 
 %% ===================================================================
@@ -66,8 +66,8 @@ transports(_) -> [wss, ws].
 -spec default_port(nkpacket:transport()) ->
     inet:port_number() | invalid.
 
-default_port(ws) -> 8081;
-default_port(wss) -> 8082.
+default_port(ws) -> 8188;
+default_port(wss) -> 8989.
 
 
 -spec conn_init(nkpacket:nkport()) ->
@@ -77,22 +77,22 @@ conn_init(NkPort) ->
     {ok, Remote} = nkpacket:get_remote_bin(NkPort),
     State = #state{remote=Remote},
     ?LLOG(notice, "new connection (~p)", [self()], State),
-    case nkmedia_fs_engine:get_all() of
-        [{Name, FsPid}|_] ->
-            case nkmedia_fs_verto_proxy_client:start(FsPid) of
+    case nkmedia_janus_engine:get_all() of
+        [{Name, JanusPid}|_] ->
+            case nkmedia_janus_proxy_client:start(JanusPid) of
                 {ok, ProxyPid} ->
-                    ?LLOG(info, "connected to FS server ~s", [Name], State),
+                    ?LLOG(info, "connected to Janus server ~s", [Name], State),
                     monitor(process, ProxyPid),
                     nklib_proc:put(?MODULE, {proxy_client, ProxyPid}),
                     {ok, State#state{proxy=ProxyPid}};
                 {error, Error} ->
                     ?LLOG(warning, "could not start proxy to ~s: ~p", 
                           [Name, Error], State),
-                    {stop, no_fs_server}
+                    {stop, no_janus_server}
             end;
         [] ->
-            ?LLOG(error, "could not locate any FS server", [], State),
-            {stop, no_fs_server}
+            ?LLOG(error, "could not locate any Janus server", [], State),
+            {stop, no_janus_server}
     end.
 
 
@@ -103,10 +103,6 @@ conn_init(NkPort) ->
 conn_parse(close, _NkPort, State) ->
     {ok, State};
 
-conn_parse({text, <<"#S", _/binary>>=Msg}, _NkPort, #state{proxy=Pid}=State) ->
-    nkmedia_fs_verto_proxy_client:send(Pid, Msg),
-    {ok, State};
-
 conn_parse({text, Data}, _NkPort, #state{proxy=Pid}=State) ->
     Msg = case nklib_json:decode(Data) of
         error ->
@@ -115,7 +111,8 @@ conn_parse({text, Data}, _NkPort, #state{proxy=Pid}=State) ->
         Json ->
             Json
     end,
-    nkmedia_fs_verto_proxy_client:send(Pid, Msg),
+    % ?LLOG(info, "received\n~s", [nklib_json:encode_pretty(Msg)], State),
+    nkmedia_janus_proxy_client:send(Pid, Msg),
     {ok, State}.
 
 
@@ -136,6 +133,7 @@ conn_encode(Msg, _NkPort) when is_binary(Msg) ->
     {ok, #state{}} | {stop, Reason::term(), #state{}}.
 
 conn_handle_call({send_reply, Event}, From, NkPort, State) ->
+    % ?LLOG(info, "sending\n~s", [nklib_json:encode_pretty(Event)], State),
     case nkpacket_connection:send(NkPort, Event) of
         ok -> 
             gen_server:reply(From, ok),
@@ -178,8 +176,5 @@ conn_handle_info(Info, _NkPort, State) ->
 
 
 
-%% ===================================================================
-%% Util
-%% ===================================================================
 
 

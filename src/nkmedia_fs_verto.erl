@@ -361,7 +361,7 @@ conn_handle_call(Msg, From, NkPort, State) ->
     {ok, #state{}} | {stop, term(), #state{}}.
 
 conn_handle_cast(stop, _NkPort, State) ->
-    lager:warning("RECIVED STOP"),
+    lager:warning("RECEIVED STOP"),
     {stop, normal, State};
 
 conn_handle_cast({originate_error, CallId, Error}, _NkPort, State) ->

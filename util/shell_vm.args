@@ -1,3 +1,4 @@
+-pa ../nkmedia/ebin
 -pa deps/eper/ebin
 -pa deps/goldrush/ebin 
 -pa deps/lager/ebin 
@@ -16,7 +17,6 @@
 -pa deps/mustache/ebin
 -pa deps/enm/ebin
 
--pa ../nkmedia/ebin
 
 ## Name of the node
 -name nkmedia@127.0.0.1
