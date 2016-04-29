@@ -67,7 +67,7 @@ start(_Type, _Args) ->
         fs_version => <<"v1.6.5">>,
         fs_release => <<"r01">>,
         fs_password => <<"764123">>,
-        janus_version => <<"v0.0.9">>,
+        janus_version => <<"master">>,
         janus_release => <<"r01">>,
         sip_port => 0,
         no_docker => false

@@ -38,6 +38,12 @@
 
 -define(JANUS_WS_TIMEOUT, 60*60*1000).
 
+-define(PRINT(Msg, Args, State),
+    % ?LLOG(notice, Msg, Args, State),
+    ok).
+
+
+
 
 %% ===================================================================
 %% Public
@@ -147,7 +153,7 @@ conn_parse({text, Data}, _NkPort, State) ->
         _ ->
             ok
     end,
-    % ?LLOG(notice, "received\n~s", [nklib_json:encode_pretty(Msg)], State),
+    ?PRINT("received\n~s", [nklib_json:encode_pretty(Msg)], State),
     send_reply(Msg, State),
     {ok, update(Msg, State)}.
 
@@ -180,7 +186,7 @@ conn_handle_call(Msg, _From, _NkPort, State) ->
     {ok, #state{}} | {stop, term(), #state{}}.
 
 conn_handle_cast({send, Msg}, NkPort, State) ->
-    % ?LLOG(info, "sending\n~s", [nklib_json:encode_pretty(Msg)], State),
+    ?PRINT("sending\n~s", [nklib_json:encode_pretty(Msg)], State),
     case do_send(Msg, NkPort, State) of
         {ok, State2} -> 
             {ok, update(Msg, State2)};
@@ -240,7 +246,7 @@ update(#{<<"janus">>:=Janus, <<"transaction">>:=Id}=Msg, State) ->
     end;
 
 update(#{<<"janus">>:=Janus}=Msg, State) ->
-    ?LLOG(info, "msg '~s':\n~s", [Janus, nklib_json:encode_pretty(Msg)], State),
+    ?LLOG(info, "server event '~s':\n~s", [Janus, nklib_json:encode_pretty(Msg)], State),
     State.
 
 %% @private
@@ -274,46 +280,29 @@ do_send(Msg, NkPort, State) ->
     % check_old_trans(Now, Rest, Acc1).
 
 
-% %% @private
-% %% When set userauth=false on the profile, it is supposed that the user 'root'
-% %% works, but it shuts freeswitch down now
-% update_password(Msg, #state{pass=Pass}) ->
-%     case Msg of
-%         #{
-%             <<"method">> := <<"login">>,
-%             <<"params">> := #{<<"passwd">>:=_}=Params1
-%         } ->
-%             % Params2 = Params1#{<<"login">>:=<<"root">>, <<"passwd">>:=Pass},
-%             Params2 = Params1#{<<"passwd">>:=Pass},
-%             Msg#{<<"params">>:=Params2};
-%         _ ->
-%             Msg
-%     end.
-
-
-
 
 %% @private
 % print_trans(_Class, _Trans) -> ok.
 
 print_trans(#trans{req=Req, resp=Resp, has_ack=HasACK}=Trans) ->
-    ACK = case HasACK of true -> "(ack)"; false -> "" end,
+    ACK = case HasACK of true -> "(with ack)"; false -> "" end,
     lager:info("Req: ~s -> ~s ~s", [Req, Resp, ACK]),
     #trans{req_msg=Msg1, resp_msg=Msg2} = Trans,
     lager:info("~s -> \n~s\n\n", 
                 [nklib_json:encode_pretty(Msg1), nklib_json:encode_pretty(Msg2)]),
-    case Msg1 of
-        #{<<"jsep">>:=#{<<"sdp">>:=SDP1}} ->
-            io:format("\n~s\n\n", [SDP1]);
-        _ -> 
-            ok
-    end,
-    case Msg2 of
-        #{<<"jsep">>:=#{<<"sdp">>:=SDP2}} ->
-            io:format("\n~s\n\n", [SDP2]);
-        _ -> 
-            ok
-    end.
+    % case Msg1 of
+    %     #{<<"jsep">>:=#{<<"sdp">>:=SDP1}} ->
+    %         io:format("\n~s\n\n", [SDP1]);
+    %     _ -> 
+    %         ok
+    % end,
+    % case Msg2 of
+    %     #{<<"jsep">>:=#{<<"sdp">>:=SDP2}} ->
+    %         io:format("\n~s\n\n", [SDP2]);
+    %     _ -> 
+    %         ok
+    % end,
+    ok.
 
 
 

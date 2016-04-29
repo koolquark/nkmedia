@@ -29,7 +29,7 @@
 % -define(WS_TIMEOUT, 60*60*1000).
 
 -define(SUPPORTED_FS, [<<"v1.6.5-r01">>]).
--define(SUPPORTED_JANUS, [<<"v0.0.9-r01">>]).
+-define(SUPPORTED_JANUS, [<<"master-r01">>]).
 
 -define(DEF_WAIT_TIMEOUT, 30).
 -define(DEF_RING_TIMEOUT, 30).

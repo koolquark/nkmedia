@@ -198,12 +198,11 @@ run_image_dockerfile(Config) ->
 
 
 
-%% Variables
-
-
-
+%% @private
 run_image_start() ->
     Base = config_base(),
+    Http = config_http(),
+    WS = config_ws(),
     Audiobridge = config_audiobridge(),
     RecordPlay = config_recordplay(),
     Sip = config_sip(),
@@ -220,6 +219,8 @@ export PASS=\"${NK_PASS-nkmedia_janus}\"
 export CONF=\"/usr/local/etc/janus\"
 
 cat > $CONF/janus.cfg <<EOF\n", Base/binary, "\nEOF
+cat > $CONF/janus.transport.http.cfg <<EOF\n", Http/binary, "\nEOF
+cat > $CONF/janus.transport.websockets.cfg <<EOF\n", WS/binary, "\nEOF
 cat > $CONF/janus.plugin.audiobridge.cfg <<EOF\n", Audiobridge/binary, "\nEOF
 cat > $CONF/janus.plugin.echotest.cfg <<EOF\n", ";", "\nEOF
 cat > $CONF/janus.plugin.recordplay.cfg <<EOF\n", RecordPlay/binary, "\nEOF
@@ -230,6 +231,7 @@ cat > $CONF/janus.plugin.videoroom.cfg <<EOF\n", VideoRoom/binary, "\nEOF
 cat > $CONF/janus.plugin.voicemail.cfg <<EOF\n", Voicemail/binary, "\nEOF
 
 exec /usr/local/bin/janus
+#exec /bin/bash
 ">>.
 
 
@@ -239,34 +241,18 @@ config_base() ->
 [general]
 configs_folder = /usr/local/etc/janus
 plugins_folder = /usr/local/lib/janus/plugins
-interface = 192.168.0.102        ; Interface to use (will be used in SDP)
-debug_level = 4             ; Debug/logging level, valid values are 0-7
+transports_folder = /usr/local/lib/janus/transports     
+;log_to_stdout = false              ; default=true
+;log_to_file = /tmp/janus.log   
+;daemonize = true               
+;pid_file = /tmp/janus.pid
+interface = 192.168.0.102           ; Interface to use (will be used in SDP)
+debug_level = 4                     ; Debug/logging level, valid values are 0-7
 ;debug_timestamps = yes
 ;debug_colors = no
 ;api_secret = $PASS
-;token_auth = yes           ; Admin API MUST be enabled
-
-[webserver]
-base_path = /janus
-threads = unlimited
-http = yes
-port = 8088
-https = no
-;secure_port = 8889
-ws = yes
-ws_port = 8188
-ws_ssl = yes
-ws_secure_port = 8989
-
-[admin]
-admin_base_path = /admin
-admin_threads = unlimited
-admin_http = no
-admin_port = 7088
-admin_https = no
-;admin_secure_port = 7889
-admin_secret = $PASS
-;admin_acl = 127.,192.168.0.
+;token_auth = yes                   ; Admin API MUST be enabled
+admin_secret = $PASS   
 
 [certificates]
 cert_pem = /usr/local/share/janus/certs/mycert.pem
@@ -277,26 +263,77 @@ cert_key = /usr/local/share/janus/certs/mycert.key
 ;max_nack_queue = 300
 ;rtp_port_range = 20000-40000
 ;dtls_mtu = 1200
+;force-bundle = true                ; Default false
+;force-rtcp-mux = true              ; Default false
 
 [nat]
 stun_server = stun.voip.eutelia.it
-stun_port = 3478
+;stun_port = 3478
 nice_debug = false
-;ice_lite = true        ; Default false
+;ice_lite = true
 ;ice_tcp = true
-;nat_1_1_mapping = 1.2.3.4      ; All host candidates will have this
+;nat_1_1_mapping = 1.2.3.4          ; All host candidates will have this
 ;turn_server = myturnserver.com
 ;turn_port = 3478
 ;turn_type = udp
 ;turn_user = myuser
 ;turn_pwd = mypassword
-;turn_rest_api = http://yourbackend.com/path/to/api ; rfc5766-turn-server and coturn
+;turn_rest_api = http://yourbackend.com/path/to/api
 ;turn_rest_api_key = anyapikeyyoumayhaveset
-;ice_enforce_list = eth0   ; Also 'eth0,192.168.', etc.
+;ice_enforce_list = eth0            ; Also IPs
 ice_ignore_list = vmnet
 
 [plugins]
 ; disable = libjanus_voicemail.so,libjanus_recordplay.so
+
+[transports]
+; disable = libjanus_rabbitmq.so
+">>.
+
+config_http() -> <<"
+[general]
+base_path = /janus          
+threads = unlimited         ; unlimited=thread per connection, number=thread pool
+http = yes                  
+port = 8088                 
+https = no                  
+;secure_port = 8889         
+;acl = 127.,192.168.0.      
+
+[admin]
+admin_base_path = /admin        
+admin_threads = unlimited       
+admin_http = no                 
+admin_port = 7088               
+admin_https = no                
+;admin_secure_port = 7889       
+;admin_acl = 127.,192.168.0.    
+
+[certificates]
+cert_pem = /usr/local/share/janus/certs/mycert.pem
+cert_key = /usr/local/share/janus/certs/mycert.key
+">>.
+
+
+config_ws() -> <<"
+[general]
+ws = yes
+ws_port = 8188
+wss = yes
+wss_port = 8989
+;ws_logging = 7             ; libwebsockets debugging level (0 by default)
+;ws_acl = 127.,192.168.0.   
+
+[admin]
+admin_ws = no                   
+admin_ws_port = 7188            
+admin_wss = no                  
+;admin_wss_port = 7989          
+;admin_ws_acl = 127.,192.168.0. 
+
+[certificates]
+cert_pem = /usr/local/share/janus/certs/mycert.pem
+cert_key = /usr/local/share/janus/certs/mycert.key
 ">>.
 
 
@@ -458,9 +495,10 @@ secret = adminpwd
 publishers = 6
 bitrate = 128000
 fir_freq = 10
+;audiocodec = opus
+;videocodec = vp8
 record = false
-;rec_dir = /tmp/janus-videoroom
-">>.
+;rec_dir = /tmp/janus-videoroom">>.
 
 
 %% @private

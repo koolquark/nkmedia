@@ -143,11 +143,8 @@ stop(Name) ->
 restart() ->
     stop(),
     nkmedia_janus_build:remove_run_image(),
-    nkmedia_janus_build:build_run_image(),
-    start().
-
-
-
+    nkmedia_janus_build:build_run_image().
+    % start().
 
 
 

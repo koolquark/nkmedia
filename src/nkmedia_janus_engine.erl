@@ -177,7 +177,8 @@ start_link(Config) ->
 	config :: config(),
 	name :: binary(),
 	status :: nkmedia_fs:status(),
-	janus_conn :: pid()
+	janus_conn :: pid(),
+	janus_info = #{} :: map()
 }).
 
 
@@ -203,9 +204,6 @@ init([#{name:=Name}=Config]) ->
 
 handle_call(get_state, _From, State) ->
 	{reply, State, State};
-
-% handle_call(_, _From, #state{status=Status}=State) when Status/=ready ->
-% 	{reply, {error, {not_ready, Status}}, State};
 
 handle_call(get_config, _From, #state{config=Config}=State) ->
     {reply, {ok, Config}, State};
@@ -242,40 +240,20 @@ handle_info(connect, #state{config=#{host:=Host, pass:=Pass}}=State) ->
 	State2 = update_status(connecting, State#state{janus_conn=undefined}),
 	case nkmedia_janus_client:start(Host, Pass) of
 		{ok, Pid} ->
-			monitor(process, Pid),
-			State3 = State2#state{janus_conn=Pid},
-			{noreply, update_status(ready, State3)};
+			case nkmedia_janus_client:info(Pid) of
+				{ok, Info} ->
+					monitor(process, Pid),
+					State3 = State2#state{janus_conn=Pid, janus_info=Info},
+					print_info(Info, State),
+					{noreply, update_status(ready, State3)};
+				{error, Error} ->
+					?LLOG(warning, "error response from Janus: ~p", [Error], State2),
+					{stop, normal, State2}
+			end;
 		{error, Error} ->
 			?LLOG(warning, "could not connect: ~p", [Error], State2),
 			{stop, normal, State2}
 	end;
-
-% handle_info({nkmedia_fs_event, _Pid, <<"SHUTDOWN">>, _Event}, State) ->
-% 	{stop, normal, State};
-
-% handle_info({nkmedia_fs_event, _Pid, <<"HEARTBEAT">>, _Event}, State) ->
-% 	{noreply, State};
-
-% handle_info({nkmedia_fs_event, _Pid, Name, Event}, State) ->
-% 	% lager:info("EV: ~p", [Event]),
-% 	Name2 = case Name of
-% 		<<"CUSTOM">> -> maps:get(<<"Event-Subclass">>, Event);
-% 		_ -> Name
-% 	end,
-% 	case lists:member(Name2, ?EVENT_PROCESS) of
-% 		true ->
-% 			parse_event(Name2, Event, State),
-% 			{noreply, State};
-% 		false ->
-% 			case lists:member(Name2, ?EVENT_IGNORE) of
-% 				true -> 
-% 					{noreply, State};
-% 				false ->
-% 					?LLOG(info, "ignoring event ~s", [Name2], State),
-% 					lager:info("\n~s\n", [nklib_json:encode_pretty(Event)]),
-% 					{noreply, State}
-% 			end
-% 	end;
 
 handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{janus_conn=Pid}=State) ->
 	?LLOG(warning, "connection event down", [], State),
@@ -308,6 +286,19 @@ terminate(Reason, State) ->
 %% Internal
 %% ===================================================================
 
+%% @private
+print_info(Map, State) ->
+	#{
+		<<"local-ip">> := LocalIp,
+		<<"public-ip">> := PublicIp,
+		<<"version">> := Vsn,
+		<<"plugins">> := Plugins
+	} = Map,
+	PluginNames = [N || <<"janus.plugin.", N/binary>> <- maps:keys(Plugins)],
+	?LLOG(info, "Janus vsn ~p (local ~s, remote ~s). Plugins: ~s",
+		  [Vsn, LocalIp, PublicIp, nklib_util:bjoin(PluginNames)], State).
+
+
 
 %% @private
 update_status(Status, #state{status=Status}=State) ->
@@ -320,90 +311,6 @@ update_status(NewStatus, #state{name=Name, status=OldStatus, janus_conn=Pid}=Sta
 	State#state{status=NewStatus}.
 	% send_update(#{}, State#state{status=NewStatus}).
 
-
-%% @private
-% parse_event(<<"HEARTBEAT">>, Data, State) ->
-% 	#{
-% 		<<"Event-Info">> := Info,
-% 		<<"FreeSWITCH-Version">> := Vsn, 
-% 		<<"Idle-CPU">> := Idle,
-% 		<<"Max-Sessions">> := MaxSessions,
-% 		<<"Session-Count">> := SessionCount,
-% 		<<"Session-Peak-FiveMin">> := PeakFiveMins,
-% 		<<"Session-Peak-Max">> := PeakMax,
-% 		<<"Session-Per-Sec">> := PerSec,
-% 		<<"Session-Per-Sec-FiveMin">> := PerSecFiveMins,
-% 		<<"Session-Per-Sec-Max">> := PerSecMax,
-% 		<<"Session-Since-Startup">> := AllSessions,
-% 		<<"Uptime-msec">> := UpTime
-% 	} = Data,
-% 	Stats = #{
-% 		idle => round(binary_to_float(Idle)),
-% 		max_sessions => binary_to_integer(MaxSessions),
-% 		session_count => binary_to_integer(SessionCount),
-% 		session_peak_five_mins => binary_to_integer(PeakFiveMins),
-% 		session_peak_max => binary_to_integer(PeakMax),
-% 		sessions_sec => binary_to_integer(PerSec),
-% 		sessions_sec_five_mins => binary_to_integer(PerSecFiveMins),
-% 		sessions_sec_max => binary_to_integer(PerSecMax),
-% 		all_sessions => binary_to_integer(AllSessions),
-% 		uptime => binary_to_integer(UpTime) div 1000
-% 	},
-% 	case Info of
-% 		<<"System Ready">> -> ok;
-% 		_ -> ?LLOG(warning, "unknown HEARTBEAT info: ~s", [Info], State)
-% 	end,
-% 	Update = #{vsn => Vsn, stats => _Stats},
-% 	State;
-
-%% @private
-% parse_event(<<"NkMEDIA">>, #{<<"Unique-ID">>:=_CallId}, State) ->
-%     ?LLOG(info, "event 'NkMEDIA'", [], State);
-    
-% parse_event(<<"CHANNEL_PARK">>, #{<<"Unique-ID">>:=CallId}, State) ->
-% 	send_event(CallId, parked, State);
-
-% parse_event(<<"CHANNEL_HANGUP">>, #{<<"Unique-ID">>:=CallId}, State) ->
-% 	send_event(CallId, stop, State);
-
-% parse_event(<<"CHANNEL_DESTROY">>, #{<<"Unique-ID">>:=CallId}, State) ->
-% 	send_event(CallId, stop, State);
-
-% parse_event(<<"CHANNEL_BRIDGE">>, Data, State) ->
-%     CallIdA = maps:get(<<"Bridge-A-Unique-ID">>, Data),
-%     CallIdB = maps:get(<<"Bridge-B-Unique-ID">>, Data),
-%     send_event(CallIdA, {bridge, CallIdB}, State),
-% 	send_event(CallIdB, {bridge, CallIdB}, State);
-
-% parse_event(<<"CONFERENCE_DATA">>, Data, State) ->
-%     ?LLOG(notice, "CONF DATA: ~s", [nklib_json:encode_pretty(Data)], State);
-
-% parse_event(<<"conference::maintenance">>, Data, State) ->
-%     case Data of
-%         #{
-%         	<<"Action">> := <<"add-member">>,
-%             <<"Unique-ID">> := CallId,
-%             <<"Member-ID">> := MemberId,
-%             <<"Conference-Name">> := ConfName
-%         } ->
-%         	Conf = #{
-%         		room_name => ConfName,
-%         		room_member_id => MemberId
-%         	},
-%         	send_event(CallId, {mcu, Conf}, State);
-%         _ ->
-%             ok
-%     end;
-
-% parse_event(Name, _Data, State) ->
-%     ?LLOG(warning, "unexpected event: ~s", [Name], State).
-
-
-% %% @private
-% send_event(ChId, Status, #state{name=FsId}) ->
-%     nkmedia_session:ms_event(ChId, {freeswitch, FsId}, Status).
-
--compile([export_all]).
 
 %% @private
 connect_janus(_Host, 0) ->
