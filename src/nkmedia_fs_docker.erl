@@ -22,7 +22,7 @@
 -module(nkmedia_fs_docker).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/0, start/1, stop/1]).
+-export([start/0, start/1, stop/1, stop/0]).
 -export([defaults/1, notify/4]).
 
 -include("nkmedia.hrl").
@@ -127,6 +127,19 @@ stop(Name) ->
             {error, Error}
     end.
 
+
+
+%% Stop running instance (development only)
+stop() ->
+    Image = nkmedia_fs_build:run_image_name(#{}),
+    FsIp = case nkmedia_app:get(docker_ip) of
+        {127,0,0,1} ->
+            error(no_dev_mode);
+        DockerIp ->
+            nklib_util:to_host(DockerIp)
+    end,
+    Name = list_to_binary(["nk_fs_", nklib_util:hash({Image, FsIp})]),
+    stop(Name).
 
 
 %% @private

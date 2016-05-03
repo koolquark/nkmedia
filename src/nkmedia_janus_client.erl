@@ -38,7 +38,7 @@
     lager:Type("NkMEDIA Janus Client "++Txt, Args)).
 
 -define(PRINT(Txt, Args, State), 
-        print(Txt, Args, State),    % Comment this
+        % print(Txt, Args, State),    % Comment this
         ok).
 
 
@@ -73,7 +73,7 @@ start(Host, Pass) ->
         ws_proto => <<"janus-protocol">>
     },
     {ok, Ip} = nklib_util:to_ip(Host),
-    Conn = {?MODULE, ws, Ip, 8188},
+    Conn = {?MODULE, ws, Ip, ?JANUS_WS_PORT},
     % Conn = {?MODULE, wss, Ip, 8989},
     case nkpacket:connect(Conn, ConnOpts) of
         {ok, Pid} -> 

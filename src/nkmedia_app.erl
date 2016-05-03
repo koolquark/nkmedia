@@ -72,6 +72,7 @@ start(_Type, _Args) ->
         sip_port => 0,
         no_docker => false
     },
+    save_log_dirs(),
     case nklib_config:load_env(?APP, Syntax, Defaults) of
         {ok, _} ->
             % nkpacket:register_protocol(fs_event, nkmedia_fs_event_protocol),
@@ -161,6 +162,23 @@ find_images(MonId) ->
     {ok, Images} = nkdocker:images(Docker),
     Tags = lists:flatten([T || #{<<"RepoTags">>:=T} <- Images]),
     lists:filter(fun(Img) -> length(binary:split(Img, <<"/nk_">>))==2 end, Tags).
+
+
+%% @private
+save_log_dirs() ->
+    Dir = filename:absname(filename:join(code:priv_dir(?APP), "../log")),
+    Path = nklib_parse:fullpath(Dir),
+    ok = filelib:ensure_dir(<<Path/binary, "/janus/log">>),
+    ok = filelib:ensure_dir(<<Path/binary, "/freeswitch/log">>),
+    nkmedia_app:put(log_dir, Path).
+
+
+
+
+
+
+
+
 
 
 

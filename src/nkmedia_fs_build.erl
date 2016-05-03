@@ -28,7 +28,7 @@
 -export([remove_run_image/0, remove_run_image/1]).
 -export([run_image_name/1]).
 
-% -include("nkmedia.hrl").
+-include("nkmedia.hrl").
 
 %% ===================================================================
 %% Public
@@ -251,7 +251,7 @@ run_image_event_socket() -> <<"
   <settings>
     <param name=\"nat-map\" value=\"false\"/>
     <param name=\"listen-ip\" value=\"$${nk_fs_ip}\"/>
-    <param name=\"listen-port\" value=\"8021\"/>
+    <param name=\"listen-port\" value=\"$${nk_event_port}\"/>
     <param name=\"password\" value=\"$${default_password}\"/>
     <param name=\"apply-inbound-acl\" value=\"0.0.0.0/0\"/>
     <param name=\"stop-on-bind-error\" value=\"true\"/>
@@ -266,7 +266,7 @@ run_image_verto() -> <<"
   </settings>
   <profiles>
     <profile name=\"nkmedia\">
-      <param name=\"bind-local\" value=\"$${nk_fs_ip}:8081\"/>
+      <param name=\"bind-local\" value=\"$${nk_fs_ip}:$${nk_verto_port}\"/>
       <param name=\"force-register-domain\" value=\"$${local_ip_v4}\"/>
       <param name=\"userauth\" value=\"true\"/>
       <param name=\"blind-reg\" value=\"true\"/>
@@ -355,24 +355,7 @@ run_image_sip() -> <<"
 </profile>
 ">>.
 
-% run_image_directory() -> <<"
-% <include>
-%     <domain name=\"nkmedia\">
-%         <params>
-%             <param name=\"jsonrpc-allowed-methods\" value=\"verto\"/>
-%             <param name=\"jsonrpc-allowed-event-channels\" value=\"demo,conference,presence\"/>
-%         </params>
-%         <variables>
-%         <variable name=\"record_stereo\" value=\"true\"/>
-%         <variable name=\"user_context\" value=\"nkmedia\"/>
-%         </variables>
-%         <groups>
-%             <users>
-%             </users>
-%         </groups>
-%     </domain>
-% </include>
-% ">>.
+
 
 
 run_image_modules() -> <<"
@@ -490,6 +473,9 @@ export RTP_IP=\"${NK_RTP_IP-$LOCAL_IP_V4}\"
 export ERLANG_IP=\"${NK_ERLANG_IP-127.0.0.1}\"
 export EXT_IP=\"${NK_EXT_IP-stun:stun.freeswitch.org}\"
 export PASS=\"${NK_PASS-6666}\"
+export EVENT_PORT=", (nklib_util:to_binary(?FS_EVENT_PORT))/binary, "
+export VERTO_PORT=", (nklib_util:to_binary(?FS_VERTO_PORT))/binary, "
+export SIP_PORT=", (nklib_util:to_binary(?FS_SIP_PORT))/binary, "
 cat > /usr/local/freeswitch/conf/nkvars.xml <<EOF
 <include>
     <X-PRE-PROCESS cmd=\"set\" data=\"nk_fs_ip=$FS_IP\"/>
@@ -499,12 +485,15 @@ cat > /usr/local/freeswitch/conf/nkvars.xml <<EOF
     <X-PRE-PROCESS cmd=\"set\" data=\"default_password=$PASS\"/>
     <X-PRE-PROCESS cmd=\"set\" data=\"local_ip_v6=[::1]\"/>
     <X-PRE-PROCESS cmd=\"set\" data=\"nkevent=Event-Name=CUSTOM,Event-Subclass=NkMEDIA\"/>
+    <X-PRE-PROCESS cmd=\"set\" data=\"nk_event_port=$EVENT_PORT\"/>
+    <X-PRE-PROCESS cmd=\"set\" data=\"nk_verto_port=$VERTO_PORT\"/>
+    <X-PRE-PROCESS cmd=\"set\" data=\"internal_sip_port=$SIP_PORT\"/>
 </include>
 EOF
 #rm /usr/local/bin/fs_cli
 cat > /usr/local/bin/fs_cli2 <<EOF
 !/bin/bash
-/usr/local/freeswitch/bin/fs_cli -H $FS_IP -p $PASS
+/usr/local/freeswitch/bin/fs_cli -H $FS_IP -P $EVENT_PORT -p $PASS
 EOF
 chmod a+x /usr/local/bin/fs_cli2
 exec /usr/local/freeswitch/bin/freeswitch -nf -nonat

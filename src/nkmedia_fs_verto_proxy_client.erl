@@ -58,7 +58,7 @@ start(FsPid) ->
         ws_proto => <<"janus-protocol">>
     },
     {ok, Ip} = nklib_util:to_ip(Host),
-    Conn = {?MODULE, ws, Ip, 8081},
+    Conn = {?MODULE, ws, Ip, ?FS_VERTO_PORT},
     nkpacket:connect(Conn, ConnOpts).
 
 

@@ -290,10 +290,10 @@ terminate(Reason, State) ->
 print_info(Map, State) ->
 	#{
 		<<"local-ip">> := LocalIp,
-		<<"public-ip">> := PublicIp,
 		<<"version">> := Vsn,
 		<<"plugins">> := Plugins
 	} = Map,
+	PublicIp = maps:get(<<"public-ip">>, Map, <<>>),
 	PluginNames = [N || <<"janus.plugin.", N/binary>> <- maps:keys(Plugins)],
 	?LLOG(info, "Janus vsn ~p (local ~s, remote ~s). Plugins: ~s",
 		  [Vsn, LocalIp, PublicIp, nklib_util:bjoin(PluginNames)], State).
@@ -317,7 +317,7 @@ connect_janus(_Host, 0) ->
 	error;
 connect_janus(Host, Tries) ->
 	Host2 = nklib_util:to_list(Host),
-	case gen_tcp:connect(Host2, 8188, [{active, false}, binary], 5000) of
+	case gen_tcp:connect(Host2, ?JANUS_WS_PORT, [{active, false}, binary], 5000) of
 		{ok, Socket} ->
 			gen_tcp:close(Socket),
 			ok;

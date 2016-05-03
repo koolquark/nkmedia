@@ -64,7 +64,7 @@ start(JanusPid) ->
         ws_proto => <<"janus-protocol">>
     },
     {ok, Ip} = nklib_util:to_ip(Host),
-    Conn = {?MODULE, ws, Ip, 8188},
+    Conn = {?MODULE, ws, Ip, ?JANUS_WS_PORT},
     nkpacket:connect(Conn, ConnOpts).
 
 
@@ -290,18 +290,18 @@ print_trans(#trans{req=Req, resp=Resp, has_ack=HasACK}=Trans) ->
     #trans{req_msg=Msg1, resp_msg=Msg2} = Trans,
     lager:info("~s -> \n~s\n\n", 
                 [nklib_json:encode_pretty(Msg1), nklib_json:encode_pretty(Msg2)]),
-    % case Msg1 of
-    %     #{<<"jsep">>:=#{<<"sdp">>:=SDP1}} ->
-    %         io:format("\n~s\n\n", [SDP1]);
-    %     _ -> 
-    %         ok
-    % end,
-    % case Msg2 of
-    %     #{<<"jsep">>:=#{<<"sdp">>:=SDP2}} ->
-    %         io:format("\n~s\n\n", [SDP2]);
-    %     _ -> 
-    %         ok
-    % end,
+    case Msg1 of
+        #{<<"jsep">>:=#{<<"sdp">>:=SDP1}} ->
+            io:format("\n~s\n\n", [SDP1]);
+        _ -> 
+            ok
+    end,
+    case Msg2 of
+        #{<<"jsep">>:=#{<<"sdp">>:=SDP2}} ->
+            io:format("\n~s\n\n", [SDP2]);
+        _ -> 
+            ok
+    end,
     ok.
 
 

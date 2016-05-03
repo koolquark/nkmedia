@@ -52,37 +52,43 @@ start() ->
 start(Config) ->
     Config2 = defaults(Config),
     Image = nkmedia_janus_build:run_image_name(Config2),
-    ErlangIp = nklib_util:to_host(nkmedia_app:get(erlang_ip)),
-    MainIp = nklib_util:to_host(nkmedia_app:get(main_ip)),
-    FsIp = case nkmedia_app:get(docker_ip) of
+    case nkmedia_app:get(docker_ip) of
         {127,0,0,1} ->
+            IsDev = false,
             Byte1 = crypto:rand_uniform(1, 255),
             Byte2 = crypto:rand_uniform(1, 255),
             Byte3 = crypto:rand_uniform(1, 255),
-            nklib_util:to_host({127, Byte1, Byte2, Byte3});
+            JanusIp = nklib_util:to_host({127, Byte1, Byte2, Byte3});
         DockerIp ->
-            nklib_util:to_host(DockerIp)
+            IsDev = true,
+            JanusIp  = nklib_util:to_host(DockerIp)
     end,
-    Name = list_to_binary(["nk_janus_", nklib_util:hash({Image, FsIp})]),
+    Name = list_to_binary(["nk_janus_", nklib_util:hash({Image, JanusIp})]),
+    LogDir = <<(nkmedia_app:get(log_dir))/binary, $/, Name/binary>>,
+    ok = filelib:ensure_dir(<<LogDir/binary, "dummy">>),
     ExtIp = nklib_util:to_host(nkpacket_app:get(ext_ip)),
     #{pass:=Pass} = Config2,
     Env = [
-        {"NK_JANUS_IP", FsIp},                 %% 127.X.Y.Z except in dev mode
-        {"NK_ERLANG_IP", ErlangIp},         %% 127.0.0.1 except in dev mode
-        {"NK_RTP_IP", MainIp},       
+        {"NK_JANUS_IP", JanusIp},                 %% 127.X.Y.Z except in dev mode
         {"NK_EXT_IP", ExtIp},  
         {"NK_PASS", nklib_util:to_list(Pass)}
     ],
     Labels = [
         {"nkmedia", "janus"}
     ],
+    Volumes = case IsDev of
+        true -> [];
+        false -> [{LogDir, "/var/log/janus"}]
+    end,
     % Cmds = ["bash"],
+    lager:warning("Volumes: ~p", [Volumes]),
     DockerOpts = #{
         name => Name,
         env => Env,
         net => host,
         interactive => true,
-        labels => Labels
+        labels => Labels,
+        volumes => Volumes
     },
     case get_docker_pid() of
         {ok, DockerPid} ->
@@ -106,13 +112,13 @@ start(Config) ->
 
 stop() ->
     Image = nkmedia_janus_build:run_image_name(#{}),
-    FsIp = case nkmedia_app:get(docker_ip) of
+    JanusIp = case nkmedia_app:get(docker_ip) of
         {127,0,0,1} ->
             error(no_dev_mode);
         DockerIp ->
             nklib_util:to_host(DockerIp)
     end,
-    Name = list_to_binary(["nk_janus_", nklib_util:hash({Image, FsIp})]),
+    Name = list_to_binary(["nk_janus_", nklib_util:hash({Image, JanusIp})]),
     stop(Name).
 
 
@@ -143,8 +149,8 @@ stop(Name) ->
 restart() ->
     stop(),
     nkmedia_janus_build:remove_run_image(),
-    nkmedia_janus_build:build_run_image().
-    % start().
+    nkmedia_janus_build:build_run_image(),
+    start().
 
 
 

@@ -44,6 +44,9 @@
 	<<"FreeSWITCH-IPv6">>, <<"FreeSWITCH-Switchname">>]).
 
 
+-include("nkmedia.hrl").
+
+
 %% ===================================================================
 %% Public
 %% ===================================================================
@@ -55,7 +58,7 @@
 
 start(Host, Pass) ->
 	{ok, Ip} = nklib_util:to_ip(Host),
-	Conn = {?MODULE, tcp, Ip, 8021},
+	Conn = {?MODULE, tcp, Ip, ?FS_EVENT_PORT},
 	ConnOpts = #{
 		class => nkmedia_fs, 
 		idle_timeout => 60000,
@@ -191,7 +194,7 @@ transports(_) -> [tcp].
 -spec default_port(nkpacket:transport()) ->
     inet:port_number() | invalid.
 
-default_port(tcp) -> 8021.
+default_port(tcp) -> ?FS_EVENT_PORT.
 
 
 -spec conn_init(nkpacket:nkport()) ->

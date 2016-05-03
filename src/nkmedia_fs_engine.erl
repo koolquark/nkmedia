@@ -431,7 +431,7 @@ connect_fs(_Host, _Pass, 0) ->
 	error;
 connect_fs(Host, Pass, Tries) ->
 	Host2 = nklib_util:to_list(Host),
-	case gen_tcp:connect(Host2, 8021, [{active, false}, binary], 5000) of
+	case gen_tcp:connect(Host2, ?FS_EVENT_PORT, [{active, false}, binary], 5000) of
 		{ok, Socket} ->
 			Res = connect_fs(Socket, Pass),
 			gen_tcp:close(Socket),

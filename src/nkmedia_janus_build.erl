@@ -28,7 +28,7 @@
 -export([remove_run_image/0, remove_run_image/1]).
 -export([run_image_name/1]).
 
-% -include("nkmedia.hrl").
+-include("nkmedia.hrl").
 
 %% ===================================================================
 %% Public
@@ -193,6 +193,7 @@ run_image_dockerfile(Config) ->
 "FROM ", base_image_name(Config), "\n"
 "ADD start.sh /usr/local/bin/\n"
 "WORKDIR /usr/local/\n"
+"RUN mkdir /var/log/janus\n"
 "ENTRYPOINT [\"sh\", \"/usr/local/bin/start.sh\"]"
 ]).
 
@@ -212,10 +213,10 @@ run_image_start() ->
 <<"#!/bin/bash
 set -e
 export JANUS_IP=\"${NK_JANUS_IP-127.0.0.1}\"
-export RTP_IP=\"${NK_RTP_IP-$JANUS_IP}\"
-export ERLANG_IP=\"${NK_ERLANG_IP-127.0.0.1}\"
-export EXT_IP=\"${NK_EXT_IP-stun:stun.freeswitch.org}\"
+export EXT_IP=\"${NK_EXT_IP-127.0.0.1}\"
 export PASS=\"${NK_PASS-nkmedia_janus}\"
+export WS_PORT=", (nklib_util:to_binary(?JANUS_WS_PORT))/binary, "
+export ADMIN_PORT=", (nklib_util:to_binary(?JANUS_ADMIN_PORT))/binary, "
 export CONF=\"/usr/local/etc/janus\"
 
 cat > $CONF/janus.cfg <<EOF\n", Base/binary, "\nEOF
@@ -230,6 +231,8 @@ cat > $CONF/janus.plugin.videocall.cfg <<EOF\n", ";", "\nEOF
 cat > $CONF/janus.plugin.videoroom.cfg <<EOF\n", VideoRoom/binary, "\nEOF
 cat > $CONF/janus.plugin.voicemail.cfg <<EOF\n", Voicemail/binary, "\nEOF
 
+mkdir /usr/local/log
+mkdir /usr/local/log/janus
 exec /usr/local/bin/janus
 #exec /bin/bash
 ">>.
@@ -243,10 +246,10 @@ configs_folder = /usr/local/etc/janus
 plugins_folder = /usr/local/lib/janus/plugins
 transports_folder = /usr/local/lib/janus/transports     
 ;log_to_stdout = false              ; default=true
-;log_to_file = /tmp/janus.log   
+log_to_file = /var/log/janus/janus.log
 ;daemonize = true               
 ;pid_file = /tmp/janus.pid
-interface = 192.168.0.102           ; Interface to use (will be used in SDP)
+interface = $JANUS_IP               ; Interface to use (will be used in SDP)
 debug_level = 4                     ; Debug/logging level, valid values are 0-7
 ;debug_timestamps = yes
 ;debug_colors = no
@@ -267,12 +270,12 @@ cert_key = /usr/local/share/janus/certs/mycert.key
 ;force-rtcp-mux = true              ; Default false
 
 [nat]
-stun_server = stun.voip.eutelia.it
+;stun_server = stun.voip.eutelia.it
 ;stun_port = 3478
 nice_debug = false
 ;ice_lite = true
 ;ice_tcp = true
-;nat_1_1_mapping = 1.2.3.4          ; All host candidates will have this
+nat_1_1_mapping = $EXT_IP          ; All host candidates will have (only) this
 ;turn_server = myturnserver.com
 ;turn_port = 3478
 ;turn_type = udp
@@ -298,7 +301,7 @@ http = yes
 port = 8088                 
 https = no                  
 ;secure_port = 8889         
-;acl = 127.,192.168.0.      
+acl = 127.,192.168.0.      
 
 [admin]
 admin_base_path = /admin        
@@ -307,7 +310,7 @@ admin_http = no
 admin_port = 7088               
 admin_https = no                
 ;admin_secure_port = 7889       
-;admin_acl = 127.,192.168.0.    
+admin_acl = 127.,192.168.0.    
 
 [certificates]
 cert_pem = /usr/local/share/janus/certs/mycert.pem
@@ -318,18 +321,18 @@ cert_key = /usr/local/share/janus/certs/mycert.key
 config_ws() -> <<"
 [general]
 ws = yes
-ws_port = 8188
-wss = yes
-wss_port = 8989
+ws_port = $WS_PORT
+;wss = yes
+;wss_port = 8989
 ;ws_logging = 7             ; libwebsockets debugging level (0 by default)
-;ws_acl = 127.,192.168.0.   
+ws_acl = 127.,192.168.0.   
 
 [admin]
-admin_ws = no                   
-admin_ws_port = 7188            
+admin_ws = yes                   
+admin_ws_port = $ADMIN_PORT
 admin_wss = no                  
 ;admin_wss_port = 7989          
-;admin_ws_acl = 127.,192.168.0. 
+admin_ws_acl = 127.,192.168.0. 
 
 [certificates]
 cert_pem = /usr/local/share/janus/certs/mycert.pem

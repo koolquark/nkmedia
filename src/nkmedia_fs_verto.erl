@@ -117,7 +117,7 @@ start(SessId, FsId) ->
         user => #{fs_id=>FsId, pass=>Pass, sess_id=>SessId}
     },
     {ok, Ip} = nklib_util:to_ip(Host),
-    Conn = {?MODULE, ws, Ip, 8081},
+    Conn = {?MODULE, ws, Ip, ?FS_VERTO_PORT},
     case nkpacket:connect(Conn, ConnOpts) of
         {ok, Pid} -> 
             case nklib_util:call(Pid, login) of

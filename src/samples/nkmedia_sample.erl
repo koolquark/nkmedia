@@ -52,7 +52,7 @@ start() ->
         verto_listen => "verto:all:8082",
         % verto_listen => "verto_proxy:all:8082",
         verto_communicator => "https:all:8082/vc",
-        janus_listen => "janus_proxy:all",
+        janus_listen => "janus_proxy:all:8989",
         janus_demos => "https://all:8083/janus",
         log_level => debug,
         nksip_trace => {console, all},
