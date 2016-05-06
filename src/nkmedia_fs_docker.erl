@@ -50,7 +50,7 @@ start() ->
 start(Opts) ->
     Opts2 = nkmedia_fs:config(Opts),
     {ok, Docker} = nkmedia_docker:get_docker(),
-    case build_fs_instance(Docker, Opts2) of
+    case build_fs_instance(Opts2) of
         ok ->
             RunName = fs_run_name(Opts2),
             ImgName = fs_instance_name(Opts2),
@@ -116,8 +116,7 @@ stop(Opts) ->
 
 build_base(Opts) ->
     Opts2 = nkmedia_fs:config(Opts),
-    {ok, Docker} = nkmedia_docker:get_docker(),
-    build_fs_base(Docker, Opts2).
+    build_fs_base(Opts2).
 
 
 
@@ -193,9 +192,9 @@ fs_run_name(#{pos:=Pos}) -> <<"nk_fs_", (nklib_util:to_binary(Pos))/binary>>.
 %% ===================================================================
 
 %% @private
-build_fs_base(Docker, Opts) ->
+build_fs_base(Opts) ->
 	{Name, Tar} = fs_base(Opts),
-	nkdocker_util:build(Docker, Name, Tar).
+	nkdocker_util:build(Name, Tar).
 
 
 %% @private
@@ -267,9 +266,9 @@ WORKDIR /usr/src/freeswitch
 %% ===================================================================
 
 %% @private
-build_fs_instance(Docker, Opts) ->
+build_fs_instance(Opts) ->
     {Name, Tar} = fs_instance(Opts),
-    nkdocker_util:build(Docker, Name, Tar).
+    nkdocker_util:build(Name, Tar).
 
 
 %% @private
