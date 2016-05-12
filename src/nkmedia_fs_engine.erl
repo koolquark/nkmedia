@@ -87,10 +87,10 @@
 -spec connect(config()) ->
 	{ok, pid()} | {error, term()}.
 
-connect(#{name:=Name, rel:=Rel, host:=Host, pass:=Pass}=Config) ->
+connect(#{name:=Name, rel:=Rel, host:=Host, base:=Base, pass:=Pass}=Config) ->
 	case find(Name) of
 		not_found ->
-			case connect_fs(Host, Pass, 10) of
+			case connect_fs(Host, Base, Pass, 10) of
 				ok ->
 					nkmedia_sup:start_fs_engine(Config);
 				error ->
@@ -260,9 +260,9 @@ handle_info(connect, #state{fs_conn=Pid}=State) when is_pid(Pid) ->
 	true = is_process_alive(Pid),
 	{noreply, State};
 
-handle_info(connect, #state{config=#{host:=Host, pass:=Pass}}=State) ->
+handle_info(connect, #state{config=#{host:=Host, base:=Base, pass:=Pass}}=State) ->
 	State2 = update_status(connecting, State#state{fs_conn=undefined}),
-	case nkmedia_fs_event_protocol:start(Host, Pass) of
+	case nkmedia_fs_event_protocol:start(Host, Base, Pass) of
 		{ok, Pid} ->
 			monitor(process, Pid),
 			State3 = State2#state{fs_conn=Pid},
@@ -427,11 +427,11 @@ send_event(ChId, Status, #state{name=FsId}) ->
 
 
 %% @private
-connect_fs(_Host, _Pass, 0) ->
+connect_fs(_Host, _Base, _Pass, 0) ->
 	error;
-connect_fs(Host, Pass, Tries) ->
+connect_fs(Host, Base, Pass, Tries) ->
 	Host2 = nklib_util:to_list(Host),
-	case gen_tcp:connect(Host2, ?FS_EVENT_PORT, [{active, false}, binary], 5000) of
+	case gen_tcp:connect(Host2, Base, [{active, false}, binary], 5000) of
 		{ok, Socket} ->
 			Res = connect_fs(Socket, Pass),
 			gen_tcp:close(Socket),
@@ -439,7 +439,7 @@ connect_fs(Host, Pass, Tries) ->
 		{error, _} ->
 			lager:info("Waiting for FS at ~s to start (~p) ...", [Host, Tries]),
 			timer:sleep(1000),
-			connect_fs(Host2, Pass, Tries-1)
+			connect_fs(Host2, Base, Pass, Tries-1)
 	end.
 
 

@@ -22,7 +22,7 @@
 -module(nkmedia_fs_docker).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/0, start/1, stop/1, stop/0]).
+-export([start/0, start/1, stop/1, stop_all/0]).
 -export([defaults/1, notify/4]).
 
 -include("nkmedia.hrl").
@@ -45,6 +45,9 @@ start() ->
 
 
 %% @doc Starts a FS instance
+%% BASE+0: Event port
+%% BASE+1: WS verto port
+%% BASE+2: SIP Port
 -spec start(nkmedia_fs:config()) ->
     {ok, Name::binary()} | {error, term()}.
 
@@ -52,24 +55,17 @@ start(Config) ->
     Config2 = defaults(Config),
     Image = nkmedia_fs_build:run_image_name(Config2),
     ErlangIp = nklib_util:to_host(nkmedia_app:get(erlang_ip)),
-    _MainIp = nklib_util:to_host(nkmedia_app:get(main_ip)),
-    FsIp = case nkmedia_app:get(docker_ip) of
-        {127,0,0,1} ->
-            Byte1 = crypto:rand_uniform(1, 255),
-            Byte2 = crypto:rand_uniform(1, 255),
-            Byte3 = crypto:rand_uniform(1, 255),
-            nklib_util:to_host({127, Byte1, Byte2, Byte3});
-        DockerIp ->
-            nklib_util:to_host(DockerIp)
-    end,
-    Name = list_to_binary(["nk_fs_", nklib_util:hash({Image, FsIp})]),
+    FsIp = nklib_util:to_host(nkmedia_app:get(docker_ip)),
+    #{base:=Base, pass:=Pass} = Config2,
+    Name = list_to_binary(["nk_fs_", nklib_util:to_binary(Base)]),
+    LogDir = <<(nkmedia_app:get(log_dir))/binary, $/, Name/binary>>,
     ExtIp = nklib_util:to_host(nkpacket_app:get(ext_ip)),
-    #{pass:=Pass} = Config2,
     Env = [
-        {"NK_FS_IP", FsIp},                 %% 127.X.Y.Z except in dev mode
-        {"NK_ERLANG_IP", ErlangIp},         %% 127.0.0.1 except in dev mode
+        {"NK_FS_IP", FsIp},                
+        {"NK_ERLANG_IP", ErlangIp},         
         {"NK_RTP_IP", "$${local_ip_v4}"},       
         {"NK_EXT_IP", ExtIp},  
+        {"NK_BASE", nklib_util:to_binary(Base)},
         {"NK_PASS", nklib_util:to_list(Pass)}
     ],
     Labels = [
@@ -83,7 +79,8 @@ start(Config) ->
         cmds => Cmds,
         net => host,
         interactive => true,
-        labels => Labels
+        labels => Labels,
+        volumes => [{LogDir, "/usr/local/freeswitch/log"}]
     },
     case get_docker_pid() of
         {ok, DockerPid} ->
@@ -128,18 +125,25 @@ stop(Name) ->
     end.
 
 
-
-%% Stop running instance (development only)
-stop() ->
-    Image = nkmedia_fs_build:run_image_name(#{}),
-    FsIp = case nkmedia_app:get(docker_ip) of
-        {127,0,0,1} ->
-            error(no_dev_mode);
-        DockerIp ->
-            nklib_util:to_host(DockerIp)
-    end,
-    Name = list_to_binary(["nk_fs_", nklib_util:hash({Image, FsIp})]),
-    stop(Name).
+%% @doc
+stop_all() ->
+    case get_docker_pid() of
+        {ok, DockerPid} ->
+            {ok, List} = nkdocker:ps(DockerPid),
+            lists:foreach(
+                fun(#{<<"Names">>:=[<<"/", Name/binary>>]}) ->
+                    case Name of
+                        <<"nk_fs_", _/binary>> ->
+                            lager:info("Stopping ~s", [Name]),
+                            stop(Name);
+                        _ -> 
+                            ok
+                    end
+                end,
+                List);
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 %% @private
@@ -161,7 +165,8 @@ defaults(Config) ->
         comp => nkmedia_app:get(docker_company), 
         vsn => nkmedia_app:get(fs_version), 
         rel => nkmedia_app:get(fs_release),
-        pass => nklib_util:uid()
+        base => crypto:rand_uniform(49152, 65535),
+        pass => nklib_util:luid()
     },
     maps:merge(Defs, Config).
 
@@ -176,14 +181,24 @@ notify(MonId, start, Name, Data) ->
         #{
             name := Name,
             labels := #{<<"nkmedia">> := <<"freeswitch">>},
-            env := #{<<"NK_FS_IP">> := Host, <<"NK_PASS">> := Pass},
+            env := #{
+                <<"NK_FS_IP">> := Host, 
+                <<"NK_BASE">> := Base, 
+                <<"NK_PASS">> := Pass
+            },
             image := Image
         } ->
             case binary:split(Image, <<"/">>) of
                 [_Comp, <<"nk_freeswitch_run:", Rel/binary>>] -> 
                     case lists:member(Rel, ?SUPPORTED_FS) of
                         true ->
-                            Config = #{name=>Name, rel=>Rel, host=>Host, pass=>Pass},
+                            Config = #{
+                                name => Name, 
+                                rel => Rel, 
+                                host => Host, 
+                                base => nklib_util:to_integer(Base),
+                                pass => Pass
+                            },
                             connect_fs(MonId, Config);
                         false ->
                             lager:warning("Started unsupported nk_freeswitch")

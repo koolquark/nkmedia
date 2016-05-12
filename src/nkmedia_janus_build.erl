@@ -212,11 +212,12 @@ run_image_start() ->
     Voicemail = config_voicemail(),
 <<"#!/bin/bash
 set -e
-export JANUS_IP=\"${NK_JANUS_IP-127.0.0.1}\"
-export EXT_IP=\"${NK_EXT_IP-127.0.0.1}\"
-export PASS=\"${NK_PASS-nkmedia_janus}\"
-export WS_PORT=", (nklib_util:to_binary(?JANUS_WS_PORT))/binary, "
-export ADMIN_PORT=", (nklib_util:to_binary(?JANUS_ADMIN_PORT))/binary, "
+JANUS_IP=${NK_JANUS_IP-127.0.0.1}
+EXT_IP=${NK_EXT_IP-127.0.0.1}
+PASS=${NK_PASS-nkmedia_janus}
+BASE=${NK_BASE-50000}
+WS_PORT=$BASE
+ADMIN_PORT=$(($BASE + 1))
 export CONF=\"/usr/local/etc/janus\"
 
 cat > $CONF/janus.cfg <<EOF\n", Base/binary, "\nEOF
@@ -234,7 +235,7 @@ cat > $CONF/janus.plugin.voicemail.cfg <<EOF\n", Voicemail/binary, "\nEOF
 mkdir /usr/local/log
 mkdir /usr/local/log/janus
 exec /usr/local/bin/janus
-#exec /bin/bash
+# exec /bin/bash
 ">>.
 
 

@@ -22,7 +22,7 @@
 -module(nkmedia_janus_docker).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/0, start/1, stop/1, stop/0]).
+-export([start/0, start/1, stop/1, stop_all/0]).
 -export([defaults/1, restart/0, notify/4]).
 
 -include("nkmedia.hrl").
@@ -46,49 +46,38 @@ start() ->
 
 
 %% @doc Starts a JANUS instance
+%% BASE+0: WS port
+%% BASE+1: WS admin port
 -spec start(nkmedia_janus:config()) ->
     {ok, Name::binary()} | {error, term()}.
 
 start(Config) ->
     Config2 = defaults(Config),
     Image = nkmedia_janus_build:run_image_name(Config2),
-    case nkmedia_app:get(docker_ip) of
-        {127,0,0,1} ->
-            IsDev = false,
-            Byte1 = crypto:rand_uniform(1, 255),
-            Byte2 = crypto:rand_uniform(1, 255),
-            Byte3 = crypto:rand_uniform(1, 255),
-            JanusIp = nklib_util:to_host({127, Byte1, Byte2, Byte3});
-        DockerIp ->
-            IsDev = true,
-            JanusIp  = nklib_util:to_host(DockerIp)
-    end,
-    Name = list_to_binary(["nk_janus_", nklib_util:hash({Image, JanusIp})]),
+    JanusIp  = nklib_util:to_host(nkmedia_app:get(docker_ip)),
+    #{base:=Base, pass:=Pass} = Config2,
+    Name = list_to_binary(["nk_janus_", nklib_util:to_binary(Base)]),
     LogDir = <<(nkmedia_app:get(log_dir))/binary, $/, Name/binary>>,
     ok = filelib:ensure_dir(<<LogDir/binary, "dummy">>),
     ExtIp = nklib_util:to_host(nkpacket_app:get(ext_ip)),
     #{pass:=Pass} = Config2,
     Env = [
-        {"NK_JANUS_IP", JanusIp},                 %% 127.X.Y.Z except in dev mode
+        {"NK_JANUS_IP", JanusIp},             
         {"NK_EXT_IP", ExtIp},  
-        {"NK_PASS", nklib_util:to_list(Pass)}
+        {"NK_PASS", nklib_util:to_binary(Pass)},
+        {"NK_BASE", nklib_util:to_binary(Base)}
     ],
     Labels = [
         {"nkmedia", "janus"}
     ],
-    Volumes = case IsDev of
-        true -> [];
-        false -> [{LogDir, "/var/log/janus"}]
-    end,
     % Cmds = ["bash"],
-    lager:warning("Volumes: ~p", [Volumes]),
     DockerOpts = #{
         name => Name,
         env => Env,
         net => host,
         interactive => true,
         labels => Labels,
-        volumes => Volumes
+        volumes => [{LogDir, "/var/log/janus"}]
     },
     case get_docker_pid() of
         {ok, DockerPid} ->
@@ -108,19 +97,6 @@ start(Config) ->
         {error, Error} ->
             {error, Error}
     end.
-
-
-stop() ->
-    Image = nkmedia_janus_build:run_image_name(#{}),
-    JanusIp = case nkmedia_app:get(docker_ip) of
-        {127,0,0,1} ->
-            error(no_dev_mode);
-        DockerIp ->
-            nklib_util:to_host(DockerIp)
-    end,
-    Name = list_to_binary(["nk_janus_", nklib_util:hash({Image, JanusIp})]),
-    stop(Name).
-
 
 
 %% @doc Stops a JANUS instance
@@ -146,8 +122,29 @@ stop(Name) ->
     end.
 
 
+%% @doc
+stop_all() ->
+    case get_docker_pid() of
+        {ok, DockerPid} ->
+            {ok, List} = nkdocker:ps(DockerPid),
+            lists:foreach(
+                fun(#{<<"Names">>:=[<<"/", Name/binary>>]}) ->
+                    case Name of
+                        <<"nk_janus_", _/binary>> ->
+                            lager:info("Stopping ~s", [Name]),
+                            stop(Name);
+                        _ -> 
+                            ok
+                    end
+                end,
+                List);
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
 restart() ->
-    stop(),
+    stop_all(),
     nkmedia_janus_build:remove_run_image(),
     nkmedia_janus_build:build_run_image(),
     start().
@@ -173,7 +170,8 @@ defaults(Config) ->
         comp => nkmedia_app:get(docker_company), 
         vsn => nkmedia_app:get(janus_version), 
         rel => nkmedia_app:get(janus_release),
-        pass => nklib_util:uid()
+        base => crypto:rand_uniform(49152, 65535),
+        pass => nklib_util:luid()
     },
     maps:merge(Defs, Config).
 
@@ -186,14 +184,24 @@ notify(MonId, start, Name, Data) ->
         #{
             name := Name,
             labels := #{<<"nkmedia">> := <<"janus">>},
-            env := #{<<"NK_JANUS_IP">> := Host, <<"NK_PASS">> := Pass},
+            env := #{
+                <<"NK_JANUS_IP">> := Host, 
+                <<"NK_BASE">> := Base, 
+                <<"NK_PASS">> := Pass
+            },
             image := Image
         } ->
             case binary:split(Image, <<"/">>) of
                 [_Comp, <<"nk_janus_run:", Rel/binary>>] -> 
                     case lists:member(Rel, ?SUPPORTED_JANUS) of
                         true ->
-                            Config = #{name=>Name, rel=>Rel, host=>Host, pass=>Pass},
+                            Config = #{
+                                name => Name, 
+                                rel => Rel, 
+                                host => Host, 
+                                base => nklib_util:to_integer(Base),
+                                pass => Pass
+                            },
                             connect_janus(MonId, Config);
                         false ->
                             lager:warning("Started unsupported nk_janus")

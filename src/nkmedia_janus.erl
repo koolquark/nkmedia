@@ -37,6 +37,7 @@
         comp => binary(),
         vsn => binary(),
         rel => binary(),
+        base => inet:port_number(),
         pass => binary(),
         name => binary()
     }.

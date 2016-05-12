@@ -35,11 +35,6 @@
 -define(DEF_RING_TIMEOUT, 30).
 -define(DEF_CALL_TIMEOUT, 24*60*60).
 
--define(FS_EVENT_PORT, 49200).
--define(FS_VERTO_PORT, 49201).
--define(FS_SIP_PORT, 49202).
--define(JANUS_WS_PORT, 49210).
--define(JANUS_ADMIN_PORT, 49211).
 
 
 

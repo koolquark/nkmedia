@@ -467,15 +467,16 @@ run_image_start() ->
 <<"
 #!/bin/bash\n
 set -e\n
-export LOCAL_IP_V4=\"\\$\\${local_ip_v4}\"
-export FS_IP=\"${NK_FS_IP-$LOCAL_IP_V4}\"
-export RTP_IP=\"${NK_RTP_IP-$LOCAL_IP_V4}\"
-export ERLANG_IP=\"${NK_ERLANG_IP-127.0.0.1}\"
-export EXT_IP=\"${NK_EXT_IP-stun:stun.freeswitch.org}\"
-export PASS=\"${NK_PASS-6666}\"
-export EVENT_PORT=", (nklib_util:to_binary(?FS_EVENT_PORT))/binary, "
-export VERTO_PORT=", (nklib_util:to_binary(?FS_VERTO_PORT))/binary, "
-export SIP_PORT=", (nklib_util:to_binary(?FS_SIP_PORT))/binary, "
+LOCAL_IP_V4=\"\\$\\${local_ip_v4}\"
+FS_IP=${NK_FS_IP-$LOCAL_IP_V4}
+RTP_IP=$LOCAL_IP_V4
+ERLANG_IP=${NK_ERLANG_IP-127.0.0.1}
+EXT_IP=\"${NK_EXT_IP-stun:stun.freeswitch.org}\"
+PASS=\"${NK_PASS-6666}\"
+BASE=${NK_BASE-50000}
+EVENT_PORT=$BASE
+VERTO_PORT=$(($BASE + 1))
+SIP_PORT=$(($BASE + 2))
 cat > /usr/local/freeswitch/conf/nkvars.xml <<EOF
 <include>
     <X-PRE-PROCESS cmd=\"set\" data=\"nk_fs_ip=$FS_IP\"/>

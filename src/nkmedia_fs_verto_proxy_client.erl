@@ -49,7 +49,8 @@
     {ok, pid()} | {error, term()}.
 
 start(FsPid) ->
-    {ok, #{host:=Host, pass:=Pass}} = nkmedia_fs_engine:get_config(FsPid),
+    {ok, Config} = nkmedia_fs_engine:get_config(FsPid),
+    #{host:=Host, base:=Base, pass:=Pass} = Config,
     ConnOpts = #{
         class => ?MODULE,
         monitor => self(),
@@ -58,7 +59,7 @@ start(FsPid) ->
         ws_proto => <<"janus-protocol">>
     },
     {ok, Ip} = nklib_util:to_ip(Host),
-    Conn = {?MODULE, ws, Ip, ?FS_VERTO_PORT},
+    Conn = {?MODULE, ws, Ip, Base+1},
     nkpacket:connect(Conn, ConnOpts).
 
 

@@ -22,7 +22,7 @@
 -module(nkmedia_janus_client).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/2, stop/1, get_all/0]).
+-export([start/3, stop/1, get_all/0]).
 -export([info/1]).
 
 -export([transports/1, default_port/1]).
@@ -61,10 +61,10 @@
 %% ===================================================================
 
 %% @doc Starts a new verto session to FS
--spec start(id(), nkmedia_janus_engine:id()) ->
+-spec start(id(), inet:port_number(), nkmedia_janus_engine:id()) ->
     {ok, pid()} | {error, term()}.
 
-start(Host, Pass) ->
+start(Host, Base, Pass) ->
     ConnOpts = #{
         class => ?MODULE,
         monitor => self(),
@@ -73,7 +73,7 @@ start(Host, Pass) ->
         ws_proto => <<"janus-protocol">>
     },
     {ok, Ip} = nklib_util:to_ip(Host),
-    Conn = {?MODULE, ws, Ip, ?JANUS_WS_PORT},
+    Conn = {?MODULE, ws, Ip, Base},
     % Conn = {?MODULE, wss, Ip, 8989},
     case nkpacket:connect(Conn, ConnOpts) of
         {ok, Pid} -> 

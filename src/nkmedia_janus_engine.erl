@@ -65,10 +65,10 @@
 -spec connect(config()) ->
 	{ok, pid()} | {error, term()}.
 
-connect(#{name:=Name, rel:=Rel, host:=Host, pass:=Pass}=Config) ->
+connect(#{name:=Name, rel:=Rel, host:=Host, base:=Base, pass:=Pass}=Config) ->
 	case find(Name) of
 		not_found ->
-			case connect_janus(Host, 10) of
+			case connect_janus(Host, Base, 10) of
 				ok ->
 					nkmedia_sup:start_janus_engine(Config);
 				error ->
@@ -236,9 +236,9 @@ handle_info(connect, #state{janus_conn=Pid}=State) when is_pid(Pid) ->
 	true = is_process_alive(Pid),
 	{noreply, State};
 
-handle_info(connect, #state{config=#{host:=Host, pass:=Pass}}=State) ->
+handle_info(connect, #state{config=#{host:=Host, base:=Base, pass:=Pass}}=State) ->
 	State2 = update_status(connecting, State#state{janus_conn=undefined}),
-	case nkmedia_janus_client:start(Host, Pass) of
+	case nkmedia_janus_client:start(Host, Base, Pass) of
 		{ok, Pid} ->
 			case nkmedia_janus_client:info(Pid) of
 				{ok, Info} ->
@@ -313,18 +313,18 @@ update_status(NewStatus, #state{name=Name, status=OldStatus, janus_conn=Pid}=Sta
 
 
 %% @private
-connect_janus(_Host, 0) ->
+connect_janus(_Host, _Base, 0) ->
 	error;
-connect_janus(Host, Tries) ->
+connect_janus(Host, Base, Tries) ->
 	Host2 = nklib_util:to_list(Host),
-	case gen_tcp:connect(Host2, ?JANUS_WS_PORT, [{active, false}, binary], 5000) of
+	case gen_tcp:connect(Host2, Base, [{active, false}, binary], 5000) of
 		{ok, Socket} ->
 			gen_tcp:close(Socket),
 			ok;
 		{error, _} ->
 			lager:info("Waiting for Janus at ~s to start (~p) ...", [Host, Tries]),
 			timer:sleep(1000),
-			connect_janus(Host2, Tries-1)
+			connect_janus(Host2, Base, Tries-1)
 	end.
 
 

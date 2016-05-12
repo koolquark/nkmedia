@@ -55,7 +55,8 @@
     {ok, pid()} | {error, term()}.
 
 start(JanusPid) ->
-    {ok, #{host:=Host, pass:=Pass}} = nkmedia_janus_engine:get_config(JanusPid),
+    {ok, Config} = nkmedia_janus_engine:get_config(JanusPid),
+    #{host:=Host, base:=Base, pass:=Pass} = Config,
     ConnOpts = #{
         class => ?MODULE,
         monitor => self(),
@@ -64,7 +65,7 @@ start(JanusPid) ->
         ws_proto => <<"janus-protocol">>
     },
     {ok, Ip} = nklib_util:to_ip(Host),
-    Conn = {?MODULE, ws, Ip, ?JANUS_WS_PORT},
+    Conn = {?MODULE, ws, Ip, Base},
     nkpacket:connect(Conn, ConnOpts).
 
 

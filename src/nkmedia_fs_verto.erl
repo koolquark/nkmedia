@@ -109,7 +109,8 @@ start(FsId) ->
     {ok, pid()} | {error, term()}.
 
 start(SessId, FsId) ->
-    {ok, #{host:=Host, pass:=Pass}} = nkmedia_fs_engine:get_config(FsId),
+    {ok, Config} = nkmedia_fs_engine:get_config(FsId),
+    #{host:=Host, base:=Base, pass:=Pass} = Config,
     ConnOpts = #{
         class => ?MODULE,
         monitor => self(),
@@ -117,7 +118,7 @@ start(SessId, FsId) ->
         user => #{fs_id=>FsId, pass=>Pass, sess_id=>SessId}
     },
     {ok, Ip} = nklib_util:to_ip(Host),
-    Conn = {?MODULE, ws, Ip, ?FS_VERTO_PORT},
+    Conn = {?MODULE, ws, Ip, Base+1},
     case nkpacket:connect(Conn, ConnOpts) of
         {ok, Pid} -> 
             case nklib_util:call(Pid, login) of

@@ -22,7 +22,7 @@
 -module(nkmedia_fs_event_protocol).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/2]).
+-export([start/3]).
 -export([api/2, api_block/2, event/3, msg/3, shutdown/1]).
 -export([execute/3, execute/4, execute/5, execute/6]).
 -export([t/1]).
@@ -53,12 +53,12 @@
 
 
 %% @doc
--spec start(binary(), binary()) ->
+-spec start(binary(), inet:port_number(), binary()) ->
 	{ok, pid()} | {error, term()}.
 
-start(Host, Pass) ->
+start(Host, Base, Pass) ->
 	{ok, Ip} = nklib_util:to_ip(Host),
-	Conn = {?MODULE, tcp, Ip, ?FS_EVENT_PORT},
+	Conn = {?MODULE, tcp, Ip, Base},
 	ConnOpts = #{
 		class => nkmedia_fs, 
 		idle_timeout => 60000,
@@ -194,7 +194,7 @@ transports(_) -> [tcp].
 -spec default_port(nkpacket:transport()) ->
     inet:port_number() | invalid.
 
-default_port(tcp) -> ?FS_EVENT_PORT.
+default_port(tcp) -> 50000.
 
 
 -spec conn_init(nkpacket:nkport()) ->
