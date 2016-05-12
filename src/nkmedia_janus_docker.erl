@@ -170,7 +170,7 @@ defaults(Config) ->
         comp => nkmedia_app:get(docker_company), 
         vsn => nkmedia_app:get(janus_version), 
         rel => nkmedia_app:get(janus_release),
-        base => crypto:rand_uniform(49152, 65535),
+        base => ?JANUS_DEF_BASE,
         pass => nklib_util:luid()
     },
     maps:merge(Defs, Config).

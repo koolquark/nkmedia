@@ -165,7 +165,7 @@ defaults(Config) ->
         comp => nkmedia_app:get(docker_company), 
         vsn => nkmedia_app:get(fs_version), 
         rel => nkmedia_app:get(fs_release),
-        base => crypto:rand_uniform(49152, 65535),
+        base => ?FS_DEF_BASE,
         pass => nklib_util:luid()
     },
     maps:merge(Defs, Config).

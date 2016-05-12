@@ -125,7 +125,7 @@ nkmedia_verto_login(_VertoId, _Login, _Pass, Verto) ->
 
 %% @doc Called when the client sends an INVITE
 %% If {ok, verto(), pid()} is returned, we must call nkmedia_verto:answer/3 ourselves
-%% A call will be added. If pid() is included, it will associated to it
+%% A call will be added. If pid() is included, it will be associated to it
 -spec nkmedia_verto_invite(call_id(), nkmedia_verto:offer(), verto()) ->
     {ok, pid()|undefined, verto()} | 
     {answer, nkmedia_verto:answer(), pid()|undefined, verto()} | 
@@ -145,6 +145,7 @@ nkmedia_verto_invite(SessId, Offer, #{srv_id:=SrvId}=Verto) ->
                 {ok, Verto2} ->
                     {ok, SessPid, Verto2};
                 {hangup, Reason, Verto2} ->
+                    nkmedia_session:hangup(SessId, Reason),
                     {hangup, Reason, Verto2}
             end;
         {error, Error} ->
@@ -240,6 +241,7 @@ nkmedia_session_event(SessId, {status, hangup, _}, #{nkmedia_verto_out:=Pid}) ->
 
 nkmedia_session_event(SessId, {status, ready, Data}, #{nkmedia_verto_in:=Pid}) ->
     #{answer:=Answer} = Data,
+    lager:notice("Verto calling media available"),
     ok = nkmedia_verto:answer(Pid, SessId, Answer),
     continue;
 
@@ -287,7 +289,7 @@ nkmedia_call_resolve(Dest, Call) ->
             {ok, {nkmedia_verto, Pid}, Call};
         [] ->
             lager:notice("Verto: user ~s not found", [Dest]),
-            {hangup, <<"Verto No User">>, Call}
+            continue
     end.
 
 

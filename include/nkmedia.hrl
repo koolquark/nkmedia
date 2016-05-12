@@ -35,6 +35,8 @@
 -define(DEF_RING_TIMEOUT, 30).
 -define(DEF_CALL_TIMEOUT, 24*60*60).
 
+-define(FS_DEF_BASE, 50000).
+-define(JANUS_DEF_BASE, 50010).
 
 
 

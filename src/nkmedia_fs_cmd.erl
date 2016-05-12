@@ -89,7 +89,7 @@ call(FsId, LegA, LegB, Opts) ->
 		case Vars of [] -> []; _ -> [",", Vars] end, 
 		"}", LegA, Append, " ", LegB
 	],
-	lager:notice("ORIGINATE CMD ~s", [list_to_binary(Cmd)]),
+	lager:info("ORIGINATE CMD ~s", [list_to_binary(Cmd)]),
 	case api(FsId, Cmd) of
 		{ok, <<"+OK ", UUID/binary>>} ->
 			Size = byte_size(UUID) -1 ,

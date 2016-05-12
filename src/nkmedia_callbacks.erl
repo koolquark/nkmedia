@@ -28,7 +28,7 @@
 		 nkmedia_session_event/3, nkmedia_session_out/4, 
 		 nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2, 
 		 nkmedia_session_handle_info/2]).
--export([nkmedia_session_get_backend/1, nkmedia_session_get_mediaserver/2]).
+-export([nkmedia_session_get_mediaserver/2]).
 -export([nkmedia_call_init/2, nkmedia_call_terminate/2, 
 		 nkmedia_call_resolve/2, nkmedia_call_out/3, 
 		 nkmedia_call_event/3, 
@@ -95,14 +95,6 @@ nkmedia_session_init(_Id, Session) ->
 
 nkmedia_session_terminate(_Reason, Session) ->
 	{ok, Session}.
-
-
-%% @doc Called to select the backend for this session
--spec nkmedia_session_get_backend(session()) ->
-	{ok, nkmedia:backend(), session()}.
-
-nkmedia_session_get_backend(Config) ->
-	{ok, p2p, Config}.
 
 
 %% @doc Called when the status of the session changes

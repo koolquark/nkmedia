@@ -52,12 +52,12 @@
         srv_id => nkservice:id(),              
         session_id => nkmedia_session:id(),
         session_pid => pid(),
-        term() => term(),                              % User defined
         offer => nkmedia:offer(),                      % From this option on are
         mediaserver => nkmedia_session:mediaserver(),  % for the outbound call
         wait_timeout => integer(),                     
         ring_timeout => integer(),          
-        call_timeout => integer()
+        call_timeout => integer(),
+        term() => term()                               % User defined
     }.
 
 
@@ -71,7 +71,7 @@
 -type call() ::
     config() |
     #{
-        call_dest => nkmedia:call_dest(),
+        dest => nkmedia:call_dest(),
         status => status(),
         ext_status => ext_status(),
         answer => nkmedia:answer()
@@ -107,7 +107,7 @@
 
 start(Dest, Config) ->
     {CallId, Config2} = nkmedia_util:add_uuid(Config),
-    Config3 = Config2#{call_dest=>Dest},
+    Config3 = Config2#{dest=>Dest},
     {ok, Pid} = gen_server:start(?MODULE, [Config3], []),
     {ok, CallId, Pid}.
 
@@ -186,7 +186,8 @@ session_event(CallId, SessId, Event) ->
 -spec init(term()) ->
     {ok, tuple()}.
 
-init([#{id:=Id, srv_id:=SrvId, session_id:=SessId, session_pid:=SessPid}=Call]) ->
+init([Call]) ->
+    #{id:=Id, srv_id:=SrvId, session_id:=SessId, session_pid:=SessPid} = Call,
     true = nklib_proc:reg({?MODULE, Id}),
     nklib_proc:put(?MODULE, {Id, SessId}),
     State = #state{
@@ -221,7 +222,7 @@ handle_call(Msg, From, State) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
 handle_cast(start, #state{call=Call}=State) ->
-    #{call_dest:=Dest, offer:=Offer} = Call,
+    #{dest:=Dest, offer:=Offer} = Call,
     IsP2P = maps:is_key(sdp, Offer),
     case handle(nkmedia_call_resolve, [Dest], State) of
         {ok, OutSpec, State3} ->
@@ -382,7 +383,6 @@ launch_out(SessId, #session_out{dest=Dest, pos=Pos}=Out, State) ->
         call = Call, 
         srv_id = SrvId, 
         outs = Outs
-        % session_in = {SessIn, _, _}
     } = State,
     case handle(nkmedia_call_out, [SessId, Dest], State) of
         {call, Dest2, State2} ->
@@ -390,7 +390,7 @@ launch_out(SessId, #session_out{dest=Dest, pos=Pos}=Out, State) ->
             Opts = Call#{
                 id => SessId, 
                 monitor => self(),
-                call_dest => Dest2,
+                dest => Dest2,
                 nkmedia_call_id => Id
             },
             {ok, SessId, Pid} = nkmedia_session:start_outbound(SrvId, Opts),
@@ -447,6 +447,9 @@ process_out_event(Event, State) ->
 
 
 %% @private
+process_call_out_event({status, wait, _Data}, _SessId, _Out, State) ->
+    {noreply, State};
+
 process_call_out_event({status, calling, _Data}, _SessId, _Out, State) ->
     {noreply, State};
 

@@ -29,7 +29,7 @@
 
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
 -export([nkmedia_verto_login/4, nkmedia_verto_call/3]).
--export([nkmedia_session_get_backend/1, nkmedia_call_resolve/2]).
+-export([nkmedia_call_resolve/2]).
 % -export([nkmedia_call_event/3, nkmedia_session_event/3]).
 -export([sip_register/2]).
 
@@ -183,32 +183,22 @@ nkmedia_verto_login(VertoId, Login, Pass, Verto) ->
 
 nkmedia_verto_call(SessId, Dest, Verto) ->
     case Dest of 
-        <<"0">> -> ok;
-        <<"1">> -> ok = nkmedia_session:to_mcu(SessId, <<"1">>);
-        _ -> ok = nkmedia_session:to_call(SessId, Dest)
-    end,
-    {ok, Verto}.
-
-
-nkmedia_session_get_backend(#{offer:=#{dest:=Dest}}=Session) ->
-    case Dest of
-        <<"d", _/binary>> -> 
-            {ok, p2p, Session};
-        <<"j", _/binary>> -> 
-            {ok, janus, Session};
-        _ -> 
-            {ok, freeswitch, Session}
+        <<"d", Num/binary>> ->
+            ok = nkmedia_session:to_call(SessId, Num, #{}),
+            {ok, Verto};
+        <<"f", Num/binary>> -> 
+            ok = nkmedia_session:to_call(SessId, Num, #{backend=>freeswitch}),
+            {ok, Verto};
+        _ ->
+            {hangup, "No Number", Verto} 
     end.
+
+
 
 
 %% @private
 nkmedia_call_resolve(Dest, Call) ->
-    Dest2 = case Dest of
-        <<"d", Rest/binary>> -> Rest;
-        <<"j", Rest/binary>> -> Rest;
-        _ -> Dest
-    end,
-    {continue, [Dest2, Call]}.
+    {continue, [Dest, Call]}.
 
 
 
