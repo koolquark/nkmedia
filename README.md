@@ -5,7 +5,7 @@ NkMEDIA is an Erlang media server control project. It is capable of managing aud
 
 NkMEDIA uses [Freeswitch](https://freeswitch.org) and [Janus](https://janus.conf.meetecho.com/docs/) media servers. In the future, other media servers could be available. 
 
-NkMEDIA allows to receive and make SIP and WebRTC calls, in the later case using a flexible plugin system to develop signalings. See [[NkSERVICE](https://github.com/NetComposer/nkservice) for a more detailed explanation. Since it uses [NkSIP](https://github.com/NetComposer/nksip), it is also a full, scalable SIP client and server. Depending on the media server, is capable of doing things like:
+NkMEDIA allows to receive and make SIP and WebRTC calls, in the later case using a flexible plugin system to develop signalings. See [NkSERVICE](https://github.com/NetComposer/nkservice) for a more detailed explanation. Since it uses [NkSIP](https://github.com/NetComposer/nksip), it is also a full, scalable SIP client and server. Depending on the media server, is capable of doing things like:
 
 * Call switching (including SIP/WebRTC gateways)
 * [MCU](https://webrtcglossary.com/mcu/)-based multi audio/video conferences
@@ -47,7 +47,7 @@ fs_version|"v1.6.5"|Default Freeswitch version to use
 fs_release|"r01|Default Freeswitch release (docker image tag) to use
 fs_password|(see code)|Default Freeswitch password for everything
 janus_version|"master"|Default Janus version to use
-janus_release|"r01|Default Freeswitch release (docker image tag) to use
+janus_release|"r01"|Default Freeswitch release (docker image tag) to use
 sip_port|0|Default port for SIP incoming
 
 
