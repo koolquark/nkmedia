@@ -1,28 +1,29 @@
 
 # NkMEDIA
 
-NkMEDIA is an Erlang media server control project. It is currently capable of managing [Freeswitch](https://freeswitch.org) media servers. In the future, [Kurento](http://www.kurento.org), [Jitsi Videobridge](https://jitsi.org/Projects/JitsiVideobridge) or [Spreed.me](https://github.com/strukturag/spreed-webrtc) media servers could be added. NkMEDIA uses [Docker](https://www.docker.com) containers to start and monitor these mediaservers.
+NkMEDIA is an Erlang media server control project. It is capable of managing audio and video streams using WebRTC and SIP, in a ver flexible way. It is easy to build scalable powerful gateways, recorders, PBXs or any other application.
+
+NkMEDIA uses [Freeswitch](https://freeswitch.org) and [Janus](https://janus.conf.meetecho.com/docs/) media servers. In the future, other media servers could be available. 
 
 NkMEDIA allows to receive and make SIP and WebRTC calls, in the later case using a flexible plugin system to develop signalings. See [[NkSERVICE](https://github.com/NetComposer/nkservice) for a more detailed explanation. Since it uses [NkSIP](https://github.com/NetComposer/nksip), it is also a full, scalable SIP client and server. Depending on the media server, is capable of doing things like:
 
-* Call switching (include SIP/WebRTC gateways)
+* Call switching (including SIP/WebRTC gateways)
 * [MCU](https://webrtcglossary.com/mcu/)-based multi audio/video conferences
+* [SFU](https://webrtcglossary.com/sfu/) (or mixed SFU+MCU) WebRTC distribution.
 * Freeswitch native signaling ([Verto](http://evoluxbr.github.io/verto-docs/)) server and proxy (it can be used with any media server, not only Freeswitch)
 
 In the near future it will be capable to:
 
 * Recording
 * Playing of media files
-* [SFU](https://webrtcglossary.com/sfu/) (or mixed SFU+MCU) WebRTC distribution.
 * [Matrix](https://matrix.org) signaling support
-
 
 NkMEDIA is a piece of the [NetComposer](http://www.slideshare.net/carlosjgf/net-composer-v2) framework, but can be used on its own.
 
 
 ## Arquitecture
 
-NkMEDIA is designed to run in the same node as freeswitch, starting it inside a docker container. Freeswitch only needs to listen on localhost for all services (event_socket, Verto and SIP). However, a development mode (maninly for OSX) allows to control an external Freeswitch docker.
+NkMEDIA starts any number of Freeswitch and Janus instances, inside [docker](https://www.docker.com) containers. All the tools to build and deploy the containers are included.
 
 
 ## Installation
@@ -33,13 +34,7 @@ cd nkmedia
 make
 ```
 
-NkMEDIA needs a docker daemon running on the host machine, and listening on `tcp://127.0.0.1`. If another docker daemon, possibly on other node, should be used instead, standard docker machine environment variables can be used. First thing is installing the specific nkmedia configured Freeswitch, from the Docker repository or by manual installtion. NkMEDIA includes all the tools to generate the image and push it to the repository.
-
-```
-make shell
-1> 
-```
-
+NkMEDIA is designed to connect to a docker daemon running on the host machine, and listening on `tcp://127.0.0.1`. Any other daemon, possibly on other node, can also be used instead, although it is not recommeded.
 
 
 ### Configuration
@@ -51,6 +46,10 @@ docker_company|"netcomposer"|Company name to name docker images
 fs_version|"v1.6.5"|Default Freeswitch version to use
 fs_release|"r01|Default Freeswitch release (docker image tag) to use
 fs_password|(see code)|Default Freeswitch password for everything
+janus_version|"master"|Default Janus version to use
+janus_release|"r01|Default Freeswitch release (docker image tag) to use
+sip_port|0|Default port for SIP incoming
+
 
 
 
