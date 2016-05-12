@@ -106,34 +106,36 @@
 
 -type config() :: 
     #{
-        id => id(),
-        offer => nkmedia:offer(),
-        monitor => pid(), 
-        backend => nkmedia:backend(),
-        call_dest => call_dest(),              % For outbound sessions 
-        wait_timeout => integer(),             % Secs
+        id => id(),                             % Genetated if not included
+        offer => nkmedia:offer(),               % Mandatory for inbound
+        monitor => pid(),                       % Monitor this process
+        backend => nkmedia:backend(),           % Place in mediaserver
+        call_dest => call_dest(),               % Mandatory for outbound
+        wait_timeout => integer(),              % Secs
         ring_timeout => integer(),          
         call_timeout => integer(),
-        term() => term()
+        module() => term()                      % User data
 }.
+
 
 -type call_dest() :: term().
 
 
 -type status() ::
-    wait    |   % Inbound session for p2p, waiting for the call
+    wait    |   % Inbound session waiting for mediaserver or p2p
     calling |   % I/O Session launching a call
-    ringing |   % I/= Session received 'ringing'
-    ready   |   % Session has media, waiting for an op
+    ringing |   % I/O Session received 'ringing'
+    ready   |   % Session has media, waiting for an operation
     bridged |   % Session is connected to another
     mcu     | 
     play    | 
     hangup.
 
 
--type status_info() ::
+%% Extended status
+-type ext_status() ::
     #{
-        dest => binary(),                       % For calling
+        dest => binary(),                       % For calling status
         answer => nkmedia:answer(),             % For ringing, ready
         peer => id(),                           % Bridged, p2p
         room_name => binary(),                  % For mcu
@@ -148,13 +150,13 @@
         srv_id => nkservice:id(),
         type => inbound | outbound,
         status => status(),
-        status_info => status_info(),
+        ext_status => ext_status(),
         answer => nkmedia:answer(),
         mediaserver => mediaserver()
     }.
 
 -type event() ::
-    {status, status(), status_info()} | {info, term()}.
+    {status, status(), ext_status()} | {info, term()}.
 
 
 -type mediaserver() :: 
@@ -170,8 +172,12 @@
 %% ===================================================================
 
 
-%% @doc
-%% Starts a new session, starts in 'wait' mode
+%% @doc Starts a new inbound session
+%% You MUST supply an offer and sdp()
+%% If you supply a backend, the session wil be placed there, and enters 
+%% 'ready' state. You can call get_answer/1 to get the answering SDP.
+%% If you don't supply a mediaserver, will stay in 'wait' state
+%% You can start a p2p call or place it in a mediaserver later on
 %% It is recommended to include a 'monitor' option
 -spec start_inbound(nkservice:id(), config()) ->
     {ok, id(), pid()}.
@@ -229,7 +235,7 @@ get_answer(SessId) ->
 
 %% @doc
 -spec get_status(id()) ->
-    {ok, status(), status_info(), integer()}.
+    {ok, status(), ext_status(), integer()}.
 
 get_status(SessId) ->
     do_call(SessId, get_status).
@@ -396,7 +402,7 @@ init([#{id:=Id, type:=Type, srv_id:=SrvId, mediaserver:=MS}=Session]) ->
 
 handle_call(get_status, _From, State) ->
     #state{status=Status, timer=Timer, session=Session} = State,
-    #{status_info:=Info} = Session,
+    #{ext_status:=Info} = Session,
     {reply, {ok, Status, Info, erlang:read_timer(Timer) div 1000}, State};
 
 handle_call(get_offer, _From, #state{session=Session}=State) ->
@@ -859,7 +865,7 @@ status(NewStatus, Info, #state{session=Session, status=Old}=State) ->
             ok
     end,
     State2 = restart_timer(State#state{status=NewStatus}),
-    State3 = State2#state{session=Session#{status=>NewStatus, status_info=>Info}},
+    State3 = State2#state{session=Session#{status=>NewStatus, ext_status=>Info}},
     event({status, NewStatus, Info}, State3).
 
 

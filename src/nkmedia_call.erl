@@ -65,7 +65,7 @@
     calling | ringing | ready | hangup.
 
 
--type status_info() :: nkmedia_session:status_info().
+-type ext_status() :: nkmedia_session:ext_status().
 
 
 -type call() ::
@@ -73,13 +73,13 @@
     #{
         call_dest => nkmedia:call_dest(),
         status => status(),
-        status_info => map(),
+        ext_status => ext_status(),
         answer => nkmedia:answer()
     }.
 
 
 -type event() ::
-    {status, status(), status_info()} | {info, term()}.
+    {status, status(), ext_status()} | {info, term()}.
 
 
 -type call_out_spec() ::
@@ -135,7 +135,7 @@ hangup(CallId, Reason) ->
 
 %% @doc
 -spec get_status(id()) ->
-    {ok, status(), status_info(), integer()}.
+    {ok, status(), ext_status(), integer()}.
 
 get_status(SessId) ->
     do_call(SessId, get_status).
@@ -209,7 +209,7 @@ init([#{id:=Id, srv_id:=SrvId, session_id:=SessId, session_pid:=SessPid}=Call]) 
 
 handle_call(get_status, _From, State) ->
     #state{status=Status, timer=Timer, call=Call} = State,
-    #{status_info:=Info} = Call,
+    #{ext_status:=Info} = Call,
     {reply, {ok, Status, Info, erlang:read_timer(Timer) div 1000}, State};
 
 handle_call(Msg, From, State) -> 
@@ -526,7 +526,7 @@ status(NewStatus, Info, #state{call=Call}=State) ->
     ?LLOG(info, "status changed to ~p", [NewStatus], State),
     State2 = State#state{
         status = NewStatus,
-        call= Call#{status=>NewStatus, status_info=>Info}
+        call= Call#{status=>NewStatus, ext_status=>Info}
     },
     event({status, NewStatus, Info}, State2).
 
