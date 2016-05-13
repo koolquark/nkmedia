@@ -152,8 +152,8 @@ conn_parse({text, <<"#S", _/binary>>=Msg}, _NkPort, State) ->
             Out = State#state.bw_out +  Size,
             State#state{bw_out=Out};
         <<"#SPD", _/binary>> ->
-            #state{bw_out=_Out, bw_time=Time} = State,
-            _Diff = (nklib_util:l_timestamp() - Time) div 10000,
+            #state{bw_out=_Out, bw_time=_Time} = State,
+            % Diff = (nklib_util:l_timestamp() - Time) div 10000,
             % lager:notice("FS BW REPLY2: ~s (~p, ~p)", [Msg, Out, Diff]),
             State#state{bw_out=0, bw_time=0}
     end,

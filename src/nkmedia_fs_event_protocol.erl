@@ -461,10 +461,10 @@ get_reply_text(Bin) ->
 %%% TEST
 
 t(P) ->
-	Start = now(),
+	Start = os:timestamp(),
 	{ok, R} = api(P, "show interfaces"),
 	t(1000, P, R),
-	timer:now_diff(now(), Start) / 1000.
+	timer:now_diff(os:timestamp(), Start) / 1000.
 
 t(0, _, _) ->
 	ok;
