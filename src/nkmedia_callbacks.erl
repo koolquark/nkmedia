@@ -168,6 +168,14 @@ nkmedia_session_get_mediaserver(freeswitch, Session) ->
        		{error, no_mediaserver_available}
     end;
 
+nkmedia_session_get_mediaserver(janus, Session) ->
+	case nkmedia_janus_engine:get_all() of
+        [{JanusId, _}|_] ->
+			{ok, {janus, JanusId}, Session};
+       	[] ->
+       		{error, no_mediaserver_available}
+    end;
+
 nkmedia_session_get_mediaserver(Backend, _Session) ->
 	{error, {unknown_backend, Backend}}.
 

@@ -189,6 +189,9 @@ nkmedia_verto_call(SessId, Dest, Verto) ->
         <<"f", Num/binary>> -> 
             ok = nkmedia_session:to_call(SessId, Num, #{backend=>freeswitch}),
             {ok, Verto};
+        <<"m">> ->
+            ok = nkmedia_session:to_mirror(SessId, #{}),
+            {ok, Verto};
         _ ->
             {hangup, "No Number", Verto} 
     end.

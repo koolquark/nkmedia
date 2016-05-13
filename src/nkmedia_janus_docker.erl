@@ -22,8 +22,8 @@
 -module(nkmedia_janus_docker).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/0, start/1, stop/1, stop_all/0]).
--export([defaults/1, restart/0, notify/4]).
+-export([start/1, stop/1, stop_all/0]).
+-export([defaults/1, notify/4]).
 
 -include("nkmedia.hrl").
 
@@ -36,14 +36,6 @@
 %% Freeswitch Instance
 %% ===================================================================
         
-
-%% @doc Starts a JANUS instance
--spec start() ->
-    {ok, Name::binary()} | {error, term()}.
-
-start() ->
-    start(#{}).
-
 
 %% @doc Starts a JANUS instance
 %% BASE+0: WS port
@@ -59,11 +51,11 @@ start(Config) ->
     Name = list_to_binary(["nk_janus_", nklib_util:to_binary(Base)]),
     LogDir = <<(nkmedia_app:get(log_dir))/binary, $/, Name/binary>>,
     ok = filelib:ensure_dir(<<LogDir/binary, "dummy">>),
-    ExtIp = nklib_util:to_host(nkpacket_app:get(ext_ip)),
+    _ExtIp = nklib_util:to_host(nkpacket_app:get(ext_ip)),
     #{pass:=Pass} = Config2,
     Env = [
         {"NK_JANUS_IP", JanusIp},             
-        {"NK_EXT_IP", ExtIp},  
+        {"NK_EXT_IP", "192.168.0.102"}, %_ExtIp},  
         {"NK_PASS", nklib_util:to_binary(Pass)},
         {"NK_BASE", nklib_util:to_binary(Base)}
     ],
@@ -141,14 +133,6 @@ stop_all() ->
         {error, Error} ->
             {error, Error}
     end.
-
-
-restart() ->
-    stop_all(),
-    nkmedia_janus_build:remove_run_image(),
-    nkmedia_janus_build:build_run_image(),
-    start().
-
 
 
 %% @private

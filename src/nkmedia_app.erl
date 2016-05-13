@@ -75,8 +75,6 @@ start(_Type, _Args) ->
     save_log_dirs(),
     case nklib_config:load_env(?APP, Syntax, Defaults) of
         {ok, _} ->
-            % nkpacket:register_protocol(fs_event, nkmedia_fs_event_protocol),
-            % nkpacket:register_protocol(fs_verto_proxy, nkmedia_fs_verto_proxy_client),
             {ok, Vsn} = application:get_key(?APP, vsn),
             lager:info("NkMEDIA v~s is starting", [Vsn]),
             MainIp = nkpacket_config_cache:main_ip(),
@@ -91,8 +89,8 @@ start(_Type, _Args) ->
                             nkmedia_app:put(erlang_ip, {127,0,0,1}),
                             nkmedia_app:put(docker_ip, {127,0,0,1});
                         _ ->
-                            lager:warning("NkMEDIA: remote docker mode enabled"),
-                            lager:warning("Erlang: ~s, Docker: ~s", 
+                            lager:notice("NkMEDIA: remote docker mode enabled"),
+                            lager:notice("Erlang: ~s, Docker: ~s", 
                                          [nklib_util:to_host(MainIp), 
                                           nklib_util:to_host(DockerIp)]),
                             nkmedia_app:put(erlang_ip, MainIp),

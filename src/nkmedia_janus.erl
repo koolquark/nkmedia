@@ -23,7 +23,8 @@
 -module(nkmedia_janus).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/1, stop/1]).
+-export([start/0, start/1, stop/1, stop_all/0]).
+-export([create/3, destroy/2, mirror/3]).
 -export_type([config/0]).
 
 
@@ -31,6 +32,7 @@
 %% Types
 %% ===================================================================
 
+-type id() :: nkmedia_janus_engine:id().
 
 -type config() ::
     #{
@@ -49,51 +51,126 @@
 %% Public functions
 %% ===================================================================
 
-%% @doc Installs and starts a local FS instance
+%% @doc Starts a JANUS instance
+-spec start() ->
+    {ok, id()} | {error, term()}.
+
+start() ->
+    start(#{}).
+
+
+%% @doc Starts a JANUS instance
 -spec start(config()) ->
+    {ok, id()} | {error, term()}.
+
+start(Config) ->
+	nkmedia_janus_docker:start(Config).
+
+
+%% @doc Stops a JANUS instance
+-spec stop(id()) ->
     ok | {error, term()}.
 
-start(Spec) ->
-	case nkmedia_fs_docker:config(Spec) of
-		{ok, Spec2, Docker} ->
-			nkmedia_fs_docker:start(Spec2, Docker);
+stop(Id) ->    
+	nkmedia_fs_docker:stop(Id).
+
+
+%% @doc
+stop_all() ->
+	nkmedia_janus_docker:stop_all().
+
+
+%% @doc Creates a new session
+-spec create(id(), nkmedia_session:id(), binary()) ->
+    {ok, nkmedia_janus_client:id()} | {error, term()}.
+
+create(JanusId, SessId, Plugin) ->
+	case nkmedia_janus_engine:get_conn(JanusId) of
+		{ok, ConnPid} -> 
+			nkmedia_janus_client:create(ConnPid, SessId, Plugin);
 		{error, Error} ->
 			{error, Error}
 	end.
-	% case nkmedia_fs_docker:start(Opts) of
-	% 	ok ->
-	% 		case nkmedia_sup:start_fs(config(Opts)) of
-	% 			{ok, Pid} ->
-	% 				case Opts of
-	% 					#{callback:=CallBack} ->
-	% 						case nkmedia_fs_server:register(Pid, CallBack) of
-	% 							ok ->
-	% 								{ok, Pid};
-	% 							{error, Error} ->
-	% 								{error, Error}
-	% 						end;
-	% 					_ ->
-	% 						{ok, Pid}
-	% 				end;
-	% 			{error, Error} ->
-	% 				{error, Error}
-	% 		end;
-	% 	{error, Error} ->
-	% 		{error, Error}
-	% end.
 
 
-%% @doc Equivalent to stop()
--spec stop(config()) ->
-    {ok, pid()} | {error, term()}.
 
-stop(Spec) ->
-	case nkmedia_fs_docker:config(Spec) of
-		{ok, Spec2, Docker} ->
-			nkmedia_fs_docker:stop(Spec2, Docker);
+%% @doc Destroys a session
+-spec destroy(id(), nkmedia_janus_client:id()) ->
+    ok.
+
+destroy(JanusId, ClientId) ->
+	case nkmedia_janus_engine:get_conn(JanusId) of
+		{ok, ConnPid} -> 
+			nkmedia_janus_client:destroy(ConnPid, ClientId);
 		{error, Error} ->
 			{error, Error}
 	end.
-	% nkmedia_sup:stop_fs(config(Opts)),
-	% nkmedia_fs_docker:remove(Opts).
-	
+
+
+mirror(JanusId, ClientId, Offer) ->
+	Body = #{
+		audio => maps:get(use_audio, Offer, true),
+		vide => maps:get(use_video, Offer, true)
+	},
+	Jsep = case Offer of
+        #{sdp:=SDP} ->
+            #{sdp=>SDP, type=>offer};
+        _ ->
+        	#{}
+    end,
+    case message(JanusId, ClientId, Body, Jsep) of
+    	{ok, Res, Jsep2} ->
+    		case Res of
+    			#{<<"data">>:=#{<<"result">>:=<<"ok">>}} ->
+    				case Jsep2 of
+    					#{<<"sdp">>:=SDP2} ->
+    						{ok, #{sdp=>SDP2}};
+    					_ ->
+    						{ok, #{}}
+    				end;
+    			_ ->
+    				{error, janus_error}
+    		end;
+    	{error, Error} ->
+    		{error, Error}
+    end.
+
+
+play(JanusId, ClientId, FileId) ->
+	Body = #{id=>FileId, request=>play},
+	case message(JanusId, ClientId, Body) of
+		{ok, _, #{<<"sdp">>:=SDP}} ->
+			{ok, SDP};
+		{ok, Body, _} ->
+			{error, Body};
+		{error, Error} ->
+			{error, Error}
+	end.
+
+
+
+
+
+
+
+
+%% ===================================================================
+%% Internal
+%% ===================================================================
+
+%% @private
+message(JanusId, ClientId, Body) ->
+	message(JanusId, ClientId, #{}).
+
+
+%% @private
+message(JanusId, ClientId, Body, Jsep) ->
+	case nkmedia_janus_engine:get_conn(JanusId) of
+		{ok, ConnPid} -> 
+			nkmedia_janus_client:message(ConnPid, ClientId, Body, Jsep);
+		{error, Error} ->
+			{error, Error}
+	end.
+
+
+

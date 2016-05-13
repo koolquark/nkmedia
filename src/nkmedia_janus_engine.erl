@@ -24,7 +24,7 @@
 -behaviour(gen_server).
 
 -export([connect/1, stop/1, find/1]).
--export([stats/2, get_config/1]).
+-export([stats/2, get_config/1, get_conn/1]).
 -export([get_all/0, stop_all/0]).
 -export([start_link/1, init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
@@ -45,7 +45,7 @@
 %% Types
 %% ===================================================================
 
--type id() :: Name:: binary() | pid().
+-type id() :: Name:: binary().
 
 -type config() ::
 	#{
@@ -114,6 +114,22 @@ get_config(Id) ->
 		not_found ->
 			{error, no_connection}
 	end.
+
+
+%% @private
+-spec get_conn(id()) ->
+	{ok, pid()} | {error, term()}.
+
+get_conn(Id) ->
+	case find(Id) of
+		{ok, ready, _JanusPid, ConnPid} ->
+			{ok, ConnPid};
+		_ ->
+			{error, no_connection}
+	end.
+
+
+
 
 
 % %% @priavte
@@ -236,9 +252,9 @@ handle_info(connect, #state{janus_conn=Pid}=State) when is_pid(Pid) ->
 	true = is_process_alive(Pid),
 	{noreply, State};
 
-handle_info(connect, #state{config=#{host:=Host, base:=Base, pass:=Pass}}=State) ->
+handle_info(connect, #state{name=Name, config=Config}=State) ->
 	State2 = update_status(connecting, State#state{janus_conn=undefined}),
-	case nkmedia_janus_client:start(Host, Base, Pass) of
+	case nkmedia_janus_client:start(Name, Config) of
 		{ok, Pid} ->
 			case nkmedia_janus_client:info(Pid) of
 				{ok, Info} ->

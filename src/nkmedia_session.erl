@@ -82,7 +82,7 @@
 
 -export([start_inbound/2, start_outbound/2, hangup_all/0]).
 -export([get_status/1, get_offer/1, get_answer/1]).
--export([hangup/1, hangup/2, to_call/3, to_mcu/3]).
+-export([hangup/1, hangup/2, to_call/3, to_mirror/2, to_mcu/3]).
 -export([reply_ringing/2, reply_answered/2]).
 -export([ms_event/3, call_event/3, get_all/0, find/1]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
@@ -283,6 +283,14 @@ to_call(SessId, Dest, Opts) ->
     do_cast(SessId, {to_call, Dest, Opts}).
 
 
+%% @doc Sends the session to mirror
+-spec to_mirror(id(), map()) ->
+    ok | {error, term()}.
+
+to_mirror(SessId, Opts) ->
+    do_cast(SessId, {to_mirror, Opts}).
+
+
 %% @private
 -spec to_mcu(id(), binary(), mcu_opts()) ->
     ok | {error, term()}.
@@ -360,11 +368,19 @@ call_event(SessPid, CallId, Event) ->
     status :: status() | init,
     % backend :: nkmedia:backend() | undefined,
     ms :: mediaserver() | undefined,
+    ms_conn_id :: nkmedia_janus_client:id(),
     call :: {nkmedia_call:id(), pid(), reference()},
     sess_out_mon :: reference(),
     timer :: reference()
 }).
 
+% - remove type
+% - add use_pbx, fs, has_offer, has_answer
+% - links = [{call, call_id(), pid(), reference()}]
+% 
+% use_pbx can come later (when starting a call...)
+% 
+% 
 
 
 %% @private
@@ -470,6 +486,16 @@ handle_cast({to_call, Dest, Opts}, State) ->
     case send_to_ms(Backend, State) of
         {ok, State2} ->
             send_to_call(Dest, Opts, State2);
+        {error, Error} ->
+            ?LLOG(warning, "error starting ms: ~p", [Error], State),
+            stop_hangup(<<"Mediaserver error">>, State)
+    end;
+
+handle_cast({to_mirror, Opts}, State) ->
+    Backend = maps:get(backend, Opts, janus),
+    case send_to_ms(Backend, <<"echotest">>, State) of
+        {ok, State2} ->
+            send_to_mirror(Opts, State2);
         {error, Error} ->
             ?LLOG(warning, "error starting ms: ~p", [Error], State),
             stop_hangup(<<"Mediaserver error">>, State)
@@ -594,31 +620,32 @@ terminate(Reason, State) ->
 
 
 %% @private
-send_to_ms(p2p, #state{ms=undefined, session=Session}=State) ->
+send_to_ms(Backend, State) ->
+    send_to_ms(Backend, none, State).
+
+
+%% @private
+send_to_ms(p2p, _Op, #state{ms=undefined, session=Session}=State) ->
     Session2 = Session#{backend=>p2p, mediaserver=>none},
     {ok, State#state{ms=none, session=Session2}};
 
-send_to_ms(Backend, #state{ms=undefined}=State) ->
+send_to_ms(Backend, Op, #state{ms=undefined}=State) ->
     case get_mediaserver(Backend, State) of
         {ok, State2} ->
-            do_send_to_ms(State2);
+            do_send_to_ms(Op, State2);
         {error, Error} ->
             {error, Error}
     end;
 
-send_to_ms(freeswitch, #state{ms={freeswitch, _}}=State) ->
+send_to_ms(freeswitch, _Op, #state{ms={freeswitch, _}}=State) ->
     {ok, State};
 
-send_to_ms(janus, #state{ms={janus, _}}=State) ->
-    {ok, State};
-
-send_to_ms(_Backend, _State) ->
-    lager:error("B: ~p, ~p", [_Backend, _State#state.ms]),
-    {error, backend_already_defined}.
+send_to_ms(_Backend, _Op, _State) ->
+    {error, incompatible_backend}.
 
 
 %% @private
-do_send_to_ms(#state{ms={freeswitch, FsId}}=State) ->
+do_send_to_ms(_Op, #state{ms={freeswitch, FsId}}=State) ->
     #state{id=SessId,session=#{offer:=Offer}=Session} = State,
     case nkmedia_fs_verto:start_in(SessId, FsId, Offer) of
         {ok, SDP} ->
@@ -629,6 +656,15 @@ do_send_to_ms(#state{ms={freeswitch, FsId}}=State) ->
             {ok, status(ready, #{answer=>Answer}, State2)};
         {error, Error} ->
             {error, {backend_in_error, Error}}
+    end;
+
+do_send_to_ms(Plugin, #state{ms={janus, JanusId}}=State) ->
+    #state{id=SessId} = State,
+    case nkmedia_janus:create(JanusId, SessId, Plugin) of
+        {ok, ConnId} ->
+            {ok, State#state{ms_conn_id=ConnId}};
+        {error, Error} ->
+            {error, {janus_error, Error}}
     end.
 
 
@@ -818,6 +854,27 @@ send_to_bridge(_SessIdB, #state{ms=MS}) ->
     {error, {invalid_backend, MS}}.
 
 
+
+%% @private
+send_to_mirror(_Opts, #state{ms={janus, JanusId}, ms_conn_id=Conn}=State) ->
+    #state{session=#{offer:=Offer}=Session} = State,
+    case nkmedia_janus:mirror(JanusId, Conn, #{}) of
+        {ok, _} ->
+            case nkmedia_janus:mirror(JanusId, Conn, Offer) of
+                {ok, Answer} ->
+                    Session2 = Session#{answer=>Answer},
+                    State2 = State#state{session=Session2},
+                    {noreply, status(ready, #{answer=>Answer}, State2)};
+                {error, Error} ->
+                    ?LLOG(notice, "janus body: ~p", [Error], State),
+                    stop_hangup(<<"Janus Error">>, State)
+            end;
+        {error, Error} ->
+            ?LLOG(notice, "janus error: ~p", [Error], State),
+            stop_hangup(<<"Janus Error">>, State)
+    end.
+
+
 % %% @private
 % send_to_park(#state{status=Status}=State) 
 %         when Status==wait; Status==ringing ->
@@ -911,6 +968,9 @@ stop_hangup(Reason, #state{id=SessId, ms=MS, call=Call}=State) ->
     case MS of
         {freeswitch, FsId} ->
             nkmedia_fs_cmd:hangup(FsId, SessId);
+        {janus, JanusId} ->
+            #state{ms_conn_id=ConnId} = State,
+            nkmedia_janus:destroy(JanusId, ConnId);
         _ ->
             ok
     end,

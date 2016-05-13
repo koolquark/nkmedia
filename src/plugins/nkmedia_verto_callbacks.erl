@@ -240,8 +240,8 @@ nkmedia_session_event(SessId, {status, hangup, _}, #{nkmedia_verto_out:=Pid}) ->
     continue;
 
 nkmedia_session_event(SessId, {status, ready, Data}, #{nkmedia_verto_in:=Pid}) ->
-    #{answer:=Answer} = Data,
-    lager:notice("Verto calling media available"),
+    #{answer:=#{sdp:=SDP}=Answer} = Data,
+    lager:notice("Verto calling media available: ~s", [SDP]),
     ok = nkmedia_verto:answer(Pid, SessId, Answer),
     continue;
 

@@ -289,8 +289,20 @@ print_trans(#trans{req=Req, resp=Resp, has_ack=HasACK}=Trans) ->
     ACK = case HasACK of true -> "(with ack)"; false -> "" end,
     lager:info("Req: ~s -> ~s ~s", [Req, Resp, ACK]),
     #trans{req_msg=Msg1, resp_msg=Msg2} = Trans,
+    Msg1B = case Msg1 of
+        #{<<"jsep">>:=#{<<"sdp">>:=_}=Jsep1} ->
+            Msg1#{<<"jsep">>=>Jsep1#{<<"sdp">>=><<"...">>}};
+        _ -> 
+            Msg1
+    end,
+    Msg2B = case Msg2 of
+        #{<<"jsep">>:=#{<<"sdp">>:=_}=Jsep2} ->
+            Msg2#{<<"jsep">>=>Jsep2#{<<"sdp">>=><<"...">>}};
+        _ -> 
+            Msg2
+    end,
     lager:info("~s -> \n~s\n\n", 
-                [nklib_json:encode_pretty(Msg1), nklib_json:encode_pretty(Msg2)]),
+                [nklib_json:encode_pretty(Msg1B), nklib_json:encode_pretty(Msg2B)]),
     case Msg1 of
         #{<<"jsep">>:=#{<<"sdp">>:=SDP1}} ->
             io:format("\n~s\n\n", [SDP1]);
