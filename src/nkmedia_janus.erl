@@ -34,6 +34,9 @@
 
 -type id() :: nkmedia_janus_engine:id().
 
+-type client_id() :: nkmedia_janus_client:id().
+
+
 -type config() ::
     #{
         comp => binary(),
@@ -82,7 +85,7 @@ stop_all() ->
 
 %% @doc Creates a new session
 -spec create(id(), nkmedia_session:id(), binary()) ->
-    {ok, nkmedia_janus_client:id()} | {error, term()}.
+    {ok, client_id()} | {error, term()}.
 
 create(JanusId, SessId, Plugin) ->
 	case nkmedia_janus_engine:get_conn(JanusId) of
@@ -95,7 +98,7 @@ create(JanusId, SessId, Plugin) ->
 
 
 %% @doc Destroys a session
--spec destroy(id(), nkmedia_janus_client:id()) ->
+-spec destroy(id(), client_id()) ->
     ok.
 
 destroy(JanusId, ClientId) ->

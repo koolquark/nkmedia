@@ -52,8 +52,8 @@
         srv_id => nkservice:id(),              
         session_id => nkmedia_session:id(),
         session_pid => pid(),
-        offer => nkmedia:offer(),                      % From this option on are
-        mediaserver => nkmedia_session:mediaserver(),  % for the outbound call
+        offer => nkmedia:offer(),                      % From this option on
+        mediaserver => nkmedia_session:mediaserver(),  % are meant for the outbound call
         wait_timeout => integer(),                     
         ring_timeout => integer(),          
         call_timeout => integer(),
@@ -390,10 +390,10 @@ launch_out(SessId, #session_out{dest=Dest, pos=Pos}=Out, State) ->
             Opts = Call#{
                 id => SessId, 
                 monitor => self(),
-                dest => Dest2,
+                b_dest => Dest2,
                 nkmedia_call_id => Id
             },
-            {ok, SessId, Pid} = nkmedia_session:start_outbound(SrvId, Opts),
+            {ok, SessId, Pid} = nkmedia_session:start(SrvId, Opts),
             Out2 = Out#session_out{launched=true, pid=Pid},
             Outs2 = maps:put(SessId, Out2, Outs),
             {noreply, State2#state{outs=Outs2}};

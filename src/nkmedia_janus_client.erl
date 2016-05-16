@@ -23,8 +23,8 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([start/1, start/2, stop/1, get_all/0]).
--export([info/1, create/3, destroy/2, message/4]).
--export([get_sessions/1]).
+-export([info/1, create/3, attach/3, message/5, detach/3, destroy/2]).
+-export([get_clients/1]).
 
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_stop/3]).
@@ -52,7 +52,8 @@
 %% Types
 %% ===================================================================
 
--type id() :: {jc, integer(), integer()}.
+-type id() :: integer().
+-type handle() :: integer().
 
 
 %% ===================================================================
@@ -105,40 +106,48 @@ info(Pid) ->
     call(Pid, info).
 
 
-%% @doc Creates a new session
--spec create(pid(), nkmedia_session:id(), binary()) ->
+%% @doc Creates a new session. 
+%% Events for the session will be sent to the callback as
+%% CallBack:janus_event(Id, JanusId, Handle, Msg).
+%% The calling process will be monitorized
+-spec create(pid(), module(), term()) ->
     {ok, id()} | {error, term()}.
 
-create(Pid, NkSessId, Plugin) ->
-    case call(Pid, {create, NkSessId, self()}) of
-        {ok, JanusSessId} ->
-            Plugin2 = <<"janus.plugin.", (nklib_util:to_binary(Plugin))/binary>>,
-            case call(Pid, {attach, JanusSessId, Plugin2}) of
-                {ok, HandleId} ->
-                    {ok, {jc, JanusSessId, HandleId}};
-                {error, Error} ->
-                    {error, Error}
-            end;
-        {error, Error} ->
-            {error, Error}
-    end.
+create(Pid, CallBack, Id) ->
+    call(Pid, {create, CallBack, Id, self()}).
+
+
+%% @doc Creates a new session
+-spec attach(pid(), id(), binary()) ->
+    {ok, handle()} | {error, term()}.
+
+attach(Pid, SessId, Plugin) ->
+    Plugin2 = <<"janus.plugin.", (nklib_util:to_binary(Plugin))/binary>>,
+    call(Pid, {attach, SessId, Plugin2}).
+
+
+%% @doc
+-spec message(pid(), id(), handle(), map(), map()) ->
+    {ok, map()} | {error, term()}. 
+
+message(Pid, Id, Handle, Body, Jsep) ->
+    call(Pid, {message, Id, Handle, Body, Jsep}).
+
+
+%% @doc Destroys a session
+-spec detach(pid(), id(), handle()) ->
+    ok.
+
+detach(Pid, SessId, Handle) ->
+    cast(Pid, {detach, SessId, Handle}).
 
 
 %% @doc Destroys a session
 -spec destroy(pid(), id()) ->
     ok.
 
-destroy(Pid, {jc, JanusSessId, HandleId}) ->
-    cast(Pid, {detach, JanusSessId, HandleId}),
-    cast(Pid, {destroy, JanusSessId}).
-
-
-%% @doc
--spec message(pid(), id(), map(), map()) ->
-    {ok, Res::map(), Jsep::map()} | {error, term()}. 
-
-message(Pid, {jc, Id, HandleId}, Body, Jsep) ->
-    call(Pid, {message, Id, HandleId, Body, Jsep}).
+destroy(Pid, SessId) ->
+    cast(Pid, {destroy, SessId}).
 
 
 %% @private
@@ -160,8 +169,8 @@ cast(Pid, Msg) ->
 
 
 %% @private
-get_sessions(Pid) ->
-    call(Pid, get_sessions).
+get_clients(Pid) ->
+    call(Pid, get_clients).
 
 
 
@@ -171,23 +180,18 @@ get_sessions(Pid) ->
 
 -type op_id() :: {trans, integer()}.
 
--type op_type() :: info | create | attach.
-
--type session() :: {nkmedia_session:id(), pid(), reference()}.
-
 -record(trans, {
-    type :: op_type(),
+    req :: term(),
     timer :: reference(),
-    from :: {pid(), term()},
-    data :: term()
+    from :: {pid(), term()}
 }).
 
 -record(state, {
     janus_id :: nkmedia_janus_engine:id(),
     remote :: binary(),
     pass :: binary(),
-    sessions = #{} :: #{integer() => session()},
-    session_mons = #{} :: #{reference() => integer()},
+    clients = #{} :: #{id() => {module(), Id::term(), reference()}},
+    mons = #{} :: #{reference() => id()},
     trans = #{} :: #{op_id() => #trans{}}
 }).
 
@@ -244,8 +248,17 @@ conn_parse({text, Data}, NkPort, State) ->
     case Msg of
         #{<<"janus">>:=<<"ack">>} ->
             {ok, State};
-        #{<<"janus">>:=Cmd, <<"transaction">>:=Id} ->
-            case extract_op({trans, Id}, State) of
+        #{<<"janus">>:=<<"event">>, <<"session_id">>:=Id, <<"sender">>:=Handle} ->
+            case get_client(Id, State) of
+                {ok, CallBack, ClientId} ->
+                    event(CallBack, ClientId, Id, Handle, Msg, State),
+                    {ok, State};
+                not_found ->
+                    ?LLOG(notice, "unexpected server event: ~p", [Msg], State),
+                    {ok, State}
+            end;
+        #{<<"janus">>:=Cmd, <<"transaction">>:=Trans} ->
+            case extract_op({trans, Trans}, State) of
                 {Op, State2} ->
                     process_server_resp(Op, Cmd, Msg, NkPort, State2);
                 not_found ->
@@ -253,7 +266,7 @@ conn_parse({text, Data}, NkPort, State) ->
             end;
         #{<<"janus">>:=<<"timeout">>, <<"session_id">>:=Id} ->
             ?LLOG(notice, "server session timeout for ~p", [Id], State),
-            State2 = removed_session(Id, State),
+            State2 = del_client(Id, State),
             {ok, State2};
         #{<<"janus">>:=<<"detached">>} ->
             {ok, State};
@@ -282,12 +295,12 @@ conn_handle_call(get_state, From, _NkPort, State) ->
     gen_server:reply(From, State),
     {ok, State};
 
-conn_handle_call(get_sessions, From, _NkPort, #state{sessions=Sessions}=State) ->
-    gen_server:reply(From, {ok, Sessions}),
+conn_handle_call(get_clients, From, _NkPort, #state{clients=Clients}=State) ->
+    gen_server:reply(From, {ok, [{CallBack, Id} || {CallBack, Id, _Mon} <- Clients]}),
     {ok, State};
 
 conn_handle_call(Msg, From, NkPort, State) ->
-    case handle_op(Msg, From, NkPort, State) of
+    case send_client_req(Msg, From, NkPort, State) of
         unknown_op ->
             lager:error("Module ~p received unexpected call: ~p", [?MODULE, Msg]),
             {stop, unexpected_call, State};
@@ -300,11 +313,10 @@ conn_handle_call(Msg, From, NkPort, State) ->
     {ok, #state{}} | {stop, term(), #state{}}.
 
 conn_handle_cast(stop, _NkPort, State) ->
-    lager:warning("RECEIVED STOP"),
     {stop, normal, State};
 
 conn_handle_cast(Msg, NkPort, State) ->
-    case handle_op(Msg, undefined, NkPort, State) of
+    case send_client_req(Msg, undefined, NkPort, State) of
         unknown_op ->
             lager:error("Module ~p received unexpected cast: ~p", [?MODULE, Msg]),
             {stop, unexpected_cast, State};
@@ -322,13 +334,13 @@ conn_handle_info({timeout, _, {op_timeout, OpId}}, _NkPort, State) ->
         {#trans{from=From}, State2} ->
             gen_server:reply(From, {error, timeout}),
             ?LLOG(warning, "operation timeout", [], State),
-            {stop, normal, State2};
+            {ok, State2};
         not_found ->
             {ok, State}
     end;
 
-conn_handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, _NkPort, State) ->
-    #state{session_mons=Mons}  = State,
+conn_handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, NkPort, State) ->
+    #state{mons=Mons}  = State,
     case maps:find(Ref, Mons) of
         {ok, Id} ->
             case Reason of
@@ -337,9 +349,8 @@ conn_handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, _NkPort, State) ->
                 _ ->
                     ?LLOG(notice, "session ~p has stopped (~p)", [Id, Reason], State)
             end,
-            State2 = 
-            removed_session(Id, State),
-            {ok, State2};
+            State2 = del_client(Id, State),
+            send_client_req({destroy, Id}, undefined, NkPort, State2);
         _ ->
             lager:warning("Module ~p received unexpected info: ~p", [?MODULE, Msg]),
             {ok, State}
@@ -364,74 +375,97 @@ conn_stop(Reason, _NkPort, _State) ->
 %% ===================================================================
 
 
-% @private
-handle_op(info, From, NkPort, State) ->
-    send_client_req(info, #{}, From, NkPort, State);
 
-handle_op({create, NkSessId, Pid}, From, NkPort, State) ->
-    send_client_req(create, {NkSessId, Pid}, From, NkPort, State);
-
-handle_op({attach, Id, Plugin}, From, NkPort, State) ->
-    send_client_req(attach, {Id, Plugin}, From, NkPort, State);
-
-handle_op({detach, Id, HandleId}, From, NkPort, State) ->
-    send_client_req(detach, {Id, HandleId}, From, NkPort, State);
-
-handle_op({destroy, Id}, From, NkPort, State) ->
-    send_client_req(destroy, Id, From, NkPort, State);
-
-handle_op({message, Id, HandleId, Body, Jsep}, From, NkPort, State) ->
-    send_client_req(message, {Id, HandleId, Body, Jsep}, From, NkPort, State);
-
-handle_op(_Op, _From, _NkPort, _State) ->
-    unknown_op.
+%% @private
+send_client_req(Msg, From, NkPort, State) ->
+    TransId = nklib_util:uid(),
+    case make_msg(Msg, TransId) of
+        unknown_op ->
+            uknown_op;
+        Req ->
+            State2 = insert_op({trans, TransId}, Req, From, State),
+            send(Msg, NkPort, State2)
+    end.
 
 
 %% @private
-process_server_resp(#trans{type=info}=Op, <<"server_info">>, Msg, _NkPort, State) ->
-    #trans{type=info, from=From} = Op,
+make_msg(info, TransId) ->
+    make_req(info, TransId, #{});
+
+make_msg({create, _CallBack, _ClientId, _Pid}, TransId) ->
+    make_req(create, TransId, #{});
+
+make_msg({attach, Id, Plugin}, TransId) ->
+    Data = #{<<"plugin">>=>Plugin, <<"session_id">>=>Id},
+    make_req(attach, TransId, Data);
+
+make_msg({detach, Id, Handle}, TransId) ->
+    Data = #{<<"session_id">>=>Id, <<"handle_id">>=>Handle},
+    make_req(detach, TransId, Data);
+
+make_msg({destroy, Id}, TransId) ->
+    Data = #{<<"session_id">>=>Id},
+    make_req(destroy, TransId, Data);
+
+make_msg({message, Id, Handle, Body, Jsep}, TransId) ->
+    Msg1 = #{
+        <<"body">> => Body,
+        <<"handle_id">> => Handle,
+        <<"session_id">> => Id
+    },
+    Msg2 = case map_size(Jsep) of
+        0 ->
+            Msg1;
+        _ ->
+            Msg1#{<<"jsep">> => Jsep}
+    end,
+    make_req(message, TransId, Msg2);
+
+make_msg(_Type, _TransId) ->
+    unknown_op.
+
+
+
+%% @private
+process_server_resp(#trans{req=info}=Op, <<"server_info">>, Msg, _NkPort, State) ->
+    #trans{from=From} = Op,
     nklib_util:reply(From, {ok, Msg}),
     {ok, State};
 
-process_server_resp(#trans{type=create}=Op, <<"success">>, Msg, _NkPort, State) ->
-    #trans{from=From, data={NkSessId, Pid}} = Op,
-    #{<<"data">> := #{<<"id">> := Id}} = Msg,
-    nklib_util:reply(From, {ok, Id}),
-    State2 = added_session(Id, NkSessId, Pid, State),
-    {ok, State2};
-
-process_server_resp(#trans{type=attach}=Op, <<"success">>, Msg, _NkPort, State) ->
+process_server_resp(#trans{req=Req}=Op, <<"success">>, Msg, _NkPort, State) ->
     #trans{from=From} = Op,
-    #{<<"data">> := #{<<"id">> := Handle}} = Msg,
-    nklib_util:reply(From, {ok, Handle}),
-    {ok, State};
-
-process_server_resp(#trans{type=destroy}=Op, <<"success">>, _Msg, _NkPort, State) ->
-    #trans{from=From, data=Id} = Op,
-    nklib_util:reply(From, ok),
-    State2 = removed_session(Id, State),
+    {Reply, State2} = case Req of
+        {create, CallBack, ClientId, Pid} ->
+            #{<<"data">> := #{<<"id">> := Id}} = Msg,
+            {{ok, Id}, add_client(Id, CallBack, ClientId, Pid, State)};
+        {attach, _Id, _Plugin} ->
+            #{<<"data">> := #{<<"id">> := Handle}} = Msg,
+            {{ok, Handle}, State};
+        {message, _Id, _Handle, _Body, _Jsep} ->
+            #{<<"plugindata">> := Data} = Msg,
+            Data2 = case Msg of
+                #{<<"jsep">>:=Jsep} -> 
+                    Data#{<<"jsep">>=>Jsep};
+                _ -> 
+                    Data
+            end,
+            {{ok, Data2}, State};
+        {detach, _Id, _Handle} ->
+            {ok, State};
+        {destroy, Id} ->
+            {ok, del_client(Id, State)}
+    end,
+    gen_server:reply(From, Reply),
     {ok, State2};
-
-process_server_resp(#trans{type=message}=Op, <<"event">>, Msg, _NkPort, State) ->
-    #trans{from=From} = Op,
-    #{<<"plugindata">> := Data} = Msg,
-    Jsep = maps:get(<<"jsep">>, Msg, #{}),
-    nklib_util:reply(From, {ok, Data, Jsep}),
-    {ok, State};
-
-process_server_resp(Op, <<"success">>, _Msg, _NkPort, State) ->
-    #trans{type=_Type, from=From} = Op,
-    nklib_util:reply(From, ok),
-    {ok, State};
 
 process_server_resp(Op, <<"error">>, Msg, _NkPort, State) ->
     #{<<"error">> := #{<<"code">>:=Code, <<"reason">>:=Reason}} = Msg,
-    #trans{type=_Type, from=From} = Op,
+    #trans{from=From} = Op,
     nklib_util:reply(From, {error, {Code, Reason}}),
     {ok, State};
 
 process_server_resp(Op, Other, Msg, _NkPort, State) ->
-    #trans{type=_Type, from=From} = Op,
+    #trans{from=From} = Op,
     nklib_util:reply(From, {{unknown, Other}, Msg}),
     {ok, State}.
 
@@ -442,7 +476,7 @@ process_server_req(Cmd, _Msg, _NkPort, State) ->
     ?LLOG(warning, "Server REQ: ~s", [Cmd], State),
     {ok, State}.
 
-
+   
 
 
 %% ===================================================================
@@ -450,55 +484,15 @@ process_server_req(Cmd, _Msg, _NkPort, State) ->
 %% ===================================================================
 
 
-%% @private
-send_client_req(Type, Data, From, NkPort, State) ->
-    TransId = nklib_util:uid(),
-    Msg = make_msg(TransId, Type, Data, State),
-    State2 = insert_op({trans, TransId}, Type, From, Data, State),
-    send(Msg, NkPort, State2).
+
 
 
 %% @private
-make_msg(TransId, info, _, _State) ->
-    make_req(TransId, info, #{});
-
-make_msg(TransId, create, _, _State) ->
-    make_req(TransId, create, #{});
-
-make_msg(TransId, attach, {Id, Plugin}, _State) ->
-    Data = #{<<"plugin">>=>Plugin, <<"session_id">>=>Id},
-    make_req(TransId, attach, Data);
-
-make_msg(TransId, detach, {Id, HandleId}, _State) ->
-    Data = #{<<"session_id">>=>Id, <<"handle_id">>=>HandleId},
-    make_req(TransId, detach, Data);
-
-make_msg(TransId, destroy, Id, _State) ->
-    Data = #{<<"session_id">>=>Id},
-    make_req(TransId, destroy, Data);
-
-make_msg(TransId, message, {Id, HandleId, Body, Jsep}, _State) ->
-    Msg1 = #{
-        <<"body">> => Body,
-        <<"handle_id">> => HandleId,
-        <<"session_id">> => Id
-    },
-    Msg2 = case map_size(Jsep) of
-        0 ->
-            Msg1;
-        _ ->
-            Msg1#{<<"jsep">> => Jsep}
-    end,
-    make_req(TransId, message, Msg2).
-
-
-%% @private
-insert_op(OpId, Type, From, Data, #state{trans=AllOps}=State) ->
+insert_op(OpId, Req, From, #state{trans=AllOps}=State) ->
     NewOp = #trans{
-        type = Type, 
+        req = Req, 
         timer = erlang:start_timer(?OP_TIME, self(), {op_timeout, OpId}),
-        from = From,
-        data = Data
+        from = From
     },
     State#state{trans=maps:put(OpId, NewOp, AllOps)}.
 
@@ -516,34 +510,48 @@ extract_op(OpId, #state{trans=AllOps}=State) ->
 
 
 %% @private
-added_session(Id, NkSessId, Pid, State) ->
-    #state{sessions=Sessions, session_mons=Mons} = State,
-    Mon = monitor(process, Pid),
-    Sessions2 = maps:put(Id, {NkSessId, Pid, Mon}, Sessions),
-    Mons2 = maps:put(Mon, Id, Mons),
-    State#state{sessions=Sessions2, session_mons=Mons2}.
+get_client(SessId, #state{clients=Clients}) ->
+    case maps:find(SessId, Clients) of
+        {ok, {CallBack, Id, _Mon}} ->
+            {ok, CallBack, Id};
+        error ->
+            not_found
+    end.
 
 
 %% @private
-removed_session(Id, State) ->
-    #state{sessions=Sessions, session_mons=Mons} = State,
-    case maps:find(Id, Sessions) of
-        {ok, {NkSessId, _Pid, Mon}} ->
+add_client(SessId, CallBack, Id, Pid, State) ->
+    #state{clients=Clients, mons=Mons} = State,
+    Mon = monitor(process, Pid),
+    Clients2 = maps:put(SessId, {CallBack, Id, Mon}, Clients),
+    Mons2 = maps:put(Mon, SessId, Mons),
+    State#state{clients=Clients2, mons=Mons2}.
+
+
+%% @private
+del_client(SessId, State) ->
+    #state{clients=Clients, mons=Mons} = State,
+    case maps:find(SessId, Clients) of
+        {ok, {CallBack, Id, Mon}} ->
             nklib_util:demonitor(Mon),
-            Sessions2 = maps:remove(Id, Sessions),
+            Clients2 = maps:remove(SessId, Clients),
             Mons2 = maps:remove(Mon, Mons),
-            event(NkSessId, stop, State),
-            State#state{sessions=Sessions2, session_mons=Mons2};
+            event(CallBack, Id, SessId, 0, stop, State),
+            State#state{clients=Clients2, mons=Mons2};
         error ->
             State
     end.
 
 
 %% @private
-event(NkSessId, Event, #state{janus_id=JanusId}=State) ->
-    nkmedia_session:ms_event(NkSessId, JanusId, Event),
+event(CallBack, ClientId, SessId, Handle, Event, State) ->
+    case catch CallBack:janus_event(ClientId, SessId, Handle, Event) of
+        ok ->
+            ok;
+        _ ->
+            ?LLOG(warning, "Error calling ~p:janus_event/4: ~p", [CallBack], Error)
+    end,
     State.
-
 
 
 %% @private
@@ -564,7 +572,7 @@ send(Msg, NkPort) ->
 
 
 %% @private
-make_req(TransId, Cmd, Data) ->
+make_req(Cmd, TransId, Data) ->
     Data#{<<"janus">> => Cmd, <<"transaction">> => TransId}.
 
 
