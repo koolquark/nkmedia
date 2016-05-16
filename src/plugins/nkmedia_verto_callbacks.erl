@@ -139,7 +139,7 @@ nkmedia_verto_invite(SessId, Offer, #{srv_id:=SrvId}=Verto) ->
         monitor => self(),
         nkmedia_verto_in => self()    % We use it to monitor status from session
     },
-    case nkmedia_session:start_inbound(SrvId, Spec) of
+    case nkmedia_session:start(SrvId, Spec) of
         {ok, SessId, SessPid} ->
             case SrvId:nkmedia_verto_call(SessId, Dest, Verto) of
                 {ok, Verto2} ->
@@ -240,8 +240,9 @@ nkmedia_session_event(SessId, {status, hangup, _}, #{nkmedia_verto_out:=Pid}) ->
     continue;
 
 nkmedia_session_event(SessId, {status, ready, Data}, #{nkmedia_verto_in:=Pid}) ->
-    #{answer:=#{sdp:=SDP}=Answer} = Data,
-    lager:notice("Verto calling media available: ~s", [SDP]),
+    #{answer:=#{sdp:=_SDP}=Answer} = Data,
+    lager:info("Verto calling media available"),
+    % lager:notice("Verto calling media available: ~s", [SDP]),
     ok = nkmedia_verto:answer(Pid, SessId, Answer),
     continue;
 
@@ -267,7 +268,7 @@ nkmedia_session_out(SessId, {nkmedia_verto, Pid}, Offer, Session) ->
         fun() ->
             case nkmedia_verto:invite(Pid, SessId, Offer#{monitor=>Self}) of
                 {answered, Answer} ->
-                    ok = nkmedia_session:reply_answered(SessId, Answer);
+                    ok = nkmedia_session:reply(SessId, {answered, Answer});
                 hangup ->
                     nkmedia_session:hangup(SessId, <<"Verto User Hangup">>);
                 {error, Error} ->

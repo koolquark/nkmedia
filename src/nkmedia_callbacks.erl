@@ -154,21 +154,21 @@ nkmedia_session_handle_info(Msg, Session) ->
 
 
 %% @private
--spec nkmedia_session_get_mediaserver(nkmedia:backend(), session()) ->
+-spec nkmedia_session_get_mediaserver(nkmedia_session:type(), session()) ->
 	{ok, nkmedia_session:mediaserver(), session()} | {error, term()}.
 
 nkmedia_session_get_mediaserver(p2p, Session) ->
 	{ok, none, Session};
 
-nkmedia_session_get_mediaserver(freeswitch, Session) ->
+nkmedia_session_get_mediaserver(pbx, Session) ->
 	case nkmedia_fs_engine:get_all() of
         [{FsId, _}|_] ->
-			{ok, {freeswitch, FsId}, Session};
+			{ok, {fs, FsId}, Session};
        	[] ->
        		{error, no_mediaserver_available}
     end;
 
-nkmedia_session_get_mediaserver(janus, Session) ->
+nkmedia_session_get_mediaserver(proxy, Session) ->
 	case nkmedia_janus_engine:get_all() of
         [{JanusId, _}|_] ->
 			{ok, {janus, JanusId}, Session};

@@ -128,7 +128,7 @@ attach(Pid, SessId, Plugin) ->
 
 %% @doc
 -spec message(pid(), id(), handle(), map(), map()) ->
-    {ok, map()} | {error, term()}. 
+    {ok, Data::map(), Jsep::map()} | {error, term()}. 
 
 message(Pid, Id, Handle, Body, Jsep) ->
     call(Pid, {message, Id, Handle, Body, Jsep}).
@@ -192,7 +192,8 @@ get_clients(Pid) ->
     pass :: binary(),
     clients = #{} :: #{id() => {module(), Id::term(), reference()}},
     mons = #{} :: #{reference() => id()},
-    trans = #{} :: #{op_id() => #trans{}}
+    trans = #{} :: #{op_id() => #trans{}},
+    pos :: integer()
 }).
 
 
@@ -220,7 +221,8 @@ conn_init(NkPort) ->
     State = #state{
         janus_id = JanusId,
         pass = Pass,
-        remote = Remote
+        remote = Remote,
+        pos = erlang:phash2(nklib_util:uid())
     },
     ?LLOG(info, "new session (~p)", [self()], State),
     nklib_proc:put(?MODULE),
@@ -248,6 +250,13 @@ conn_parse({text, Data}, NkPort, State) ->
     case Msg of
         #{<<"janus">>:=<<"ack">>} ->
             {ok, State};
+        #{<<"janus">>:=Cmd, <<"transaction">>:=Trans} ->
+            case extract_op({trans, Trans}, State) of
+                {Op, State2} ->
+                    process_server_resp(Op, Cmd, Msg, NkPort, State2);
+                not_found ->
+                    process_server_req(Cmd, Msg, NkPort, State)
+            end;
         #{<<"janus">>:=<<"event">>, <<"session_id">>:=Id, <<"sender">>:=Handle} ->
             case get_client(Id, State) of
                 {ok, CallBack, ClientId} ->
@@ -256,13 +265,6 @@ conn_parse({text, Data}, NkPort, State) ->
                 not_found ->
                     ?LLOG(notice, "unexpected server event: ~p", [Msg], State),
                     {ok, State}
-            end;
-        #{<<"janus">>:=Cmd, <<"transaction">>:=Trans} ->
-            case extract_op({trans, Trans}, State) of
-                {Op, State2} ->
-                    process_server_resp(Op, Cmd, Msg, NkPort, State2);
-                not_found ->
-                    process_server_req(Cmd, Msg, NkPort, State)
             end;
         #{<<"janus">>:=<<"timeout">>, <<"session_id">>:=Id} ->
             ?LLOG(notice, "server session timeout for ~p", [Id], State),
@@ -292,11 +294,11 @@ conn_encode(Msg, _NkPort) when is_binary(Msg) ->
     {ok, #state{}} | {stop, term(), #state{}}.
 
 conn_handle_call(get_state, From, _NkPort, State) ->
-    gen_server:reply(From, State),
+    nklib_util:reply(From, State),
     {ok, State};
 
 conn_handle_call(get_clients, From, _NkPort, #state{clients=Clients}=State) ->
-    gen_server:reply(From, {ok, [{CallBack, Id} || {CallBack, Id, _Mon} <- Clients]}),
+    nklib_util:reply(From, {ok, [{CallBack, Id} || {CallBack, Id, _Mon} <- Clients]}),
     {ok, State};
 
 conn_handle_call(Msg, From, NkPort, State) ->
@@ -332,7 +334,7 @@ conn_handle_cast(Msg, NkPort, State) ->
 conn_handle_info({timeout, _, {op_timeout, OpId}}, _NkPort, State) ->
     case extract_op(OpId, State) of
         {#trans{from=From}, State2} ->
-            gen_server:reply(From, {error, timeout}),
+            nklib_util:reply(From, {error, timeout}),
             ?LLOG(warning, "operation timeout", [], State),
             {ok, State2};
         not_found ->
@@ -374,17 +376,16 @@ conn_stop(Reason, _NkPort, _State) ->
 %% Requests
 %% ===================================================================
 
-
-
 %% @private
-send_client_req(Msg, From, NkPort, State) ->
-    TransId = nklib_util:uid(),
+send_client_req(Msg, From, NkPort, #state{pos=Pos}=State) ->
+    TransId = nklib_util:to_binary(Pos),
     case make_msg(Msg, TransId) of
         unknown_op ->
             uknown_op;
         Req ->
-            State2 = insert_op({trans, TransId}, Req, From, State),
-            send(Msg, NkPort, State2)
+            State2 = insert_op({trans, TransId}, Msg, From, State),
+            Pos2 = (Pos+1) rem 100000000000,
+            send(Req, NkPort, State2#state{pos=Pos2})
     end.
 
 
@@ -441,22 +442,20 @@ process_server_resp(#trans{req=Req}=Op, <<"success">>, Msg, _NkPort, State) ->
         {attach, _Id, _Plugin} ->
             #{<<"data">> := #{<<"id">> := Handle}} = Msg,
             {{ok, Handle}, State};
-        {message, _Id, _Handle, _Body, _Jsep} ->
-            #{<<"plugindata">> := Data} = Msg,
-            Data2 = case Msg of
-                #{<<"jsep">>:=Jsep} -> 
-                    Data#{<<"jsep">>=>Jsep};
-                _ -> 
-                    Data
-            end,
-            {{ok, Data2}, State};
         {detach, _Id, _Handle} ->
             {ok, State};
         {destroy, Id} ->
             {ok, del_client(Id, State)}
     end,
-    gen_server:reply(From, Reply),
+    nklib_util:reply(From, Reply),
     {ok, State2};
+
+process_server_resp(Op, <<"event">>, Msg, _NkPort, State) ->
+    #trans{req={message, _Id, _Handle, _Body, _Jsep}, from=From} = Op,
+    #{<<"plugindata">> := Data} = Msg,
+    Jsep = maps:get(<<"jsep">>, Msg, #{}),
+    nklib_util:reply(From, {ok, Data, Jsep}),
+    {ok, State};
 
 process_server_resp(Op, <<"error">>, Msg, _NkPort, State) ->
     #{<<"error">> := #{<<"code">>:=Code, <<"reason">>:=Reason}} = Msg,
@@ -466,7 +465,7 @@ process_server_resp(Op, <<"error">>, Msg, _NkPort, State) ->
 
 process_server_resp(Op, Other, Msg, _NkPort, State) ->
     #trans{from=From} = Op,
-    nklib_util:reply(From, {{unknown, Other}, Msg}),
+    nklib_util:reply(From, {{unknown, Op, Other}, Msg}),
     {ok, State}.
 
 

@@ -53,7 +53,8 @@
         session_id => nkmedia_session:id(),
         session_pid => pid(),
         offer => nkmedia:offer(),                      % From this option on
-        mediaserver => nkmedia_session:mediaserver(),  % are meant for the outbound call
+        type => nkmedia_session:type(),                % are meant for the outbound call
+        mediaserver => nkmedia_session:mediaserver(),  
         wait_timeout => integer(),                     
         ring_timeout => integer(),          
         call_timeout => integer(),
@@ -387,13 +388,15 @@ launch_out(SessId, #session_out{dest=Dest, pos=Pos}=Out, State) ->
     case handle(nkmedia_call_out, [SessId, Dest], State) of
         {call, Dest2, State2} ->
             ?LLOG(info, "launching out ~p (~p)", [Dest2, Pos], State),
-            Opts = Call#{
+            NotShared = [dest, status, ext_status],
+            Config1 = maps:without(NotShared, Call),
+            Config2 = Config1#{
                 id => SessId, 
                 monitor => self(),
                 b_dest => Dest2,
                 nkmedia_call_id => Id
             },
-            {ok, SessId, Pid} = nkmedia_session:start(SrvId, Opts),
+            {ok, SessId, Pid} = nkmedia_session:start(SrvId, Config2),
             Out2 = Out#session_out{launched=true, pid=Pid},
             Outs2 = maps:put(SessId, Out2, Outs),
             {noreply, State2#state{outs=Outs2}};
@@ -438,7 +441,7 @@ remove_out(SessId, #state{outs=Outs, status=Status}=State) ->
 process_out_event({status, hangup, _Data}, State) ->
     stop_hangup(<<"Callee Hangup">>, State);
 
-process_out_event({status, bridged, _}, State) ->
+process_out_event({status, call, _}, State) ->
     {noreply, State};
 
 process_out_event(Event, State) ->

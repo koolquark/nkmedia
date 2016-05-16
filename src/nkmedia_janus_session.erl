@@ -35,8 +35,8 @@
 -include("nkmedia.hrl").
 
 
--define(OP_TIMEOUT, 5).
--define(RING_TIMEOUT, 5).
+-define(OP_TIMEOUT, 50).
+-define(RING_TIMEOUT, 50).
 -define(CALL_TIMEOUT, 4*60*60).
 
 
@@ -282,9 +282,10 @@ videocall_1(SDP, From, #state{data=Data}=State) ->
         {ok, Id} -> 
             case attach(Id, <<"videocall">>, State) of
                 {ok, Handle} -> 
-                    Body = #{request=>register, username=>Handle},
+                    UserName = nklib_util:to_binary(Handle),
+                    Body = #{request=>register, username=>UserName},
                     case message(Id, Handle, Body, State) of
-                        {ok, <<"registered">>, _} ->
+                        {ok, <<"registered">>, _, _} ->
                             Data2 = Data#{
                                 janus_id_a => Id, 
                                 janus_handle_a => Handle,
@@ -308,9 +309,10 @@ videocall_2(#state{data=Data}=State) ->
         {ok, Id} -> 
             case attach(Id, <<"videocall">>, State) of
                 {ok, Handle} -> 
-                    Body = #{request=>register, username=>Handle},
+                    UserName = nklib_util:to_binary(Handle),
+                    Body = #{request=>register, username=>UserName},
                     case message(Id, Handle, Body, State) of
-                        {ok, <<"registered">>, _} ->
+                        {ok, <<"registered">>, _, _} ->
                             Data2 = Data#{janus_id_b=>Id, janus_handle_b=>Handle},
                             videocall_3(State#state{data=Data2});
                         {error, Error} ->
@@ -332,9 +334,9 @@ videocall_3(#state{data=Data}=State) ->
         janus_handle_b := HandleB,
         sdp_1_a := SDP
     } = Data,
-    Body = #{request=>call, username=>HandleB},
-    case message(Id, Handle, Body, #{sdp=>SDP}, State) of
-        {ok, <<"calling">>, _} ->
+    Body = #{request=>call, username=>nklib_util:to_binary(HandleB)},
+    case message(Id, Handle, Body, #{sdp=>SDP, type=>offer}, State) of
+        {ok, <<"calling">>, _, _} ->
             {ok, status(wait_videocall_4, State)};
         {error, Error} ->
             {error, {could_not_call, Error}}
@@ -343,11 +345,8 @@ videocall_3(#state{data=Data}=State) ->
 
 %% @private Janus sends us the SDP for called party. We wait answer.
 videocall_4(Msg, #state{from=From, data=Data}=State) ->
-    case Msg of
-        #{
-            <<"jsep">> := #{<<"sdp">>:=SDP},
-            <<"result">> := #{<<"event">> := <<"incomingcall">>}
-        } ->
+    case event(Msg) of
+        {ok, <<"incomingcall">>, _, #{<<"sdp">>:=SDP}} ->
             gen_server:reply(From, {ok, #{sdp=>SDP}}),
             Data2 = Data#{sdp_2_a=>SDP},
             {ok, status(wait_videocall_5, State#state{data=Data2, from=undefined})};
@@ -357,12 +356,12 @@ videocall_4(Msg, #state{from=From, data=Data}=State) ->
 
 
 %% @private. We receive answer from called party and wait Janus
-videocall_5(SDP, #state{data=Data}=State) ->
-    #{janus_id_b:=Id, janus_handle_b:=Handle, sdp_2_b:=SDP} = Data,
+videocall_5(SDP2B, #state{data=Data}=State) ->
+    #{janus_id_b:=Id, janus_handle_b:=Handle} = Data,
     Body = #{request=>accept},
-    case message(Id, Handle, Body, #{sdp=>SDP}, State) of
-        {ok, <<"accepted">>, _} ->
-            Data2 = Data#{sdp_2_b=>SDP},
+    case message(Id, Handle, Body, #{sdp=>SDP2B, type=>answer}, State) of
+        {ok, <<"accepted">>, _, _} ->
+            Data2 = Data#{sdp_2_b=>SDP2B},
             {ok, status(wait_videocall_6, State#state{data=Data2})};
         {error, Error} ->
             {error, Error}
@@ -371,16 +370,13 @@ videocall_5(SDP, #state{data=Data}=State) ->
 
 %% @private Janus send us the answer for caller
 videocall_6(Msg, #state{from=From, data=Data}=State) ->
-    case Msg of
-        #{
-            <<"jsep">> := #{<<"sdp">>:=SDP},
-            <<"result">> := #{<<"event">> := <<"accepted">>}
-        } ->
+    case event(Msg) of
+        {ok, <<"accepted">>, _, #{<<"sdp">>:=SDP}} -> 
             gen_server:reply(From, {ok, #{sdp=>SDP}}),
-            Data2 = Data#{sdp_2_b=>SDP},
+            Data2 = Data#{sdp_1_b=>SDP},
             {ok, status(videocall, State#state{data=Data2, from=undefined})};
-        _ ->
-            {error, {invalid_msg, Msg}}
+        O ->
+            {error, {invalid_msg, O}}
     end.
 
 
@@ -409,8 +405,10 @@ message(SessId, Handle, Body, State) ->
 %% @private
 message(SessId, Handle, Body, Jsep, #state{janus_pid=Pid}) ->
     case nkmedia_janus_client:message(Pid, SessId, Handle, Body, Jsep) of
-        {ok, #{<<"data">>:=#{<<"result">>:=Result}}=Data} ->
-            {ok, Result, Data};
+        {ok, #{<<"data">>:=Data}, Jsep2} ->
+            #{<<"result">>:=Result} = Data,
+            #{<<"event">>:=Event} = Result,
+            {ok, Event, Result, Jsep2};
         {error, Error} ->
             {error, Error}
     end.
@@ -419,6 +417,30 @@ message(SessId, Handle, Body, Jsep, #state{janus_pid=Pid}) ->
 %% @private
 destroy(SessId, #state{janus_pid=Pid}) ->
     nkmedia_janus_client:destroy(Pid, SessId).
+
+
+%% @private
+event(Msg) ->
+    Jsep = maps:get(<<"jsep">>, Msg, #{}),
+    case Msg of
+        #{
+            <<"plugindata">> := #{
+                <<"data">> := #{
+                    <<"result">> := #{<<"event">> := Event} = Result
+                }
+            }
+        } ->
+            {ok, Event, Result, Jsep};
+        _  ->
+
+
+            {error, {invalid_msg, Msg}}
+    end.
+
+
+
+
+
 
 
 %% @private
@@ -455,7 +477,7 @@ find(SessId) ->
 
 %% @private
 do_call(SessId, Msg) ->
-    do_call(SessId, Msg, 5000).
+    do_call(SessId, Msg, 1000*?RING_TIMEOUT).
 
 
 %% @private

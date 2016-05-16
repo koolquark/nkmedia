@@ -184,13 +184,13 @@ nkmedia_verto_login(VertoId, Login, Pass, Verto) ->
 nkmedia_verto_call(SessId, Dest, Verto) ->
     case Dest of 
         <<"d", Num/binary>> ->
-            ok = nkmedia_session:to_call(SessId, Num, #{}),
+            ok = nkmedia_session:to_call(SessId, Num, #{type=>p2p}),
             {ok, Verto};
         <<"f", Num/binary>> -> 
-            ok = nkmedia_session:to_call(SessId, Num, #{backend=>freeswitch}),
+            ok = nkmedia_session:to_call(SessId, Num, #{type=>pbx}),
             {ok, Verto};
-        <<"m">> ->
-            ok = nkmedia_session:to_mirror(SessId, #{}),
+        <<"j", Num/binary>> ->
+            ok = nkmedia_session:to_call(SessId, Num, #{type=>proxy}),
             {ok, Verto};
         _ ->
             {hangup, "No Number", Verto} 
