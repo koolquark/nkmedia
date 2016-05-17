@@ -283,6 +283,12 @@ conn_parse({text, Data}, NkPort, State) ->
             {ok, State2};
         #{<<"janus">>:=<<"detached">>} ->
             {ok, State};
+        #{<<"janus">>:=<<"webrtcup">>, <<"session_id">>:=SessionId} ->
+            ?LLOG(info, "WEBRTCUP for ~p", [SessionId], State),
+            {ok, State};
+        #{<<"janus">>:=<<"media">>, <<"session_id">>:=SessionId, <<"type">>:=Type} ->
+            ?LLOG(info, "MEDIA (~s) for ~p", [Type, SessionId], State),
+            {ok, State};
         #{<<"janus">>:=Cmd} ->
             ?LLOG(notice, "unknown msg: ~s: ~p", [Cmd, Msg], State),
             {ok, State}
@@ -489,7 +495,7 @@ process_server_resp(Other, _OpId, _Req, From, Msg, _NkPort, State) ->
 
 %% @private
 process_server_req(Cmd, _Msg, _NkPort, State) ->
-    ?LLOG(warning, "Server REQ: ~s", [Cmd], State),
+    ?LLOG(warning, "server REQ: ~s", [Cmd], State),
     {ok, State}.
 
    

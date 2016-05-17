@@ -30,6 +30,7 @@
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
 -export([nkmedia_verto_login/4, nkmedia_verto_call/3]).
 -export([nkmedia_call_resolve/2]).
+-export([nkmedia_janus_call/3]).
 % -export([nkmedia_call_event/3, nkmedia_session_event/3]).
 -export([sip_register/2]).
 
@@ -52,7 +53,8 @@ start() ->
         verto_listen => "verto:all:8082",
         % verto_listen => "verto_proxy:all:8082",
         verto_communicator => "https:all:8082/vc",
-        janus_listen => "janus_proxy:all:8989",
+        % janus_listen => "janus_proxy:all:8989",
+        janus_listen => "janus:all:8989",
         janus_demos => "https://all:8083/janus",
         log_level => debug,
         nksip_trace => {console, all},
@@ -148,7 +150,7 @@ call_sip_user(User) ->
 
 
 plugin_deps() ->
-    [nkmedia, nkmedia_sip, nkmedia_verto, nkmedia_janus_demo].
+    [nkmedia, nkmedia_sip, nkmedia_verto, nkmedia_janus_proto].
 
 
 plugin_start(Config, #{name:=Name}) ->
@@ -192,11 +194,17 @@ nkmedia_verto_call(SessId, Dest, Verto) ->
         <<"j", Num/binary>> ->
             ok = nkmedia_session:to_call(SessId, Num, #{type=>proxy}),
             {ok, Verto};
+        <<"e">> ->
+            ok = nkmedia_session:to_echo(SessId, #{}),
+            {ok, Verto};
         _ ->
             {hangup, "No Number", Verto} 
     end.
 
 
+nkmedia_janus_call(SessId, _Dest, Janus) ->
+    ok = nkmedia_session:to_call(SessId, <<"1009">>, #{type=>proxy}),
+    {ok, Janus}.
 
 
 %% @private

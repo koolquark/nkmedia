@@ -142,7 +142,8 @@ RUN apt-get install -y \\
         wget vim nano telnet git build-essential libmicrohttpd-dev libjansson-dev \\
         libnice-dev libssl-dev libsrtp-dev libsofia-sip-ua-dev libglib2.0-dev \\
         libopus-dev libogg-dev libini-config-dev libcollection-dev pkg-config \\
-        gengetopt libtool automake librabbitmq-dev subversion make cmake && \\
+        gengetopt libtool automake librabbitmq-dev subversion make cmake
+        libavutil-dev libavcodec-dev libavformat-dev && \\
         apt-get clean
 
 WORKDIR /root
@@ -162,7 +163,7 @@ WORKDIR /root
 RUN git clone --branch ", (nklib_util:to_binary(Vsn))/binary, 
       " --depth 1 https://github.com/meetecho/janus-gateway && \\
     cd janus-gateway && \\
-    ./autogen.sh && ./configure --disable-docs && \\
+    ./autogen.sh && ./configure --enable-post-processing --disable-docs && \\
     make && make install && \\
     make configs && make clean
 

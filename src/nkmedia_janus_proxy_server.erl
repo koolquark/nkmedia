@@ -42,7 +42,7 @@ get_all() ->
 
 
 send_reply(Pid, Event) ->
-    gen_server:call(Pid, {send_reply, Event}).
+    gen_server:call(Pid, {send_reply, self(), Event}).
 
 
 
@@ -112,7 +112,7 @@ conn_parse({text, Data}, _NkPort, #state{proxy=Pid}=State) ->
             Json
     end,
     % ?LLOG(info, "received\n~s", [nklib_json:encode_pretty(Msg)], State),
-    nkmedia_janus_proxy_client:send(Pid, Msg),
+    nkmedia_janus_proxy_client:send(Pid, self(), Msg),
     {ok, State}.
 
 
@@ -132,7 +132,7 @@ conn_encode(Msg, _NkPort) when is_binary(Msg) ->
 -spec conn_handle_call(term(), term(), nkpacket:nkport(), #state{}) ->
     {ok, #state{}} | {stop, Reason::term(), #state{}}.
 
-conn_handle_call({send_reply, Event}, From, NkPort, State) ->
+conn_handle_call({send_reply, _Pid, Event}, From, NkPort, State) ->
     % ?LLOG(info, "sending\n~s", [nklib_json:encode_pretty(Event)], State),
     case nkpacket_connection:send(NkPort, Event) of
         ok -> 
@@ -153,7 +153,7 @@ conn_handle_call(Info, _NkPort, _From, State) ->
 -spec conn_handle_info(term(), nkpacket:nkport(), #state{}) ->
     {ok, #state{}} | {stop, Reason::term(), #state{}}.
 
-conn_handle_info({send_reply, Event}, NkPort, State) ->
+conn_handle_info({send_reply, _Pid, Event}, NkPort, State) ->
     case nkpacket_connection:send(NkPort, Event) of
         ok -> 
             {ok, State};

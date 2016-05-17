@@ -82,7 +82,7 @@
 
 -export([start/2, hangup_all/0]).
 -export([get_status/1, get_session/1]).
--export([hangup/1, hangup/2, to_call/3, to_mirror/2, to_mcu/3]).
+-export([hangup/1, hangup/2, to_call/3, to_echo/2, to_mcu/3]).
 -export([reply/2]).
 -export([pbx_event/3, call_event/3, get_all/0, find/1]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
@@ -244,11 +244,11 @@ to_call(SessId, Dest, Opts) ->
 
 
 %% @doc Sends the session to mirror
--spec to_mirror(id(), map()) ->
+-spec to_echo(id(), map()) ->
     ok | {error, term()}.
 
-to_mirror(SessId, Opts) ->
-    do_cast(SessId, {to_mirror, Opts}).
+to_echo(SessId, Opts) ->
+    do_cast(SessId, {to_echo, Opts}).
 
 
 %% @private
@@ -407,15 +407,16 @@ handle_cast({to_call, Dest, Config}, State) ->
             stop_hangup(<<"Incompatible Type">>, State)
     end;
 
-% handle_cast({to_mirror, Opts}, State) ->
-%     Backend = maps:get(backend, Opts, janus),
-%     case pbx_get_answer(Backend, <<"echotest">>, State) of
-%         {ok, State2} ->
-%             send_to_mirror(Opts, State2);
-%         {error, Error} ->
-%             ?LLOG(warning, "error starting ms: ~p", [Error], State),
-%             stop_hangup(<<"Mediaserver error">>, State)
-%     end;
+handle_cast({to_echo, Config}, State) ->
+    case update_config(Config, State) of
+        {ok, #state{type=undefined}} ->
+            handle_cast({to_echo, Config#{type=>proxy}}, State);
+        {ok, State2} ->
+            send_echo(Config, State2);
+        {error, Error} ->
+            ?LLOG(warnng, "to_mirror error: ~p", [Error], State),
+            stop_hangup(<<"Incompatible Type">>, State)
+    end;
 
 % handle_cast({to_mcu, Room, _Opts}, State) ->
 %     lager:warning("TO MCU"),
@@ -596,6 +597,37 @@ send_call(Dest, Config, #state{id=Id, type=proxy, has_offer=true}=State) ->
 
 send_call(_Dest, _Config, State) ->
     stop_hangup(<<"Incompatible Call">>, State).
+
+
+
+%% @private
+send_echo(_Config, #state{id=Id, type=proxy, has_offer=true}=State) ->
+    #state{session=#{offer:=Offer}} = State,
+    case get_mediaserver(State) of
+        {ok, {janus, JanusId}, State2} ->
+            case nkmedia_janus_session:start(Id, JanusId) of
+                {ok, Pid} ->
+                    State3 = add_link(janus, Pid, State2),
+                    case nkmedia_janus_session:echo(Pid, Offer) of
+                        {ok, #{sdp:=_}=Answer} ->
+                            State4 = status(ready, #{answer=>Answer}, State3),
+                            {noreply, status(echo, State4)};
+                        {error, Error} ->
+                            ?LLOG(warning, "could not get offer from proxy: ~p",
+                                  [Error], State),
+                            stop_hangup(<<"Proxy Error">>, State3)
+                    end;
+                {error, Error} ->
+                    ?LLOG(warning, "could not connect to proxy: ~p", [Error], State),  
+                    stop_hangup(<<"Proxy Error">>, State2)
+            end;
+        {error, Error} ->
+            ?LLOG(warning, "could not get mediaserver: ~p", [Error], State),
+            stop_hangup(<<"No Mediaserver Available">>, State)
+    end;
+
+send_echo(_Config, State) ->
+    stop_hangup(<<"Incompatible Echo">>, State).
 
 
 %% @private
@@ -879,6 +911,9 @@ do_ready(#state{type=Type, session=Session}=State) ->
         p2p ->
             #{session_id:=PeerId} = Session,
             {noreply, status(call, #{peer_id=>PeerId}, State2)};
+        proxy ->
+            #{session_id:=PeerId} = Session,
+            {noreply, status(call, #{peer_id=>PeerId}, State2)};
         _ ->
             {noreply, State2}
     end.
@@ -962,7 +997,7 @@ update_config(Config, #state{session=Session, type=OldType, ms=MS}=State) ->
 
 
 % %% @private
-% send_to_mirror(_Opts, #state{ms={janus, JanusId}, ms_conn_id=Conn}=State) ->
+% send_to_echo(_Opts, #state{ms={janus, JanusId}, ms_conn_id=Conn}=State) ->
 %     #state{session=#{offer:=Offer}=Session} = State,
 %     case nkmedia_janus:mirror(JanusId, Conn, #{}) of
 %         {ok, _} ->

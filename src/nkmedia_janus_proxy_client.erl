@@ -22,7 +22,7 @@
 -module(nkmedia_janus_proxy_client).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/1, send/2, stop/1]).
+-export([start/1, send/3, stop/1]).
 -export([get_all/0]).
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3]).
@@ -39,7 +39,7 @@
 -define(JANUS_WS_TIMEOUT, 60*60*1000).
 
 -define(PRINT(Msg, Args, State),
-    % ?LLOG(notice, Msg, Args, State),
+    ?LLOG(notice, Msg, Args, State),
     ok).
 
 
@@ -75,11 +75,11 @@ stop(ConnPid) ->
 
 
 %% @doc Sends data to a started proxy
--spec send(pid(), map()|binary()) ->
+-spec send(pid(), pid(), map()|binary()) ->
     ok | {error, term()}.
 
-send(ConnPid, Data) ->
-    gen_server:cast(ConnPid, {send, Data}).
+send(ConnPid, Pid, Data) ->
+    gen_server:cast(ConnPid, {send, Pid, Data}).
 
 
 %% @private
@@ -145,7 +145,7 @@ conn_init(NkPort) ->
 conn_parse(close, _NkPort, State) ->
     {ok, State};
 
-conn_parse({text, Data}, _NkPort, State) ->
+conn_parse({text, Data}, _NkPort, #state{proxy=Pid}=State) ->
     Msg = nklib_json:decode(Data),
     case Msg of
         error -> 
@@ -154,7 +154,7 @@ conn_parse({text, Data}, _NkPort, State) ->
         _ ->
             ok
     end,
-    ?PRINT("received\n~s", [nklib_json:encode_pretty(Msg)], State),
+    ?PRINT("from server to client ~p\n~s", [Pid, nklib_json:encode_pretty(Msg)], State),
     send_reply(Msg, State),
     {ok, update(Msg, State)}.
 
@@ -186,8 +186,8 @@ conn_handle_call(Msg, _From, _NkPort, State) ->
 -spec conn_handle_cast(term(), nkpacket:nkport(), #state{}) ->
     {ok, #state{}} | {stop, term(), #state{}}.
 
-conn_handle_cast({send, Msg}, NkPort, State) ->
-    ?PRINT("sending\n~s", [nklib_json:encode_pretty(Msg)], State),
+conn_handle_cast({send, Pid, Msg}, NkPort, State) ->
+    ?PRINT("from client ~p to server\n~s", [Pid, nklib_json:encode_pretty(Msg)], State),
     case do_send(Msg, NkPort, State) of
         {ok, State2} -> 
             {ok, update(Msg, State2)};
@@ -240,14 +240,14 @@ update(#{<<"janus">>:=Janus, <<"transaction">>:=Id}=Msg, State) ->
         {ok, Trans} when Janus == <<"ack">> ->
             Trans2 = Trans#trans{has_ack=true},
             State#state{trans=maps:put(Id, Trans2, AllTrans)};
-        {ok, Trans} ->
-            Trans2 = Trans#trans{resp=Janus, resp_msg=Msg},
-            print_trans(Trans2),
+        {ok, _Trans} ->
+            % Trans2 = Trans#trans{resp=Janus, resp_msg=Msg},
+            % print_trans(Trans2),
             State#state{trans=maps:remove(Id, AllTrans)}
     end;
 
 update(#{<<"janus">>:=Janus}=Msg, State) ->
-    ?LLOG(info, "server event '~s':\n~s", [Janus, nklib_json:encode_pretty(Msg)], State),
+    % ?LLOG(info, "server event '~s':\n~s", [Janus, nklib_json:encode_pretty(Msg)], State),
     State.
 
 %% @private
@@ -255,7 +255,7 @@ update(#{<<"janus">>:=Janus}=Msg, State) ->
     ok.
 
 send_reply(Msg, #state{proxy=Pid}) ->
-    ok = nkmedia_fs_verto_proxy_server:send_reply(Pid, Msg).
+    ok = nkmedia_janus_proxy_server:send_reply(Pid, Msg).
 
 
 %% @private
