@@ -24,7 +24,7 @@
 
 -export([start/1, start/2, stop/1, get_all/0]).
 -export([info/1, create/3, attach/3, message/5, detach/3, destroy/2]).
--export([get_clients/1]).
+-export([keepalive/2, get_clients/1]).
 
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_stop/3]).
@@ -150,6 +150,14 @@ destroy(Pid, SessId) ->
     cast(Pid, {destroy, SessId}).
 
 
+%% @doc Destroys a session
+-spec keepalive(pid(), id()) ->
+    ok.
+
+keepalive(Pid, SessId) ->
+    cast(Pid, {keepalive, SessId}).
+
+
 %% @private
 -spec get_all() ->
     [{id(), pid()}].
@@ -248,12 +256,15 @@ conn_parse({text, Data}, NkPort, State) ->
     end,
     ?PRINT("receiving ~s", [Msg], State),
     case Msg of
-        #{<<"janus">>:=<<"ack">>} ->
-            {ok, State};
-        #{<<"janus">>:=Cmd, <<"transaction">>:=Trans} ->
-            case extract_op({trans, Trans}, State) of
-                {Op, State2} ->
-                    process_server_resp(Op, Cmd, Msg, NkPort, State2);
+        #{<<"janus">>:=BinCmd, <<"transaction">>:=Trans} ->
+            OpId = {trans, Trans},
+            Cmd = case catch binary_to_existing_atom(BinCmd, latin1) of
+                {'EXIT', _} -> BinCmd;
+                Cmd2 -> Cmd2
+            end,
+            case extract_op(OpId, State) of
+                {#trans{req=Req, from=From}, State2} ->
+                    process_server_resp(Cmd, OpId, Req, From, Msg, NkPort, State2);
                 not_found ->
                     process_server_req(Cmd, Msg, NkPort, State)
             end;
@@ -422,19 +433,28 @@ make_msg({message, Id, Handle, Body, Jsep}, TransId) ->
     end,
     make_req(message, TransId, Msg2);
 
+make_msg({keepalive, Id}, TransId) ->
+    Data = #{<<"session_id">>=>Id},
+    make_req(keepalive, TransId, Data);
+
 make_msg(_Type, _TransId) ->
     unknown_op.
 
 
-
 %% @private
-process_server_resp(#trans{req=info}=Op, <<"server_info">>, Msg, _NkPort, State) ->
-    #trans{from=From} = Op,
+process_server_resp(ack, _OpId, {keepalive, _}, From, _Msg, _NkPort, State) ->
+    nklib_util:reply(From, ok),
+    {ok, State};
+
+process_server_resp(ack, OpId, Req, From, _Msg, _NkPort, State) ->
+    State2 = insert_op(OpId, Req, From, State),
+    {ok, State2};
+
+process_server_resp(server_info, _OpId, info, From, Msg, _NkPort, State) ->
     nklib_util:reply(From, {ok, Msg}),
     {ok, State};
 
-process_server_resp(#trans{req=Req}=Op, <<"success">>, Msg, _NkPort, State) ->
-    #trans{from=From} = Op,
+process_server_resp(success, _OpId, Req, From, Msg, _NkPort, State) ->
     {Reply, State2} = case Req of
         {create, CallBack, ClientId, Pid} ->
             #{<<"data">> := #{<<"id">> := Id}} = Msg,
@@ -450,24 +470,21 @@ process_server_resp(#trans{req=Req}=Op, <<"success">>, Msg, _NkPort, State) ->
     nklib_util:reply(From, Reply),
     {ok, State2};
 
-process_server_resp(Op, <<"event">>, Msg, _NkPort, State) ->
-    #trans{req={message, _Id, _Handle, _Body, _Jsep}, from=From} = Op,
+process_server_resp(event, _OpId, Req, From, Msg, _NkPort, State) ->
+    {message, _Id, _Handle, _Body, _Jsep} = Req,
     #{<<"plugindata">> := Data} = Msg,
     Jsep = maps:get(<<"jsep">>, Msg, #{}),
     nklib_util:reply(From, {ok, Data, Jsep}),
     {ok, State};
 
-process_server_resp(Op, <<"error">>, Msg, _NkPort, State) ->
+process_server_resp(error, _OpId, _Req, From, Msg, _NkPort, State) ->
     #{<<"error">> := #{<<"code">>:=Code, <<"reason">>:=Reason}} = Msg,
-    #trans{from=From} = Op,
     nklib_util:reply(From, {error, {Code, Reason}}),
     {ok, State};
 
-process_server_resp(Op, Other, Msg, _NkPort, State) ->
-    #trans{from=From} = Op,
-    nklib_util:reply(From, {{unknown, Op, Other}, Msg}),
+process_server_resp(Other, _OpId, _Req, From, Msg, _NkPort, State) ->
+    nklib_util:reply(From, {{unknown_response, Other}, Msg}),
     {ok, State}.
-
 
 
 %% @private
@@ -481,10 +498,6 @@ process_server_req(Cmd, _Msg, _NkPort, State) ->
 %% ===================================================================
 %% Util
 %% ===================================================================
-
-
-
-
 
 %% @private
 insert_op(OpId, Req, From, #state{trans=AllOps}=State) ->
@@ -543,6 +556,9 @@ del_client(SessId, State) ->
 
 
 %% @private
+event(undefined, _ClientId, _SessId, _Handle, _Event, State) ->
+    State;
+
 event(CallBack, ClientId, SessId, Handle, Event, State) ->
     case catch CallBack:janus_event(ClientId, SessId, Handle, Event) of
         ok ->

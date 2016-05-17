@@ -36,8 +36,7 @@
 	lager:Type("NkMEDIA Janus Engine '~s' "++Txt, [State#state.name|Args])).
 
 -define(CALL_TIME, 30000).
-
-
+-define(KEEPALIVE, 30000).
 -include("nkmedia.hrl").
 
 
@@ -54,7 +53,6 @@
 		host => binary(),
 		pass => binary()
 	}.
-
 
 
 %% ===================================================================
@@ -129,25 +127,6 @@ get_conn(Id) ->
 	end.
 
 
-
-
-
-% %% @priavte
-% -spec api(id(), iolist()) ->
-% 	{ok, binary()} | {error, term()}.
-
-% api(Id, Api) ->
-% 	case find(Id) of
-% 		{ok, ready, _JanusPid, ConnPid} when is_pid(ConnPid) ->
-% 			nkmedia_fs_event_protocol:api(ConnPid, Api);
-% 		{ok, _, _, _} ->
-% 			{error, not_ready};
-% 		not_found ->
-% 			{error, no_connection}
-% 	end.
-
-
-
 %% @doc
 -spec get_all() ->
 	[{Name::binary(), pid()}].
@@ -194,6 +173,7 @@ start_link(Config) ->
 	name :: binary(),
 	status :: nkmedia_fs:status(),
 	janus_conn :: pid(),
+	janus_session :: integer(),
 	janus_info = #{} :: map()
 }).
 
@@ -209,6 +189,7 @@ init([#{name:=Name}=Config]) ->
 	nklib_proc:put({?MODULE, self()}, {connecting, undefined}),
 	nklib_proc:put(?MODULE, Name),
 	self() ! connect,
+	self() ! keepalive,
 	?LLOG(info, "started (~p)", [self()], State),
 	{ok, State}.
 
@@ -259,8 +240,13 @@ handle_info(connect, #state{name=Name, config=Config}=State) ->
 			case nkmedia_janus_client:info(Pid) of
 				{ok, Info} ->
 					monitor(process, Pid),
-					State3 = State2#state{janus_conn=Pid, janus_info=Info},
 					print_info(Info, State),
+					{ok, Session} = nkmedia_janus_client:create(Pid, undefined, Name),
+					State3 = State2#state{
+						janus_conn = Pid, 
+						janus_info = Info,
+						janus_session = Session
+					},
 					{noreply, update_status(ready, State3)};
 				{error, Error} ->
 					?LLOG(warning, "error response from Janus: ~p", [Error], State2),
@@ -270,6 +256,16 @@ handle_info(connect, #state{name=Name, config=Config}=State) ->
 			?LLOG(warning, "could not connect: ~p", [Error], State2),
 			{stop, normal, State2}
 	end;
+
+handle_info(keepalive, #state{janus_conn=Conn, janus_session=Session}=State) ->
+	case is_pid(Conn) of
+		true -> 
+			nkmedia_janus_client:keepalive(Conn, Session);
+		false ->
+			ok
+	end,
+	erlang:send_after(?KEEPALIVE, self(), keepalive),
+	{noreply, State};
 
 handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{janus_conn=Pid}=State) ->
 	?LLOG(warning, "connection event down", [], State),
@@ -301,6 +297,8 @@ terminate(Reason, State) ->
 % ===================================================================
 %% Internal
 %% ===================================================================
+
+
 
 %% @private
 print_info(Map, State) ->
