@@ -335,7 +335,7 @@ videocall_3(#state{data=Data}=State) ->
         sdp_1_a := SDP
     } = Data,
     Body = #{request=>call, username=>nklib_util:to_binary(HandleB)},
-    case message(Id, Handle, Body, #{sdp=>SDP, type=>offer}, State) of
+    case message(Id, Handle, Body, #{sdp=>SDP, type=>offer, trickle=>false}, State) of
         {ok, <<"calling">>, _, _} ->
             {ok, status(wait_videocall_4, State)};
         {error, Error} ->
@@ -359,7 +359,7 @@ videocall_4(Msg, #state{from=From, data=Data}=State) ->
 videocall_5(SDP2B, #state{data=Data}=State) ->
     #{janus_id_b:=Id, janus_handle_b:=Handle} = Data,
     Body = #{request=>accept},
-    case message(Id, Handle, Body, #{sdp=>SDP2B, type=>answer}, State) of
+    case message(Id, Handle, Body, #{sdp=>SDP2B, type=>answer, tricke=>false}, State) of
         {ok, <<"accepted">>, _, _} ->
             Data2 = Data#{sdp_2_b=>SDP2B},
             {ok, status(wait_videocall_6, State#state{data=Data2})};
