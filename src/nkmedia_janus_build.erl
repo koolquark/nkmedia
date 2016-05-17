@@ -307,8 +307,8 @@ acl = 127.,192.168.0.
 [admin]
 admin_base_path = /admin        
 admin_threads = unlimited       
-admin_http = no                 
-admin_port = 7088               
+admin_http = yes                 
+admin_port = $ADMIN_PORT               
 admin_https = no                
 ;admin_secure_port = 7889       
 admin_acl = 127.,192.168.0.    
@@ -325,12 +325,12 @@ ws = yes
 ws_port = $WS_PORT
 ;wss = yes
 ;wss_port = 8989
-;ws_logging = 7             ; libwebsockets debugging level (0 by default)
+ws_logging = 7             ; libwebsockets debugging level (0 by default)
 ws_acl = 127.,192.168.0.   
 
 [admin]
-admin_ws = yes                   
-admin_ws_port = $ADMIN_PORT
+admin_ws = no                   
+;admin_ws_port = 7988
 admin_wss = no                  
 ;admin_wss_port = 7989          
 admin_ws_acl = 127.,192.168.0. 
