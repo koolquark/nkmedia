@@ -37,7 +37,7 @@
     lager:Type("NkMEDIA Janus Client "++Txt, Args)).
 
 -define(PRINT(Txt, Args, State), 
-        print(Txt, Args, State),    % Comment this
+        % print(Txt, Args, State),    % Comment this
         ok).
 
 
@@ -414,33 +414,33 @@ make_msg({create, _CallBack, _ClientId, _Pid}, TransId) ->
     make_req(create, TransId, #{});
 
 make_msg({attach, Id, Plugin}, TransId) ->
-    Data = #{<<"plugin">>=>Plugin, <<"session_id">>=>Id},
+    Data = #{plugin=>Plugin, session_id=>Id},
     make_req(attach, TransId, Data);
 
 make_msg({detach, Id, Handle}, TransId) ->
-    Data = #{<<"session_id">>=>Id, <<"handle_id">>=>Handle},
+    Data = #{session_id=>Id, handle_id=>Handle},
     make_req(detach, TransId, Data);
 
 make_msg({destroy, Id}, TransId) ->
-    Data = #{<<"session_id">>=>Id},
+    Data = #{session_id=>Id},
     make_req(destroy, TransId, Data);
 
 make_msg({message, Id, Handle, Body, Jsep}, TransId) ->
     Msg1 = #{
-        <<"body">> => Body,
-        <<"handle_id">> => Handle,
-        <<"session_id">> => Id
+        body => Body,
+        handle_id => Handle,
+        session_id => Id
     },
     Msg2 = case map_size(Jsep) of
         0 ->
             Msg1;
         _ ->
-            Msg1#{<<"jsep">> => Jsep}
+            Msg1#{jsep=>Jsep}
     end,
     make_req(message, TransId, Msg2);
 
 make_msg({keepalive, Id}, TransId) ->
-    Data = #{<<"session_id">>=>Id},
+    Data = #{session_id=>Id},
     make_req(keepalive, TransId, Data);
 
 make_msg(_Type, _TransId) ->
@@ -594,11 +594,15 @@ send(Msg, NkPort) ->
 
 %% @private
 make_req(Cmd, TransId, Data) ->
-    Data#{<<"janus">> => Cmd, <<"transaction">> => TransId}.
+    Data#{janus=>Cmd, transaction=>TransId}.
 
 
 
 %% @private
+print(_Txt, [#{janus:=keepalive}], _State) ->
+    ok;
+print(_Txt, [#{<<"janus">>:=<<"ack">>}], _State) ->
+    ok;
 print(Txt, [#{}=Map], State) ->
     print(Txt, [nklib_json:encode_pretty(Map)], State);
 print(Txt, Args, _State) ->

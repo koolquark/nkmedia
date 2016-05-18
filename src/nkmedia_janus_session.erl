@@ -92,7 +92,7 @@ echo(SessId, #{sdp:=SDP}) ->
 
 %% @doc Answers a videocall from the remote party.
 %% The SDP answer for the calling party is returned.
--spec answer(nkmedia_session:id(), nkmedia:offer()) ->
+-spec answer(nkmedia_session:id(), nkmedia:answer()) ->
     {ok, nkmedia:answer()} | {error, term()}.
 
 answer(SessId, #{sdp:=SDP}) ->
@@ -388,8 +388,21 @@ videocall_5(SDP2B, #state{data=Data}=State) ->
     Jsep = #{sdp=>SDP2B, type=>answer, trickle=>false},
     case message(Id, Handle, Body, Jsep, State) of
         {ok, #{<<"event">>:=<<"accepted">>}, _} ->
-            Data2 = Data#{sdp_2_b=>SDP2B},
-            {ok, status(wait_videocall_6, State#state{data=Data2})};
+            Body2 = #{
+                request => set,
+                audio => true,
+                video => true,
+                bitrate => 0,
+                record => true,
+                filename => <<"/tmp/call_b">>
+            },
+            case message(Id, Handle, Body2, State) of
+                {ok, #{<<"event">>:=<<"set">>}, _} ->
+                    Data2 = Data#{sdp_2_b=>SDP2B},
+                    {ok, status(wait_videocall_6, State#state{data=Data2})};
+                {error, Error} ->
+                    {error, Error}
+            end;
         {error, Error} ->
             {error, Error}
     end.
@@ -397,14 +410,30 @@ videocall_5(SDP2B, #state{data=Data}=State) ->
 
 %% @private Janus send us the answer for caller
 videocall_6(Msg, #state{from=From, data=Data}=State) ->
+    #{janus_id_a:=Id, janus_handle_a:=Handle} = Data,
     case event(Msg) of
         {ok, <<"accepted">>, _, #{<<"sdp">>:=SDP}} -> 
             gen_server:reply(From, {ok, #{sdp=>SDP}}),
-            Data2 = Data#{sdp_1_b=>SDP},
-            {ok, status(videocall, State#state{data=Data2, from=undefined})};
-        O ->
-            {error, {invalid_msg, O}}
+            Body = #{
+                request => set,
+                audio => true,
+                video => true,
+                bitrate => 0,
+                record => true,
+                filename => <<"/tmp/call_a">>
+            },
+            case message(Id, Handle, Body, State) of
+                {ok, #{<<"event">>:=<<"set">>}, _} ->
+                    Data2 = Data#{sdp_1_b=>SDP},
+                    {ok, status(videocall, State#state{data=Data2, from=undefined})};
+                {error, Error} ->
+                    {error, Error}
+            end;
+        _ ->
+            {error, {invalid_msg, Msg}}
     end.
+
+
 
 
 % ===================================================================

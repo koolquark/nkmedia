@@ -169,8 +169,6 @@ plugin_stop(Config, #{name:=Name}) ->
 %% nkmedia_verto callbacks
 %% ===================================================================
 
-%% The functions in this group are called from the nkmedia_verto
-%% protocol
 
 nkmedia_verto_login(VertoId, Login, Pass, Verto) ->
     case binary:split(Login, <<"@">>) of
@@ -184,28 +182,33 @@ nkmedia_verto_login(VertoId, Login, Pass, Verto) ->
 
 
 nkmedia_verto_call(SessId, Dest, Verto) ->
-    case Dest of 
-        <<"d", Num/binary>> ->
-            ok = nkmedia_session:to_call(SessId, Num, #{type=>p2p}),
+    case send_call(SessId, Dest) of
+        ok ->
             {ok, Verto};
-        <<"f", Num/binary>> -> 
-            ok = nkmedia_session:to_call(SessId, Num, #{type=>pbx}),
-            {ok, Verto};
-        <<"j", Num/binary>> ->
-            ok = nkmedia_session:to_call(SessId, Num, #{type=>proxy}),
-            {ok, Verto};
-        <<"e">> ->
-            ok = nkmedia_session:to_echo(SessId, #{}),
-            {ok, Verto};
-        _ ->
+        no_number ->
             {hangup, "No Number", Verto} 
     end.
 
 
-nkmedia_janus_call(SessId, _Dest, Janus) ->
-    ok = nkmedia_session:to_call(SessId, <<"1009">>, #{type=>proxy}),
-    {ok, Janus}.
 
+%% ===================================================================
+%% nkmedia_janus_proto callbacks
+%% ===================================================================
+
+
+nkmedia_janus_call(SessId, Dest, Janus) ->
+    case send_call(SessId, Dest) of
+        ok ->
+            {ok, Janus};
+        no_number ->
+            {hangup, "No Number", Janus} 
+    end.
+
+
+
+%% ===================================================================
+%% nkmedia callbacks
+%% ===================================================================
 
 %% @private
 nkmedia_call_resolve(Dest, Call) ->
@@ -224,17 +227,23 @@ sip_register(Req, Call) ->
 
 
 
-%% ==================================================================
-%% Session
-%% ===================================================================
-
-
-
-
-
-
-
-
 %% ===================================================================
 %% Internal
 %% ===================================================================
+
+send_call(SessId, Dest) ->
+    case Dest of 
+        <<"d", Num/binary>> ->
+            ok = nkmedia_session:to_call(SessId, Num, #{type=>p2p});
+        <<"f", Num/binary>> -> 
+            ok = nkmedia_session:to_call(SessId, Num, #{type=>pbx});
+        <<"j", Num/binary>> ->
+            ok = nkmedia_session:to_call(SessId, Num, #{type=>proxy});
+        <<"e">> ->
+            ok = nkmedia_session:to_echo(SessId, #{});
+        _ ->
+            no_number
+    end.
+
+
+

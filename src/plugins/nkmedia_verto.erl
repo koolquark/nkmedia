@@ -580,21 +580,11 @@ make_msg(Id, {invite, CallId, Opts}, State) ->
         <<"caller_id_number">> => maps:get(caller_id, Opts, <<"0000000000">>),
         <<"display_direction">> => <<"outbound">>
     },
-
-    io:format("VERTO INVITE: ~p\n", [maps:remove(<<"sdp">>, Params)]),
-    io:format("~s\n", [maps:get(<<"sdp">>, Params)]),
-
     {ok, nkmedia_fs_util:verto_req(Id, <<"verto.invite">>, Params)};
 
 make_msg(Id, {answer, CallId, Opts}, _State) ->
     #{sdp:=SDP} = Opts,
     Params = #{<<"callID">> => CallId, <<"sdp">> => SDP},
-
-    io:format("VERTO ANSWER: ~p\n", [maps:remove(<<"sdp">>, Params)]),
-    io:format("~s\n", [maps:get(<<"sdp">>, Params)]),
-
-
-
     {ok, nkmedia_fs_util:verto_req(Id, <<"verto.answer">>, Params)};
 
 make_msg(Id, {hangup, CallId, Reason}, _State) ->

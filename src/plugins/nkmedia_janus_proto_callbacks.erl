@@ -157,8 +157,14 @@ nkmedia_janus_call(CallId, Dest, Janus) ->
 -spec nkmedia_janus_answer(call_id(), nkmedia_janus:answer(), janus()) ->
     {ok, janus()} |{hangup, nkmedia:hangup_reason(), janus()} | continue().
 
-nkmedia_janus_answer(_CallId, _Answer, Janus) ->
-    {ok, Janus}.
+nkmedia_janus_answer(CallId, Answer, Janus) ->
+    case nkmedia_session:reply(CallId, {answered, Answer}) of
+        ok ->
+            {ok, Janus};
+        {error, Error} ->
+            lager:error("No Session: ~p: ~p", [CallId, Error]),
+            {hangup, <<"No Session">>, Janus}
+    end.
 
 
 %% @doc Sends when the client sends a BYE
@@ -251,38 +257,27 @@ nkmedia_session_event(_SessId, _Event, _Session) ->
 
 %% @private
 nkmedia_session_out(SessId, {nkmedia_janus, Pid}, Offer, Session) ->
-    Self = self(),
-    spawn_link(
-        fun() ->
-            case nkmedia_janus:invite(Pid, SessId, Offer#{monitor=>Self}) of
-                {answered, Answer} ->
-                    ok = nkmedia_session:reply(SessId, {answered, Answer});
-                hangup ->
-                    nkmedia_session:hangup(SessId, <<"Janus User Hangup">>);
-                {error, Error} ->
-                    lager:warning("Error calling invite: ~p", [Error]),
-                    nkmedia_session:hangup(SessId, <<"Janus Invite Error">>)
-            end
-        end),
-    Session2 = maps:remove(nkmedia_janus_in, Session),
-    {ringing, #{}, Pid, Session2#{nkmedia_janus_out=>Pid}};
+    case nkmedia_janus_proto:invite(Pid, SessId, Offer#{monitor=>self()}) of
+        ok ->
+            {ringing, #{}, Pid, Session#{nkmedia_janus_out=>Pid}};
+        {error, Error} ->
+            lager:warning("Error calling invite: ~p", [Error]),
+            {hangup, <<"Janus Invite Error">>, Session}
+    end;
 
 nkmedia_session_out(_SessId, _Dest, _Offer, _Session) ->
     continue.
 
 
 % %% @private
-nkmedia_call_resolve(_Dest, _Call) ->
-    continue.
-
-% nkmedia_call_resolve(Dest, Call) ->
-%     case nkmedia_janus:find_user(Dest) of
-%         [Pid|_] ->
-%             {ok, {nkmedia_janus, Pid}, Call};
-%         [] ->
-%             lager:notice("Janus: user ~s not found", [Dest]),
-%             continue
-%     end.
+nkmedia_call_resolve(Dest, Call) ->
+    case nkmedia_janus_proto:find_user(Dest) of
+        [Pid|_] ->
+            {ok, {nkmedia_janus, Pid}, Call};
+        [] ->
+            lager:notice("Janus: user ~s not found", [Dest]),
+            continue
+    end.
 
 
 

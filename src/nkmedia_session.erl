@@ -579,6 +579,7 @@ send_call(Dest, Config, #state{id=Id, type=proxy, has_offer=true}=State) ->
                     State3 = add_link(janus, Pid, State2),
                     case nkmedia_janus_session:videocall(Pid, Offer) of
                         {ok, #{sdp:=SDP}} ->
+                            % We get the offer for the called party
                             Offer2 = Offer#{sdp=>SDP},
                             do_send_call(Dest, Config, Offer2, State3);
                         {error, Error} ->
@@ -598,6 +599,17 @@ send_call(Dest, Config, #state{id=Id, type=proxy, has_offer=true}=State) ->
 send_call(_Dest, _Config, State) ->
     stop_hangup(<<"Incompatible Call">>, State).
 
+
+%% @private
+do_send_call(Dest, _Config, Offer, State) ->
+    #state{id=Id, session=Session} = State,
+    Shared = [srv_id, type, mediaserver, wait_timeout, ring_timeout, call_timeout],
+    Config1 = maps:with(Shared, Session),
+    Config2 = Config1#{session_id=>Id, session_pid=>self(), offer=>Offer}, 
+    {ok, CallId, CallPid} = nkmedia_call:start(Dest, Config2),
+    State2 = add_link({call, CallId}, CallPid, State),
+    % Now we will receive notifications from the call
+    {noreply, status(calling, #{dest=>Dest}, State2)}.
 
 
 %% @private
@@ -628,17 +640,6 @@ send_echo(_Config, #state{id=Id, type=proxy, has_offer=true}=State) ->
 
 send_echo(_Config, State) ->
     stop_hangup(<<"Incompatible Echo">>, State).
-
-
-%% @private
-do_send_call(Dest, _Config, Offer, State) ->
-    #state{id=Id, session=Session} = State,
-    NotShared = [id, answer, monitor, b_dest, status, ext_status],
-    Config1 = maps:without(NotShared, Session),
-    Config2 = Config1#{session_id=>Id, session_pid=>self(), offer=>Offer}, 
-    {ok, CallId, CallPid} = nkmedia_call:start(Dest, Config2),
-    State2 = add_link({call, CallId}, CallPid, State),
-    {noreply, status(calling, #{dest=>Dest}, State2)}.
 
 
 %% @private
@@ -710,14 +711,15 @@ do_call_event(_CallId, {status, ringing, _Data}, #state{status=ringing}=State) -
 do_call_event(_CallId, {status, ready, Data}, #state{status=Status}=State)
         when Status==calling; Status==ringing ->
     #state{session=Session, type=Type} = State,
-    #{answer:=Answer, session_peer_id:=PeerId} = Data,
-    State2 = status(ready, #{answer=>Answer}, State),
+    % We get the answer and Id of the remote session
+    #{answer:=AnswerB, session_peer_id:=PeerId} = Data,
     case Type of
         p2p -> 
-            State3 = State2#state{session=Session#{answer=>Answer}},
+            State2 = status(ready, #{answer=>AnswerB}, State),
+            State3 = State2#state{session=Session#{answer=>AnswerB}},
             {noreply, status(call, #{peer_id=>PeerId}, State3)};
         pbx -> 
-            case pbx_get_answer(State2) of
+            case pbx_get_answer(State) of
                 {ok, State3} ->
                     case pbx_bridge(PeerId, State3) of
                         ok ->
@@ -726,14 +728,14 @@ do_call_event(_CallId, {status, ready, Data}, #state{status=Status}=State)
                             stop_hangup(<<"Mediaserver Error">>, State3)
                     end;
                 error ->
-                    stop_hangup(<<"Mediaserver Error">>, State2)
+                    stop_hangup(<<"Mediaserver Error">>, State)
             end;
         proxy ->
-            case proxy_get_answer(Answer, State2) of
-                {ok, State3} ->
-                    {noreply, status(call, State3)};
+            case proxy_get_answer(AnswerB, State) of
+                {ok, State2} ->
+                    {noreply, status(call, #{peer_id=>PeerId}, State2)};
                 error ->
-                    stop_hangup(<<"Mediaserver Error">>, State2)
+                    stop_hangup(<<"Mediaserver Error">>, State)
             end
     end;
 
@@ -760,13 +762,12 @@ pbx_bridge(SessIdB, #state{id=SessIdA, ms={fs, FsId}}=State) ->
             error
     end.
 
-proxy_get_answer(Answer, #state{id=Id, ms={janus, _}, session=Session}=State) ->
-    case nkmedia_janus_session:answer(Id, Answer) of
-        {ok, SDP} ->
-            Answer2 = #{sdp=>SDP},
-            Session2 = Session#{answer=>Answer2},
+proxy_get_answer(AnswerB, #state{id=Id, ms={janus, _}, session=Session}=State) ->
+    case nkmedia_janus_session:answer(Id, AnswerB) of
+        {ok, AnswerA} ->
+            Session2 = Session#{answer=>AnswerA},
             State2 = State#state{session=Session2},
-            {ok, status(ready, #{answer=>Answer2}, State2)};
+            {ok, status(ready, #{answer=>AnswerA}, State2)};
         {error, Error} ->
             ?LLOG(warning, "could not get answer from proxy: ~p", [Error], State),
             error
@@ -806,7 +807,6 @@ pbx_get_offer(#state{ms={fs, FsId}}=State) ->
     Mod = get_fs_mod(State),
     case Mod:start_out(SessId, FsId, #{}) of
         {ok, SDP} ->
-            % io:format("SDP: ~s\n", [SDP]),
             %% TODO Send and receive pings
             Offer = maps:get(offer, Session, #{}),
             Session2 = Session#{offer=>Offer#{sdp=>SDP}},
@@ -989,43 +989,6 @@ update_config(Config, #state{session=Session, type=OldType, ms=MS}=State) ->
 %     end;
 
 % send_to_mcu(_Room, #state{ms=MS}) ->
-%     {error, {invalid_backend, MS}}.
-
-
-
-
-
-
-% %% @private
-% send_to_echo(_Opts, #state{ms={janus, JanusId}, ms_conn_id=Conn}=State) ->
-%     #state{session=#{offer:=Offer}=Session} = State,
-%     case nkmedia_janus:mirror(JanusId, Conn, #{}) of
-%         {ok, _} ->
-%             case nkmedia_janus:mirror(JanusId, Conn, Offer) of
-%                 {ok, Answer} ->
-%                     Session2 = Session#{answer=>Answer},
-%                     State2 = State#state{session=Session2},
-%                     {noreply, status(ready, #{answer=>Answer}, State2)};
-%                 {error, Error} ->
-%                     ?LLOG(notice, "janus body: ~p", [Error], State),
-%                     stop_hangup(<<"Janus Error">>, State)
-%             end;
-%         {error, Error} ->
-%             ?LLOG(notice, "janus error: ~p", [Error], State),
-%             stop_hangup(<<"Janus Error">>, State)
-%     end.
-
-
-% %% @private
-% send_to_park(#state{status=Status}=State) 
-%         when Status==wait; Status==ringing ->
-%     {error, {invalid_status, Status}, State};
-
-% send_to_park(#state{id=SessId, ms={fs, FsId}}) ->
-%     ok = nkmedia_fs_cmd:set_var(FsId, SessId, "park_after_bridge", "true"),
-%     nkmedia_fs_cmd:park(FsId, SessId);
-
-% send_to_park(#state{ms=MS}) ->
 %     {error, {invalid_backend, MS}}.
 
 
