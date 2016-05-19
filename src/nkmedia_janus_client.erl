@@ -265,6 +265,8 @@ conn_parse({text, Data}, NkPort, State) ->
             case extract_op(OpId, State) of
                 {#trans{req=Req, from=From}, State2} ->
                     process_server_resp(Cmd, OpId, Req, From, Msg, NkPort, State2);
+                not_found when Cmd==ack->
+                    {ok, State};
                 not_found ->
                     process_server_req(Cmd, Msg, NkPort, State)
             end;
@@ -495,7 +497,7 @@ process_server_resp(Other, _OpId, _Req, From, Msg, _NkPort, State) ->
 
 %% @private
 process_server_req(Cmd, _Msg, _NkPort, State) ->
-    ?LLOG(warning, "server REQ: ~s", [Cmd], State),
+    ?LLOG(warning, "unexpected server REQ: ~s", [Cmd], State),
     {ok, State}.
 
    

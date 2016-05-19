@@ -83,6 +83,8 @@
 -export([start/2, hangup_all/0]).
 -export([get_status/1, get_session/1]).
 -export([hangup/1, hangup/2, to_call/3, to_echo/2, to_mcu/3]).
+-export([to_publisher/3]).
+-export([from_listener/4]).
 -export([reply/2]).
 -export([pbx_event/3, call_event/3, get_all/0, find/1]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
@@ -256,7 +258,23 @@ to_echo(SessId, Opts) ->
     ok | {error, term()}.
 
 to_mcu(SessId, Room, Opts) ->
-    do_call(SessId, {to_mcu, Room, Opts}).
+    do_cast(SessId, {to_mcu, Room, Opts}).
+
+
+%% @private
+-spec to_publisher(id(), binary(), config()) ->
+    ok | {error, term()}.
+
+to_publisher(SessId, Room, Opts) ->
+    do_cast(SessId, {to_publisher, Room, Opts}).
+
+
+%% @private
+-spec from_listener(id(), binary(), binary(), config()) ->
+    ok | {error, term()}.
+
+from_listener(SessId, Room, UserId, Opts) ->
+    do_cast(SessId, {from_listener, Room, UserId, Opts}).
 
 
 %% @private Called when an outbound process delayed the response
@@ -269,10 +287,10 @@ reply(SessId, Reply) ->
 
 %% @private
 -spec get_all() ->
-    [{id(), inbound|outbound, pid()}].
+    [{id(), pid()}].
 
 get_all() ->
-    [{Id, Type, Pid} || {{Id, Type}, Pid} <- nklib_proc:values(?MODULE)].
+    nklib_proc:values(?MODULE).
 
 
 
@@ -418,15 +436,38 @@ handle_cast({to_echo, Config}, State) ->
             stop_hangup(<<"Incompatible Type">>, State)
     end;
 
-% handle_cast({to_mcu, Room, _Opts}, State) ->
-%     lager:warning("TO MCU"),
+handle_cast({to_mcu, Dest, Config}, State) ->
+    case update_config(Config, State) of
+        {ok, #state{type=undefined}} ->
+            handle_cast({to_mcu, Dest, Config#{type=>pbx}}, State);
+        {ok, State2} ->
+            send_mcu(Dest, Config, State2);
+        {error, Error} ->
+            ?LLOG(warnng, "to_mcu error: ~p", [Error], State),
+            stop_hangup(<<"Incompatible Type">>, State)
+    end;
 
-%     case send_to_mcu(Room, State) of
-%         {ok, State2} ->
-%             {reply, ok, State2};
-%         {error, Error} ->
-%             {reply, {error, Error}, State}
-%     end;
+handle_cast({to_publisher, Dest, Config}, State) ->
+    case update_config(Config, State) of
+        {ok, #state{type=undefined}} ->
+            handle_cast({to_publisher, Dest, Config#{type=>proxy}}, State);
+        {ok, State2} ->
+            send_publisher(Dest, Config, State2);
+        {error, Error} ->
+            ?LLOG(warnng, "to_mcu error: ~p", [Error], State),
+            stop_hangup(<<"Incompatible Type">>, State)
+    end;
+
+handle_cast({from_listener, Dest, User, Config}, State) ->
+    case update_config(Config, State) of
+        {ok, #state{type=undefined}} ->
+            handle_cast({from_listener, Dest, User, Config#{type=>proxy}}, State);
+        {ok, State2} ->
+            receive_listener(Dest, User, Config, State2);
+        {error, Error} ->
+            ?LLOG(warnng, "to_mcu error: ~p", [Error], State),
+            stop_hangup(<<"Incompatible Type">>, State)
+    end;
 
 handle_cast({hangup, Reason}, State) ->
     ?LLOG(info, "external hangup: ~p", [Reason], State),
@@ -562,7 +603,7 @@ send_call(Dest, Config, #state{type=pbx, has_offer=true}=State) ->
                             stop_hangup(<<"Mediaserver Error">>, State)
                     end;
                 false ->
-                    lager:error("NO PRE ANSWER"),
+                    ?LLOG(info, "not using pre answer", [], State),
                     do_send_call(Dest, Config, Offer2, State2)
             end;
         {error, Error} ->
@@ -570,30 +611,22 @@ send_call(Dest, Config, #state{type=pbx, has_offer=true}=State) ->
             stop_hangup(<<"No Mediaserver Available">>, State)
     end;
 
-send_call(Dest, Config, #state{id=Id, type=proxy, has_offer=true}=State) ->
+send_call(Dest, Config, #state{type=proxy, has_offer=true}=State) ->
     #state{session=#{offer:=Offer}} = State,
-    case get_mediaserver(State) of
-        {ok, {janus, JanusId}, State2} ->
-            case nkmedia_janus_session:start(Id, JanusId) of
-                {ok, Pid} ->
-                    State3 = add_link(janus, Pid, State2),
-                    case nkmedia_janus_session:videocall(Pid, Offer) of
-                        {ok, #{sdp:=SDP}} ->
-                            % We get the offer for the called party
-                            Offer2 = Offer#{sdp=>SDP},
-                            do_send_call(Dest, Config, Offer2, State3);
-                        {error, Error} ->
-                            ?LLOG(warning, "could not get offer from proxy: ~p",
-                                  [Error], State),
-                            stop_hangup(<<"Proxy Error">>, State3)
-                    end;
+    case get_proxy(State) of
+        {ok, Pid, State2} ->
+            case nkmedia_janus_session:videocall(Pid, Offer) of
+                {ok, #{sdp:=SDP}} ->
+                    % We get the offer for the called party
+                    Offer2 = Offer#{sdp=>SDP},
+                    do_send_call(Dest, Config, Offer2, State2);
                 {error, Error} ->
-                    ?LLOG(warning, "could not connect to proxy: ~p", [Error], State),  
+                    ?LLOG(warning, "could not get offer from proxy: ~p",
+                          [Error], State),
                     stop_hangup(<<"Proxy Error">>, State2)
             end;
-        {error, Error} ->
-            ?LLOG(warning, "could not get mediaserver: ~p", [Error], State),
-            stop_hangup(<<"No Mediaserver Available">>, State)
+        Other ->
+            Other
     end;
 
 send_call(_Dest, _Config, State) ->
@@ -613,25 +646,65 @@ do_send_call(Dest, _Config, Offer, State) ->
 
 
 %% @private
-send_echo(_Config, #state{id=Id, type=proxy, has_offer=true}=State) ->
-    #state{session=#{offer:=Offer}} = State,
+send_mcu(Dest, Config, #state{type=pbx, has_offer=true}=State) ->
     case get_mediaserver(State) of
-        {ok, {janus, JanusId}, State2} ->
-            case nkmedia_janus_session:start(Id, JanusId) of
-                {ok, Pid} ->
-                    State3 = add_link(janus, Pid, State2),
-                    case nkmedia_janus_session:echo(Pid, Offer) of
-                        {ok, #{sdp:=_}=Answer} ->
-                            State4 = status(ready, #{answer=>Answer}, State3),
-                            {noreply, status(echo, State4)};
-                        {error, Error} ->
-                            ?LLOG(warning, "could not get offer from proxy: ~p",
-                                  [Error], State),
-                            stop_hangup(<<"Proxy Error">>, State3)
-                    end;
+        {ok, {fs, _}, State2} ->
+            case pbx_get_answer(State2) of
+                {ok, State3} ->
+                    do_send_mcu(Dest, Config, State3);
+                error ->
+                    stop_hangup(<<"Mediaserver Error">>, State)
+            end;
+        {error, Error} ->
+            ?LLOG(warning, "could not get mediaserver: ~p", [Error], State),
+            stop_hangup(<<"No Mediaserver Available">>, State)
+    end;
+
+send_mcu(_Dest, _Config, State) ->
+    stop_hangup(<<"Incompatible Call">>, State).
+
+
+%% @private
+do_send_mcu(Dest, Config, #state{id=SessId, ms={fs, FsId}}=State) ->
+    Type = maps:get(room_type, Config, <<"video-mcu-stereo">>),
+    ok = nkmedia_fs_cmd:set_var(FsId, SessId, "park_after_bridge", "true"),
+    Cmd = [<<"conference:">>, Dest, <<"@">>, Type],
+    case nkmedia_fs_cmd:transfer_inline(FsId, SessId, Cmd) of
+        ok ->
+            % Wait for FS
+            {noreply, State};
+        {error, Error} ->
+            ?LLOG(warning, "error sending to mcu: ~p", [Error], State),
+            stop_hangup(<<"Mediaserver Error">>, State)
+    end.
+
+
+%% @private
+send_echo(_Config, #state{type=proxy, has_offer=true}=State) ->
+    #state{session=#{offer:=Offer}} = State,
+    case get_proxy(State) of
+        {ok, Pid, State2} ->
+            case nkmedia_janus_session:echo(Pid, Offer) of
+                {ok, #{sdp:=_}=Answer} ->
+                    State4 = status(ready, #{answer=>Answer}, State2),
+                    {noreply, status(echo, State4)};
                 {error, Error} ->
-                    ?LLOG(warning, "could not connect to proxy: ~p", [Error], State),  
+                    ?LLOG(warning, "could not get offer from proxy: ~p",
+                          [Error], State),
                     stop_hangup(<<"Proxy Error">>, State2)
+            end;
+        Other ->
+            Other
+    end;
+
+send_echo(Config, #state{type=pbx, has_offer=true}=State) ->
+    case get_mediaserver(State) of
+        {ok, {fs, _}, State2} ->
+            case pbx_get_answer(State2) of
+                {ok, State3} ->
+                    do_send_echo(Config, State3);
+                error ->
+                    stop_hangup(<<"Mediaserver Error">>, State)
             end;
         {error, Error} ->
             ?LLOG(warning, "could not get mediaserver: ~p", [Error], State),
@@ -640,6 +713,82 @@ send_echo(_Config, #state{id=Id, type=proxy, has_offer=true}=State) ->
 
 send_echo(_Config, State) ->
     stop_hangup(<<"Incompatible Echo">>, State).
+
+
+%% @private
+do_send_echo(_Config, #state{id=SessId, ms={fs, FsId}}=State) ->
+    case nkmedia_fs_cmd:transfer_inline(FsId, SessId, "echo") of
+        ok ->
+            % Wait for FS
+            {noreply, State};
+        {error, Error} ->
+            ?LLOG(warning, "error sending to echo: ~p", [Error], State),
+            stop_hangup(<<"Mediaserver Error">>, State)
+    end.
+
+
+%% @private
+send_publisher(Dest, _Config, #state{type=proxy, has_offer=true}=State) ->
+    #state{session=#{offer:=Offer}} = State,
+    case get_proxy(State) of
+        {ok, Pid, State2} ->
+            Room = nklib_util:to_integer(Dest),
+            case nkmedia_janus_session:publisher(Pid, Room, Offer) of
+                {ok, UserId, #{sdp:=_}=Answer} ->
+                    lager:notice("UserId: ~p", [UserId]),
+                    State4 = status(ready, #{answer=>Answer}, State2),
+                    {noreply, status(publisher, State4)};
+                {error, Error} ->
+                    ?LLOG(warning, "could not get offer from proxy: ~p",
+                          [Error], State),
+                    stop_hangup(<<"Proxy Error">>, State2)
+            end;
+        Other ->
+            Other
+    end;
+
+send_publisher(_Dest, _Config, State) ->
+    stop_hangup(<<"Incompatible Destination">>, State).
+
+
+%% @private
+receive_listener(Dest, User, _Config, #state{type=proxy, has_offer=false}=State) ->
+    case get_proxy(State) of
+        {ok, Pid, State2} ->
+            Room = nklib_util:to_integer(Dest),
+            UserId = nklib_util:to_integer(User),
+            case nkmedia_janus_session:listener(Pid, Room, UserId) of
+                {ok, Offer} ->
+                    {ok, State3} = update_config(#{offer=>Offer}, State2),
+                    {noreply, State3};
+                {error, Error} ->
+                    ?LLOG(warning, "could not get offer from proxy: ~p",
+                          [Error], State),
+                    stop_hangup(<<"Proxy Error">>, State2)
+            end;
+        Other ->
+            Other
+    end;
+
+receive_listener(_Dest, _User, _Config, State) ->
+    stop_hangup(<<"Incompatible Destination">>, State).
+
+
+%% @private
+get_proxy(#state{id=Id, type=proxy}=State) ->
+    case get_mediaserver(State) of
+        {ok, {janus, JanusId}, State2} ->
+            case nkmedia_janus_session:start(Id, JanusId) of
+                {ok, Pid} ->
+                    {ok, Pid, add_link(janus, Pid, State2)};
+                {error, Error} ->
+                    ?LLOG(warning, "could not connect to proxy: ~p", [Error], State),  
+                    stop_hangup(<<"Proxy Error">>, State2)
+            end;
+        {error, Error} ->
+            ?LLOG(warning, "could not get mediaserver: ~p", [Error], State),
+            stop_hangup(<<"No Mediaserver Available">>, State)
+    end.
 
 
 %% @private
@@ -763,7 +912,7 @@ pbx_bridge(SessIdB, #state{id=SessIdA, ms={fs, FsId}}=State) ->
     end.
 
 proxy_get_answer(AnswerB, #state{id=Id, ms={janus, _}, session=Session}=State) ->
-    case nkmedia_janus_session:answer(Id, AnswerB) of
+    case nkmedia_janus_session:videocall_answer(Id, AnswerB) of
         {ok, AnswerA} ->
             Session2 = Session#{answer=>AnswerA},
             State2 = State#state{session=Session2},

@@ -233,14 +233,22 @@ sip_register(Req, Call) ->
 
 send_call(SessId, Dest) ->
     case Dest of 
+        <<"e">> ->
+            ok = nkmedia_session:to_echo(SessId, #{});
+        <<"fe">> ->
+            ok = nkmedia_session:to_echo(SessId, #{type=>pbx});
+        <<"m1">> ->
+            ok = nkmedia_session:to_mcu(SessId, "mcu1", #{});
+        <<"m2">> ->
+            ok = nkmedia_session:to_mcu(SessId, "mcu2", #{});
+        <<"p">> ->
+            ok = nkmedia_session:to_publisher(SessId, 1234, #{});
         <<"d", Num/binary>> ->
             ok = nkmedia_session:to_call(SessId, Num, #{type=>p2p});
         <<"f", Num/binary>> -> 
             ok = nkmedia_session:to_call(SessId, Num, #{type=>pbx});
         <<"j", Num/binary>> ->
             ok = nkmedia_session:to_call(SessId, Num, #{type=>proxy});
-        <<"e">> ->
-            ok = nkmedia_session:to_echo(SessId, #{});
         _ ->
             no_number
     end.

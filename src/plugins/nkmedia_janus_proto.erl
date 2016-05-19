@@ -620,7 +620,12 @@ print(_Txt, [#{<<"janus">>:=<<"keepalive">>}], _State) ->
 print(_Txt, [#{janus:=ack}], _State) ->
     ok;
 print(Txt, [#{}=Map], State) ->
-    print(Txt, [nklib_json:encode_pretty(Map)], State);
+    Map2 = case Map of
+        % #{jsep:=Jsep} -> Map#{jsep:=Jsep#{sdp=><<"...">>}};
+        % #{<<"jsep">>:=Jsep} -> Map#{<<"jsep">>:=Jsep#{<<"sdp">>=><<"...">>}};
+        _ -> Map
+    end,
+    print(Txt, [nklib_json:encode_pretty(Map2)], State);
 print(Txt, Args, State) ->
     ?LLOG(info, Txt, Args, State).
 
