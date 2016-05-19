@@ -20,71 +20,14 @@
 
 %% @doc Session Management
 
-% There are two types of sessions:
-
-%  - inbound sessions: 
-%     You MUST supply an offer. 
-%     If you supply a backend, it wil be placed there, and enter the 'ready'
-%     state. You can call pbx_get_answer/1 to get the answering SDP.
-%     You can send them to an mcu, bridge, etc.
-%     If you don't supply a mediaserver, will stay in 'wait' state
-%
-% - oubound sessions:
-%     You MUST supply a 'call_dest' parameter
-%     If you supply an sdp_offer, it will be used.
-%     If you don't supply an sdp_offer. You MUST supply a backend.
-%     The backend will make an sdp_offer, and send the call
-%     The session will start in 'ready' state.
-% 
-%  Process for a typical call:
-%  - user starts an inbound session. It should include an offer, and some
-%    key to detect events later on (in nkmedia_session_event/3).
-%  - The backend is identified in the config or, if not there, calling
-%    nkmedia_session_get_backend/2, based on the offer.
-%  - If it is not p2p, the mediaserver is selected calling
-%    nkmedia_session_get_mediaserver/2. It fails if none is found.
-%  - If mediaserver is 'none' (p2p backend) the session enters 'wait' state.
-%    If there is a mediaserver, the call is placed there, and the call enters
-%    'ready' state, including an 'answer' key that the caller must user.
-%  - The user starts a call calling to_call/2 with a destination. The session starts
-%    a new nkmedia_call process, sending the same config but removing the sdp from
-%    the offer (unless it is a p2p call), and including session_id and session_pid.
-%    The call enters 'calling' state.
-%  - The call will call nkmedia_call_resolve/2 with the destination, to get a list of 
-%    resolved destinations. Typically the technology to use is reflected in each
-%    destionation (like {verto, pid()}).
-%  - When the time comes for each launch, the call calls nkmedia_call_out/2, where
-%    it can be decided to go ahead, to retry later or abort this branch
-%  - For each branch, a new outbound session is started. 
-%    If it is a p2p call, the offer would include the sdp, and the call is intiated
-%    to the user calling nkmedia_session_out/3. 
-%    If not, first an sdp is get from the mediaserver, and the offer is updated before
-%    calling nkmedia_session_out/3.
-%  - The called user can reply inmediately or later calling reply_ringing/2 and 
-%    reply_answered/2. At least on them must carry an answer. 
-%  - When the first ringing is received, the status of the outbound session 
-%    changes to ringing. This is detected  by the call, that also changes to ringing. 
-%    This is again detected by the inbound sessions, that changes to ringing state. 
-%    The caller can detect this event and see if there is any early media.
-%    Received early media is received only if the call is sent to a single destination.
-%  - When the answers for an outbound sessions comes, the session enters 'ready'
-%    state, including the answer. The call detects this and enters also 'ready' state,
-%    including the answer and the session_peer_id. All other out sessions are hangup.
-%  - The inbound session detects this and enters 'ready' state with the answer. 
-%    (the caller can use it)
-%  - If it is a p2p call, enters 'call' state. If not, the call is call at the 
-%    mediaservers, and then enters 'call' state when the event is received
-
 
 -module(nkmedia_session).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([start/2, hangup_all/0]).
--export([get_status/1, get_session/1]).
--export([hangup/1, hangup/2, to_call/3, to_echo/2, to_mcu/3]).
--export([to_publisher/3]).
--export([from_listener/4]).
+-export([start/2, get_status/1, get_session/1]).
+-export([hangup/1, hangup/2, hangup_all/0]).
+-export([set_offer/3, set_answer/3]).
 -export([reply/2]).
 -export([pbx_event/3, call_event/3, get_all/0, find/1]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
@@ -113,8 +56,7 @@
         offer => nkmedia:offer(),               
         answer => nkmedia:offer(),              
         monitor => pid(),                       % Monitor this process
-        b_dest => call_dest(),                  % 'call' to this destination (B-leg)
-        mediaserver => mediaserver(),           % Sets mediaserver (B-leg)
+        mediaserver => mediaserver(),           % Forces mediaserver
         wait_timeout => integer(),              % Secs
         ring_timeout => integer(),          
         call_timeout => integer(),
@@ -127,7 +69,7 @@
 
 -type status() ::
     wait    |   % Waiting for an operation, no media
-    calling |   % Launching a call
+    calling |   % Launching an invite
     ringing |   % Received 'ringing'
     ready   |   % Waiting for operation, has media
     call    |   % Session is connected to another
@@ -156,6 +98,28 @@
         srv_id => nkservice:id(),
         status => status(),
         ext_status => ext_status()
+    }.
+
+-type offer_op() ::
+    nkmedia:offer() | {listener, Room::integer(), User::integer()}.
+
+
+-type answer_op() ::
+    nkmedia:answer() | echo | {mcu, Room::binary()} | 
+    {publisher, Room::integer()} | {call, Dest::binary()} | 
+    {invite, Dest::binary()}.
+
+-type op_opts() ::  
+    #{
+        type => type(),
+        sync => boolean(),
+        get_sdp => boolean()
+    }.
+
+-type op_meta() ::  
+    #{
+        offer => nkmedia:offer(),
+        answer => nkmedia:answer()
     }.
 
 
@@ -237,44 +201,26 @@ hangup_all() ->
     lists:foreach(fun({SessId, _Pid}) -> hangup(SessId) end, get_all()).
 
 
-%% @doc Starts a new call inside the session
--spec to_call(id(), nkmedia:call_dest(), config()) ->
-    ok | {error, term()}.
+%% @doc 
+-spec set_offer(id(), offer_op(), op_opts()) ->
+    ok | {ok, op_meta()} | {error, term()}.
 
-to_call(SessId, Dest, Opts) ->
-    do_cast(SessId, {to_call, Dest, Opts}).
+set_offer(SessId, OfferOp, #{sync:=true}=Opts) ->
+    do_call(SessId, {offer_op, OfferOp, Opts});
 
-
-%% @doc Sends the session to mirror
--spec to_echo(id(), map()) ->
-    ok | {error, term()}.
-
-to_echo(SessId, Opts) ->
-    do_cast(SessId, {to_echo, Opts}).
+set_offer(SessId, OfferOp, Opts) ->
+    do_cast(SessId, {offer_op, OfferOp, Opts}).
 
 
-%% @private
--spec to_mcu(id(), binary(), config()) ->
-    ok | {error, term()}.
+%% @doc 
+-spec set_answer(id(), answer_op(), op_opts()) ->
+    ok | {ok, op_meta()} | {error, term()}.
 
-to_mcu(SessId, Room, Opts) ->
-    do_cast(SessId, {to_mcu, Room, Opts}).
+set_answer(SessId, AnswerOp, #{sync:=true}=Opts) ->
+    do_call(SessId, {answer_op, AnswerOp, Opts});
 
-
-%% @private
--spec to_publisher(id(), binary(), config()) ->
-    ok | {error, term()}.
-
-to_publisher(SessId, Room, Opts) ->
-    do_cast(SessId, {to_publisher, Room, Opts}).
-
-
-%% @private
--spec from_listener(id(), binary(), binary(), config()) ->
-    ok | {error, term()}.
-
-from_listener(SessId, Room, UserId, Opts) ->
-    do_cast(SessId, {from_listener, Room, UserId, Opts}).
+set_answer(SessId, AnswerOp, Opts) ->
+    do_cast(SessId, {answer_op, AnswerOp, Opts}).
 
 
 %% @private Called when an outbound process delayed the response
@@ -329,18 +275,21 @@ call_event(SessPid, CallId, Event) ->
 -type link_id() ::
     user | {call, nkmedia_call:id()} | janus | out.
 
+-type from_id() ::
+    {call, nkmedia_call:id()} | out.
 
 -record(state, {
     id :: id(),
     srv_id :: nkservice:id(),
-    session :: session(),
     type :: type(),
     status :: status() | init,
     ms :: mediaserver(),
-    links = [] :: [{link_id(), pid(), reference()}],
     has_offer = false :: boolean(),
     has_answer = false :: boolean(),
-    timer :: reference()
+    links = [] :: [{link_id(), pid(), reference()}],
+    froms = [] :: [{from_id(), {pid(), term()}, op_opts()}],
+    timer :: reference(),
+    session :: session()
 }).
 
 
@@ -354,24 +303,20 @@ init([#{id:=Id, srv_id:=SrvId}=Session]) ->
     State1 = #state{
         id = Id, 
         srv_id = SrvId, 
-        session = #{},
         status = init,
-        ms = maps:get(mediaserver, Session, undefined)
+        ms = maps:get(mediaserver, Session, undefined),
+        session = #{}
     },
     State2 = case Session of
-        #{monitor:=Pid} -> add_link(user, Pid, State1);
-        _ -> State1
+        #{monitor:=Pid} -> 
+            add_link(user, Pid, State1);
+        _ -> 
+            State1
     end,
     {ok, State3} = update_config(Session, State2),
     {ok, State4} = handle(nkmedia_session_init, [Id], State3),
     lager:info("NkMEDIA Session ~s starting (~p)", [Id, self()]),
-    #state{has_offer=Offer, has_answer=Answer, session=Session3} = State4,
-    case maps:find(b_dest, Session3) of
-        {ok, Dest} -> 
-            gen_server:cast(self(), {b_call, Dest});
-        error ->
-            ok
-    end,
+    #state{has_offer=Offer, has_answer=Answer} = State4,
     case Offer andalso Answer of
         true -> 
             {ok, status(ready, State4)};
@@ -393,6 +338,15 @@ handle_call(get_status, _From, State) ->
     #{ext_status:=Info} = Session,
     {reply, {ok, Status, Info, erlang:read_timer(Timer) div 1000}, State};
 
+handle_call({offer_op, OfferOp, Opts}, From, #state{has_offer=false}=State) ->
+    send_offer_op(OfferOp, Opts, From, State);
+
+handle_call({offer_op, _OfferOp, _Opts}, _From, State) ->
+    {reply, {error, already_has_offer}, State};
+
+handle_call({answer_op, AnswerOp, Opts}, From, State) ->
+    send_answer_op(AnswerOp, Opts, From, State);
+
 handle_call(Msg, From, State) -> 
     handle(nkmedia_session_handle_call, [Msg, From], State).
 
@@ -401,73 +355,14 @@ handle_call(Msg, From, State) ->
 -spec handle_cast(term(), #state{}) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
-handle_cast({b_call, Dest}, #state{type=undefined, has_offer=HasOffer}=State) ->
-    case HasOffer of
-        true ->
-            {ok, State2} = update_config(#{type=>p2p}, State),
-            handle_cast({b_call, Dest}, State2);
-        false ->
-            {ok, State2} = update_config(#{type=>pbx}, State),
-            handle_cast({b_call, Dest}, State2)
-    end;
+handle_cast({offer_op, OfferOp, Opts}, #state{has_offer=false}=State) ->
+    send_offer_op(OfferOp, Opts, undefined, State);
 
-handle_cast({b_call, Dest}, State) ->
-    send_b_call(Dest, State);
+handle_cast({offer_op, _OfferOp, _Opts}, State) ->
+    {reply, {error, already_has_offer}, State};
 
-handle_cast({to_call, Dest, Config}, State) ->
-    case update_config(Config, State) of
-        {ok, #state{type=undefined}} ->
-            handle_cast({to_call, Dest, Config#{type=>p2p}}, State);
-        {ok, State2} ->
-            send_call(Dest, Config, State2);
-        {error, Error} ->
-            ?LLOG(warnng, "to_call error: ~p", [Error], State),
-            stop_hangup(<<"Incompatible Type">>, State)
-    end;
-
-handle_cast({to_echo, Config}, State) ->
-    case update_config(Config, State) of
-        {ok, #state{type=undefined}} ->
-            handle_cast({to_echo, Config#{type=>proxy}}, State);
-        {ok, State2} ->
-            send_echo(Config, State2);
-        {error, Error} ->
-            ?LLOG(warnng, "to_mirror error: ~p", [Error], State),
-            stop_hangup(<<"Incompatible Type">>, State)
-    end;
-
-handle_cast({to_mcu, Dest, Config}, State) ->
-    case update_config(Config, State) of
-        {ok, #state{type=undefined}} ->
-            handle_cast({to_mcu, Dest, Config#{type=>pbx}}, State);
-        {ok, State2} ->
-            send_mcu(Dest, Config, State2);
-        {error, Error} ->
-            ?LLOG(warnng, "to_mcu error: ~p", [Error], State),
-            stop_hangup(<<"Incompatible Type">>, State)
-    end;
-
-handle_cast({to_publisher, Dest, Config}, State) ->
-    case update_config(Config, State) of
-        {ok, #state{type=undefined}} ->
-            handle_cast({to_publisher, Dest, Config#{type=>proxy}}, State);
-        {ok, State2} ->
-            send_publisher(Dest, Config, State2);
-        {error, Error} ->
-            ?LLOG(warnng, "to_mcu error: ~p", [Error], State),
-            stop_hangup(<<"Incompatible Type">>, State)
-    end;
-
-handle_cast({from_listener, Dest, User, Config}, State) ->
-    case update_config(Config, State) of
-        {ok, #state{type=undefined}} ->
-            handle_cast({from_listener, Dest, User, Config#{type=>proxy}}, State);
-        {ok, State2} ->
-            receive_listener(Dest, User, Config, State2);
-        {error, Error} ->
-            ?LLOG(warnng, "to_mcu error: ~p", [Error], State),
-            stop_hangup(<<"Incompatible Type">>, State)
-    end;
+handle_cast({answer_op, AnswerOp, Opts}, State) ->
+    send_answer_op(AnswerOp, Opts, undefned, State);
 
 handle_cast({hangup, Reason}, State) ->
     ?LLOG(info, "external hangup: ~p", [Reason], State),
@@ -497,13 +392,13 @@ handle_cast({pbx_event, FsId2, Event}, #state{ms=MS}=State) ->
     {noreply, State};
 
 handle_cast({reply, ringing}, State) ->
-    do_ringing(#{}, State);
+    invite_ringing(#{}, State);
 
 handle_cast({reply, {ringing, Answer}}, State) ->
-    do_ringing(Answer, State);
+    invite_ringing(Answer, State);
 
 handle_cast({reply, {answered, Answer}}, State) ->
-    do_answered(Answer, State);
+    invite_answered(Answer, State);
 
 handle_cast({reply, Reply}, State) ->
     ?LLOG(warning, "unrecognized reply: ~p", [Reply], State),
@@ -580,249 +475,399 @@ terminate(Reason, State) ->
 
 
 %% ===================================================================
-%% Internal - A-leg Specific
+%% Internal - offer_op
+%% ===================================================================
+
+offer_op(#{sdp:=_}=Offer, Opts, From, State) ->
+    Meta = case Opts of
+        #{get_offer:=true} -> #{offer=>Offer};
+        _ -> #{}
+    end,
+    nklib_util:reply(From, {ok, Meta}),
+    State2 = update_config(#{offer=>Offer}, State),
+    {noreply, State2};
+
+offer_op({listener, Room, UserId}, Opts, From, #state{type=undefined}=State) ->
+    State2 = update_config(#{type=>proxy}, State),
+    offer_op({listener, Room, UserId}, Opts, From, State2);
+
+offer_op({listener, Room, UserId}, Opts, From, #state{type=proxy}=State) ->
+    case get_proxy(State) of
+        {ok, Pid, State2} ->
+            case nkmedia_janus_session:listener(Pid, Room, UserId) of
+                {ok, #{sdp:=_}=Offer} ->
+                    offer_op(Offer, Opts, From, State);
+                {error, Error} ->
+                    reply_error(Error, From, State2)
+            end;
+        {error, Error} ->
+            reply_error(Error, From, State)
+    end;
+
+offer_op({listener, _Room, _UserId}, _Opts, From, State) ->
+    reply_error(incompatible_session_type, From, State);
+
+offer_op(_OfferOp, _Opts, From, State) ->
+    reply_error(unknown_offer_op, From, State).
+
+
+
+%% ===================================================================
+%% offer_op - util
 %% ===================================================================
 
 
-%% @private A-leg
-send_call(Dest, Config, #state{type=p2p, has_offer=true, session=Session}=State) ->
-    #{offer:=Offer} = Session,
-    do_send_call(Dest, Config, Offer, State);
+%% TODO: Check if we are ringing, calling or waiting to fs
 
-send_call(Dest, Config, #state{type=pbx, has_offer=true}=State) ->
-    #state{session=#{offer:=Offer}} = State,
-    Offer2 = maps:remove(sdp, Offer),
-    case get_mediaserver(State) of
-        {ok, {fs, _}, State2} ->
-            case maps:get(pre_answer, Config, false) of
-                true ->
-                    case pbx_get_answer(State2) of
-                        {ok, State3} ->
-                            do_send_call(Dest, Config, Offer2, State3);
-                        error ->
-                            stop_hangup(<<"Mediaserver Error">>, State)
-                    end;
-                false ->
-                    ?LLOG(info, "not using pre answer", [], State),
-                    do_send_call(Dest, Config, Offer2, State2)
-            end;
-        {error, Error} ->
-            ?LLOG(warning, "could not get mediaserver: ~p", [Error], State),
-            stop_hangup(<<"No Mediaserver Available">>, State)
-    end;
-
-send_call(Dest, Config, #state{type=proxy, has_offer=true}=State) ->
-    #state{session=#{offer:=Offer}} = State,
-    case get_proxy(State) of
-        {ok, Pid, State2} ->
-            case nkmedia_janus_session:videocall(Pid, Offer) of
-                {ok, #{sdp:=SDP}} ->
-                    % We get the offer for the called party
-                    Offer2 = Offer#{sdp=>SDP},
-                    do_send_call(Dest, Config, Offer2, State2);
+%% @private
+send_offer_op(OfferOp, Opts, From, #state{type=Type}=State) ->
+    case offer_op_default(OfferOp) of
+        unknown ->
+            {reply, {error, unknown_offer_op}, State};
+        DefType ->
+            Opts2 = case Type of
+                undefined -> Opts#{type=>DefType};
+                _ -> Opts
+            end,
+            case update_config(Opts2, State) of
+                {ok, State2} ->
+                    offer_op(OfferOp, Opts2, From, State2);
                 {error, Error} ->
-                    ?LLOG(warning, "could not get offer from proxy: ~p",
-                          [Error], State),
-                    stop_hangup(<<"Proxy Error">>, State2)
-            end;
-        Other ->
-            Other
-    end;
-
-send_call(_Dest, _Config, State) ->
-    stop_hangup(<<"Incompatible Call">>, State).
-
-
-%% @private
-do_send_call(Dest, _Config, Offer, State) ->
-    #state{id=Id, session=Session} = State,
-    Shared = [srv_id, type, mediaserver, wait_timeout, ring_timeout, call_timeout],
-    Config1 = maps:with(Shared, Session),
-    Config2 = Config1#{session_id=>Id, session_pid=>self(), offer=>Offer}, 
-    {ok, CallId, CallPid} = nkmedia_call:start(Dest, Config2),
-    State2 = add_link({call, CallId}, CallPid, State),
-    % Now we will receive notifications from the call
-    {noreply, status(calling, #{dest=>Dest}, State2)}.
-
-
-%% @private
-send_mcu(Dest, Config, #state{type=pbx, has_offer=true}=State) ->
-    case get_mediaserver(State) of
-        {ok, {fs, _}, State2} ->
-            case pbx_get_answer(State2) of
-                {ok, State3} ->
-                    do_send_mcu(Dest, Config, State3);
-                error ->
-                    stop_hangup(<<"Mediaserver Error">>, State)
-            end;
-        {error, Error} ->
-            ?LLOG(warning, "could not get mediaserver: ~p", [Error], State),
-            stop_hangup(<<"No Mediaserver Available">>, State)
-    end;
-
-send_mcu(_Dest, _Config, State) ->
-    stop_hangup(<<"Incompatible Call">>, State).
-
-
-%% @private
-do_send_mcu(Dest, Config, #state{id=SessId, ms={fs, FsId}}=State) ->
-    Type = maps:get(room_type, Config, <<"video-mcu-stereo">>),
-    ok = nkmedia_fs_cmd:set_var(FsId, SessId, "park_after_bridge", "true"),
-    Cmd = [<<"conference:">>, Dest, <<"@">>, Type],
-    case nkmedia_fs_cmd:transfer_inline(FsId, SessId, Cmd) of
-        ok ->
-            % Wait for FS
-            {noreply, State};
-        {error, Error} ->
-            ?LLOG(warning, "error sending to mcu: ~p", [Error], State),
-            stop_hangup(<<"Mediaserver Error">>, State)
+                    {reply, {error, Error}, State}
+            end
     end.
 
 
 %% @private
-send_echo(_Config, #state{type=proxy, has_offer=true}=State) ->
+offer_op_default(Op) ->
+    case Op of
+        Map when is_map(Map) -> undefined;
+        {listener, _, _} -> proxy;
+        _ -> unknown
+    end.
+
+
+
+%% ===================================================================
+%% Internal - answer_op
+%% ===================================================================
+
+
+
+%% RAW SDP
+answer_op(#{sdp:=_}=Answer, Opts, From, #state{has_answer=false}=State) ->
+    State2 = answer_op_set_ready(Answer, State),
+    answer_op_reply(From, Opts, State2),
+    {noreply, State2};
+
+
+%% ECHO
+answer_op(echo, Opts, From, #state{type=proxy, has_answer=false}=State) ->
     #state{session=#{offer:=Offer}} = State,
     case get_proxy(State) of
         {ok, Pid, State2} ->
             case nkmedia_janus_session:echo(Pid, Offer) of
                 {ok, #{sdp:=_}=Answer} ->
-                    State4 = status(ready, #{answer=>Answer}, State2),
-                    {noreply, status(echo, State4)};
+                    State3 = answer_op_set_ready(Answer, State2),
+                    answer_op_reply(From, Opts, State3),
+                    {noreply, status(echo, State2)};
                 {error, Error} ->
-                    ?LLOG(warning, "could not get offer from proxy: ~p",
-                          [Error], State),
-                    stop_hangup(<<"Proxy Error">>, State2)
-            end;
-        Other ->
-            Other
-    end;
-
-send_echo(Config, #state{type=pbx, has_offer=true}=State) ->
-    case get_mediaserver(State) of
-        {ok, {fs, _}, State2} ->
-            case pbx_get_answer(State2) of
-                {ok, State3} ->
-                    do_send_echo(Config, State3);
-                error ->
-                    stop_hangup(<<"Mediaserver Error">>, State)
+                    reply_error(Error, From, State2)
             end;
         {error, Error} ->
-            ?LLOG(warning, "could not get mediaserver: ~p", [Error], State),
-            stop_hangup(<<"No Mediaserver Available">>, State)
+            reply_error(Error, From, State)
     end;
 
-send_echo(_Config, State) ->
-    stop_hangup(<<"Incompatible Echo">>, State).
+answer_op(echo, Opts, From, #state{type=pbx, has_answer=false}=State) ->
+    case get_pbx_answer(State) of
+        {ok, Answer, State2} ->
+            State2 = answer_op_set_ready(Answer, State),
+            answer_op(echo, Opts, From, State2);
+        {error, Error} ->
+            reply_error(Error, From, State)
+    end;
 
-
-%% @private
-do_send_echo(_Config, #state{id=SessId, ms={fs, FsId}}=State) ->
-    case nkmedia_fs_cmd:transfer_inline(FsId, SessId, "echo") of
+answer_op(echo, Opts, From, #state{type=pbx, has_answer=true}=State) ->
+    case pbx_transfer("echo", State) of
         ok ->
-            % Wait for FS
-            {noreply, State};
+            % FS will send event and status will be updated
+            answer_op_reply(From, Opts, State);
         {error, Error} ->
-            ?LLOG(warning, "error sending to echo: ~p", [Error], State),
-            stop_hangup(<<"Mediaserver Error">>, State)
-    end.
+            reply_error({echo_transfer_error, Error}, From, State)
+    end;
 
 
-%% @private
-send_publisher(Dest, _Config, #state{type=proxy, has_offer=true}=State) ->
+%% MCU
+answer_op({mcu, Room}, Opts, From, #state{type=pbx, has_answer=false}=State) ->
+    case get_pbx_answer(State) of
+        {ok, Answer, State2} ->
+            State2 = answer_op_set_ready(Answer, State),
+            answer_op({mcu, Room}, Opts, From, State2);
+        {error, Error} ->
+            reply_error(Error, From, State)
+    end;
+
+answer_op({mcu, Room}, Opts, From, #state{type=pbx, has_answer=true}=State) ->
+    Type = maps:get(room_type, Opts, <<"video-mcu-stereo">>),
+    Cmd = [<<"conference:">>, Room, <<"@">>, Type],
+    case pbx_transfer(Cmd, State) of
+        ok ->
+            % FS will send event and status will be updated
+            answer_op_reply(From, Opts, State);
+        {error, Error} ->
+            reply_error({mcu_transfer_error, Error}, From, State)
+    end;
+
+
+%% PUBLISHER
+answer_op({publisher, Room}, Opts, From, 
+              #state{type=proxy, has_answer=false}=State) ->
     #state{session=#{offer:=Offer}} = State,
     case get_proxy(State) of
         {ok, Pid, State2} ->
-            Room = nklib_util:to_integer(Dest),
             case nkmedia_janus_session:publisher(Pid, Room, Offer) of
-                {ok, UserId, #{sdp:=_}=Answer} ->
-                    lager:notice("UserId: ~p", [UserId]),
-                    State4 = status(ready, #{answer=>Answer}, State2),
-                    {noreply, status(publisher, State4)};
+                {ok, _UserId, #{sdp:=_}=Answer} ->
+                    answer_op(Answer, Opts, From, State2);
                 {error, Error} ->
-                    ?LLOG(warning, "could not get offer from proxy: ~p",
-                          [Error], State),
-                    stop_hangup(<<"Proxy Error">>, State2)
+                    reply_error(Error, From, State2)
             end;
-        Other ->
-            Other
+        {error, Error} ->
+            reply_error(Error, From, State)
     end;
 
-send_publisher(_Dest, _Config, State) ->
-    stop_hangup(<<"Incompatible Destination">>, State).
 
+%% CALL
+answer_op({call, Dest}, Opts, From, #state{type=p2p, has_answer=false}=State) ->
+    #state{session=#{offer:=Offer}} = State,
+    do_send_call(Dest, Opts, Offer, From, State);
 
-%% @private
-receive_listener(Dest, User, _Config, #state{type=proxy, has_offer=false}=State) ->
+answer_op({call, Dest}, Opts, From, #state{type=pbx, has_answer=false}=State) ->
+    case get_pbx_answer(State) of
+        {ok, Answer, State2} ->
+            State2 = answer_op_set_ready(Answer, State),
+            answer_op({call, Dest}, Opts, From, State2);
+        {error, Error} ->
+            reply_error(Error, From, State)
+    end;
+
+answer_op({call, Dest}, Opts, From, #state{type=pbx, has_answer=true}=State) ->
+    #state{session=#{offer:=Offer}} = State,
+    Offer2 = maps:remove(sdp, Offer),
+    do_send_call(Dest, Opts, Offer2, From, State);
+
+answer_op({call, Dest}, Opts, From, #state{type=proxy, has_answer=false}=State) ->
+    #state{session=#{offer:=Offer}} = State,
     case get_proxy(State) of
         {ok, Pid, State2} ->
-            Room = nklib_util:to_integer(Dest),
-            UserId = nklib_util:to_integer(User),
-            case nkmedia_janus_session:listener(Pid, Room, UserId) of
-                {ok, Offer} ->
-                    {ok, State3} = update_config(#{offer=>Offer}, State2),
-                    {noreply, State3};
+            case nkmedia_janus_session:videocall(Pid, Offer) of
+                {ok, #{sdp:=SDP}} ->
+                    do_send_call(Dest, Opts, Offer#{sdp=>SDP}, From, State2);
                 {error, Error} ->
-                    ?LLOG(warning, "could not get offer from proxy: ~p",
-                          [Error], State),
-                    stop_hangup(<<"Proxy Error">>, State2)
+                    reply_error(Error, From, State)
             end;
-        Other ->
-            Other
+        {error, Error} ->
+            reply_error(Error, From, State)
     end;
 
-receive_listener(_Dest, _User, _Config, State) ->
-    stop_hangup(<<"Incompatible Destination">>, State).
+
+%% INVITE
+answer_op({invite, Dest}, Opts, From, #state{id=Id, session=Session}=State) ->
+    #{offer:=Offer} = Session,
+    State2 = status(calling, State),
+    case handle(nkmedia_session_out, [Id, Dest, Offer], State2) of
+        {ringing, Answer, Pid, State3} ->
+            State4 = add_link(out, Pid, State3),
+            State5 = add_from(out, From, Opts, State4),
+            invite_ringing(Answer, State5);
+        {answer, Answer, Pid, State3} ->
+            ?LLOG(info, "session answer", [], State3),
+            State4 = add_link(out, Pid, State3),
+            State5 = add_from(out, From, Opts, State4),
+            invite_answered(Answer, State5);
+        {async, Pid, State3} ->
+            ?LLOG(info, "session delayed", [], State3),
+            State4 = add_link(out, Pid, State3),
+            State5 = add_from(out, From, Opts, State4),
+            {noreply, State5};
+        {hangup, Reason, State3} ->
+            ?LLOG(info, "session hangup: ~p", [Reason], State3),
+            gen_server:reply(From, {hangup, Reason}),
+            stop_hangup(Reason, State3)
+    end;
+
+
+%% ERROR
+answer_op(_AnswerOp, _Opts, From, State) ->
+    reply_error(incompatible_session_type, From, State).
+
+
+%% ===================================================================
+%% answer_op - util
+%% ===================================================================
 
 
 %% @private
-get_proxy(#state{id=Id, type=proxy}=State) ->
-    case get_mediaserver(State) of
-        {ok, {janus, JanusId}, State2} ->
-            case nkmedia_janus_session:start(Id, JanusId) of
-                {ok, Pid} ->
-                    {ok, Pid, add_link(janus, Pid, State2)};
+send_answer_op(AnswerOp, Opts, From, #state{type=Type}=State) ->
+    case answer_op_default(AnswerOp) of
+        unknown ->
+            {reply, {error, unknown_answer_op}, State};
+        DefType ->
+            Type2 = maps:get(type, Opts, Type),
+            Opts2 = Opts#{type=>Type2};
+
+            lager:error("T: ~p", [Type]),
+
+
+            case update_config(Opts2, State) of
+                {ok, #state{has_offer=true}=State2} ->
+                    answer_op(AnswerOp, Opts2, From, State2);
+                {ok, #state{type=pbx, has_offer=false}=State2} ->
+                    case get_pbx_offer(State2) of
+                        {ok, State3} ->
+                            answer_op(AnswerOp, Opts2, From, State3);
+                        {error, Error} ->
+                            reply_error(Error, From, State)
+                    end;
+                {ok, State2} ->
+                    reply_error(offer_is_missing, From, State2);
                 {error, Error} ->
-                    ?LLOG(warning, "could not connect to proxy: ~p", [Error], State),  
-                    stop_hangup(<<"Proxy Error">>, State2)
-            end;
-        {error, Error} ->
-            ?LLOG(warning, "could not get mediaserver: ~p", [Error], State),
-            stop_hangup(<<"No Mediaserver Available">>, State)
+                    reply_error(Error, From, State)
+            end
     end.
 
 
 %% @private
-get_mediaserver(#state{ms=undefined}=State) ->
-    #state{srv_id=SrvId, type=Type, session=Session} = State,
-    case SrvId:nkmedia_session_get_mediaserver(Type, Session) of
-        {ok, MS, Session2} ->
-            Session3 = Session2#{mediaserver=>MS},
-            {ok, MS, State#state{ms=MS, session=Session3}};
-        {error, Error} ->
-            {error, Error}
+answer_op_default(Op) ->
+    case Op of
+        Map when is_map(Map) -> undefined;
+        echo -> proxy;
+        {mcu, _} -> pbx;
+        {publisher, _} -> proxy;
+        {invite, _} -> proxy;
+        _ -> unknown
+    end.
+
+
+%% @private
+answer_op_set_ready(#{sdp:=_}=Answer, #state{has_answer=false}=State) ->
+    {ok, State2} = update_config(#{answer=>Answer}, State),
+    status(ready, #{answer=>Answer}, State2).
+
+
+%% @private
+answer_op_reply(From, Opts, #state{session=Session}) ->
+    Meta = case Opts of
+        #{get_answer:=true} -> 
+            #{answer=>maps:get(answer, Session)};
+        _ -> 
+            #{}
+    end,
+    nklib_util:reply(From, {ok, Meta}).
+
+
+%% @private
+do_send_call(Dest, Opts, Offer, From, State) ->
+    #state{id=Id, session=Session} = State,
+    gen_server:reply(From, {ok, #{}}),
+    Shared = [srv_id, type, mediaserver, wait_timeout, ring_timeout, call_timeout],
+    Config1 = maps:with(Shared, Session),
+    Config2 = Config1#{session_id=>Id, session_pid=>self(), offer=>Offer}, 
+    {ok, CallId, CallPid} = nkmedia_call:start(Dest, Config2),
+    State2 = add_link({call, CallId}, CallPid, State),
+    State3 = add_from({call, CallId}, From, Opts, State2),
+    % Now we will receive notifications from the call
+    {noreply, status(calling, #{dest=>Dest}, State3)}.
+
+
+%% @private Called at the B-leg
+invite_ringing(Answer, #state{status=calling}=State) ->
+    case Answer of
+        #{sdp:=_} ->
+            case invite_set_answer(Answer, State) of
+                {ok, State2} -> 
+                    {noreply, status(ringing, Answer, State2)};
+                {error, Error} ->
+                    stop_hangup(Error, State)
+            end;
+        _ ->
+            {noreply, status(ringing, Answer, State)}
     end;
 
-get_mediaserver(#state{ms=MS}=State) ->
-    {ok, MS, State}.
+invite_ringing(_Answer, State) ->
+    {noreply, State}.
 
 
-%% @private Called at A-leg
-pbx_get_answer(#state{ms={fs, _}, session=#{answer:=_}}=State) ->
-    {ok, State};
+%% @private Called at the B-leg
+invite_answered(_Answer, #state{status=Status}=State) 
+        when Status/=calling, Status/=ringing ->
+    ?LLOG(warning, "received unexpected answer", [], State),
+    {noreply, State};
 
-pbx_get_answer(#state{ms={fs, FsId}}=State) ->
-    #state{id=SessId,session=#{offer:=Offer}=Session} = State,
-    case nkmedia_fs_verto:start_in(SessId, FsId, Offer) of
-        {ok, SDP} ->
-            %% TODO Send and receive pings
-            Answer = #{sdp=>SDP},
+invite_answered(#{sdp:=SDP}, #state{session=#{answer:=Old}}=State) ->
+    case Old of
+        #{sdp:=SDP} ->
+            invite_do_ready(State);
+        _ ->
+            ?LLOG(warning, "ignoring updated SDP!: ~p", [Old], State),
+            invite_do_ready(State)
+    end;
+
+invite_answered(#{sdp:=_}=Answer, State) ->
+    case invite_set_answer(Answer, State) of
+        {ok, State2} ->
+            invite_do_ready(State2);
+        {error, Error} ->
+            stop_hangup(Error, State)
+    end;
+
+invite_answered(_Answer, State) ->
+    stop_hangup(<<"Missing SDP">>, State).
+
+
+%% @private Called at the B-leg
+invite_set_answer(Answer, #state{type=p2p, session=Session}=State) ->
+    Session2 = Session#{answer=>Answer},
+    {ok, State#state{has_answer=true, session=Session2}};
+
+invite_set_answer(Answer, #state{type=pbx, ms={fs, _}}=State) ->
+    #state{id=SessId, session=Session} = State,
+    Mod = get_fs_mod(State),
+    case Mod:answer_out(SessId, Answer) of
+        ok ->
             Session2 = Session#{answer=>Answer},
-            State2 = State#state{session=Session2},
-            {ok, status(ready, #{answer=>Answer}, State2)};
+            {ok, State#state{has_answer=true, session=Session2}};
         {error, Error} ->
-            ?LLOG(warning, "could not get answer from pbx: ~p", [Error], State),
-            error
+            ?LLOG(warning, "mediaserver error in invite_set_answer: ~p", [Error], State),
+            {error, <<"Mediaserver Error">>}
+    end;
+
+invite_set_answer(Answer, #state{type=proxy, session=Session}=State) ->
+    Session2 = Session#{answer=>Answer},
+    {ok, State#state{has_answer=true, session=Session2}}.
+
+
+%% @private
+invite_do_ready(#state{type=Type, session=Session}=State) ->
+    #{answer:=Answer} = Session,
+    State2 = status(ready, #{answer=>Answer}, State),
+    {From, Opts, State3} = get_from(out, State),
+    answer_op_reply(From, Opts, State3),
+    case Type of
+        p2p ->
+            #{session_id:=PeerId} = Session,
+            {noreply, status(call, #{peer_id=>PeerId}, State3)};
+        proxy ->
+            #{session_id:=PeerId} = Session,
+            {noreply, status(call, #{peer_id=>PeerId}, State3)};
+        _ ->
+            {noreply, State2}
     end.
+
+
+%% ===================================================================
+%% Events
+%% ===================================================================
+
 
 
 %% @private
@@ -837,7 +882,7 @@ do_call_event(_CallId, {status, ringing, Data}, #state{status=calling}=State) ->
     end,
     case HasMedia of
         true when Type==pbx ->
-            case pbx_get_answer(State) of
+            case get_pbx_answer(State) of
                 {ok, State2} ->
                     {noreply, status(ringing, Data, State2)};
                 error ->
@@ -857,44 +902,49 @@ do_call_event(_CallId, {status, ringing, Data}, #state{status=calling}=State) ->
 do_call_event(_CallId, {status, ringing, _Data}, #state{status=ringing}=State) ->
     {noreply, State};
 
-do_call_event(_CallId, {status, ready, Data}, #state{status=Status}=State)
+do_call_event(CallId, {status, ready, Data}, #state{status=Status}=State)
         when Status==calling; Status==ringing ->
     #state{session=Session, type=Type} = State,
+    {From, Opts, State2} = get_from({call, CallId}, State),
+    answer_op_reply(From, Opts, State2),
     % We get the answer and Id of the remote session
     #{answer:=AnswerB, session_peer_id:=PeerId} = Data,
     case Type of
         p2p -> 
-            State2 = status(ready, #{answer=>AnswerB}, State),
-            State3 = State2#state{session=Session#{answer=>AnswerB}},
-            {noreply, status(call, #{peer_id=>PeerId}, State3)};
+            State3 = status(ready, #{answer=>AnswerB}, State2),
+            State4 = State3#state{session=Session#{answer=>AnswerB}},
+            {noreply, status(call, #{peer_id=>PeerId}, State4)};
         pbx -> 
-            case pbx_get_answer(State) of
-                {ok, State3} ->
-                    case pbx_bridge(PeerId, State3) of
+            case get_pbx_answer(State2) of
+                {ok, State4} ->
+                    case pbx_bridge(PeerId, State4) of
                         ok ->
-                            {noreply, State3};  % Wait for pbx event
+                            {noreply, State4};  % Wait for pbx event
                         error ->
-                            stop_hangup(<<"Mediaserver Error">>, State3)
+                            stop_hangup(<<"Mediaserver Error">>, State4)
                     end;
                 error ->
-                    stop_hangup(<<"Mediaserver Error">>, State)
+                    stop_hangup(<<"Mediaserver Error">>, State2)
             end;
         proxy ->
-            case proxy_get_answer(AnswerB, State) of
-                {ok, State2} ->
-                    {noreply, status(call, #{peer_id=>PeerId}, State2)};
+            case proxy_get_answer(AnswerB, State2) of
+                {ok, State3} ->
+                    {noreply, status(call, #{peer_id=>PeerId}, State3)};
                 error ->
-                    stop_hangup(<<"Mediaserver Error">>, State)
+                    stop_hangup(<<"Mediaserver Error">>, State2)
             end
     end;
 
-do_call_event(_CallId, {status, hangup, #{hangup_reason:=Reason}}, 
-              #state{status=Status}=State)
-        when Status==calling; Status==ringing; Status==call ->
-    stop_hangup(Reason, State);
-
-do_call_event(CallId, {status, hangup, _Data}, #state{status=wait}=State) ->
-    {noreply, remove_link({call, CallId}, State)};    
+do_call_event(CallId, {status, hangup, Data}, #state{status=Status}=State) ->
+    {From, _Opts, State2} = get_from({call, CallId}, State),
+    #{hangup_reason:=Reason} = Data,
+    gen_server:reply(From, {hangup, Reason}),
+    if 
+        Status==calling; Status==ringing; Status==call ->
+            stop_hangup(Reason, State2);
+        true ->
+            {noreply, remove_link({call, CallId}, State2)}
+    end;
 
 do_call_event(_CallId, Event, State) ->
     ?LLOG(warning, "unexpected call event: ~p", [Event], State),
@@ -902,170 +952,29 @@ do_call_event(_CallId, Event, State) ->
 
 
 %% @private
-pbx_bridge(SessIdB, #state{id=SessIdA, ms={fs, FsId}}=State) ->
-    case nkmedia_fs_cmd:set_var(FsId, SessIdA, "park_after_bridge", "true") of
-        ok ->
-            nkmedia_fs_cmd:bridge(FsId, SessIdA, SessIdB);
-        {error, Error} ->
-            ?LLOG(warning, "pbx bridge error: ~p", [Error], State),
-            error
-    end.
-
-proxy_get_answer(AnswerB, #state{id=Id, ms={janus, _}, session=Session}=State) ->
-    case nkmedia_janus_session:videocall_answer(Id, AnswerB) of
-        {ok, AnswerA} ->
-            Session2 = Session#{answer=>AnswerA},
-            State2 = State#state{session=Session2},
-            {ok, status(ready, #{answer=>AnswerA}, State2)};
-        {error, Error} ->
-            ?LLOG(warning, "could not get answer from proxy: ~p", [Error], State),
-            error
-    end.
-
-
-
-
-
-%% ===================================================================
-%% Internal - B-leg Specific
-%% ===================================================================
-
-
-%% @private
-send_b_call(Dest, #state{has_offer=true}=State) ->
-    do_send_b_call(Dest, State);
-
-%% We could allow no ms and get one here
-send_b_call(Dest, #state{type=pbx, has_offer=false, ms={fs, _}}=State) ->
-    case pbx_get_offer(State) of
-        {ok, State2} ->
-            do_send_b_call(Dest, State2);
-        {error, Error} ->
-            ?LLOG(warning, "could not place outcoming call (pbx): ~p", [Error], State),
-            stop_hangup(<<"PBX Error">>, State)
-    end;
-
-send_b_call(_Dest, State) ->
-    ?LLOG(warning, "could not place outcoming call: incompatible config", [], State),
-    stop_hangup(<<"Config Error">>, State).
-
-
-%% @private Called at B-leg
-pbx_get_offer(#state{ms={fs, FsId}}=State) ->
-    #state{id=SessId, session=Session} = State,
-    Mod = get_fs_mod(State),
-    case Mod:start_out(SessId, FsId, #{}) of
-        {ok, SDP} ->
-            %% TODO Send and receive pings
-            Offer = maps:get(offer, Session, #{}),
-            Session2 = Session#{offer=>Offer#{sdp=>SDP}},
-            {ok, State#state{session=Session2}};
-        {error, Error} ->
-            {error, {backend_out_error, Error}}
-    end.
-
-
-%% @private Starts a B-leg call
-do_send_b_call(Dest, #state{id=Id, session=Session}=State) ->
-    #{offer:=Offer} = Session,
-    State2 = status(calling, State),
-    case handle(nkmedia_session_out, [Id, Dest, Offer], State2) of
-        {ringing, Answer, Pid, State3} ->
-            State4 = add_link(out, Pid, State3),
-            do_ringing(Answer, State4);
-        {answer, Answer, Pid, State3} ->
-            ?LLOG(info, "session answer", [], State3),
-            State4 = add_link(out, Pid, State3),
-            do_answered(Answer, State4);
-        {async, Pid, State3} ->
-            ?LLOG(info, "session delayed", [], State3),
-            {noreply, add_link(out, Pid, State3)};
-        {hangup, Reason, State3} ->
-            ?LLOG(info, "session hangup: ~p", [Reason], State3),
-            stop_hangup(Reason, State3)
-    end.
-
-
-%% @private Called at the B-leg
-do_ringing(Answer, #state{status=calling}=State) ->
-    case Answer of
-        #{sdp:=_} ->
-            case set_answer(Answer, State) of
-                {ok, State2} -> 
-                    {noreply, status(ringing, Answer, State2)};
-                {error, Error} ->
-                    stop_hangup(Error, State)
-            end;
-        _ ->
-            {noreply, status(ringing, Answer, State)}
-    end;
-
-do_ringing(_Answer, State) ->
-    {noreply, State}.
-
-
-%% @private Called at the B-leg
-do_answered(_Answer, #state{status=Status}=State) when Status/=calling, Status/=ringing ->
-    ?LLOG(warning, "received unexpected answer", [], State),
+do_pbx_event(parked, #state{status=Status}=State)
+        when Status==ready; Status==ringing ->
     {noreply, State};
 
-do_answered(#{sdp:=SDP}, #state{session=#{answer:=Old}}=State) ->
-    case Old of
-        #{sdp:=SDP} ->
-            do_ready(State);
-        _ ->
-            ?LLOG(warning, "ignoring updated SDP!: ~p", [Old], State),
-            do_ready(State)
-    end;
+do_pbx_event(parked, #state{status=Status}=State) ->
+    ?LLOG(notice, "received parked in '~p'", [Status], State),
+    {noreply, State};
 
-do_answered(#{sdp:=_}=Answer, State) ->
-    case set_answer(Answer, State) of
-        {ok, State2} ->
-            do_ready(State2);
-        {error, Error} ->
-            stop_hangup(Error, State)
-    end;
+do_pbx_event({bridge, Remote}, State) ->
+    {noreply, status(call, #{peer=>Remote}, State)};
 
-do_answered(_Answer, State) ->
-    stop_hangup(<<"Missing SDP">>, State).
+do_pbx_event({mcu, McuInfo}, State) ->
+    {noreply, status(mcu, McuInfo, State)};
 
+do_pbx_event({hangup, Reason}, State) ->
+    stop_hangup(Reason, State);
 
-%% @private Called at the B-leg
-set_answer(Answer, #state{type=p2p, session=Session}=State) ->
-    Session2 = Session#{answer=>Answer},
-    {ok, State#state{has_answer=true, session=Session2}};
+do_pbx_event(stop, State) ->
+    stop_hangup(<<"MediaServer Stop">>, State);
 
-set_answer(Answer, #state{type=pbx, ms={fs, _}}=State) ->
-    #state{id=SessId, session=Session} = State,
-    Mod = get_fs_mod(State),
-    case Mod:answer_out(SessId, Answer) of
-        ok ->
-            Session2 = Session#{answer=>Answer},
-            {ok, State#state{has_answer=true, session=Session2}};
-        {error, Error} ->
-            ?LLOG(warning, "mediaserver error in set_answer: ~p", [Error], State),
-            {error, <<"Mediaserver Error">>}
-    end;
-
-set_answer(Answer, #state{type=proxy, session=Session}=State) ->
-    Session2 = Session#{answer=>Answer},
-    {ok, State#state{has_answer=true, session=Session2}}.
-
-
-%% @private Called at the B-leg
-do_ready(#state{type=Type, session=Session}=State) ->
-    #{answer:=Answer} = Session,
-    State2 = status(ready, #{answer=>Answer}, State),
-    case Type of
-        p2p ->
-            #{session_id:=PeerId} = Session,
-            {noreply, status(call, #{peer_id=>PeerId}, State2)};
-        proxy ->
-            #{session_id:=PeerId} = Session,
-            {noreply, status(call, #{peer_id=>PeerId}, State2)};
-        _ ->
-            {noreply, State2}
-    end.
+do_pbx_event(Event, State) ->
+    ?LLOG(warning, "unexpected ms event: ~p", [Event], State),
+    {noreply, State}.
 
 
 
@@ -1100,14 +1009,16 @@ update_config(Config, #state{session=Session, type=OldType, ms=MS}=State) ->
             error ->
                 OldType
         end,
-        case Type of
-            undefined -> ok;
-            p2p when MS==undefined -> ok;
-            pbx when MS==undefined -> ok;
-            pbx when element(1, MS)==fs -> ok;
-            proxy when MS==undefined -> ok;
-            proxy when element(1, MS)==janus -> ok;
-            _ -> throw(incompatible_type)
+        Type2 = case Type of
+            undefined when MS==undefined -> undefined;
+            undefined when element(1, MS)==fs -> pbx;
+            undefined when element(1, MS)==janus -> proxy;
+            p2p when MS==undefined -> p2p;
+            pbx when MS==undefined -> pbx;
+            pbx when element(1, MS)==fs -> pbx;
+            proxy when MS==undefined -> proxy;
+            proxy when element(1, MS)==janus -> proxy;
+            _ -> throw(invalid_session_type)
         end,
         State2 = State#state{
             type = Type,
@@ -1121,53 +1032,110 @@ update_config(Config, #state{session=Session, type=OldType, ms=MS}=State) ->
     end.
 
 
-
-% %% @private
-% send_to_mcu(_Room, #state{status=Status}=State) 
-%         when Status==wait; Status==ringing ->
-%     {error, {invalid_status, Status}, State};
-
-% send_to_mcu(Room, #state{id=SessId, ms={fs, FsId}}=State) ->
-%     ok = nkmedia_fs_cmd:set_var(FsId, SessId, "park_after_bridge", "true"),
-%     Cmd = [<<"conference:">>, Room, <<"@video-mcu-stereo">>],
-%     case nkmedia_fs_cmd:transfer_inline(FsId, SessId, Cmd) of
-%         ok ->
-%             {ok, status(wait, #{wait_op=>{mcu, Room}}, State)};
-%         {error, Error} ->
-%             {error, Error}
-%     end;
-
-% send_to_mcu(_Room, #state{ms=MS}) ->
-%     {error, {invalid_backend, MS}}.
-
-
+%% @private
+get_proxy(#state{id=Id, type=proxy}=State) ->
+    case get_mediaserver(State) of
+        {ok, {janus, JanusId}, State2} ->
+            case nkmedia_janus_session:start(Id, JanusId) of
+                {ok, Pid} ->
+                    {ok, Pid, add_link(janus, Pid, State2)};
+                {error, Error} ->
+                    {error, {proxy_connect_error, Error}}
+            end;
+        {error, Error} ->
+            {error, {get_proxy_error, Error}}
+    end.
 
 
 %% @private
-do_pbx_event(parked, #state{status=Status}=State)
-        when Status==ready; Status==ringing ->
-    {noreply, State};
+get_pbx_answer(#state{type=pbx, ms={fs, _}, has_answer=true}=State) ->
+    {ok, State};
 
-do_pbx_event(parked, #state{status=Status}=State) ->
-    ?LLOG(notice, "received parked in '~p'", [Status], State),
-    {noreply, State};
+get_pbx_answer(#state{type=pbx, ms={fs, FsId}, has_answer=false}=State) ->
+    #state{id=SessId, session=#{offer:=Offer}} = State,
+    case nkmedia_fs_verto:start_in(SessId, FsId, Offer) of
+        {ok, SDP} ->
+            %% TODO Send and receive pings
+            {ok, #{sdp=>SDP}, State};
+        {error, Error} ->
+            {error, {get_pbx_answer_error, Error}}
+    end;
 
-do_pbx_event({bridge, Remote}, State) ->
-    {noreply, status(call, #{peer=>Remote}, State)};
+get_pbx_answer(#state{type=pbx, ms=undefined}=State) ->
+    case get_mediaserver(State) of
+        {ok, {fs, _}, State2} ->
+            get_pbx_answer(State2);
+        {error, Error} ->
+            {error, {get_pbx_answer_error, Error}}
+    end.
 
-do_pbx_event({mcu, McuInfo}, State) ->
-    {noreply, status(mcu, McuInfo, State)};
 
-do_pbx_event({hangup, Reason}, State) ->
-    stop_hangup(Reason, State);
+%% @private
+get_pbx_offer(#state{type=pbx, ms={fs, _}, has_offer=true}=State) ->
+    {ok, State};
 
-do_pbx_event(stop, State) ->
-    stop_hangup(<<"MediaServer Stop">>, State);
+get_pbx_offer(#state{type=pbx, ms={fs, FsId}, has_offer=false}=State) ->
+    #state{id=SessId, session=Session} = State,
+    Mod = get_fs_mod(State),
+    case Mod:start_out(SessId, FsId, #{}) of
+        {ok, SDP} ->
+            %% TODO Send and receive pings
+            Offer1 = maps:get(offer, Session, #{}),
+            Offer2 = Offer1#{sdp=>SDP},
+            {ok, update_config(#{offer=>Offer2}, State)};
+        {error, Error} ->
+            {error, {backend_out_error, Error}}
+    end;
 
-do_pbx_event(Event, State) ->
-    ?LLOG(warning, "unexpected ms event: ~p", [Event], State),
-    {noreply, State}.
+get_pbx_offer(#state{type=pbx, ms=undefined}=State) ->
+        case get_mediaserver(State) of
+        {ok, {fs, _}, State2} ->
+            get_pbx_offer(State2);
+        {error, Error} ->
+            {error, {get_pbx_offer_error, Error}}
+    end.
 
+
+%% @private
+get_mediaserver(#state{ms=undefined}=State) ->
+    #state{srv_id=SrvId, type=Type, session=Session} = State,
+    case SrvId:nkmedia_session_get_mediaserver(Type, Session) of
+        {ok, MS, Session2} ->
+            Session3 = Session2#{mediaserver=>MS},
+            {ok, MS, State#state{ms=MS, session=Session3}};
+        {error, Error} ->
+            {error, Error}
+    end;
+
+get_mediaserver(#state{ms=MS}=State) ->
+    {ok, MS, State}.
+
+
+%% @private
+pbx_transfer(Dest, #state{id=SessId, ms={fs, FsId}}) ->
+    nkmedia_fs_cmd:transfer_inline(FsId, SessId, Dest).
+
+
+%% @private
+pbx_bridge(SessIdB, #state{id=SessIdA, ms={fs, FsId}}=State) ->
+    case nkmedia_fs_cmd:set_var(FsId, SessIdA, "park_after_bridge", "true") of
+        ok ->
+            nkmedia_fs_cmd:bridge(FsId, SessIdA, SessIdB);
+        {error, Error} ->
+            ?LLOG(warning, "pbx bridge error: ~p", [Error], State),
+            error
+    end.
+
+proxy_get_answer(AnswerB, #state{id=Id, ms={janus, _}, session=Session}=State) ->
+    case nkmedia_janus_session:videocall_answer(Id, AnswerB) of
+        {ok, AnswerA} ->
+            Session2 = Session#{answer=>AnswerA},
+            State2 = State#state{session=Session2},
+            {ok, status(ready, #{answer=>AnswerA}, State2)};
+        {error, Error} ->
+            ?LLOG(warning, "could not get answer from proxy: ~p", [Error], State),
+            error
+    end.
 
 
 
@@ -1175,7 +1143,7 @@ do_pbx_event(Event, State) ->
 stop_hangup(_Reason, #state{status=hangup}=State) ->
     {stop, normal, State};
 
-stop_hangup(Reason, #state{id=SessId, ms=MS, links=Links}=State) ->
+stop_hangup(Reason, #state{id=SessId, ms=MS, links=Links, froms=Froms}=State) ->
     lists:foreach(
         fun
             ({{call, CallId}, _, _Mon}) ->
@@ -1186,6 +1154,11 @@ stop_hangup(Reason, #state{id=SessId, ms=MS, links=Links}=State) ->
                 ok
         end,
         Links),
+     lists:foreach(
+        fun({_Id, From, _Opts}) ->
+            gen_server:reply(From, {hangup, Reason})
+        end,
+        Froms),
     case MS of
         {fs, FsId} ->
             nkmedia_fs_cmd:hangup(FsId, SessId);
@@ -1310,4 +1283,30 @@ do_find_link_pid(_Pid, []) -> not_found;
 do_find_link_pid(Pid, [{Id, Pid, _}|_]) -> Id;
 do_find_link_pid(Pid, [_|Rest]) -> do_find_link_pid(Pid, Rest).
 
+
+%% @private
+add_from(_Id, undefined, _Opts, State) ->
+    State;
+
+add_from(Id, From, Opts, #state{froms=Froms}=State) ->
+    State#state{links=[{Id, From, Opts}|Froms]}.
+
+
+%% @private
+get_from(Id, #state{froms=Froms}=State) ->
+    case lists:keytake(Id, 1, Froms) of
+        {value, {Id, From, Opts}, Froms2} ->
+            {From, Opts, State#state{froms=Froms2}};
+        false ->
+            {undefined, #{}, State}
+    end.
+
+
+reply_error(Error, undefined, State) ->
+    ?LLOG(warning, "operation error: ~p", [Error], State),
+    {noreply, State};
+
+reply_error(Error, From, State) ->
+    gen_server:reply(From, {error, Error}),
+    {noreply, State}.
 

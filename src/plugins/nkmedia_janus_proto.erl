@@ -33,7 +33,7 @@
     lager:Type("NkMEDIA Janus Proto (~s) "++Txt, [State#state.user | Args])).
 
 -define(PRINT(Txt, Args, State), 
-        print(Txt, Args, State),    % Uncomment this for detailed logs
+        % print(Txt, Args, State),    % Uncomment this for detailed logs
         ok).
 
 

@@ -159,7 +159,7 @@ nkmedia_verto_invite(SessId, Offer, #{srv_id:=SrvId}=Verto) ->
     {ok, verto()} | {hangup, nkmedia:hangup_reason(), verto()} | continue().
 
 nkmedia_verto_call(CallId, Dest, Verto) ->
-    ok = nkmedia_session:to_call(CallId, Dest),
+    ok = nkmedia_session:set_answer(CallId, {call, Dest}, #{}),
     {ok, Verto}.
 
 

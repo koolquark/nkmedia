@@ -246,8 +246,9 @@ update(#{<<"janus">>:=Janus, <<"transaction">>:=Id}=Msg, State) ->
             State#state{trans=maps:remove(Id, AllTrans)}
     end;
 
-update(#{<<"janus">>:=Janus}=Msg, State) ->
-    % ?LLOG(info, "server event '~s':\n~s", [Janus, nklib_json:encode_pretty(Msg)], State),
+update(#{<<"janus">>:=_Janus}=_Msg, State) ->
+    % ?LLOG(info, "server event '~s':\n~s", 
+    %       [Janus, nklib_json:encode_pretty(Msg)], State),
     State.
 
 %% @private

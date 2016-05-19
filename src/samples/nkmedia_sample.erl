@@ -24,9 +24,6 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([start/0, stop/0, restart/0]).
--export([find_user/1, find_call_id/1, to_mcu/2, to_park/1, to_join/2]).
--export([call/1, call_sip_user/1]).
-
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
 -export([nkmedia_verto_login/4, nkmedia_verto_call/3]).
 -export([nkmedia_call_resolve/2]).
@@ -71,76 +68,6 @@ restart() ->
     stop(),
     timer:sleep(100),
     start().
-
-
-find_call_id(User) ->
-    case nklib_proc:values({?MODULE, call, nklib_util:to_binary(User)}) of
-        [{CallId, _Pid}|_] -> {ok, CallId};
-        [] -> not_found
-    end.
-
-
-find_user(User) ->
-    case nklib_proc:values({?MODULE, user, nklib_util:to_binary(User)}) of
-        [{undefined, Pid}|_] -> {ok, Pid};
-        [] -> not_found
-    end.
-
-
-to_mcu(User, Room) ->
-    case find_call_id(User) of 
-        <<>> -> {error, user_not_found};
-        CallId -> nkmedia_session:to_mcu(CallId, Room)
-    end.
-
-
-to_park(User) ->
-    case find_call_id(User) of 
-        <<>> -> {error, user_not_found};
-        CallId -> nkmedia_session:to_park(CallId)
-    end.
-
-
-to_join(User1, User2) ->
-    case find_call_id(User1) of 
-        <<>> -> 
-            {error, user_not_found};
-        SessIdA -> 
-            case find_call_id(User2) of 
-                <<>> -> 
-                    {error, user_not_found};
-                CallId_B -> 
-                    nkmedia_session:to_join(SessIdA, CallId_B)
-            end
-    end.
-
-
-call(User) ->
-    case find_user(User) of
-        Pid when is_pid(Pid) ->
-            Config = #{monitor => self()},
-            {ok, CallId, _SessPid} = nkmedia_session:start(sample, Config),
-            ok = nkmedia_session:to_call(CallId, {verto, Pid}),
-            ok = nkmedia_session:to_mcu(CallId, "kk");
-        not_found ->
-            {error, user_not_found}
-    end.
-
-
-call_sip_user(User) ->
-    User2 = nklib_util:to_binary(User),
-    case nksip_registrar:find(sample, sip, User2, <<"nkmedia_sample">>) of
-        [Uri|_] ->
-            Config = #{monitor => self(), sdp_type=>sip},
-            {ok, CallId, _SessPid} = nkmedia_session:start(sample, Config),
-            spawn(
-                fun() ->
-                    _ = nkmedia_session:to_call(CallId, {sip, Uri, #{}}),
-                    ok = nkmedia_session:to_mcu(CallId, "kk")
-                end);
-        [] ->
-            {error, user_not_found}
-    end.
 
 
 
@@ -234,21 +161,21 @@ sip_register(Req, Call) ->
 send_call(SessId, Dest) ->
     case Dest of 
         <<"e">> ->
-            ok = nkmedia_session:to_echo(SessId, #{});
+            ok = nkmedia_session:set_answer(SessId, echo, #{});
         <<"fe">> ->
-            ok = nkmedia_session:to_echo(SessId, #{type=>pbx});
+            ok = nkmedia_session:set_answer(SessId, echo, #{type=>pbx});
         <<"m1">> ->
-            ok = nkmedia_session:to_mcu(SessId, "mcu1", #{});
+            ok = nkmedia_session:set_answer(SessId, {mcu, "mcu1"}, #{});
         <<"m2">> ->
-            ok = nkmedia_session:to_mcu(SessId, "mcu2", #{});
+            ok = nkmedia_session:set_answer(SessId, {mcu, "mcu2"}, #{});
         <<"p">> ->
-            ok = nkmedia_session:to_publisher(SessId, 1234, #{});
+            ok = nkmedia_session:set_answer(SessId, {publisher, 1234}, #{});
         <<"d", Num/binary>> ->
-            ok = nkmedia_session:to_call(SessId, Num, #{type=>p2p});
+            ok = nkmedia_session:set_answer(SessId, {call, Num}, #{type=>p2p});
         <<"f", Num/binary>> -> 
-            ok = nkmedia_session:to_call(SessId, Num, #{type=>pbx});
+            ok = nkmedia_session:set_answer(SessId, {call, Num}, #{type=>pbx});
         <<"j", Num/binary>> ->
-            ok = nkmedia_session:to_call(SessId, Num, #{type=>proxy});
+            ok = nkmedia_session:set_answer(SessId, {call, Num}, #{type=>proxy});
         _ ->
             no_number
     end.

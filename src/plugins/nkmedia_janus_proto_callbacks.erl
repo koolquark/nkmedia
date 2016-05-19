@@ -149,7 +149,7 @@ nkmedia_janus_invite(SessId, Offer, #{srv_id:=SrvId}=Janus) ->
     {ok, janus()} | {hangup, nkmedia:hangup_reason(), janus()} | continue().
 
 nkmedia_janus_call(CallId, Dest, Janus) ->
-    ok = nkmedia_session:to_call(CallId, Dest),
+    ok = nkmedia_session:set_answer(CallId, {call, Dest}, #{}),
     {ok, Janus}.
 
 
