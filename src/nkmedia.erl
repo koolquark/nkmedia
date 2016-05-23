@@ -51,6 +51,8 @@
         use_data => boolean(),
         in_bw => integer(),
         out_bw => integer(),
+        module => term(),				% User specific info
+        pid => pid(),				% Will be monitorized
 		verto_params => map()
 	}.
 
@@ -62,7 +64,9 @@
 		verto_params => map(),
         use_audio => boolean(),
         use_video => boolean(),
-        use_data => boolean()
+        use_data => boolean(),
+        module => term(),			
+        pid => pid()
 	}.
 
 -type call_dest() :: binary().

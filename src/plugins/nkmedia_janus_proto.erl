@@ -150,7 +150,7 @@ get_all() ->
     plugin :: binary(),
     handle :: integer(),
     user :: binary(),
-    calls = #{} :: #{CallId::binary() => {pid(), reference()}},
+    calls = [] :: [{CallId::binary(), reference()}],
     janus :: janus(),
     pos :: integer()
 
@@ -285,6 +285,17 @@ conn_handle_cast(Msg, NkPort, State) ->
 %             {ok, State}
 %     end;
 
+conn_handle_info({'DOWN', Ref, process, _Pid, Reason}=Info, _NkPort, State) ->
+    #state{calls=Calls} = State,
+    case lists:keytake(Ref, 2, Calls) of
+        {value, {CallId, Ref}, Calls2} ->
+            ?LLOG(notice, "call ~s down: ~p", [CallId, Reason], State),
+            {ok, State#state{calls=Calls2}};
+        false ->
+            ?LLOG(notice, "down not found: ~p, ~p", [Ref, Calls], State),
+            handle(nkmedia_janus_handle_info, [Info], State)
+    end;
+
 conn_handle_info(Info, _NkPort, State) ->
     handle(nkmedia_janus_handle_info, [Info], State).
 
@@ -303,7 +314,7 @@ conn_stop(Reason, _NkPort, State) ->
 
 send_req({invite, CallId, #{sdp:=SDP}=Opts}, From, NkPort, State) ->
     nklib_util:reply(From, ok),
-    ?LLOG(notice, "ordered INVITE (~s)", [CallId], State),
+    ?LLOG(info, "ordered INVITE (~s)", [CallId], State),
     Result = #{
         event => incomingcall, 
         username => unknown
@@ -316,9 +327,13 @@ send_req({invite, CallId, #{sdp:=SDP}=Opts}, From, NkPort, State) ->
     send(Req, NkPort, State2);
 
 send_req({answer, CallId, #{sdp:=SDP}}, From, NkPort, #state{calls=Calls}=State) ->
-    ?LLOG(notice, "ordered ANSWER (~s)", [CallId], State),
-    [{CallId, _}|_] = maps:to_list(Calls),
-
+    ?LLOG(info, "ordered ANSWER (~s)", [CallId], State),
+    case Calls of
+        [{CallId, _}|_] ->
+            ok;
+        Other ->
+            ?LLOG(warning, "answer for unknown call: ~p", [Other], State)
+    end,
     Result = #{
         event => accepted, 
         username => unknown
@@ -329,7 +344,7 @@ send_req({answer, CallId, #{sdp:=SDP}}, From, NkPort, #state{calls=Calls}=State)
     send(Req, NkPort, State);
 
 send_req({hangup, CallId, Reason}, From, NkPort, State) ->
-    ?LLOG(notice, "ordered HANGUP (~s, ~p)", [CallId, Reason], State),
+    ?LLOG(info, "ordered HANGUP (~s, ~p)", [CallId, Reason], State),
     nklib_util:reply(From, ok),
     Result = #{
         event => hangup, 
@@ -396,7 +411,7 @@ process_client_req(Cmd, _Msg, _NkPort, State) ->
 %% @private
 process_client_msg(register, Body, Msg, NkPort, State) ->
     #{<<"username">>:=User} = Body,
-    ?LLOG(notice, "received REGISTER (~s)", [User], State),
+    ?LLOG(info, "received REGISTER (~s)", [User], State),
     nklib_proc:put(?MODULE, User),
     nklib_proc:put({?MODULE, user, User}),
     Result = #{event=>registered, username=>User},
@@ -405,7 +420,7 @@ process_client_msg(register, Body, Msg, NkPort, State) ->
 
 process_client_msg(call, Body, Msg, NkPort, State) ->
     CallId = nklib_util:uuid_4122(),
-    ?LLOG(notice, "received CALL (~s)", [CallId], State),
+    ?LLOG(info, "received CALL (~s)", [CallId], State),
     #{<<"username">>:=Dest} = Body,
     #{<<"jsep">>:=#{<<"sdp">>:=SDP}} = Msg,
     case handle(nkmedia_janus_invite, [CallId, #{dest=>Dest, sdp=>SDP}], State) of
@@ -422,8 +437,8 @@ process_client_msg(call, Body, Msg, NkPort, State) ->
     send(Resp, NkPort, State3);
 
 process_client_msg(accept, _Body, Msg, NkPort, #state{calls=Calls}=State) ->
-    [{CallId, _}|_] = maps:to_list(Calls),
-    ?LLOG(notice, "received ACCEPT (~s)", [CallId], State),
+    [{CallId, _}|_] = Calls,
+    ?LLOG(info, "received ACCEPT (~s)", [CallId], State),
     #{<<"jsep">>:=#{<<"sdp">>:=SDP}} = Msg,
     case handle(nkmedia_janus_answer, [CallId, #{sdp=>SDP}], State) of
         {ok, State2} ->
@@ -437,7 +452,7 @@ process_client_msg(accept, _Body, Msg, NkPort, #state{calls=Calls}=State) ->
     send(Resp, NkPort, State2);
 
 process_client_msg(hangup, _Body, _Msg, _NkPort, #state{calls=Calls}=State) ->
-    State3 = case maps:to_list(Calls) of
+    State3 = case Calls of
         [{CallId, _}|_] ->
             {ok, State2} = handle(nkmedia_janus_bye, [CallId], State),
             del_call(CallId, State2);
@@ -445,7 +460,7 @@ process_client_msg(hangup, _Body, _Msg, _NkPort, #state{calls=Calls}=State) ->
             CallId = <<>>,
             State
     end,
-    ?LLOG(notice, "received HANGUP (~s)", [CallId], State),
+    ?LLOG(notice, "received HANGUP (~s)", [CallId], State3),
     {ok, State3};
 
 process_client_msg(list, _Body, Msg, NkPort, State) ->
@@ -534,14 +549,13 @@ call(JanusPid, Msg) ->
 %% @private
 add_call(CallId, Pid, #state{calls=Calls}=State) ->
     nklib_proc:put({?MODULE, call, CallId}),
-    case maps:is_key(CallId, Calls) of
+    case lists:keymember(CallId, 1, Calls) of
         false ->
             Ref = case is_pid(Pid) of
                 true -> monitor(process, Pid);
                 _ -> undefined
             end,
-            Calls2 = maps:put(CallId, Ref, Calls),
-            State#state{calls=Calls2};
+            State#state{calls=[{CallId, Ref}|Calls]};
         true ->
             ?LLOG(notice, "duplicated reg!", [], State),
             State
@@ -551,14 +565,14 @@ add_call(CallId, Pid, #state{calls=Calls}=State) ->
 %% @private
 del_call(CallId, #state{calls=Calls}=State) ->
     nklib_proc:del({?MODULE, call, CallId}),
-    case maps:find(CallId, Calls) of
-        {ok, Ref} -> nklib_util:demonitor(Ref);
-        error -> ok
-    end,
-    State#state{calls=maps:remove(CallId, Calls)}.
-
-
-
+    case lists:keytake(CallId, 1, Calls) of
+        {value, {CallId, Ref}, Calls2} -> 
+            nklib_util:demonitor(Ref),
+            State#state{calls=Calls2};
+        false ->
+            State
+    end.
+    
 
 
 % %% @private

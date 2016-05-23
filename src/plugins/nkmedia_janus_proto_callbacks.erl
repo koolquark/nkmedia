@@ -123,12 +123,8 @@ nkmedia_janus_login(_JanusId, _Login, _Pass, Janus) ->
 
 nkmedia_janus_invite(SessId, Offer, #{srv_id:=SrvId}=Janus) ->
     #{dest:=Dest} = Offer,
-    Spec = #{
-        id => SessId, 
-        offer => Offer, 
-        monitor => self(),
-        nkmedia_janus_in => self()    % We use it to monitor status from session
-    },
+    Offer2 = Offer#{module=>nkmedia_janus_in, pid=>self()},
+    Spec = #{id => SessId, offer => Offer2},
     case nkmedia_session:start(SrvId, Spec) of
         {ok, SessId, SessPid} ->
             case SrvId:nkmedia_janus_call(SessId, Dest, Janus) of
@@ -225,7 +221,8 @@ nkmedia_janus_handle_info(Msg, Janus) ->
 
 
 %% @private
-nkmedia_session_event(SessId, {status, hangup, _}, #{nkmedia_janus_in:=Pid}) ->
+nkmedia_session_event(SessId, {status, hangup, _}, 
+                      #{offer:=#{module:=nkmedia_janus_in, pid:=Pid}}) ->
     nkmedia_janus_proto:hangup(Pid, SessId),
     continue;
 
@@ -233,7 +230,8 @@ nkmedia_session_event(SessId, {status, hangup, _}, #{nkmedia_janus_out:=Pid}) ->
     nkmedia_janus_proto:hangup(Pid, SessId),
     continue;
 
-nkmedia_session_event(SessId, {status, ready, Data}, #{nkmedia_janus_in:=Pid}) ->
+nkmedia_session_event(SessId, {status, ready, Data}, 
+                      #{offer:=#{module:=nkmedia_janus_in, pid:=Pid}}) ->
     #{answer:=#{sdp:=_SDP}=Answer} = Data,
     lager:info("Janus calling media available"),
     % lager:notice("Janus calling media available: ~s", [SDP]),
@@ -243,7 +241,8 @@ nkmedia_session_event(SessId, {status, ready, Data}, #{nkmedia_janus_in:=Pid}) -
 nkmedia_session_event(_SessId, {status, ready, _Data}, #{nkmedia_janus_out:=_Pid}) ->
     continue;
 
-% nkmedia_session_event(SessId, {status, Status, Data}, #{nkmedia_janus_in:=_}) ->
+% nkmedia_session_event(SessId, {status, Status, Data}, 
+%                      #{offer:=#{module:=nkmedia_janus_in, pid:=Pid}}) ->
 %     lager:notice("Janus In status (~s): ~p, ~p", [SessId, Status, Data]),
 %     continue;
 
@@ -275,7 +274,7 @@ nkmedia_call_resolve(Dest, Call) ->
         [Pid|_] ->
             {ok, {nkmedia_janus, Pid}, Call};
         [] ->
-            lager:notice("Janus: user ~s not found", [Dest]),
+            lager:info("Janus: user ~s not found", [Dest]),
             continue
     end.
 

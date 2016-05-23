@@ -23,8 +23,7 @@
 -module(nkmedia_fs).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/1, stop/1]).
--export([start_inbound/3, start_outbound/2, channel_op/3, channel_op/4]).
+-export([start/0, start/1, stop/1, stop_all/0]).
 -export([config/1]).
 -export_type([config/0]).
 
@@ -33,12 +32,15 @@
 %% Types
 %% ===================================================================
 
+-type id() :: nkmedia_freeswitch_engine:id().
+
 
 -type config() ::
     #{
         comp => binary(),
         vsn => binary(),
         rel => binary(),
+        base => inet:port_number(),
         pass => binary(),
         name => binary()
     }.
@@ -93,54 +95,35 @@
 %% Public functions
 %% ===================================================================
 
-%% @doc Installs and starts a local FS instance
+%% @doc Starts a FREESWITCH instance
+-spec start() ->
+    {ok, id()} | {error, term()}.
+
+start() ->
+    start(#{}).
+
+
+%% @doc Starts a FREESWITCH instance
 -spec start(config()) ->
+    {ok, id()} | {error, term()}.
+
+start(Config) ->
+	nkmedia_fs_docker:start(Config).
+
+
+%% @doc Stops a FREESWITCH instance
+-spec stop(id()) ->
     ok | {error, term()}.
 
-start(Spec) ->
-	case nkmedia_fs_docker:config(Spec) of
-		{ok, Spec2, Docker} ->
-			nkmedia_fs_docker:start(Spec2, Docker);
-		{error, Error} ->
-			{error, Error}
-	end.
-	% case nkmedia_fs_docker:start(Opts) of
-	% 	ok ->
-	% 		case nkmedia_sup:start_fs(config(Opts)) of
-	% 			{ok, Pid} ->
-	% 				case Opts of
-	% 					#{callback:=CallBack} ->
-	% 						case nkmedia_fs_server:register(Pid, CallBack) of
-	% 							ok ->
-	% 								{ok, Pid};
-	% 							{error, Error} ->
-	% 								{error, Error}
-	% 						end;
-	% 					_ ->
-	% 						{ok, Pid}
-	% 				end;
-	% 			{error, Error} ->
-	% 				{error, Error}
-	% 		end;
-	% 	{error, Error} ->
-	% 		{error, Error}
-	% end.
+stop(Id) ->    
+	nkmedia_fs_docker:stop(Id).
 
 
-%% @doc Equivalent to stop()
--spec stop(config()) ->
-    {ok, pid()} | {error, term()}.
+%% @doc
+stop_all() ->
+	nkmedia_fs_docker:stop_all().
 
-stop(Spec) ->
-	case nkmedia_fs_docker:config(Spec) of
-		{ok, Spec2, Docker} ->
-			nkmedia_fs_docker:stop(Spec2, Docker);
-		{error, Error} ->
-			{error, Error}
-	end.
-	% nkmedia_sup:stop_fs(config(Opts)),
-	% nkmedia_fs_docker:remove(Opts).
-	
+
 
 
 % %% @doc Starts a proxy connection
@@ -159,37 +142,37 @@ stop(Spec) ->
 % 	end.
 
 
-%% @doc Generates a new inbound channel
--spec start_inbound(pid(), binary(), nkmedia_fs_server:in_ch_opts()) ->
-	{ok, CallId::binary(), pid(), SDP::binary()} | {error, term()}.
+% %% @doc Generates a new inbound channel
+% -spec start_inbound(pid(), binary(), nkmedia_fs_server:in_ch_opts()) ->
+% 	{ok, CallId::binary(), pid(), SDP::binary()} | {error, term()}.
 
-start_inbound(Pid, SDP, Opts) ->
-	nkmedia_fs_server:start_inbound(Pid, SDP, Opts).
-
-
-%% @doc Generates a new outbound channel at this server and node
--spec start_outbound(pid(), nkmedia_fs_server:out_ch_opts()) ->
-	{ok, CallId::binary()} | {error, term()}.
-
-start_outbound(Pid, Opts) ->
-	nkmedia_fs_server:start_outbound(Pid, Opts).
+% start_inbound(Pid, SDP, Opts) ->
+% 	nkmedia_fs_server:start_inbound(Pid, SDP, Opts).
 
 
-%% @doc Equivalent to channel_op(Pid, CallId, Op, #{})
--spec channel_op(pid(), binary(), nkmedia_fs_channel:op()) ->
-	ok | {error, term()}.
+% %% @doc Generates a new outbound channel at this server and node
+% -spec start_outbound(pid(), nkmedia_fs_server:out_ch_opts()) ->
+% 	{ok, CallId::binary()} | {error, term()}.
 
-channel_op(Pid, CallId, Op) ->
-	channel_op(Pid, CallId, Op, #{}).
+% start_outbound(Pid, Opts) ->
+% 	nkmedia_fs_server:start_outbound(Pid, Opts).
 
 
-%% @doc Tries to perform an operation over a channel.
--spec channel_op(pid(), binary(), nkmedia_fs_channel:op(), 
-			     nkmedia_fs_channel:op_opts()) ->
-	ok | {error, term()}.
+% %% @doc Equivalent to channel_op(Pid, CallId, Op, #{})
+% -spec channel_op(pid(), binary(), nkmedia_fs_channel:op()) ->
+% 	ok | {error, term()}.
 
-channel_op(Pid, CallId, Op, Opts) ->
-	nkmedia_fs_server:channel_op(Pid, CallId, Op, Opts).
+% channel_op(Pid, CallId, Op) ->
+% 	channel_op(Pid, CallId, Op, #{}).
+
+
+% %% @doc Tries to perform an operation over a channel.
+% -spec channel_op(pid(), binary(), nkmedia_fs_channel:op(), 
+% 			     nkmedia_fs_channel:op_opts()) ->
+% 	ok | {error, term()}.
+
+% channel_op(Pid, CallId, Op, Opts) ->
+% 	nkmedia_fs_server:channel_op(Pid, CallId, Op, Opts).
 
 
 

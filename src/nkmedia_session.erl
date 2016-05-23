@@ -116,7 +116,7 @@
         get_sdp => boolean()
     }.
 
--type op_meta() ::  
+-type op_result() ::  
     #{
         offer => nkmedia:offer(),
         answer => nkmedia:answer()
@@ -203,7 +203,7 @@ hangup_all() ->
 
 %% @doc 
 -spec set_offer(id(), offer_op(), op_opts()) ->
-    ok | {ok, op_meta()} | {error, term()}.
+    ok | {ok, op_result()} | {error, term()}.
 
 set_offer(SessId, OfferOp, #{sync:=true}=Opts) ->
     do_call(SessId, {offer_op, OfferOp, Opts});
@@ -214,7 +214,7 @@ set_offer(SessId, OfferOp, Opts) ->
 
 %% @doc 
 -spec set_answer(id(), answer_op(), op_opts()) ->
-    ok | {ok, op_meta()} | {error, term()}.
+    ok | {ok, op_result()} | {error, term()}.
 
 set_answer(SessId, AnswerOp, #{sync:=true}=Opts) ->
     do_call(SessId, {answer_op, AnswerOp, Opts});
@@ -273,7 +273,7 @@ call_event(SessPid, CallId, Event) ->
 %% ===================================================================
 
 -type link_id() ::
-    user | {call, nkmedia_call:id()} | janus | out.
+    offer | {call, nkmedia_call:id()} | janus | out.
 
 -type from_id() ::
     {call, nkmedia_call:id()} | out.
@@ -307,21 +307,15 @@ init([#{id:=Id, srv_id:=SrvId}=Session]) ->
         ms = maps:get(mediaserver, Session, undefined),
         session = #{}
     },
-    State2 = case Session of
-        #{monitor:=Pid} -> 
-            add_link(user, Pid, State1);
-        _ -> 
-            State1
-    end,
-    {ok, State3} = update_config(Session, State2),
-    {ok, State4} = handle(nkmedia_session_init, [Id], State3),
+    {ok, State2} = update_type(Session, State1),
+    {ok, State3} = handle(nkmedia_session_init, [Id], State2),
     lager:info("NkMEDIA Session ~s starting (~p)", [Id, self()]),
-    #state{has_offer=Offer, has_answer=Answer} = State4,
+    #state{has_offer=Offer, has_answer=Answer} = State3,
     case Offer andalso Answer of
         true -> 
-            {ok, status(ready, State4)};
+            {ok, status(ready, State3)};
         false ->
-            {ok, status(wait, State4)}
+            {ok, status(wait, State3)}
     end.
 
 
@@ -339,13 +333,13 @@ handle_call(get_status, _From, State) ->
     {reply, {ok, Status, Info, erlang:read_timer(Timer) div 1000}, State};
 
 handle_call({offer_op, OfferOp, Opts}, From, #state{has_offer=false}=State) ->
-    send_offer_op(OfferOp, Opts, From, State);
+    do_offer_op(OfferOp, Opts, From, State);
 
 handle_call({offer_op, _OfferOp, _Opts}, _From, State) ->
     {reply, {error, already_has_offer}, State};
 
 handle_call({answer_op, AnswerOp, Opts}, From, State) ->
-    send_answer_op(AnswerOp, Opts, From, State);
+    do_answer_op(AnswerOp, Opts, From, State);
 
 handle_call(Msg, From, State) -> 
     handle(nkmedia_session_handle_call, [Msg, From], State).
@@ -356,13 +350,14 @@ handle_call(Msg, From, State) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
 handle_cast({offer_op, OfferOp, Opts}, #state{has_offer=false}=State) ->
-    send_offer_op(OfferOp, Opts, undefined, State);
+    do_offer_op(OfferOp, Opts, undefined, State);
 
 handle_cast({offer_op, _OfferOp, _Opts}, State) ->
-    {reply, {error, already_has_offer}, State};
+    ?LLOG(warning, "already had offer", [], State),
+    {stop, normal, State};
 
 handle_cast({answer_op, AnswerOp, Opts}, State) ->
-    send_answer_op(AnswerOp, Opts, undefned, State);
+    do_answer_op(AnswerOp, Opts, undefined, State);
 
 handle_cast({hangup, Reason}, State) ->
     ?LLOG(info, "external hangup: ~p", [Reason], State),
@@ -392,12 +387,15 @@ handle_cast({pbx_event, FsId2, Event}, #state{ms=MS}=State) ->
     {noreply, State};
 
 handle_cast({reply, ringing}, State) ->
+    ?LLOG(info, "receiving ringing", [], State),
     invite_ringing(#{}, State);
 
 handle_cast({reply, {ringing, Answer}}, State) ->
+    ?LLOG(info, "receiving ringing", [], State),
     invite_ringing(Answer, State);
 
 handle_cast({reply, {answered, Answer}}, State) ->
+    ?LLOG(info, "receiving answered", [], State),
     invite_answered(Answer, State);
 
 handle_cast({reply, Reply}, State) ->
@@ -422,12 +420,18 @@ handle_info({timeout, _, status_timeout}, State) ->
 
 handle_info({'DOWN', _Ref, process, Pid, Reason}=Msg, State) ->
     case find_link_pid(Pid, State) of
-        user when Reason==normal ->
-            ?LLOG(info, "user monitor down (normal)", [], State),
-            stop_hangup(<<"Monitor Stop">>, State);
-        user ->
-            ?LLOG(notice, "user monitor down (~p)", [Reason], State),
-            stop_hangup(<<"Monitor Stop">>, State);
+        offer when Reason==normal ->
+            ?LLOG(info, "offer monitor down (normal)", [], State),
+            stop_hangup(<<"Offer Monitor Stop">>, State);
+        offer ->
+            ?LLOG(notice, "offer monitor down (~p)", [Reason], State),
+            stop_hangup(<<"Offer Monitor Stop">>, State);
+        answer when Reason==normal ->
+            ?LLOG(info, "answer monitor down (normal)", [], State),
+            stop_hangup(<<"Answer Monitor Stop">>, State);
+        answer ->
+            ?LLOG(notice, "answer monitor down (~p)", [Reason], State),
+            stop_hangup(<<"Answer Monitor Stop">>, State);
         {call, CallId} when Reason==normal ->
             ?LLOG(info, "call ~s down (normal)", [CallId], State),
             stop_hangup(<<"Call Down">>, State);
@@ -478,25 +482,40 @@ terminate(Reason, State) ->
 %% Internal - offer_op
 %% ===================================================================
 
-offer_op(#{sdp:=_}=Offer, Opts, From, State) ->
+%% TODO: Check if we are ringing, calling or waiting to fs
+
+%% @private
+do_offer_op(OfferOp, Opts, From, State) ->
+    case set_default_type(offer, OfferOp, Opts, State) of
+        {ok, State2} ->
+            do_offer(OfferOp, Opts, From, State2);
+        {error, Error} ->
+            reply_error(Error, From, State)
+    end.
+
+
+%% @private Process offer
+do_offer(#{sdp:=_}=Offer, Opts, From, State) ->
+    State2 = case Offer of
+        #{offer:=#{pid:=Pid}} -> 
+            add_link(offer, Pid, State);
+        _ -> 
+            State
+    end,
     Meta = case Opts of
         #{get_offer:=true} -> #{offer=>Offer};
         _ -> #{}
     end,
     nklib_util:reply(From, {ok, Meta}),
-    State2 = update_config(#{offer=>Offer}, State),
-    {noreply, State2};
+    State3 = update_type(#{offer=>Offer}, State2),
+    {noreply, State3};
 
-offer_op({listener, Room, UserId}, Opts, From, #state{type=undefined}=State) ->
-    State2 = update_config(#{type=>proxy}, State),
-    offer_op({listener, Room, UserId}, Opts, From, State2);
-
-offer_op({listener, Room, UserId}, Opts, From, #state{type=proxy}=State) ->
+do_offer({listener, Room, UserId}, Opts, From, #state{type=proxy}=State) ->
     case get_proxy(State) of
         {ok, Pid, State2} ->
             case nkmedia_janus_session:listener(Pid, Room, UserId) of
                 {ok, #{sdp:=_}=Offer} ->
-                    offer_op(Offer, Opts, From, State);
+                    do_offer(Offer, Opts, From, State);
                 {error, Error} ->
                     reply_error(Error, From, State2)
             end;
@@ -504,46 +523,42 @@ offer_op({listener, Room, UserId}, Opts, From, #state{type=proxy}=State) ->
             reply_error(Error, From, State)
     end;
 
-offer_op({listener, _Room, _UserId}, _Opts, From, State) ->
-    reply_error(incompatible_session_type, From, State);
+do_offer({listener, _Room, _UserId}, _Opts, From, State) ->
+    reply_error(incompatible_session_type, From, State).
 
-offer_op(_OfferOp, _Opts, From, State) ->
-    reply_error(unknown_offer_op, From, State).
-
-
-
-%% ===================================================================
-%% offer_op - util
-%% ===================================================================
-
-
-%% TODO: Check if we are ringing, calling or waiting to fs
 
 %% @private
-send_offer_op(OfferOp, Opts, From, #state{type=Type}=State) ->
-    case offer_op_default(OfferOp) of
-        unknown ->
-            {reply, {error, unknown_offer_op}, State};
-        DefType ->
-            Opts2 = case Type of
-                undefined -> Opts#{type=>DefType};
-                _ -> Opts
-            end,
-            case update_config(Opts2, State) of
-                {ok, State2} ->
-                    offer_op(OfferOp, Opts2, From, State2);
-                {error, Error} ->
-                    {reply, {error, Error}, State}
+set_default_type(Class, Op, Opts, #state{type=OldType}=State) ->
+    DefType = case Class of
+        offer ->
+            case Op of
+                Map when is_map(Map) -> undefined;
+                {listener, _, _} -> proxy;
+                _ -> unknown
+            end;
+        answer ->
+            case Op of
+                Map when is_map(Map) -> undefined;
+                echo -> proxy;
+                {mcu, _} -> pbx;
+                {call, _} -> proxy;
+                {invite, _} -> proxy;
+                {publisher, _} -> proxy;
+                _ -> unknown
             end
-    end.
-
-
-%% @private
-offer_op_default(Op) ->
-    case Op of
-        Map when is_map(Map) -> undefined;
-        {listener, _, _} -> proxy;
-        _ -> unknown
+    end,
+    case DefType of
+        unknown ->
+            {error, unknown_op};
+        _ ->
+            case maps:get(type, Opts, OldType) of
+                undefined -> 
+                    update_type(#{type=>DefType}, State);
+                OldType -> 
+                    {ok, State};
+                NewType ->
+                    update_type(#{type=>NewType}, State)
+            end
     end.
 
 
@@ -552,12 +567,29 @@ offer_op_default(Op) ->
 %% Internal - answer_op
 %% ===================================================================
 
+%% @private
+do_answer_op(AnswerOp, Opts, From, State) ->
+    case set_default_type(answer, AnswerOp, Opts, State) of
+        {ok, #state{has_offer=true, type=_Type3}=State2} ->
+            answer_op(AnswerOp, Opts, From, State2);
+        {ok, #state{type=pbx, has_offer=false}=State2} ->
+            case get_pbx_offer(State2) of
+                {ok, State3} ->
+                    answer_op(AnswerOp, Opts, From, State3);
+                {error, Error} ->
+                    reply_error(Error, From, State)
+            end;
+        {ok, State2} ->
+            reply_error(offer_is_missing, From, State2);
+        {error, Error} ->
+            reply_error(Error, From, State)
+    end.
 
 
 %% RAW SDP
 answer_op(#{sdp:=_}=Answer, Opts, From, #state{has_answer=false}=State) ->
     State2 = answer_op_set_ready(Answer, State),
-    answer_op_reply(From, Opts, State2),
+    answer_op_reply(ok, Opts, From, State2),
     {noreply, State2};
 
 
@@ -569,7 +601,7 @@ answer_op(echo, Opts, From, #state{type=proxy, has_answer=false}=State) ->
             case nkmedia_janus_session:echo(Pid, Offer) of
                 {ok, #{sdp:=_}=Answer} ->
                     State3 = answer_op_set_ready(Answer, State2),
-                    answer_op_reply(From, Opts, State3),
+                    answer_op_reply(ok, Opts, From, State3),
                     {noreply, status(echo, State2)};
                 {error, Error} ->
                     reply_error(Error, From, State2)
@@ -581,17 +613,19 @@ answer_op(echo, Opts, From, #state{type=proxy, has_answer=false}=State) ->
 answer_op(echo, Opts, From, #state{type=pbx, has_answer=false}=State) ->
     case get_pbx_answer(State) of
         {ok, Answer, State2} ->
-            State2 = answer_op_set_ready(Answer, State),
-            answer_op(echo, Opts, From, State2);
+            State3 = answer_op_set_ready(Answer, State2),
+            answer_op(echo, Opts, From, State3);
         {error, Error} ->
             reply_error(Error, From, State)
     end;
 
 answer_op(echo, Opts, From, #state{type=pbx, has_answer=true}=State) ->
+
     case pbx_transfer("echo", State) of
         ok ->
             % FS will send event and status will be updated
-            answer_op_reply(From, Opts, State);
+            answer_op_reply(ok, Opts, From, State),
+            {noreply, State};
         {error, Error} ->
             reply_error({echo_transfer_error, Error}, From, State)
     end;
@@ -601,8 +635,8 @@ answer_op(echo, Opts, From, #state{type=pbx, has_answer=true}=State) ->
 answer_op({mcu, Room}, Opts, From, #state{type=pbx, has_answer=false}=State) ->
     case get_pbx_answer(State) of
         {ok, Answer, State2} ->
-            State2 = answer_op_set_ready(Answer, State),
-            answer_op({mcu, Room}, Opts, From, State2);
+            State3 = answer_op_set_ready(Answer, State2),
+            answer_op({mcu, Room}, Opts, From, State3);
         {error, Error} ->
             reply_error(Error, From, State)
     end;
@@ -613,7 +647,8 @@ answer_op({mcu, Room}, Opts, From, #state{type=pbx, has_answer=true}=State) ->
     case pbx_transfer(Cmd, State) of
         ok ->
             % FS will send event and status will be updated
-            answer_op_reply(From, Opts, State);
+            answer_op_reply(ok, Opts, From, State),
+            {noreply, State};
         {error, Error} ->
             reply_error({mcu_transfer_error, Error}, From, State)
     end;
@@ -644,8 +679,8 @@ answer_op({call, Dest}, Opts, From, #state{type=p2p, has_answer=false}=State) ->
 answer_op({call, Dest}, Opts, From, #state{type=pbx, has_answer=false}=State) ->
     case get_pbx_answer(State) of
         {ok, Answer, State2} ->
-            State2 = answer_op_set_ready(Answer, State),
-            answer_op({call, Dest}, Opts, From, State2);
+            State3= answer_op_set_ready(Answer, State2),
+            answer_op({call, Dest}, Opts, From, State3);
         {error, Error} ->
             reply_error(Error, From, State)
     end;
@@ -691,7 +726,7 @@ answer_op({invite, Dest}, Opts, From, #state{id=Id, session=Session}=State) ->
             {noreply, State5};
         {hangup, Reason, State3} ->
             ?LLOG(info, "session hangup: ~p", [Reason], State3),
-            gen_server:reply(From, {hangup, Reason}),
+            answer_op_reply({hangup, Reason}, Opts, From, State),
             stop_hangup(Reason, State3)
     end;
 
@@ -701,77 +736,42 @@ answer_op(_AnswerOp, _Opts, From, State) ->
     reply_error(incompatible_session_type, From, State).
 
 
+
+
 %% ===================================================================
 %% answer_op - util
 %% ===================================================================
 
 
-%% @private
-send_answer_op(AnswerOp, Opts, From, #state{type=Type}=State) ->
-    case answer_op_default(AnswerOp) of
-        unknown ->
-            {reply, {error, unknown_answer_op}, State};
-        DefType ->
-            Type2 = maps:get(type, Opts, Type),
-            Opts2 = Opts#{type=>Type2};
-
-            lager:error("T: ~p", [Type]),
-
-
-            case update_config(Opts2, State) of
-                {ok, #state{has_offer=true}=State2} ->
-                    answer_op(AnswerOp, Opts2, From, State2);
-                {ok, #state{type=pbx, has_offer=false}=State2} ->
-                    case get_pbx_offer(State2) of
-                        {ok, State3} ->
-                            answer_op(AnswerOp, Opts2, From, State3);
-                        {error, Error} ->
-                            reply_error(Error, From, State)
-                    end;
-                {ok, State2} ->
-                    reply_error(offer_is_missing, From, State2);
-                {error, Error} ->
-                    reply_error(Error, From, State)
-            end
-    end.
-
-
-%% @private
-answer_op_default(Op) ->
-    case Op of
-        Map when is_map(Map) -> undefined;
-        echo -> proxy;
-        {mcu, _} -> pbx;
-        {publisher, _} -> proxy;
-        {invite, _} -> proxy;
-        _ -> unknown
-    end.
-
 
 %% @private
 answer_op_set_ready(#{sdp:=_}=Answer, #state{has_answer=false}=State) ->
-    {ok, State2} = update_config(#{answer=>Answer}, State),
+    {ok, State2} = update_type(#{answer=>Answer}, State),
     status(ready, #{answer=>Answer}, State2).
 
 
 %% @private
-answer_op_reply(From, Opts, #state{session=Session}) ->
+answer_op_reply(ok, Opts, From, #state{session=Session}) ->
     Meta = case Opts of
         #{get_answer:=true} -> 
             #{answer=>maps:get(answer, Session)};
         _ -> 
             #{}
     end,
-    nklib_util:reply(From, {ok, Meta}).
+    nklib_util:reply(From, {ok, Meta});
+
+answer_op_reply(Reply, _Opts, From, _State) ->
+    nklib_util:reply(From, Reply).
 
 
 %% @private
 do_send_call(Dest, Opts, Offer, From, State) ->
     #state{id=Id, session=Session} = State,
-    gen_server:reply(From, {ok, #{}}),
+    % answergen_server:reply(From, {ok, #{}}),
     Shared = [srv_id, type, mediaserver, wait_timeout, ring_timeout, call_timeout],
     Config1 = maps:with(Shared, Session),
-    Config2 = Config1#{session_id=>Id, session_pid=>self(), offer=>Offer}, 
+    Offer2 = maps:without([module, pid], Offer),
+    Config2 = Config1#{session_id=>Id, session_pid=>self(), offer=>Offer2}, 
     {ok, CallId, CallPid} = nkmedia_call:start(Dest, Config2),
     State2 = add_link({call, CallId}, CallPid, State),
     State3 = add_from({call, CallId}, From, Opts, State2),
@@ -851,7 +851,7 @@ invite_do_ready(#state{type=Type, session=Session}=State) ->
     #{answer:=Answer} = Session,
     State2 = status(ready, #{answer=>Answer}, State),
     {From, Opts, State3} = get_from(out, State),
-    answer_op_reply(From, Opts, State3),
+    answer_op_reply(ok, Opts, From, State3),
     case Type of
         p2p ->
             #{session_id:=PeerId} = Session,
@@ -904,9 +904,10 @@ do_call_event(_CallId, {status, ringing, _Data}, #state{status=ringing}=State) -
 
 do_call_event(CallId, {status, ready, Data}, #state{status=Status}=State)
         when Status==calling; Status==ringing ->
+    ?LLOG(info, "receiving call ready", [], State),
     #state{session=Session, type=Type} = State,
     {From, Opts, State2} = get_from({call, CallId}, State),
-    answer_op_reply(From, Opts, State2),
+    answer_op_reply(ok, Opts, From, State2),
     % We get the answer and Id of the remote session
     #{answer:=AnswerB, session_peer_id:=PeerId} = Data,
     case Type of
@@ -936,9 +937,9 @@ do_call_event(CallId, {status, ready, Data}, #state{status=Status}=State)
     end;
 
 do_call_event(CallId, {status, hangup, Data}, #state{status=Status}=State) ->
-    {From, _Opts, State2} = get_from({call, CallId}, State),
+    {From, Opts, State2} = get_from({call, CallId}, State),
     #{hangup_reason:=Reason} = Data,
-    gen_server:reply(From, {hangup, Reason}),
+    answer_op_reply({hangup, Reason}, Opts, From, State),
     if 
         Status==calling; Status==ringing; Status==call ->
             stop_hangup(Reason, State2);
@@ -985,31 +986,71 @@ do_pbx_event(Event, State) ->
 
 
 %% @private
--spec update_config(config(), #state{}) ->
+-spec update_type(config(), #state{}) ->
     {ok, #state{}} | {error, term()}.
 
-update_config(Config, #state{session=Session, type=OldType, ms=MS}=State) ->
+update_type(Config, State) ->
+    #state{
+        type = OldType, 
+        has_offer = OldHasOffer,
+        has_answer = OldHasAnswer,
+        session = OldSession, 
+        ms = MS
+    } = State,
+
+    % lager:error("U1: ~p", [maps:get(type, Config, none)]),
+
+
     try
-        Session2 = maps:merge(Session, Config),
-        HasOffer = case Session2 of
-            #{offer := #{sdp:= _}} -> true;
-            _ -> false
+        State2 = case Config of
+            #{offer:=#{sdp:=_}=Offer} when not OldHasOffer ->
+                StateOffer =  State#state{has_offer=true},
+                case Offer of
+                    #{pid:=OfferPid} ->
+                        add_link(offer, OfferPid, StateOffer);
+                    _ ->
+                        StateOffer
+                end;
+            #{offer:=#{sdp:=_}} ->
+                throw(duplicated_offer);
+            _ ->
+                State
         end,
-        HasAnswer = case Session2 of
-            #{answer := #{sdp:= _}} -> true;
-            _ -> false
+        State3 = case Config of
+            #{answer:=#{sdp:=_}=Answer} when not OldHasAnswer ->
+                StateAnswer =  State2#state{has_answer=true},
+                case Answer of
+                    #{pid:=AnswerPid} ->
+                        add_link(answer, AnswerPid, StateAnswer);
+                    _ ->
+                        StateAnswer
+                end;
+            #{answer:=#{sdp:=_}} ->
+                throw(duplicated_answer);
+            _ ->
+                State2
         end,
-        Type = case maps:find(type, Session2) of
+        case State3 of
+            #state{has_offer=false, has_answer=true} ->
+                throw(missing_offer);
+            _ -> 
+                ok
+        end,
+        Type1 = case maps:find(type, Config) of
             {ok, OldType} ->
                 OldType;
             {ok, NewType} when OldType==undefined ->
                 NewType;
-            {ok, _} -> 
-                throw(incompatible_type);
+            {ok, NewType} -> 
+                throw({type_changed, NewType, OldType});
             error ->
                 OldType
         end,
-        Type2 = case Type of
+
+        % lager:warning("U2: ~p", [Type1]),
+
+
+        Type2 = case Type1 of
             undefined when MS==undefined -> undefined;
             undefined when element(1, MS)==fs -> pbx;
             undefined when element(1, MS)==janus -> proxy;
@@ -1020,22 +1061,29 @@ update_config(Config, #state{session=Session, type=OldType, ms=MS}=State) ->
             proxy when element(1, MS)==janus -> proxy;
             _ -> throw(invalid_session_type)
         end,
-        State2 = State#state{
-            type = Type,
-            session = Session2#{type=>Type},
-            has_offer = HasOffer,
-            has_answer = HasAnswer
+
+        % lager:warning("U3: ~p", [Type2]),
+
+
+
+        Session = maps:merge(OldSession, Config),
+        State4 = State3#state{
+            type = Type2,
+            session = Session#{type=>Type2}
         },
-        {ok, State2}
+        {ok, State4}
     catch
         throw:Error -> {error, Error}
     end.
 
 
 %% @private
+-spec get_proxy(#state{}) ->
+    {ok, pid(), #state{}} | {error, term(), #state{}}.
+
 get_proxy(#state{id=Id, type=proxy}=State) ->
     case get_mediaserver(State) of
-        {ok, {janus, JanusId}, State2} ->
+        {ok, #state{ms={janus, JanusId}}=State2} ->
             case nkmedia_janus_session:start(Id, JanusId) of
                 {ok, Pid} ->
                     {ok, Pid, add_link(janus, Pid, State2)};
@@ -1048,6 +1096,14 @@ get_proxy(#state{id=Id, type=proxy}=State) ->
 
 
 %% @private
+get_pbx_answer(#state{type=pbx, ms=undefined}=State) ->
+    case get_mediaserver(State) of
+        {ok, #state{ms={fs, _}}=State2} ->
+            get_pbx_answer(State2);
+        {error, Error} ->
+            {error, {get_pbx_answer_error, Error}}
+    end;
+
 get_pbx_answer(#state{type=pbx, ms={fs, _}, has_answer=true}=State) ->
     {ok, State};
 
@@ -1059,18 +1115,18 @@ get_pbx_answer(#state{type=pbx, ms={fs, FsId}, has_answer=false}=State) ->
             {ok, #{sdp=>SDP}, State};
         {error, Error} ->
             {error, {get_pbx_answer_error, Error}}
-    end;
-
-get_pbx_answer(#state{type=pbx, ms=undefined}=State) ->
-    case get_mediaserver(State) of
-        {ok, {fs, _}, State2} ->
-            get_pbx_answer(State2);
-        {error, Error} ->
-            {error, {get_pbx_answer_error, Error}}
     end.
 
 
 %% @private
+get_pbx_offer(#state{type=pbx, ms=undefined}=State) ->
+        case get_mediaserver(State) of
+        {ok, #state{ms={fs, _}}=State2} ->
+            get_pbx_offer(State2);
+        {error, Error} ->
+            {error, {get_pbx_offer_error, Error}}
+    end;
+
 get_pbx_offer(#state{type=pbx, ms={fs, _}, has_offer=true}=State) ->
     {ok, State};
 
@@ -1082,33 +1138,29 @@ get_pbx_offer(#state{type=pbx, ms={fs, FsId}, has_offer=false}=State) ->
             %% TODO Send and receive pings
             Offer1 = maps:get(offer, Session, #{}),
             Offer2 = Offer1#{sdp=>SDP},
-            {ok, update_config(#{offer=>Offer2}, State)};
+            update_type(#{offer=>Offer2}, State);
         {error, Error} ->
             {error, {backend_out_error, Error}}
-    end;
-
-get_pbx_offer(#state{type=pbx, ms=undefined}=State) ->
-        case get_mediaserver(State) of
-        {ok, {fs, _}, State2} ->
-            get_pbx_offer(State2);
-        {error, Error} ->
-            {error, {get_pbx_offer_error, Error}}
     end.
 
 
+
 %% @private
+-spec get_mediaserver(#state{}) ->
+    {ok, #state{}} | {error, term()}.
+
 get_mediaserver(#state{ms=undefined}=State) ->
     #state{srv_id=SrvId, type=Type, session=Session} = State,
     case SrvId:nkmedia_session_get_mediaserver(Type, Session) of
         {ok, MS, Session2} ->
             Session3 = Session2#{mediaserver=>MS},
-            {ok, MS, State#state{ms=MS, session=Session3}};
+            {ok, State#state{ms=MS, session=Session3}};
         {error, Error} ->
             {error, Error}
     end;
 
-get_mediaserver(#state{ms=MS}=State) ->
-    {ok, MS, State}.
+get_mediaserver(State) ->
+    {ok, State}.
 
 
 %% @private
@@ -1304,7 +1356,7 @@ get_from(Id, #state{froms=Froms}=State) ->
 
 reply_error(Error, undefined, State) ->
     ?LLOG(warning, "operation error: ~p", [Error], State),
-    {noreply, State};
+    {stop, normal, State};
 
 reply_error(Error, From, State) ->
     gen_server:reply(From, {error, Error}),

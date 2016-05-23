@@ -75,7 +75,7 @@ start(Config) ->
     ok | {error, term()}.
 
 stop(Id) ->    
-	nkmedia_fs_docker:stop(Id).
+	nkmedia_janus_docker:stop(Id).
 
 
 %% @doc
@@ -149,9 +149,6 @@ play(JanusId, ClientId, FileId) ->
 		{error, Error} ->
 			{error, Error}
 	end.
-
-
-
 
 
 

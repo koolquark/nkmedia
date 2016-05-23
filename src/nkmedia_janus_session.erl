@@ -239,7 +239,7 @@ handle_cast({event, _Id, _Handle, Msg}, State) ->
     result({noreply, State}, State);
 
 handle_cast(stop, State) ->
-    ?LLOG(notice, "user stop", [], State),
+    ?LLOG(info, "user stop", [], State),
     {stop, normal, State};
 
 handle_cast(Msg, State) -> 

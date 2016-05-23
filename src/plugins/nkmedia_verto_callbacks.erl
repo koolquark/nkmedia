@@ -133,12 +133,8 @@ nkmedia_verto_login(_VertoId, _Login, _Pass, Verto) ->
 
 nkmedia_verto_invite(SessId, Offer, #{srv_id:=SrvId}=Verto) ->
     #{dest:=Dest} = Offer,
-    Spec = #{
-        id => SessId, 
-        offer => Offer, 
-        monitor => self(),
-        nkmedia_verto_in => self()    % We use it to monitor status from session
-    },
+    Offer2 = Offer#{module=>nkmedia_verto_in, pid=>self()},
+    Spec = #{id => SessId, offer => Offer2}, 
     case nkmedia_session:start(SrvId, Spec) of
         {ok, SessId, SessPid} ->
             case SrvId:nkmedia_verto_call(SessId, Dest, Verto) of
@@ -231,7 +227,8 @@ nkmedia_verto_handle_info(Msg, Verto) ->
 
 
 %% @private
-nkmedia_session_event(SessId, {status, hangup, _}, #{nkmedia_verto_in:=Pid}) ->
+nkmedia_session_event(SessId, {status, hangup, _}, 
+                      #{offer:=#{module:=nkmedia_verto_in, pid:=Pid}}) ->
     nkmedia_verto:hangup(Pid, SessId),
     continue;
 
@@ -239,7 +236,8 @@ nkmedia_session_event(SessId, {status, hangup, _}, #{nkmedia_verto_out:=Pid}) ->
     nkmedia_verto:hangup(Pid, SessId),
     continue;
 
-nkmedia_session_event(SessId, {status, ready, Data}, #{nkmedia_verto_in:=Pid}) ->
+nkmedia_session_event(SessId, {status, ready, Data}, 
+                      #{offer:=#{module:=nkmedia_verto_in, pid:=Pid}}) ->
     #{answer:=#{sdp:=_SDP}=Answer} = Data,
     lager:info("Verto calling media available"),
     % lager:notice("Verto calling media available: ~s", [SDP]),
@@ -249,7 +247,8 @@ nkmedia_session_event(SessId, {status, ready, Data}, #{nkmedia_verto_in:=Pid}) -
 nkmedia_session_event(_SessId, {status, ready, _Data}, #{nkmedia_verto_out:=_Pid}) ->
     continue;
 
-% nkmedia_session_event(SessId, {status, Status, Data}, #{nkmedia_verto_in:=_}) ->
+% nkmedia_session_event(SessId, {status, Status, Data}, 
+%                      #{offer:=#{module:=nkmedia_verto_in, pid:=Pid}}) ->
 %     lager:notice("Verto In status (~s): ~p, ~p", [SessId, Status, Data]),
 %     continue;
 
