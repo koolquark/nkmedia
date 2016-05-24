@@ -185,8 +185,9 @@ init({SessId, JanusId, JanusPid}) ->
         janus_id = JanusId, 
         janus_pid = JanusPid
     },
-    nklib_proc:put({?MODULE, SessId}),
+    true = nklib_proc:reg({?MODULE, SessId}),
     nklib_proc:put(?MODULE, SessId),
+
     self() ! send_keepalive,
     {ok, status(start, State)}.
 
@@ -235,7 +236,12 @@ handle_cast({event, _Id, _Handle, stop}, State) ->
     {stop, normal, State};
 
 handle_cast({event, _Id, _Handle, Msg}, State) ->
-    ?LLOG(warning, "unexpected event: ~p", [event(Msg)], State),
+    case Msg of
+        {data, #{<<"echotest">>:=<<"event">>, <<"result">>:=<<"done">>}} ->
+            ok;
+        _ ->
+            ?LLOG(notice, "unexpected event: ~p", [event(Msg)], State)
+    end,
     result({noreply, State}, State);
 
 handle_cast(stop, State) ->
@@ -546,7 +552,7 @@ listener_1(Room, UserId, State) ->
                                 handle_id = Handle,
                                 room_id = Room
                             },
-                            {reply, {ok, SDP}, status(wait_listener_2, State2)};
+                            {reply, {ok, #{sdp=>SDP}}, status(wait_listener_2, State2)};
                         {error, Error} ->
                             {error, {could_not_join, Error}}
                     end;
@@ -565,7 +571,7 @@ listener_2(#{sdp:=SDP}, State) ->
     Jsep = #{sdp=>SDP, type=>answer, trickle=>false},
     case message(Id, Handle, Body, Jsep, State) of
         {ok, #{<<"started">>:=<<"ok">>}, _} ->
-            {reply, {ok, SDP}, status(listener, State)};
+            {reply, ok, status(listener, State)};
         {error, Error} ->
             {error, {could_not_start, Error}}
     end.
@@ -687,6 +693,7 @@ find(Pid) when is_pid(Pid) ->
     {ok, Pid};
 
 find(SessId) ->
+    lager:warning("SESSID: ~p", [SessId]),
     case nklib_proc:values({?MODULE, SessId}) of
         [{undefined, Pid}] -> {ok, Pid};
         [] -> not_found

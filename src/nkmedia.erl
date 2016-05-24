@@ -72,7 +72,7 @@
 -type call_dest() :: binary().
 
 
--type hangup_reason() :: nkmedia:hangup_reason().
+-type hangup_reason() :: nkmedia_util:hangup_reason().
 
 
 -type fs_start_opts() ::

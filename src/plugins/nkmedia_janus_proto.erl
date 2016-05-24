@@ -24,6 +24,7 @@
 
 -export([invite/3, answer/3, hangup/2, hangup/3]).
 -export([find_user/1, find_call_id/1, get_all/0]).
+-export([register_play/3]).
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_stop/3,
          conn_handle_call/4, conn_handle_cast/3, conn_handle_info/3]).
@@ -124,6 +125,14 @@ find_call_id(CallId) ->
     [Pid || {undefined, Pid} <- nklib_proc:values({?MODULE, call, CallId2})].
 
 
+-spec register_play(string()|binary(), pid(), nkmedia:offer()) ->
+    ok.
+
+register_play(CallId, Pid, Offer) ->
+    Obj = #{call_id=>CallId, offer=>Offer, pid=>Pid},
+    nkmedia_app:put(nkmedia_janus_proto_play_reg, Obj).
+
+
 get_all() ->
     [{Local, Remote} || {Remote, Local} <- nklib_proc:values(?MODULE)].
 
@@ -147,13 +156,12 @@ get_all() ->
     srv_id ::  nkservice:id(),
     trans = #{} :: #{op_id() => #trans{}},
     session_id :: integer(),
-    plugin :: binary(),
+    plugin :: videocall | recordplay,
     handle :: integer(),
     user :: binary(),
     calls = [] :: [{CallId::binary(), reference()}],
     janus :: janus(),
     pos :: integer()
-
 }).
 
 
@@ -206,28 +214,11 @@ conn_parse({text, Data}, NkPort, State) ->
     ?PRINT("receiving ~s", [Msg], State),
     case Msg of
         #{<<"janus">>:=BinCmd, <<"transaction">>:=_Trans} ->
-            % OpId = {trans, Trans},
             Cmd = case catch binary_to_existing_atom(BinCmd, latin1) of
                 {'EXIT', _} -> BinCmd;
                 Cmd2 -> Cmd2
             end,
-            % case extract_op(OpId, State) of
-            %     {#trans{req=Req, from=From}, State2} ->
-            %         process_client_resp(Cmd, OpId, Req, From, Msg, NkPort, State2);
-            %     not_found ->
-            %         process_client_req(Cmd, Msg, NkPort, State)
-            % end;
             process_client_req(Cmd, Msg, NkPort, State);
-
-        % #{<<"janus">>:=<<"event">>, <<"session_id">>:=Id, <<"sender">>:=Handle} ->
-        %     case get_client(Id, State) of
-        %         {ok, CallBack, ClientId} ->
-        %             event(CallBack, ClientId, Id, Handle, Msg, State),
-        %             {ok, State};
-        %         not_found ->
-        %             ?LLOG(notice, "unexpected server event: ~p", [Msg], State),
-        %             {ok, State}
-        %     end;
         #{<<"janus">>:=Cmd} ->
             ?LLOG(notice, "unknown msg: ~s: ~p", [Cmd, Msg], State),
             {ok, State}
@@ -271,19 +262,9 @@ conn_handle_cast(Msg, NkPort, State) ->
     end.
 
 
-% %% @doc Called when the connection received an erlang message
-% -spec conn_handle_info(term(), nkpacket:nkport(), #state{}) ->
-%     {ok, #state{}} | {stop, Reason::term(), #state{}}.
-
-% conn_handle_info({timeout, _, {op_timeout, OpId}}, _NkPort, State) ->
-%     case extract_op(OpId, State) of
-%         {Op, State2} ->
-%             user_reply(Op, {error, timeout}),
-%             ?LLOG(warning, "operation ~p timeout!", [OpId], State),
-%             {stop, normal, State2};
-%         not_found ->
-%             {ok, State}
-%     end;
+%% @doc Called when the connection received an erlang message
+-spec conn_handle_info(term(), nkpacket:nkport(), #state{}) ->
+    {ok, #state{}} | {stop, Reason::term(), #state{}}.
 
 conn_handle_info({'DOWN', Ref, process, _Pid, Reason}=Info, _NkPort, State) ->
     #state{calls=Calls} = State,
@@ -368,11 +349,16 @@ process_client_req(create, Msg, NkPort, State) ->
 
 process_client_req(attach, Msg, NkPort, #state{session_id=SessionId}=State) ->
     #{<<"plugin">>:=Plugin, <<"session_id">>:=SessionId} = Msg,
+    Plugin2 = case Plugin of
+        <<"janus.plugin.videocall">> -> videocall;
+        <<"janus.plugin.recordplay">> -> recordplay;
+        _ -> error({invalid_plugin, Plugin})
+    end,
     Handle = erlang:phash2(make_ref()),
     Resp = make_resp(#{janus=>success, data=>#{id=>Handle}}, Msg),
-    send(Resp, NkPort, State#state{handle=Handle, plugin=Plugin});
+    send(Resp, NkPort, State#state{handle=Handle, plugin=Plugin2});
 
-process_client_req(message, Msg, NkPort, State) ->
+process_client_req(message, Msg, NkPort, #state{plugin=recordplay}=State) ->
     #state{session_id=SessionId, handle=Handle} = State,
     #{<<"body">>:=Body, <<"session_id">>:=SessionId, <<"handle_id">>:=Handle} = Msg,
     #{<<"request">> := BinReq} = Body,
@@ -380,12 +366,27 @@ process_client_req(message, Msg, NkPort, State) ->
         {'EXIT', _} -> BinReq;
         Req2 -> Req2
     end,
-    Ack = make_resp(#{janus=>ack, session_id=>SessionId}, Msg),
-    case send(Ack, NkPort, State) of
-        {ok, State2} ->
-           process_client_msg(Req, Body, Msg, NkPort, State2);
-        Other ->
-            Other
+   process_client_msg(Req, Body, Msg, NkPort, State);
+
+process_client_req(message, Msg, NkPort, #state{plugin=videocall}=State) ->
+    #state{session_id=SessionId, handle=Handle} = State,
+    #{<<"body">>:=Body, <<"session_id">>:=SessionId, <<"handle_id">>:=Handle} = Msg,
+    #{<<"request">> := BinReq} = Body,
+    Req = case catch binary_to_existing_atom(BinReq, latin1) of
+        {'EXIT', _} -> BinReq;
+        Req2 -> Req2
+    end,
+    case Req of
+        list ->
+           process_client_msg(Req, Body, Msg, NkPort, State); 
+        _ ->
+            Ack = make_resp(#{janus=>ack, session_id=>SessionId}, Msg),
+            case send(Ack, NkPort, State) of
+                {ok, State2} ->
+                   process_client_msg(Req, Body, Msg, NkPort, State2);
+                Other ->
+                    Other
+            end
     end;
 
 process_client_req(detach, Msg, NkPort, State) ->
@@ -460,12 +461,75 @@ process_client_msg(hangup, _Body, _Msg, _NkPort, #state{calls=Calls}=State) ->
             CallId = <<>>,
             State
     end,
-    ?LLOG(notice, "received HANGUP (~s)", [CallId], State3),
+    ?LLOG(info, "received HANGUP (~s)", [CallId], State3),
     {ok, State3};
 
-process_client_msg(list, _Body, Msg, NkPort, State) ->
+process_client_msg(list, _Body, Msg, NkPort, #state{plugin=videocall}=State) ->
     Resp = make_videocall_resp(#{list=>[]}, Msg, State),
     send(Resp, NkPort, State);
+
+process_client_msg(list, _Body, Msg, NkPort, #state{plugin=recordplay}=State) ->
+    ?LLOG(info, "received LIST", [], State),
+    List = case nkmedia_app:get(nkmedia_janus_proto_play_reg) of
+        #{
+            call_id := CallId,
+            offer := _Offer
+        } ->
+            [#{
+                id => erlang:phash2(CallId),
+                name => CallId,
+                audio => <<"true">>,
+                video => <<"true">>,
+                date => <<>>
+            }];
+        _ ->
+            []
+    end,
+    Resp = make_recordplay_resp1(#{list=>List, recordplay=>list}, Msg, State),
+    send(Resp, NkPort, State);
+
+process_client_msg(play, Body, Msg, NkPort, State) ->
+    #{<<"id">> := Id} = Body,
+    case nkmedia_app:get(nkmedia_janus_proto_play_reg) of
+        #{
+            call_id := CallId,
+            offer := #{sdp:=SDP},
+            pid := Pid
+        } = Reg ->
+            case erlang:phash2(CallId) of
+                Id ->
+                    ?LLOG(info, "received PLAY (~s)", [CallId], State),
+                    Pid = maps:get(pid, Reg, undefined),
+                    State2 = add_call(CallId, Pid, State),
+                    Data = #{
+                        recordplay => event,
+                        result => #{id=>Id, status=>preparing}
+                    },
+                    Jsep = #{sdp=>SDP, type=>offer},
+                    Resp = make_recordplay_resp2(Data, Jsep, Msg, State),
+                    send(Resp, NkPort, State2);
+                _ ->
+                    error(invalid_id1)
+            end;
+        O ->
+            error({invalid_id2, O})
+    end;
+
+process_client_msg(start, _Body, Msg, NkPort, #state{calls=Calls}=State) ->
+    #{<<"jsep">>:=#{<<"sdp">>:=SDP}} = Msg,
+    #{call_id := CallId} = nkmedia_app:get(nkmedia_janus_proto_play_reg),
+    nkmedia_app:del(nkmedia_janus_proto_play_reg),
+    [{CallId, _}|_] = Calls,
+    ?LLOG(info, "received START (~s)", [CallId], State),
+    case handle(nkmedia_janus_start, [CallId, #{sdp=>SDP}], State) of
+        {ok, State2} ->
+            ok;
+        {hangup, Reason, State2} ->
+            hangup(self(), CallId, Reason)
+    end,
+    Data = #{recordplay=>event, result=>#{status=>playing}},
+    Resp = make_recordplay_resp2(Data, #{}, Msg, State2),
+    send(Resp, NkPort, State2);
 
 process_client_msg(Cmd, _Body, _Msg, _NkPort, State) ->
     ?LLOG(warning, "unexpected client MESSAGE: ~s", [Cmd], State),
@@ -507,7 +571,7 @@ process_client_msg(Cmd, _Body, _Msg, _NkPort, State) ->
 
 
 %% @private
-make_videocall_req(Result, Jsep, State) ->
+make_videocall_req(Result, Jsep, #state{plugin=videocall}=State) ->
     #state{session_id=SessionId, handle=Handle} = State,
     Req = #{
         janus => event,
@@ -531,6 +595,41 @@ make_videocall_req(Result, Jsep, State) ->
 make_videocall_resp(Result, Msg, State) ->
     Req = make_videocall_req(Result, #{}, State),
     make_resp(Req, Msg).
+
+
+
+%% @private
+make_recordplay_resp1(Data, Msg, #state{plugin=recordplay}=State) ->
+    #state{session_id=SessionId, handle=Handle} = State,
+    Resp = #{
+        janus => success,
+        plugindata => #{
+            data => Data,
+            plugin => <<"janus.plugin.recordplay">>
+        },
+        sender => Handle,
+        session_id => SessionId
+    },
+    make_resp(Resp, Msg).
+
+
+%% @private
+make_recordplay_resp2(Data, Jsep, Msg, #state{plugin=recordplay}=State) ->
+    #state{session_id=SessionId, handle=Handle} = State,
+    Resp1 = #{
+        janus => event,
+        plugindata => #{
+            data => Data,
+            plugin => <<"janus.plugin.recordplay">>
+        },
+        sender => Handle,
+        session_id => SessionId
+    },
+    Resp2 = case maps:size(Jsep) of
+        0 -> Resp1;
+        _ -> Resp1#{jsep=>Jsep}
+    end,
+    make_resp(Resp2, Msg).
 
 
 %% @private

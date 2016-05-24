@@ -24,7 +24,7 @@
 
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
 -export([sip_bye/2]).
--export([nkmedia_session_out/3, nkmedia_session_out_notify/4]).
+-export([nkmedia_session_invite/3, nkmedia_session_out_notify/4]).
 
 
 %% ===================================================================
@@ -74,12 +74,12 @@ sip_bye(Req, _Call) ->
 	continue.
 
 
-nkmedia_session_out(SessId, {sip, Uri, Opts}, Session) ->
+nkmedia_session_invite(SessId, {sip, Uri, Opts}, Session) ->
     #{srv_id:=SrvId, sdp_offer:=SDP} = Session,
     {ok, Ref} = nkmedia_sip:send_invite(SessId, SrvId, Uri, Opts#{sdp=>SDP}),
     {async, {sip_ref, Ref}, Session};
 
-nkmedia_session_out(_SessId, _Dest, _Session) ->
+nkmedia_session_invite(_SessId, _Dest, _Session) ->
 	continue.
 
 

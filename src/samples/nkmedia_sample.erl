@@ -24,6 +24,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([start/0, stop/0, restart/0]).
+-export([listener/1]).
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
 -export([nkmedia_verto_login/4, nkmedia_verto_call/3]).
 -export([nkmedia_call_resolve/2]).
@@ -50,8 +51,8 @@ start() ->
         verto_listen => "verto:all:8082",
         % verto_listen => "verto_proxy:all:8082",
         verto_communicator => "https:all:8082/vc",
-        % janus_listen => "janus_proxy:all:8989",
-        janus_listen => "janus:all:8989",
+        janus_listen => "janus:all:8989, janus_proxy:all:8990",
+        % janus_listen => "janus:all:8989",
         janus_demos => "https://all:8083/janus",
         log_level => debug,
         nksip_trace => {console, all},
@@ -68,6 +69,19 @@ restart() ->
     stop(),
     timer:sleep(100),
     start().
+
+
+
+listener(Id) ->
+    {ok, SessId, Pid} = nkmedia_session:start(sample, #{}),
+    {ok, Meta} = nkmedia_session:set_offer(SessId, {listener, 1234, Id}, 
+                                           #{sync=>true, get_offer=>true}),
+    #{offer:=Offer} = Meta,
+    nkmedia_janus_proto:register_play(SessId, Pid, Offer).
+
+
+
+
 
 
 

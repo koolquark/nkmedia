@@ -25,10 +25,10 @@
          plugin_start/2, plugin_stop/2]).
 -export([nkmedia_janus_init/2, nkmedia_janus_login/4, nkmedia_janus_call/3,
          nkmedia_janus_invite/3, nkmedia_janus_answer/3, nkmedia_janus_bye/2,
-         nkmedia_janus_dtmf/3, nkmedia_janus_terminate/2,
+         nkmedia_janus_start/3, nkmedia_janus_terminate/2,
          nkmedia_janus_handle_call/3, nkmedia_janus_handle_cast/2,
          nkmedia_janus_handle_info/2]).
--export([nkmedia_session_out/4, nkmedia_session_event/3]).
+-export([nkmedia_session_invite/4, nkmedia_session_event/3]).
 -export([nkmedia_call_resolve/2]).
 
 
@@ -123,8 +123,7 @@ nkmedia_janus_login(_JanusId, _Login, _Pass, Janus) ->
 
 nkmedia_janus_invite(SessId, Offer, #{srv_id:=SrvId}=Janus) ->
     #{dest:=Dest} = Offer,
-    Offer2 = Offer#{module=>nkmedia_janus_in, pid=>self()},
-    Spec = #{id => SessId, offer => Offer2},
+    Spec = #{id=>SessId, offer=>Offer, nkmedia_janus_in=>self(), monitor=>self()},
     case nkmedia_session:start(SrvId, Spec) of
         {ok, SessId, SessPid} ->
             case SrvId:nkmedia_janus_call(SessId, Dest, Janus) of
@@ -154,7 +153,7 @@ nkmedia_janus_call(CallId, Dest, Janus) ->
     {ok, janus()} |{hangup, nkmedia:hangup_reason(), janus()} | continue().
 
 nkmedia_janus_answer(CallId, Answer, Janus) ->
-    case nkmedia_session:reply(CallId, {answered, Answer}) of
+    case nkmedia_session:invite_reply(CallId, {answered, Answer}) of
         ok ->
             {ok, Janus};
         {error, Error} ->
@@ -172,12 +171,21 @@ nkmedia_janus_bye(CallId, Janus) ->
     {ok, Janus}.
 
 
-%% @doc
--spec nkmedia_janus_dtmf(call_id(), DTMF::binary(), janus()) ->
-    {ok, janus()} | continue().
+%% @doc Called when the client sends an START for a PLAY
+-spec nkmedia_janus_start(call_id(), nkmedia_janus:offer(), janus()) ->
+    ok | {hangup, nkmedia:hangup_reason(), janus()} | continue().
 
-nkmedia_janus_dtmf(_CallId, _DTMF, Janus) ->
-    {ok, Janus}.
+nkmedia_janus_start(SessId, Answer, Janus) ->
+    % Answer2 = Answer#{module=>nkmedia_janus_proto_start, pid=>self()},
+    case nkmedia_session:set_answer(SessId, Answer, #{}) of
+        ok ->
+            JaSess = <<"O_", SessId/binary>>,
+            ok = nkmedia_janus_session:listener_answer(JaSess, Answer),
+            {ok, Janus};
+        {error, Error} ->
+            lager:warning("Janus janus_start error: ~p", [Error]),
+            {hangup, <<"MediaServer Error">>, Janus}
+    end.
 
 
 %% @doc Called when the connection is stopped
@@ -221,8 +229,17 @@ nkmedia_janus_handle_info(Msg, Janus) ->
 
 
 %% @private
-nkmedia_session_event(SessId, {status, hangup, _}, 
-                      #{offer:=#{module:=nkmedia_janus_in, pid:=Pid}}) ->
+nkmedia_session_event(SessId, {status, answer, Data}, #{nkmedia_janus_in:=Pid}) ->
+    #{answer:=#{sdp:=_SDP}=Answer} = Data,
+    lager:info("Janus calling media available"),
+    % lager:notice("Janus calling media available: ~s", [SDP]),
+    ok = nkmedia_janus_proto:answer(Pid, SessId, Answer),
+    continue;
+
+nkmedia_session_event(_SessId, {status, answer, _Data}, #{}) ->
+    continue;
+
+nkmedia_session_event(SessId, {status, hangup, _}, #{nkmedia_janus_in:=Pid}) ->
     nkmedia_janus_proto:hangup(Pid, SessId),
     continue;
 
@@ -230,16 +247,6 @@ nkmedia_session_event(SessId, {status, hangup, _}, #{nkmedia_janus_out:=Pid}) ->
     nkmedia_janus_proto:hangup(Pid, SessId),
     continue;
 
-nkmedia_session_event(SessId, {status, ready, Data}, 
-                      #{offer:=#{module:=nkmedia_janus_in, pid:=Pid}}) ->
-    #{answer:=#{sdp:=_SDP}=Answer} = Data,
-    lager:info("Janus calling media available"),
-    % lager:notice("Janus calling media available: ~s", [SDP]),
-    ok = nkmedia_janus_proto:answer(Pid, SessId, Answer),
-    continue;
-
-nkmedia_session_event(_SessId, {status, ready, _Data}, #{nkmedia_janus_out:=_Pid}) ->
-    continue;
 
 % nkmedia_session_event(SessId, {status, Status, Data}, 
 %                      #{offer:=#{module:=nkmedia_janus_in, pid:=Pid}}) ->
@@ -255,7 +262,7 @@ nkmedia_session_event(_SessId, _Event, _Session) ->
 
 
 %% @private
-nkmedia_session_out(SessId, {nkmedia_janus, Pid}, Offer, Session) ->
+nkmedia_session_invite(SessId, {nkmedia_janus, Pid}, Offer, Session) ->
     case nkmedia_janus_proto:invite(Pid, SessId, Offer#{monitor=>self()}) of
         ok ->
             {ringing, #{}, Pid, Session#{nkmedia_janus_out=>Pid}};
@@ -264,7 +271,7 @@ nkmedia_session_out(SessId, {nkmedia_janus, Pid}, Offer, Session) ->
             {hangup, <<"Janus Invite Error">>, Session}
     end;
 
-nkmedia_session_out(_SessId, _Dest, _Offer, _Session) ->
+nkmedia_session_invite(_SessId, _Dest, _Offer, _Session) ->
     continue.
 
 

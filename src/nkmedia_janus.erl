@@ -24,7 +24,6 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([start/0, start/1, stop/1, stop_all/0]).
--export([create/3, destroy/2, mirror/3]).
 -export_type([config/0]).
 
 
@@ -33,8 +32,6 @@
 %% ===================================================================
 
 -type id() :: nkmedia_janus_engine:id().
-
--type client_id() :: nkmedia_janus_client:id().
 
 
 -type config() ::
@@ -83,72 +80,6 @@ stop_all() ->
 	nkmedia_janus_docker:stop_all().
 
 
-%% @doc Creates a new session
--spec create(id(), nkmedia_session:id(), binary()) ->
-    {ok, client_id()} | {error, term()}.
-
-create(JanusId, SessId, Plugin) ->
-	case nkmedia_janus_engine:get_conn(JanusId) of
-		{ok, ConnPid} -> 
-			nkmedia_janus_client:create(ConnPid, SessId, Plugin);
-		{error, Error} ->
-			{error, Error}
-	end.
-
-
-
-%% @doc Destroys a session
--spec destroy(id(), client_id()) ->
-    ok.
-
-destroy(JanusId, ClientId) ->
-	case nkmedia_janus_engine:get_conn(JanusId) of
-		{ok, ConnPid} -> 
-			nkmedia_janus_client:destroy(ConnPid, ClientId);
-		{error, Error} ->
-			{error, Error}
-	end.
-
-
-mirror(JanusId, ClientId, Offer) ->
-	Body = #{
-		audio => maps:get(use_audio, Offer, true),
-		vide => maps:get(use_video, Offer, true)
-	},
-	Jsep = case Offer of
-        #{sdp:=SDP} ->
-            #{sdp=>SDP, type=>offer};
-        _ ->
-        	#{}
-    end,
-    case message(JanusId, ClientId, Body, Jsep) of
-    	{ok, Res, Jsep2} ->
-    		case Res of
-    			#{<<"data">>:=#{<<"result">>:=<<"ok">>}} ->
-    				case Jsep2 of
-    					#{<<"sdp">>:=SDP2} ->
-    						{ok, #{sdp=>SDP2}};
-    					_ ->
-    						{ok, #{}}
-    				end;
-    			_ ->
-    				{error, janus_error}
-    		end;
-    	{error, Error} ->
-    		{error, Error}
-    end.
-
-
-play(JanusId, ClientId, FileId) ->
-	Body = #{id=>FileId, request=>play},
-	case message(JanusId, ClientId, Body) of
-		{ok, _, #{<<"sdp">>:=SDP}} ->
-			{ok, SDP};
-		{ok, Body, _} ->
-			{error, Body};
-		{error, Error} ->
-			{error, Error}
-	end.
 
 
 
@@ -157,20 +88,4 @@ play(JanusId, ClientId, FileId) ->
 %% ===================================================================
 %% Internal
 %% ===================================================================
-
-%% @private
-message(JanusId, ClientId, Body) ->
-	message(JanusId, ClientId, #{}).
-
-
-%% @private
-message(JanusId, ClientId, Body, Jsep) ->
-	case nkmedia_janus_engine:get_conn(JanusId) of
-		{ok, ConnPid} -> 
-			nkmedia_janus_client:message(ConnPid, ClientId, Body, Jsep);
-		{error, Error} ->
-			{error, Error}
-	end.
-
-
 

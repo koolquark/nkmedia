@@ -63,7 +63,7 @@
 
 
 -type status() ::
-    calling | ringing | ready | hangup.
+    calling | ringing | answer | hangup.
 
 
 -type ext_status() :: nkmedia_session:ext_status().
@@ -385,7 +385,7 @@ launch_out(SessId, #session_out{dest=Dest, pos=Pos}=Out, State) ->
         srv_id = SrvId, 
         outs = Outs
     } = State,
-    case handle(nkmedia_call_out, [SessId, Dest], State) of
+    case handle(nkmedia_call_invite, [SessId, Dest], State) of
         {call, Dest2, State2} ->
             ?LLOG(info, "launching out ~p (~p)", [Dest2, Pos], State),
             NotShared = [dest, status, ext_status],
@@ -450,6 +450,9 @@ process_out_event(Event, State) ->
 
 
 %% @private
+process_call_out_event({status, offer, _Data}, _SessId, _Out, State) ->
+    {noreply, State};
+
 process_call_out_event({status, wait, _Data}, _SessId, _Out, State) ->
     {noreply, State};
 
@@ -464,7 +467,7 @@ process_call_out_event({status, ringing, Data}, _SessId, _Out, State) ->
     end,
     {noreply, status(ringing, Data2, State)};
 
-process_call_out_event({status, ready, Data}, SessId, Out, State) ->
+process_call_out_event({status, answer, Data}, SessId, Out, State) ->
     case State of
         #state{status=Status} when Status==calling; Status==ringing ->
             #session_out{pid=SessPid} = Out,
@@ -472,7 +475,7 @@ process_call_out_event({status, ready, Data}, SessId, Out, State) ->
             State2 = State#state{session_out=SessOut},
             State3 = hangup_all_outs(State2),
             Data2 = Data#{session_peer_id=>SessId},
-            {noreply, status(ready, Data2, State3)};
+            {noreply, status(answer, Data2, State3)};
         _ ->
             nkmedia_session:hangup(SessId, <<"Already Answered">>),
             {noreply, State}

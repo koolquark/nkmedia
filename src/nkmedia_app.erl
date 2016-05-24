@@ -24,7 +24,7 @@
 -behaviour(application).
 
 -export([start/0, start/2, stop/1]).
--export([get/1, get/2, put/2]).
+-export([get/1, get/2, put/2, del/1]).
 -export([get_env/1, get_env/2, set_env/2]).
 
 -include("nkmedia.hrl").
@@ -134,6 +134,9 @@ get(Key, Default) ->
 
 put(Key, Val) ->
     nklib_config:put(?APP, Key, Val).
+
+del(Key) ->
+    nklib_config:del(?APP, Key).
 
 
 

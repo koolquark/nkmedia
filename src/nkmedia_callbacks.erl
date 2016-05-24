@@ -25,12 +25,12 @@
 
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
 -export([nkmedia_session_init/2, nkmedia_session_terminate/2, 
-		 nkmedia_session_event/3, nkmedia_session_out/4, 
+		 nkmedia_session_event/3, nkmedia_session_invite/4, 
 		 nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2, 
 		 nkmedia_session_handle_info/2]).
 -export([nkmedia_session_get_mediaserver/2]).
 -export([nkmedia_call_init/2, nkmedia_call_terminate/2, 
-		 nkmedia_call_resolve/2, nkmedia_call_out/3, 
+		 nkmedia_call_resolve/2, nkmedia_call_invite/3, 
 		 nkmedia_call_event/3, 
 		 nkmedia_call_handle_call/3, nkmedia_call_handle_cast/2, 
 		 nkmedia_call_handle_info/2]).
@@ -115,14 +115,14 @@ nkmedia_session_event(SessId, Event, Session) ->
 %% @doc Called when a new call must be sent from the session
 %% The notify, is included, will be monitorized and stored and out_notify in the 
 %% session
--spec nkmedia_session_out(session_id(), nkmedia_session:call_dest(), 
+-spec nkmedia_session_invite(session_id(), nkmedia_session:call_dest(), 
 						  nkmedia:offer(), session()) ->
 	{ringing, nkmedia:answer(), pid()|undefined,  session()} |	% Answer optional
 	{answer, nkmedia:answer(), pid()|undefined, session()} |    % Answer optional
 	{async, pid()|undefined, session()} | 			     	    %   (if not in ringing)
 	{hangup, nkmedia:hangup_reason(), session()}.
 
-nkmedia_session_out(_SessId, _CallDest, _Offer, Session) ->
+nkmedia_session_invite(_SessId, _CallDest, _Offer, Session) ->
 	{hangup, <<"Unrecognized Destination">>, Session}.
 
 
@@ -229,13 +229,13 @@ nkmedia_call_resolve(_Dest, Call) ->
 
 
 %% @doc Called when an outbound call is to be sent
--spec nkmedia_call_out(session_id(), nkmedia_session:call_dest(), call()) ->
+-spec nkmedia_call_invite(session_id(), nkmedia_session:call_dest(), call()) ->
 	{call, nkmedia_session:call_dest(), call()} | 
 	{retry, Secs::pos_integer(), call()} | 
 	{remove, call()} | 
 	continue().
 
-nkmedia_call_out(_SessId, Dest, Call) ->
+nkmedia_call_invite(_SessId, Dest, Call) ->
 	{call, Dest, Call}.
 
 
