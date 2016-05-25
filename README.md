@@ -3,11 +3,11 @@
 
 **IMPORTANT** NkMEDIA is still under development, and not ready for general use.
 
-NkMEDIA is an Erlang media server control project. It is capable of managing audio and video streams using WebRTC and SIP, in a ver flexible way. It is easy to build scalable powerful gateways, recorders, PBXs or any other application.
+NkMEDIA is an Erlang media server control project. It is capable of managing audio and video streams using WebRTC and SIP, in a very flexible way. It is easy to build scalable and powerful gateways, recorders, PBXs or any other application.
 
 NkMEDIA uses [Freeswitch](https://freeswitch.org) and [Janus](https://janus.conf.meetecho.com/docs/) media servers. In the future, other media servers could be available. 
 
-NkMEDIA allows to receive and make SIP and WebRTC calls, in the later case using a flexible plugin system to develop signalings. See [NkSERVICE](https://github.com/NetComposer/nkservice) for a more detailed explanation. Since it uses [NkSIP](https://github.com/NetComposer/nksip), it is also a full, scalable SIP client and server. Depending on the media server, is capable of doing things like:
+NkMEDIA allows to receive and make SIP and WebRTC calls, in the later case using a flexible plugin system to develop any custom signaling. See [NkSERVICE](https://github.com/NetComposer/nkservice) for a more detailed explanation. Since it uses [NkSIP](https://github.com/NetComposer/nksip), it is also a full, scalable SIP client and server. Depending on the media server, is capable of doing things like:
 
 * Call switching (including SIP/WebRTC gateways)
 * [MCU](https://webrtcglossary.com/mcu/)-based multi audio/video conferences
