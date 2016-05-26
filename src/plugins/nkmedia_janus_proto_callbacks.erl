@@ -229,21 +229,21 @@ nkmedia_janus_handle_info(Msg, Janus) ->
 
 
 %% @private
-nkmedia_session_event(SessId, {status, answer, Data}, #{nkmedia_janus_in:=Pid}) ->
-    #{answer:=#{sdp:=_SDP}=Answer} = Data,
+nkmedia_session_event(SessId, {answer, Answer}, #{nkmedia_janus_in:=Pid}) ->
+    #{sdp:=_} = Answer,
     lager:info("Janus calling media available"),
     % lager:notice("Janus calling media available: ~s", [SDP]),
     ok = nkmedia_janus_proto:answer(Pid, SessId, Answer),
     continue;
 
-nkmedia_session_event(_SessId, {status, answer, _Data}, #{}) ->
+nkmedia_session_event(_SessId, {answer, _Data}, #{}) ->
     continue;
 
-nkmedia_session_event(SessId, {status, hangup, _}, #{nkmedia_janus_in:=Pid}) ->
+nkmedia_session_event(SessId, {hangup, _}, #{nkmedia_janus_in:=Pid}) ->
     nkmedia_janus_proto:hangup(Pid, SessId),
     continue;
 
-nkmedia_session_event(SessId, {status, hangup, _}, #{nkmedia_janus_out:=Pid}) ->
+nkmedia_session_event(SessId, {hangup, _}, #{nkmedia_janus_out:=Pid}) ->
     nkmedia_janus_proto:hangup(Pid, SessId),
     continue;
 

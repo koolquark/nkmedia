@@ -175,7 +175,7 @@ sip_register(Req, Call) ->
 send_call(SessId, Dest) ->
     case Dest of 
         <<"e">> ->
-            ok = nkmedia_session:set_answer(SessId, echo, #{});
+           ok = nkmedia_session:set_answer(SessId, echo, #{});
         <<"fe">> ->
             ok = nkmedia_session:set_answer(SessId, echo, #{type=>pbx});
         <<"m1">> ->

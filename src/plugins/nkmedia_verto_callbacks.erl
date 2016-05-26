@@ -226,22 +226,22 @@ nkmedia_verto_handle_info(Msg, Verto) ->
 
 
 %% @private
-nkmedia_session_event(SessId, {status, hangup, _}, #{nkmedia_verto_in:=Pid}) ->
+nkmedia_session_event(SessId, {hangup, _}, #{nkmedia_verto_in:=Pid}) ->
     nkmedia_verto:hangup(Pid, SessId),
     continue;
 
-nkmedia_session_event(SessId, {status, hangup, _}, #{nkmedia_verto_out:=Pid}) ->
+nkmedia_session_event(SessId, {hangup, _}, #{nkmedia_verto_out:=Pid}) ->
     nkmedia_verto:hangup(Pid, SessId),
     continue;
 
-nkmedia_session_event(SessId, {status, answer, Data}, #{nkmedia_verto_in:=Pid}) ->
-    #{answer:=#{sdp:=_SDP}=Answer} = Data,
+nkmedia_session_event(SessId, {answer, Answer}, #{nkmedia_verto_in:=Pid}) ->
+    #{sdp:=_} = Answer,
     lager:info("Verto calling media available"),
     % lager:notice("Verto calling media available: ~s", [SDP]),
     ok = nkmedia_verto:answer(Pid, SessId, Answer),
     continue;
 
-nkmedia_session_event(_SessId, {status, answer, _Data}, #{nkmedia_verto_out:=_Pid}) ->
+nkmedia_session_event(_SessId, {answer, _Data}, #{nkmedia_verto_out:=_Pid}) ->
     continue;
 
 % nkmedia_session_event(SessId, {status, Status, Data}, 

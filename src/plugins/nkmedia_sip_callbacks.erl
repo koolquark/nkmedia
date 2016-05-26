@@ -83,7 +83,7 @@ nkmedia_session_invite(_SessId, _Dest, _Session) ->
 	continue.
 
 
-nkmedia_session_out_notify(SessId, {status, hangup, _}, {sip_ref, Ref}, Session) ->
+nkmedia_session_out_notify(SessId, {hangup, _}, {sip_ref, Ref}, Session) ->
     nkmedia_sip:send_bye(Ref, SessId),
     {ok, Session};
 

@@ -101,17 +101,10 @@ nkmedia_session_terminate(_Reason, Session) ->
 -spec nkmedia_session_event(nkmedia_session:id(), nkmedia_session:event(), session()) ->
 	{ok, session()} | continue().
 
-nkmedia_session_event(SessId, Event, Session) ->
-	case Session of
-		#{nkmedia_call_id:=CallId} ->
-			nkmedia_call:session_event(CallId, SessId, Event);
-		_ ->
-			ok
-	end,
+nkmedia_session_event(_SessId, _Event, Session) ->
 	{ok, Session}.
 
 				  
-
 %% @doc Called when a new call must be sent from the session
 %% The notify, is included, will be monitorized and stored and out_notify in the 
 %% session
@@ -208,13 +201,7 @@ nkmedia_call_terminate(_Reason, Call) ->
 -spec nkmedia_call_event(call_id(), nkmedia_call:event(), call()) ->
 	{ok, call()} | continue().
 
-nkmedia_call_event(CallId, Event, Call) ->
-	case Call of
-		#{session_id:=SessionId} ->
-			nkmedia_session:call_event(SessionId, CallId, Event);
-		_ ->
-			ok
-	end,
+nkmedia_call_event(_CallId, _Event, Call) ->
 	{ok, Call}.
 
 

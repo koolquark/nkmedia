@@ -402,7 +402,7 @@ conn_stop(Reason, _NkPort, _State) ->
 %% @private
 send_client_req(Msg, From, NkPort, #state{pos=Pos}=State) ->
     TransId = nklib_util:to_binary(Pos),
-    case make_msg(Msg, TransId) of
+    case make_msg(Msg, TransId, State) of
         unknown_op ->
             uknown_op;
         Req ->
@@ -413,25 +413,25 @@ send_client_req(Msg, From, NkPort, #state{pos=Pos}=State) ->
 
 
 %% @private
-make_msg(info, TransId) ->
-    make_req(info, TransId, #{});
+make_msg(info, TransId, State) ->
+    make_req(info, TransId, #{}, State);
 
-make_msg({create, _CallBack, _ClientId, _Pid}, TransId) ->
-    make_req(create, TransId, #{});
+make_msg({create, _CallBack, _ClientId, _Pid}, TransId, State) ->
+    make_req(create, TransId, #{}, State);
 
-make_msg({attach, Id, Plugin}, TransId) ->
+make_msg({attach, Id, Plugin}, TransId, State) ->
     Data = #{plugin=>Plugin, session_id=>Id},
-    make_req(attach, TransId, Data);
+    make_req(attach, TransId, Data, State);
 
-make_msg({detach, Id, Handle}, TransId) ->
+make_msg({detach, Id, Handle}, TransId, State) ->
     Data = #{session_id=>Id, handle_id=>Handle},
-    make_req(detach, TransId, Data);
+    make_req(detach, TransId, Data, State);
 
-make_msg({destroy, Id}, TransId) ->
+make_msg({destroy, Id}, TransId, State) ->
     Data = #{session_id=>Id},
-    make_req(destroy, TransId, Data);
+    make_req(destroy, TransId, Data, State);
 
-make_msg({message, Id, Handle, Body, Jsep}, TransId) ->
+make_msg({message, Id, Handle, Body, Jsep}, TransId, State) ->
     Msg1 = #{
         body => Body,
         handle_id => Handle,
@@ -443,13 +443,13 @@ make_msg({message, Id, Handle, Body, Jsep}, TransId) ->
         _ ->
             Msg1#{jsep=>Jsep}
     end,
-    make_req(message, TransId, Msg2);
+    make_req(message, TransId, Msg2, State);
 
-make_msg({keepalive, Id}, TransId) ->
+make_msg({keepalive, Id}, TransId, State) ->
     Data = #{session_id=>Id},
-    make_req(keepalive, TransId, Data);
+    make_req(keepalive, TransId, Data, State);
 
-make_msg(_Type, _TransId) ->
+make_msg(_Type, _TransId, _State) ->
     unknown_op.
 
 
@@ -599,9 +599,12 @@ send(Msg, NkPort) ->
 
 
 %% @private
-make_req(Cmd, TransId, Data) ->
-    Data#{janus=>Cmd, transaction=>TransId}.
-
+make_req(Cmd, TransId, Data, #state{pass=Pass}) ->
+    Data#{
+        janus => Cmd, 
+        transaction => TransId,
+        apisecret => Pass
+    }.
 
 
 %% @private
