@@ -37,7 +37,7 @@
     lager:Type("NkMEDIA Janus Client "++Txt, Args)).
 
 -define(PRINT(Txt, Args, State), 
-        % print(Txt, Args, State),    % Comment this
+        print(Txt, Args, State),    % Comment this
         ok).
 
 
@@ -477,7 +477,10 @@ process_server_resp(success, _OpId, Req, From, Msg, _NkPort, State) ->
         {detach, _Id, _Handle} ->
             {ok, State};
         {destroy, Id} ->
-            {ok, del_client(Id, State)}
+            {ok, del_client(Id, State)};
+        {message, _Id, _Handle, _Body, _Jsep} ->
+            #{<<"plugindata">>:=Data} = Msg,
+            {{ok, Data, #{}}, State}
     end,
     nklib_util:reply(From, Reply),
     {ok, State2};

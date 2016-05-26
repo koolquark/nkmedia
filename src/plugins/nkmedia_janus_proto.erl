@@ -271,6 +271,7 @@ conn_handle_info({'DOWN', Ref, process, _Pid, Reason}=Info, _NkPort, State) ->
     case lists:keytake(Ref, 2, Calls) of
         {value, {CallId, Ref}, Calls2} ->
             ?LLOG(notice, "call ~s down: ~p", [CallId, Reason], State),
+            hangup(self(), CallId, <<"Process Down">>),
             {ok, State#state{calls=Calls2}};
         false ->
             ?LLOG(notice, "down not found: ~p, ~p", [Ref, Calls], State),
@@ -323,6 +324,9 @@ send_req({answer, CallId, #{sdp:=SDP}}, From, NkPort, #state{calls=Calls}=State)
     Req = make_videocall_req(Result, Jsep, State),
     nklib_util:reply(From, ok),
     send(Req, NkPort, State);
+
+send_req({hangup, _CallId, _Reason}, _From, _NkPort, #state{plugin=recordplay}=State) ->
+    {stop, normal, State};
 
 send_req({hangup, CallId, Reason}, From, NkPort, State) ->
     ?LLOG(info, "ordered HANGUP (~s, ~p)", [CallId, Reason], State),
@@ -531,6 +535,11 @@ process_client_msg(start, _Body, Msg, NkPort, #state{calls=Calls}=State) ->
     Resp = make_recordplay_resp2(Data, #{}, Msg, State2),
     send(Resp, NkPort, State2);
 
+
+process_client_msg(stop, _Body, _Msg, _NkPort, State) ->
+    ?LLOG(warning, "received STOP", [], State),
+    {ok, State};
+
 process_client_msg(Cmd, _Body, _Msg, _NkPort, State) ->
     ?LLOG(warning, "unexpected client MESSAGE: ~s", [Cmd], State),
     {ok, State}.
@@ -734,10 +743,15 @@ print(_Txt, [#{janus:=ack}], _State) ->
     ok;
 print(Txt, [#{}=Map], State) ->
     Map2 = case Map of
-        % #{jsep:=Jsep} -> Map#{jsep:=Jsep#{sdp=><<"...">>}};
-        % #{<<"jsep">>:=Jsep} -> Map#{<<"jsep">>:=Jsep#{<<"sdp">>=><<"...">>}};
-        _ -> Map
+        #{jsep:=#{sdp:=_SDP}=Jsep} -> 
+            Map#{jsep:=Jsep#{sdp=><<"...">>}};
+        #{<<"jsep">>:=#{<<"sdp">>:=_SDP}=Jsep} -> 
+            Map#{<<"jsep">>:=Jsep#{<<"sdp">>=><<"...">>}};
+        _ -> 
+            _SDP = <<>>,
+            Map
     end,
+    % io:format("~s\n", [_SDP]),
     print(Txt, [nklib_json:encode_pretty(Map2)], State);
 print(Txt, Args, State) ->
     ?LLOG(info, Txt, Args, State).

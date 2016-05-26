@@ -255,7 +255,7 @@ interface = $JANUS_IP               ; Interface to use (will be used in SDP)
 debug_level = 4                     ; Debug/logging level, valid values are 0-7
 ;debug_timestamps = yes
 ;debug_colors = no
-api_secret = $PASS
+;api_secret = $PASS
 ;token_auth = yes                   ; Admin API MUST be enabled
 admin_secret = $PASS   
 

@@ -176,11 +176,8 @@ nkmedia_janus_bye(CallId, Janus) ->
     ok | {hangup, nkmedia:hangup_reason(), janus()} | continue().
 
 nkmedia_janus_start(SessId, Answer, Janus) ->
-    % Answer2 = Answer#{module=>nkmedia_janus_proto_start, pid=>self()},
     case nkmedia_session:set_answer(SessId, Answer, #{}) of
         ok ->
-            JaSess = <<"O_", SessId/binary>>,
-            ok = nkmedia_janus_session:listener_answer(JaSess, Answer),
             {ok, Janus};
         {error, Error} ->
             lager:warning("Janus janus_start error: ~p", [Error]),

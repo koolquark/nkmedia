@@ -23,6 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([list_sessions/1, list_handles/2, handle_info/3, set_log_level/2]).
+-export([print_handle_info/3]).
 
 
 %% ===================================================================
@@ -76,6 +77,17 @@ handle_info(Id, Session, Handle) ->
         {error, Error} ->
             {error, Error}
     end.
+
+
+%% @doc Gets info on a handle for a session
+-spec print_handle_info(nkmedia_janus:id()|nkmedia_janus:config(), 
+                        integer(), integer()) ->
+    ok.
+
+print_handle_info(Id, Session, Handle) ->
+    {ok, Info} = handle_info(Id, Session, Handle),
+    io:format("~s", [nklib_json:encode_pretty(Info)]).
+
 
 
 %% @doc Gets info on a handle for a session

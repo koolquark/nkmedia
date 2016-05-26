@@ -4,6 +4,6 @@
     {modules, []},
     {registered, []},
     {mod, {nkmedia_app, []}},
-    {applications, [nkdocker, nksip]},
+    {applications, [nkdocker, nksip, inets]},
     {env, []}
 ]}.

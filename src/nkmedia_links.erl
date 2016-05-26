@@ -112,7 +112,7 @@ remove(Id, Links) ->
     {ok, id(), data(), links()} | not_found.
 
 extract_mon(Mon, Links) ->
-    case lists:keytake(Mon, 3, Links) of
+    case lists:keytake(Mon, 4, Links) of
         {value, {Id, Data, _Pid, Mon}, Links2} ->
             nklib_util:demonitor(Mon),
             {ok, Id, Data, Links2};

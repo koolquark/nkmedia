@@ -74,7 +74,7 @@ restart() ->
 
 listener(Id) ->
     {ok, SessId, Pid} = nkmedia_session:start(sample, #{}),
-    {ok, Meta} = nkmedia_session:set_offer(SessId, {listener, 1234, Id}, 
+    {ok, Meta} = nkmedia_session:set_offer(SessId, {listen, 1234, Id}, 
                                            #{sync=>true, get_offer=>true}),
     #{offer:=Offer} = Meta,
     nkmedia_janus_proto:register_play(SessId, Pid, Offer).
@@ -183,7 +183,7 @@ send_call(SessId, Dest) ->
         <<"m2">> ->
             ok = nkmedia_session:set_answer(SessId, {mcu, "mcu2"}, #{});
         <<"p">> ->
-            ok = nkmedia_session:set_answer(SessId, {publisher, 1234}, #{});
+            ok = nkmedia_session:set_answer(SessId, {publish, 1234}, #{});
         <<"d", Num/binary>> ->
             ok = nkmedia_session:set_answer(SessId, {call, Num}, #{type=>p2p});
         <<"f", Num/binary>> -> 
