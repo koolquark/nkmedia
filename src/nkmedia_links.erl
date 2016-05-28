@@ -22,8 +22,8 @@
 
 -module(nkmedia_links).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([new/0, add/4, get/2, update/3, remove/2, extract_mon/2, iter/2]).
--export([add/5, get/3, update/4, remove/3, extract_mon/3, iter/3]).
+-export([new/0, add/4, get/2, update/3, remove/2, extract_mon/2, iter/2, fold/3]).
+-export([add/5, get/3, update/4, remove/3, extract_mon/3, iter/3, fold/4]).
 -export_type([links/0, links/1, id/0, data/0]).
 
 
@@ -130,6 +130,17 @@ iter(Fun, Links) ->
         fun({Id, Data, _Pid, _Mon}) -> Fun(Id, Data) end, Links).
 
 
+%% @doc Folds over links
+-spec fold(fun((id(), data(), term()) -> term()), term(), links()) ->
+    ok.
+
+fold(Fun, Acc0, Links) ->
+    lists:foldl(
+        fun({Id, Data, _Pid, _Mon}, Acc) -> Fun(Id, Data, Acc) end, 
+        Acc0,
+        Links).
+
+
 
 %% ===================================================================
 %% In-tuple functions
@@ -192,5 +203,13 @@ extract_mon(Mon, Pos, Tuple) when is_integer(Pos), is_tuple(Tuple) ->
     ok.
 
 iter(Fun, Pos, Tuple) when is_integer(Pos), is_tuple(Tuple) ->
-    lists:foreach(
-        fun({Id, Data, _Pid, _Mon}) -> Fun(Id, Data) end, element(Pos, Tuple)).
+    iter(Fun, element(Pos, Tuple)).
+
+
+%% @doc Folds over links
+-spec fold(fun((id(), data(), term()) -> term()), term(), integer(), tuple()) ->
+    ok.
+
+fold(Fun, Acc, Pos, Tuple) when is_integer(Pos), is_tuple(Tuple) ->
+    fold(Fun, Acc, element(Pos, Tuple)).
+

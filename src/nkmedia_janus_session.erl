@@ -24,8 +24,9 @@
 -behaviour(gen_server).
 
 -export([start/1, stop/1, videocall/3, videocall_answer/2, echo/3]).
--export([list_rooms/1, create_room/2, destroy_room/2]).
--export([publish/4, unpublish/1, listen/4, listen_answer/2, listen_switch/3]).
+-export([list_rooms/1, create_room/3, destroy_room/2]).
+-export([publish/5, unpublish/1]).
+-export([listen/5, listen_answer/2, listen_switch/3, unlisten/1]).
 -export([get_all/0, janus_event/4]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
@@ -48,31 +49,39 @@
 
 -type id() :: binary().
 
--type room() :: integer().
+-type room() :: binary().
 
--type room_user_id() :: integer().
+-type session() :: nkmedia_session:id().
 
--type opts() ::
+-type room_opts() ::
     #{
-        bitrate => integer(),
-        record => boolean(),
-        filename => binary(),
-
-        % For room creation:
         audiocodec => opus | isac32 | isac16 | pcmu | pcma,
         videocodec => vp8 | vp9 | h264,
         description => binary(),
         bitrate => integer(),
         publishers => integer(),
         record => boolean(),
-        rec_dir => binary(),
+        rec_dir => binary()
+    }.
 
-        % For listeners
+-type publish_opts() ::
+    #{
+        audio => boolean(),
+        video => boolean(),
+        data => boolean(),
+        bitrate => integer(),
+        record => boolean(),
+        filename => binary(),
+        info => term()
+    }.
+
+-type listen_opts() ::
+    #{
         audio => boolean(),
         video => boolean(),
         data => boolean()
-
     }.
+
 
 -type status() ::
     wait | videocall | echo | publish | listen.
@@ -103,7 +112,7 @@ stop(Id) ->
 
 %% @doc Starts a videocall inside the session.
 %% The SDP offer for the remote party is returned.
--spec videocall(id()|pid(), nkmedia:offer(), opts()) ->
+-spec videocall(id()|pid(), nkmedia:offer(), room_opts()) ->
     {ok, nkmedia:offer()} | {error, term()}.
 
 videocall(Id, Offer, Opts) ->
@@ -121,7 +130,7 @@ videocall_answer(Id, Answer) ->
 
 %% @doc Starts a echo inside the session.
 %% The SDP is returned.
--spec echo(id()|pid(), nkmedia:offer(), opts()) ->
+-spec echo(id()|pid(), nkmedia:offer(), room_opts()) ->
     {ok, nkmedia:answer()} | {error, term()}.
 
 echo(Id, Offer, Opts) ->
@@ -138,28 +147,28 @@ list_rooms(Id) ->
 
 
 %% @doc Creates a new videoroom
--spec create_room(id()|pid(), opts()) ->
+-spec create_room(id()|pid(), room(), room_opts()) ->
     {ok, room()} | {error, term()}.
 
-create_room(Id, Opts) ->
-    do_call(Id, {create_room, Opts}).
+create_room(Id, Room, Opts) ->
+    do_call(Id, {create_room, to_room(Room), Opts}).
 
 
 %% @doc Destroys a videoroom
 -spec destroy_room(id()|pid(), room()) ->
-    {ok, room()} | {error, term()}.
+    ok | {error, term()}.
 
 destroy_room(Id, Room) ->
-    do_call(Id, {destroy_room, Room}).
+    do_call(Id, {destroy_room, to_room(Room)}).
 
 
 %% @doc Starts a conection to a videoroom.
 %% caller_id is taked from offer.
--spec publish(id()|pid(), room(), nkmedia:offer(), opts()) ->
-    {ok, room_user_id(), nkmedia:answer()} | {error, term()}.
+-spec publish(id()|pid(), room(), session(), nkmedia:offer(), publish_opts()) ->
+    {ok, nkmedia:answer()} | {error, term()}.
 
-publish(Id, Room, Offer, Opts) ->
-    do_call(Id, {publish, Room, Offer, Opts}).
+publish(Id, Room, Session, Offer, Opts) when is_binary(Session) ->
+    do_call(Id, {publish, to_room(Room), Session, Offer, Opts}).
 
 
 %% @doc Starts a conection to a videoroom.
@@ -172,11 +181,11 @@ unpublish(Id) ->
 
 
 %% @doc Starts a conection to a videoroom
--spec listen(id()|pid(), room(), room_user_id(), opts()) ->
+-spec listen(id()|pid(), room(), session(), session(), listen_opts()) ->
     {ok, nkmedia:offer()} | {error, term()}.
 
-listen(Id, Room, UserId, Opts) ->
-    do_call(Id, {listen, Room, UserId, Opts}).
+listen(Id, Room, Session, Listen, Opts) when is_binary(Session), is_binary(Listen) ->
+    do_call(Id, {listen, to_room(Room), Session, Listen, Opts}).
 
 
 %% @doc Answers a listen
@@ -188,11 +197,20 @@ listen_answer(Id, Answer) ->
 
 
 %% @doc Answers a listen
--spec listen_switch(id()|pid(), room_user_id(), opts()) ->
+-spec listen_switch(id()|pid(), session(), listen_opts()) ->
     ok | {error, term()}.
 
-listen_switch(Id, UserId, Opts) ->
-    do_call(Id, {listen_switch, UserId, Opts}).
+listen_switch(Id, Listen, Opts) ->
+    Listen2 = nklib_util:to_binary(Listen),
+    do_call(Id, {listen_switch, Listen2, Opts}).
+
+
+%% @doc
+-spec unlisten(id()|pid()) ->
+    ok | {error, term()}.
+
+unlisten(Id) ->
+    do_call(Id, unlisten).
 
 
 %% @private
@@ -209,6 +227,7 @@ get_all() ->
 %% ===================================================================
 
 janus_event({?MODULE, Pid}, JanusSessId, JanusHandle, Msg) ->
+    % lager:error("Event: ~p", [Msg]),
     gen_server:cast(Pid, {event, JanusSessId, JanusHandle, Msg}).
 
 
@@ -221,15 +240,17 @@ janus_event({?MODULE, Pid}, JanusSessId, JanusHandle, Msg) ->
 -record(state, {
     id :: id(),
     janus_id :: nkmedia_janus:id(),
-    opts :: opts(),
     mon :: reference(),
     status = init :: status() | init,
     session_id :: integer(),
     handle_id :: integer(),
     session_id2 :: integer(),
     handle_id2 :: integer(),
-    room_id :: integer(),
+    room :: room(),
+    room_mon :: reference(),
+    session ::session(),
     from :: {pid(), term()},
+    opts :: map(),
     timer :: reference()
 }).
 
@@ -268,27 +289,30 @@ handle_call({echo, Offer, Opts}, _From, #state{status=wait}=State) ->
 handle_call(list_rooms, _From, #state{status=wait}=State) -> 
     do_list_rooms(State);
 
-handle_call({create_room, Opts}, _From, #state{status=wait}=State) -> 
-    do_create_room(Opts, State);
+handle_call({create_room, Room, Opts}, _From, #state{status=wait}=State) -> 
+    do_create_room(Room, Opts, State);
 
 handle_call({destroy_room, Room}, _From, #state{status=wait}=State) -> 
     do_destroy_room(Room, State);
 
-handle_call({publish, Room, Offer, Opts}, _From, #state{status=wait}=State) -> 
-    do_publish(Room, Offer, Opts, State);
+handle_call({publish, Room, Session, Offer, Opts}, _From, #state{status=wait}=State) -> 
+    do_publish(Room, Session, Offer, Opts, State);
 
 handle_call(upublish, _From, #state{status=publish}=State) -> 
     do_unpublish(State);
 
-handle_call({listen, Room, UserId, Opts}, _From, #state{status=wait}=State) -> 
-    do_listen(Room, UserId, Opts, State);
+handle_call({listen, Room, Session, Listen, Opts}, _From, #state{status=wait}=State) -> 
+    do_listen(Room, Session, Listen, Opts, State);
 
 handle_call({listen_answer, Answer}, _From, 
             #state{status=wait_listen_answer}=State) -> 
     do_listen_answer(Answer, State);
 
-handle_call({listen_switch, UserId, Opts}, _From, #state{status=listen}=State) -> 
-    do_listen_switch(UserId, Opts, State);
+handle_call({listen_switch, Listen, Opts}, _From, #state{status=listen}=State) -> 
+    do_listen_switch(Listen, Opts, State);
+
+handle_call(unlisten, _From, #state{status=listen}=State) -> 
+    do_unlisten(State);
 
 handle_call(_Msg, _From, State) -> 
     reply({error, invalid_state}, State).
@@ -345,9 +369,18 @@ handle_info({timeout, _, status_timeout}, State) ->
 handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{mon=Ref}=State) ->
     case Reason of
         normal ->
-            ?LLOG(info, "monitor stop", [], State);
+            ?LLOG(info, "caller monitor stop", [], State);
         _ ->
-            ?LLOG(notice, "monitor stop: ~p", [Reason], State)
+            ?LLOG(notice, "caller monitor stop: ~p", [Reason], State)
+    end,
+    {stop, normal, State};
+
+handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{room_mon=Ref}=State) ->
+    case Reason of
+        normal ->
+            ?LLOG(info, "room monitor stop", [], State);
+        _ ->
+            ?LLOG(notice, "room monitor stop: ~p", [Reason], State)
     end,
     {stop, normal, State};
 
@@ -369,7 +402,7 @@ code_change(_OldVsn, State, _Extra) ->
     ok.
 
 terminate(_Reason, State) ->
-    #state{from=From, session_id=Id, session_id2=Id2} = State,
+    #state{from=From, session_id=Id, session_id2=Id2, status=Status} = State,
     case Id of
         undefined -> ok;
         _ -> destroy(Id, State)
@@ -377,6 +410,16 @@ terminate(_Reason, State) ->
     case Id2 of
         undefined -> ok;
         _ -> destroy(Id2, State)
+    end,
+    case Status of
+        publisher ->
+            #state{room=Room, session=Session} = State,
+            _ = nkmedia_janus_room:event(Room, {unpublish, Session});
+        listener ->
+            #state{room=Room, session=Session} = State,
+            _ = nkmedia_janus_room:event(Room, {unlisten, Session});
+        _ ->
+            ok
     end,
     nklib_util:reply(From, {error, stopped}),
     ok.
@@ -500,19 +543,21 @@ do_list_rooms(State) ->
     Body = #{request => list}, 
     case message(Id, Handle, Body, State) of
         {ok, #{<<"list">>:=List}, _} ->
-            reply_stop({ok, List}, State);
+            List2 = [{Desc, Data} || #{<<"description">>:=Desc}=Data <- List],
+            reply_stop({ok, maps:from_list(List2)}, State);
         {error, Error} ->
             reply_error({create_error, Error}, State)
     end.
 
 
 %% @private
-do_create_room(Opts, State) ->
+do_create_room(Room, Opts, State) ->
     {ok, Id} = create(State),
     {ok, Handle} = attach(Id, videoroom, State),
+    RoomId = to_room_id(Room),
     Body = #{
         request => create, 
-        description => nklib_util:to_binary(maps:get(description, Opts, <<>>)),
+        description => nklib_util:to_binary(Room),
         bitrate => maps:get(bitrate, Opts, 128000),
         publishers => maps:get(publishers, Opts, 6),
         audiocodec => maps:get(audiocodec, Opts, opus),
@@ -520,13 +565,17 @@ do_create_room(Opts, State) ->
         record => maps:get(record, Opts, false),
         rec_dir => nklib_util:to_binary(maps:get(rec_dir, Opts, <<"/tmp">>)),
         is_private => false,
-        permanent => false
+        permanent => false,
+        room => RoomId
         % fir_freq
-        % room => you can select id 
     },
     case message(Id, Handle, Body, State) of
-        {ok, #{<<"videoroom">>:=<<"created">>, <<"room">>:=Room}, _} ->
-            reply_stop({ok, Room}, State);
+        {ok, #{<<"videoroom">>:=<<"created">>, <<"room">>:=RoomId}, _} ->
+            reply_stop(ok, State);
+        {ok, #{<<"error_code">>:=427}, _} ->
+            reply_error(already_exists, State);
+        {ok, #{<<"error">>:=Error}, _} ->
+            reply_error({create_error, Error}, State);
         {error, Error} ->
             reply_error({create_error, Error}, State)
     end.
@@ -536,17 +585,17 @@ do_create_room(Opts, State) ->
 do_destroy_room(Room, State) ->
     {ok, Id} = create(State),
     {ok, Handle} = attach(Id, videoroom, State),
-    Body = #{
-        request => destroy,
-        room => Room 
-    },
+    RoomId = to_room_id(Room),
+    Body = #{request => destroy, room => RoomId},
     case message(Id, Handle, Body, State) of
         {ok, #{<<"videoroom">>:=<<"destroyed">>}, _} ->
-            reply({ok, Room}, State);
+            reply_stop(ok, State);
+        {ok, #{<<"error_code">>:=426}, _} ->
+            reply_error(room_not_found, State);
         {ok, #{<<"error">>:=Error}, _} ->
             reply_error(Error, State);
         {error, Error} ->
-            reply_error({create_error, Error}, State)
+            reply_error({destroy_error, Error}, State)
     end.
 
 
@@ -558,41 +607,67 @@ do_destroy_room(Room, State) ->
 %% ===================================================================
 
 %% @private Create session and join
-do_publish(Room, #{sdp:=SDP}=Offer, Opts, State) ->
+do_publish(Room, Session, #{sdp:=SDP}, Opts, State) ->
     {ok, Id} = create(State),
     {ok, Handle} = attach(Id, videoroom, State),
-    Display = maps:get(caller_id, Offer, <<"undefined">>),
+    RoomId = to_room_id(Room),
+    Feed = erlang:phash2(Session),
     Body = #{
         request => join, 
-        room => Room,
+        room => RoomId,
         ptype => publisher,
-        display => nklib_util:to_binary(Display)
-        % id 
+        display => Session,
+        id => Feed
     },
     case message(Id, Handle, Body, State) of
-        {ok, #{<<"videoroom">>:=<<"joined">>, <<"id">>:=UserId}, _} ->
-            State2 = State#state{session_id=Id, handle_id=Handle, opts=Opts},
-            do_publish_2(UserId, SDP, State2);
+        {ok, #{<<"videoroom">>:=<<"joined">>, <<"id">>:=Feed}, _} ->
+            State2 = State#state{
+                session_id = Id, 
+                handle_id = Handle, 
+                room = Room,
+                session = Session,
+                opts = Opts
+            },
+            do_publish_2(SDP, State2);
+        {ok, #{<<"error_code">>:=426}, _} ->
+            reply_error(unknown_room, State);
+        {ok, #{<<"error">>:=Error}, _} ->
+            reply_error(Error, State);
         {error, Error} ->
             reply_error({joined_error, Error}, State)
     end.
 
 
 %% @private
-do_publish_2(UserId, SDP_A, State) ->
-    #state{session_id=Id, handle_id=Handle} = State,
+do_publish_2(SDP_A, State) ->
+    #state{
+        session_id = Id, 
+        handle_id = Handle, 
+        room = Room, 
+        session = Session,
+        opts = Opts
+    } = State,
+    DefFile = <<"publish_", Session/binary>>,
     Body = #{
         request => configure,
-        audio => true,
-        video => true
-        % bitrate
-        % record
-        % filename
+        audio => maps:get(audio, Opts, true),
+        video => maps:get(video, Opts, true),
+        data => maps:get(data, Opts, true),
+        bitrate => maps:get(bitrate, Opts, 0),
+        record => maps:get(record, Opts, true),
+        filename => nklib_util:to_binary(maps:get(filename, Opts, DefFile))
     },
     Jsep = #{sdp=>SDP_A, type=>offer, trickle=>false},
     case message(Id, Handle, Body, Jsep, State) of
         {ok, #{<<"configured">>:=<<"ok">>}, #{<<"sdp">>:=SDP_B}} ->
-            reply({ok, UserId, #{sdp=>SDP_B}}, status(publish, State));
+            case nkmedia_janus_room:event(Room, {publish, Session, Opts}) of
+                {ok, Pid} ->
+                    Mon = erlang:monitor(process, Pid),
+                    State2 = State#state{room_mon=Mon},
+                    reply({ok, #{sdp=>SDP_B}}, status(publish, State2));
+                {error, Error} ->
+                    reply_error({nkmedia_room_error, Error}, State)
+            end;
         {error, Error} ->
             reply_error({configure_error, Error}, State)
     end.
@@ -604,7 +679,7 @@ do_unpublish(State) ->
     Body = #{request => unpublish},
     case message(Id, Handle, Body, State) of
         {ok, #{<<"videoroom">>:=<<"unpublished">>}, _} ->
-            reply(ok, State);
+            reply_stop(ok, State);
         {error, Error} ->
             reply_error({joined_error, Error}, State)
     end.
@@ -619,27 +694,36 @@ do_unpublish(State) ->
 
 
 %% @private Create session and join
-do_listen(Room, UserId, Opts, State) ->
+do_listen(Room, Session, Listen, Opts, State) ->
     {ok, Id} = create(State),
     {ok, Handle} = attach(Id, videoroom, State),
+    Feed = erlang:phash2(Listen),
     Body = #{
         request => join, 
-        room => Room,
+        room => to_room_id(Room),
         ptype => listener,
-        feed => UserId
-        % audio
-        % video
-        % data
+        feed => Feed,
+        audio => maps:get(audio, Opts, true),
+        video => maps:get(video, Opts, true),
+        data => maps:get(data, Opts, true)
     },
     case message(Id, Handle, Body, State) of
         {ok, #{<<"videoroom">>:=<<"attached">>}, #{<<"sdp">>:=SDP}} ->
             State2 = State#state{
                 session_id = Id, 
                 handle_id = Handle,
-                room_id = Room,
+                room = Room,
+                session = Session,
                 opts = Opts
             },
-            reply({ok, #{sdp=>SDP}}, status(wait_listen_answer, State2));
+            case nkmedia_janus_room:event(Room, {listen, Session, Opts}) of
+                {ok, Pid} ->
+                    Mon = erlang:monitor(process, Pid),
+                    State3 = State2#state{room_mon=Mon},
+                    reply({ok, #{sdp=>SDP}}, status(wait_listen_answer, State3));
+                {error, Error} ->
+                    reply_error({nkmedia_room_error, Error}, State)
+            end;
         {ok, #{<<"error">>:=Error}, _} ->
             reply_error(Error, State);
         {error, Error} ->
@@ -649,7 +733,7 @@ do_listen(Room, UserId, Opts, State) ->
 
 %% @private Caller answers
 do_listen_answer(#{sdp:=SDP}, State) ->
-    #state{session_id=Id, handle_id=Handle, room_id=Room} = State,
+    #state{session_id=Id, handle_id=Handle, room=Room} = State,
     Body = #{request=>start, room=>Room},
     Jsep = #{sdp=>SDP, type=>answer, trickle=>false},
     case message(Id, Handle, Body, Jsep, State) of
@@ -662,11 +746,12 @@ do_listen_answer(#{sdp:=SDP}, State) ->
 
 
 %% @private Create session and join
-do_listen_switch(UserId, Opts, State) ->
+do_listen_switch(Listen, Opts, State) ->
     #state{session_id=Id, handle_id=Handle} = State,
+    Feed = erlang:phash2(Listen),
     Body = #{
         request => switch,        
-        feed => UserId,
+        feed => Feed,
         audio => maps:get(audio, Opts, true),
         video => maps:get(video, Opts, true),
         data => maps:get(data, Opts, true)
@@ -678,6 +763,18 @@ do_listen_switch(UserId, Opts, State) ->
             reply({error, Error}, State);
         {error, Error} ->
             {error, {could_not_join, Error}}
+    end.
+
+
+%% @private
+do_unlisten(State) ->
+    #state{session_id=Id, handle_id=Handle} = State,
+    Body = #{request => leave},
+    case message(Id, Handle, Body, State) of
+        {ok, #{<<"videoroom">>:=<<"unpublished">>}, _} ->
+            reply_stop(ok, State);
+        {error, Error} ->
+            reply_error({leave_error, Error}, State)
     end.
 
 
@@ -719,8 +816,15 @@ do_event(Id, Handle, {event, <<"accepted">>, _, #{<<"sdp">>:=SDP}}, State) ->
             {stop, normal, State}
     end;
 
+do_event(_Id, _Handle, {data, #{<<"publishers">>:=_}}, State) ->
+    noreply(State);
+
+do_event(_Id, _Handle, {data, #{<<"videoroom">>:=<<"destroyed">>}}, State) ->
+    ?LLOG(notice, "videoroom destroyed", [], State),
+    {stop, normal, State};
+
 do_event(_Id, _Handle, Event, State) ->
-    ?LLOG(info, "unexpected event: ~p", [Event], State),
+    ?LLOG(warning, "unexpected event: ~p", [Event], State),
     noreply(State).
 
 
@@ -892,3 +996,12 @@ do_cast(SessId, Msg) ->
         not_found -> {error, session_not_found}
     end.
 
+
+%% @private
+to_room(Room) when is_integer(Room) -> Room;
+to_room(Room) -> nklib_util:to_binary(Room).
+
+
+%% @private
+to_room_id(Room) when is_integer(Room) -> Room;
+to_room_id(Room) when is_binary(Room) -> erlang:phash2(Room).

@@ -101,9 +101,9 @@
     }.
 
 -type offer_op() ::
-    nkmedia:offer() |                               % Set raw offer 
-    pbx             |                               % Get offer from pbx
-    {listen, Room::integer(), User::integer()}.   % Get offer from listen
+    nkmedia:offer()             |       % Set raw offer 
+    pbx                         |       % Get offer from pbx
+    {listen, room(), id()}.             % Get offer from listen
 
 
 -type answer_op() ::
@@ -111,7 +111,7 @@
     pbx                          |      % Put session into pbx (only pbx type)
     echo                         |      % Perform media echo (proxy and pbx)
     {mcu, Room::binary()}        |      % Connect offer to mcu (pbx)
-    {publish, Room::integer()} |      % Connect offer to publish (proxy)
+    {publish, room()}            |      % Connect offer to publish (proxy)
     {call, Dest::call_dest()}    |      % Get answer from complex call (all)
     {invite, Dest::call_dest()}.        % Get answer from invite (all)
 
@@ -122,6 +122,8 @@
     {call, Dest::call_dest()}           |   % Get answer from complex call (pbx)
     {invite, Dest::call_dest()}         |   % Get answer from invite (pbx)
     {listen_switch, User::integer()}.     % (only proxy)
+
+-type room() :: nkmedia_janus_room:room().
 
 
 -type op_opts() ::  
@@ -336,7 +338,7 @@ set_call_peer(SessId, PeerSessId) ->
     ms :: mediaserver(),
     pbx_type :: inbound | outbound,
     proxy_pid :: pid(),
-    after_answer :: {janus_call, pid()} | {janus_listen, pid()},
+    after_answer2 = [] :: [{janus_call, pid()} | {janus_listen, pid()}],
     links :: nkmedia_links:links(link_id()),
     timer :: reference(),
     hangup_sent = false :: boolean(),
@@ -620,14 +622,16 @@ do_offer(pbx, Opts, From, #state{type=pbx}=State) ->
             op_reply({error, Error}, Opts, From, State)
     end;
 
-do_offer({listen, Room, UserId}, Opts, From, #state{type=proxy}=State) ->
+do_offer({listen, Room, SessB}, Opts, From, #state{id=Id, type=proxy}=State) ->
+    Room2 = nklib_util:to_binary(Room),
     case get_proxy(State) of
         {ok, Pid, State2} ->
-            case nkmedia_janus_session:listen(Pid, Room, UserId, Opts) of
+            case nkmedia_janus_session:listen(Pid, Room2, Id, SessB, Opts) of
                 {ok, #{sdp:=_}=Offer} ->
+                    #state{after_answer2=After1} = State2,
                     State3 = State2#state{
                         proxy_pid = Pid,
-                        after_answer = {janus_listen, Pid}
+                        after_answer2 = [{janus_listen, Pid}|After1]
                     },
                     do_offer(Offer, Opts, From, State3);
                 {error, Error} ->
@@ -730,16 +734,16 @@ answer_op({mcu, Room}, Opts, From, #state{type=pbx}=State) ->
 
 
 %% PUBLISHER
-answer_op({publish, Room}, Opts, From, #state{type=proxy}=State) ->
+answer_op({publish, Room}, Opts, From, #state{id=Id, type=proxy}=State) ->
+    Room2 = nklib_util:to_binary(Room),
     #state{session=#{offer:=Offer}} = State,
     case get_proxy(State) of
         {ok, Pid, State2} ->
-            case nkmedia_janus_session:publish(Pid, Room, Offer, Opts) of
-                {ok, UserId, #{sdp:=_}=Answer} ->
-                    lager:notice("Publisher Id: ~p", [UserId]),
+            case nkmedia_janus_session:publish(Pid, Room2, Id, Offer, Opts) of
+                {ok, #{sdp:=_}=Answer} ->
                     {ok, State3} = update_answer(Answer, State2),
-                    State4 = status(publish, #{id=>UserId}, State3), 
-                    op_reply({ok, #{id=>UserId}}, Opts, From, State4);
+                    State4 = status(publish, #{room=>Room2}, State3), 
+                    op_reply(ok, Opts, From, State4);
                 {error, Error} ->
                     op_reply({error, Error}, Opts, From, State2)
             end;
@@ -754,12 +758,12 @@ answer_op({call, Dest}, Opts, From, #state{type=p2p}=State) ->
     do_send_call(Dest, Opts, Offer, From, State);
 
 answer_op({call, Dest}, Opts, From, #state{type=proxy}=State) ->
-    #state{session=#{offer:=Offer}} = State,
+    #state{session=#{offer:=Offer}, after_answer2=After} = State,
     case get_proxy(State) of
         {ok, Pid, State2} ->
             case nkmedia_janus_session:videocall(Pid, Offer, Opts) of
                 {ok, #{sdp:=SDP}} ->
-                    State3 = State2#state{after_answer={janus_call, Pid}},
+                    State3 = State2#state{after_answer2=[{janus_call, Pid}|After]},
                     do_send_call(Dest, Opts, Offer#{sdp=>SDP}, From, State3);
                 {error, Error} ->
                     op_reply({error, Error}, Opts, From, State)
@@ -1151,10 +1155,10 @@ update_answer(Answer, #state{has_answer=HasAnswer}=State) ->
             end;
         #{sdp:=_SDP} ->
             case update_answer_ms(Answer, State) of
-                {ok, State2} ->
-                    Session2 = Session#{answer=>Answer},
+                {ok, Answer2, State2} ->
+                    Session2 = Session#{answer=>Answer2},
                     State3 = State2#state{has_answer=true, session=Session2},
-                    {ok, event({answer, Answer}, State3)};
+                    {ok, event({answer, Answer2}, State3)};
                 {error, Error} ->
                     {error, Error}
             end;
@@ -1171,28 +1175,27 @@ update_answer_ms(Answer, #state{id=SessId, ms={fs, _}, pbx_type=outbound}=State)
     Mod = get_fs_mod(State),
     case Mod:answer_out(SessId, Answer) of
         ok ->
-            {ok, State};
+            {ok, Answer, State};
         {error, Error} ->
             ?LLOG(warning, "mediaserver error in answer_out: ~p", [Error], State),
             {error, mediaserver_error}
     end;
 
 %% For listens, we could get the response locally
-update_answer_ms(Answer, #state{type=proxy}=State) ->
-    update_proxy_answer(Answer, State);
+update_answer_ms(#{sdp:=_}=Answer, #state{type=proxy, after_answer2=After}=State) ->
+    process_after_answer(After, Answer, State);
 
-update_answer_ms(_Answer, State) ->
-    {ok, State}.
+update_answer_ms(Answer, State) ->
+    {ok, Answer, State}.
 
 
-%% @private
+%% @private A remote answer is available from a call
 %% For P2P, the remote answer is our answer also
 update_call_answer(#{sdp:=_}=AnswerB, _PeerId, #state{type=p2p}=State) ->
     update_answer(AnswerB, State);
 
-
-%% For pbx, the session should have been already placed at the pbx
-%% We only need to bridge
+%% For pbx, the session should have been already placed at the pbx,
+%% we only need to bridge
 update_call_answer(#{sdp:=_}, PeerId, #state{type=pbx, pbx_type=inbound}=State) ->
     case pbx_bridge(PeerId, State) of
         ok ->
@@ -1202,34 +1205,38 @@ update_call_answer(#{sdp:=_}, PeerId, #state{type=pbx, pbx_type=inbound}=State) 
             {error, pbx_error}
     end;
 
+%% For proxy, we may need to perform aditional operations
 update_call_answer(#{sdp:=_}=AnswerB, _PeerId, #state{type=proxy}=State) ->
-    lager:error("PROXY ANS1: ~p", State#state.after_answer),
-    update_proxy_answer(AnswerB, State);
+    #state{after_answer2=After} = State,
+    case process_after_answer(After, AnswerB, State) of
+        {ok, AnswerB2, State2} ->
+            update_answer(AnswerB2, State2);
+        {error, Error} ->
+            {error, Error}
+    end;
 
 update_call_answer(_Answer, _PeerId, _State) ->
     not_updated.
 
 
 %% @private
-update_proxy_answer(#{sdp:=_}=AnswerB, #state{type=proxy}=State) ->
-    #state{after_answer=AfterAnswer} = State,
-    case AfterAnswer of
-        undefined ->
-            {ok, State};
-        {janus_call, Pid} ->
-            case nkmedia_janus_session:videocall_answer(Pid, AnswerB) of
-                {ok, AnswerA} ->
-                    update_answer(AnswerA, State#state{after_answer=undefined});
-                {error, Error} ->
-                    {error, Error}
-            end;
-        {janus_listen, Pid} ->
-            case nkmedia_janus_session:listen_answer(Pid, AnswerB) of
-                ok ->
-                    update_answer(AnswerB, State#state{after_answer=undefined});
-                {error, Error} ->
-                    {error, Error}
-            end
+process_after_answer([], Answer, State) ->
+    {ok, Answer, State#state{after_answer2=[]}};
+
+process_after_answer([{janus_call, Pid}|Rest], Answer, State) ->
+    case nkmedia_janus_session:videocall_answer(Pid, Answer) of
+        {ok, Answer2} ->
+            process_after_answer(Rest, Answer2, State);
+        {error, Error} ->
+            {error, Error}
+    end;
+
+process_after_answer([{janus_listen, Pid}|Rest], Answer, State) ->
+    case nkmedia_janus_session:listen_answer(Pid, Answer) of
+        ok ->
+            process_after_answer(Rest, Answer, State);
+        {error, Error} ->
+            {error, Error}
     end.
 
 

@@ -24,7 +24,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([start/0, stop/0, restart/0]).
--export([listener/1]).
+-export([listener/1, listener2/2]).
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
 -export([nkmedia_verto_login/4, nkmedia_verto_call/3]).
 -export([nkmedia_call_resolve/2]).
@@ -79,6 +79,17 @@ listener(Id) ->
     #{offer:=Offer} = Meta,
     nkmedia_janus_proto:register_play(SessId, Pid, Offer).
 
+
+listener2(Sess, Dest) ->
+    case nkmedia_session:get_status(Sess) of
+        {ok, publish, #{room:=Room}, _} ->
+            {ok, SessId, _Pid} = nkmedia_session:start(sample, #{}),
+            {ok, _} = nkmedia_session:set_offer(SessId, {listen, Room, Sess}, 
+                                                #{sync=>true}),
+            {ok, _} = nkmedia_session:set_answer(SessId, {call, Dest}, #{sync=>true});
+        _ ->
+            {error, invalid_session}
+    end.
 
 
 
@@ -184,6 +195,8 @@ send_call(SessId, Dest) ->
             ok = nkmedia_session:set_answer(SessId, {mcu, "mcu2"}, #{});
         <<"p">> ->
             ok = nkmedia_session:set_answer(SessId, {publish, 1234}, #{});
+        <<"p2">> ->
+            ok = nkmedia_session:set_answer(SessId, {publish, "room2"}, #{});
         <<"d", Num/binary>> ->
             ok = nkmedia_session:set_answer(SessId, {call, Num}, #{type=>p2p});
         <<"f", Num/binary>> -> 
