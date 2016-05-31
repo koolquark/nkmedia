@@ -428,7 +428,8 @@ process_client_msg(call, Body, Msg, NkPort, State) ->
     ?LLOG(info, "received CALL (~s)", [CallId], State),
     #{<<"username">>:=Dest} = Body,
     #{<<"jsep">>:=#{<<"sdp">>:=SDP}} = Msg,
-    case handle(nkmedia_janus_invite, [CallId, #{dest=>Dest, sdp=>SDP}], State) of
+    Offer = #{dest=>Dest, sdp=>SDP, sdp_type=>webrtc},
+    case handle(nkmedia_janus_invite, [CallId, Offer], State) of
         {ok, Pid, State2} ->
             ok;
         {answer, Answer, Pid, State2} ->
@@ -445,7 +446,8 @@ process_client_msg(accept, _Body, Msg, NkPort, #state{calls=Calls}=State) ->
     [{CallId, _}|_] = Calls,
     ?LLOG(info, "received ACCEPT (~s)", [CallId], State),
     #{<<"jsep">>:=#{<<"sdp">>:=SDP}} = Msg,
-    case handle(nkmedia_janus_answer, [CallId, #{sdp=>SDP}], State) of
+    Answer = #{sdp=>SDP, sdp_type=>webrtc},
+    case handle(nkmedia_janus_answer, [CallId, Answer], State) of
         {ok, State2} ->
             ok;
         {hangup, Reason, State2} ->

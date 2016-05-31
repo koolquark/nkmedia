@@ -129,53 +129,106 @@ base_image_name(Config) ->
 %% @private
 base_image_dockerfile(Vsn) -> 
 <<"
-FROM debian:jessie
-ENV DEBIAN_FRONTEND noninteractive
-ENV APT_LISTCHANGES_FRONTEND noninteractive
+FROM ubuntu:xenial
+#ENV DEBIAN_FRONTEND noninteractive
+#ENV APT_LISTCHANGES_FRONTEND noninteractive
 
-RUN echo \"deb http://" ?DEBIAN "/debian jessie main\\n \\
-           deb http://" ?DEBIAN "/debian jessie-updates main\\n \\
-           deb http://security.debian.org jessie/updates main \\
-        \" > /etc/apt/sources.list
+#RUN echo \"deb http://" ?DEBIAN "/debian jessie main\\n \\
+#           deb http://" ?DEBIAN "/debian jessie-updates main\\n \\
+#           deb http://security.debian.org jessie/updates main \\
+#        \" > /etc/apt/sources.list
 RUN apt-get update
 RUN apt-get install -y \\
         wget vim nano telnet git build-essential libmicrohttpd-dev libjansson-dev \\
-        libnice-dev libssl-dev libsrtp-dev libsofia-sip-ua-dev libglib2.0-dev \\
+        libnice-dev libssl-dev libsofia-sip-ua-dev libglib2.0-dev libsrtp-dev \\
         libopus-dev libogg-dev libini-config-dev libcollection-dev pkg-config \\
-        gengetopt libtool automake librabbitmq-dev subversion make cmake
+        gengetopt libtool automake subversion make cmake \\ 
         libavutil-dev libavcodec-dev libavformat-dev && \\
         apt-get clean
+
+#WORKDIR /root
+#RUN wget https://github.com/cisco/libsrtp/archive/v1.5.0.tar.gz && \\
+#    tar xfv v1.5.0.tar.gz && \\
+#    cd libsrtp-1.5.0 && \\
+#    ./configure --prefix=/usr --enable-openssl --libdir=/usr/lib64 && \\
+#    make libsrtp.so && make install
+
+WORKDIR /root
+RUN git clone https://github.com/sctplab/usrsctp && \\
+    cd usrsctp && \\
+    ./bootstrap && \\
+    ./configure --prefix=/usr && make && make install 
 
 WORKDIR /root
 RUN git clone git://git.libwebsockets.org/libwebsockets && \\
     cd libwebsockets && \\
     git checkout v1.5-chrome47-firefox41 && \\
     mkdir build && cd build && \\
-    cmake -DCMAKE_INSTALL_PREFIX:PATH=/usr .. && \\
-    make && make install && make clean
+    cmake -DCMAKE_INSTALL_PREFIX:PATH=/usr -DCMAKE_C_FLAGS=\"-fpic\" .. && \\
+    make install && make clean
 
 WORKDIR /root
-RUN svn co http://sctp-refimpl.googlecode.com/svn/trunk/KERN/usrsctp usrsctp && \\
-    cd usrsctp && \\
-    ./bootstrap && ./configure && make && make install && make clean
-
-WORKDIR /root
-RUN git clone --branch ", (nklib_util:to_binary(Vsn))/binary, 
-      " --depth 1 https://github.com/meetecho/janus-gateway && \\
+RUN git clone https://github.com/meetecho/janus-gateway && \\
     cd janus-gateway && \\
-    ./autogen.sh && ./configure --enable-post-processing --disable-docs && \\
+    git checkout ", (nklib_util:to_binary(Vsn))/binary, " && \\ 
+    ./autogen.sh && \\
+    ./configure --enable-post-processing --disable-docs --disable-rabbitmq && \\
     make && make install && \\
     make configs && make clean
 
 RUN ldconfig
 
-#EXPOSE 7088 8088 8188
-#USER janus
 WORKDIR /usr/local/
 ">>.
 
 
+% %% @private
+% base_image_dockerfile(Vsn) -> 
+% <<"
+% FROM debian:jessie
+% ENV DEBIAN_FRONTEND noninteractive
+% ENV APT_LISTCHANGES_FRONTEND noninteractive
 
+% RUN echo \"deb http://" ?DEBIAN "/debian jessie main\\n \\
+%            deb http://" ?DEBIAN "/debian jessie-updates main\\n \\
+%            deb http://security.debian.org jessie/updates main \\
+%         \" > /etc/apt/sources.list
+% RUN apt-get update
+% RUN apt-get install -y \\
+%         wget vim nano telnet git build-essential libmicrohttpd-dev libjansson-dev \\
+%         libnice-dev libssl-dev libsrtp-dev libsofia-sip-ua-dev libglib2.0-dev \\
+%         libopus-dev libogg-dev libini-config-dev libcollection-dev pkg-config \\
+%         gengetopt libtool automake librabbitmq-dev subversion make cmake \\ 
+%         libavutil-dev libavcodec-dev libavformat-dev && \\
+%         apt-get clean
+
+% WORKDIR /root
+% RUN git clone git://git.libwebsockets.org/libwebsockets && \\
+%     cd libwebsockets && \\
+%     git checkout v1.5-chrome47-firefox41 && \\
+%     mkdir build && cd build && \\
+%     cmake -DCMAKE_INSTALL_PREFIX:PATH=/usr .. && \\
+%     make && make install && make clean
+
+% WORKDIR /root
+% RUN svn co http://sctp-refimpl.googlecode.com/svn/trunk/KERN/usrsctp usrsctp && \\
+%     cd usrsctp && \\
+%     ./bootstrap && ./configure && make && make install && make clean
+
+% WORKDIR /root
+% RUN git clone --branch ", (nklib_util:to_binary(Vsn))/binary, 
+%       " --depth 1 https://github.com/meetecho/janus-gateway && \\
+%     cd janus-gateway && \\
+%     ./autogen.sh && ./configure --enable-post-processing --disable-docs && \\
+%     make && make install && \\
+%     make configs && make clean
+
+% RUN ldconfig
+
+% #EXPOSE 7088 8088 8188
+% #USER janus
+% WORKDIR /usr/local/
+% ">>.
 %% ===================================================================
 %% Instance build files (Comp/nk_janus_run:vXXX-rXXX)
 %% ===================================================================
@@ -252,7 +305,7 @@ log_to_file = /var/log/janus/janus.log
 ;daemonize = true               
 ;pid_file = /tmp/janus.pid
 interface = $JANUS_IP               ; Interface to use (will be used in SDP)
-debug_level = 4                     ; Debug/logging level, valid values are 0-7
+debug_level = 7                     ; Debug/logging level, valid values are 0-7
 ;debug_timestamps = yes
 ;debug_colors = no
 ;api_secret = $PASS
@@ -301,8 +354,10 @@ base_path = /janus
 threads = unlimited         ; unlimited=thread per connection, number=thread pool
 http = yes                  
 port = 8088                
+;interface = eth0
 https = no                  
 ;secure_port = 8889         
+;secure_interface = eth0
 acl = 127.,192.168.0.      
 
 [admin]
@@ -310,8 +365,10 @@ admin_base_path = /admin
 admin_threads = unlimited       
 admin_http = yes                 
 admin_port = $ADMIN_PORT               
+;admin_interface = eth0
 admin_https = no                
 ;admin_secure_port = 7889       
+;admin_secure_interface = eth0
 admin_acl = 127.,192.168.0.    
 
 [certificates]
@@ -324,16 +381,20 @@ config_ws() -> <<"
 [general]
 ws = yes
 ws_port = $WS_PORT
+;ws_interface = eth0
 ;wss = yes
 ;wss_port = 8989
+;wss_interface = eth0
 ws_logging = 7             ; libwebsockets debugging level (0 by default)
 ws_acl = 127.,192.168.0.   
 
 [admin]
 admin_ws = no                   
 ;admin_ws_port = 7988
+;admin_ws_interface = eth0
 admin_wss = no                  
 ;admin_wss_port = 7989          
+;admin_wss_interface = eth0
 admin_ws_acl = 127.,192.168.0. 
 
 [certificates]

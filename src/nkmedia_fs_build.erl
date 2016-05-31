@@ -132,10 +132,6 @@ base_image_name(Config) ->
     list_to_binary([Comp, "/nk_freeswitch_base:", Vsn, "-", Rel]).
 
 
-% -define(DEBIAN, "ftp.us.debian.org").
--define(DEBIAN, "ftp.debian.org").
-
- 
 %% @private
 base_image_dockerfile(Vsn) -> 
 <<"
@@ -143,10 +139,6 @@ FROM debian:jessie
 ENV DEBIAN_FRONTEND noninteractive
 ENV APT_LISTCHANGES_FRONTEND noninteractive
 WORKDIR /root
-RUN echo \"deb http://" ?DEBIAN "/debian jessie main\\n \\
-           deb http://" ?DEBIAN "/debian jessie-updates main\\n \\
-           deb http://security.debian.org jessie/updates main \\
-        \" > /etc/apt/sources.list
 RUN apt-get update && \\
     apt-get install -y wget vim nano telnet git build-essential && \\
     echo \"deb http://files.freeswitch.org/repo/deb/debian/ jessie main\" > /etc/apt/sources.list.d/99FreeSWITCH.list && \\
@@ -406,46 +398,19 @@ run_image_dialplan() ->
 
     <extension name=\"nkmedia_inbound\">
         <condition field=\"destination_number\" expression=\"^nkmedia_in$\">
-            <action application=\"set\" data=\"transfer_after_bridge=nkmedia_route:XML:default\"/>
+            <action application=\"set\" data=\"park_after_bridge=true\"/>
             <action application=\"answer\"/>
-            <action application=\"info\"/>
-            <action application=\"transfer\" data=\"nkmedia_route\"/>
+            <action application=\"park\"/>
         </condition>
     </extension>
 
     <extension name=\"nkmedia_outgoing\">
         <condition field=\"destination_number\" expression=\"^nkmedia_out$\">
-            <action application=\"set\" data=\"transfer_after_bridge=nkmedia_route:XML:default\"/>
-            <action application=\"transfer\" data=\"nkmedia_route\"/>
+            <action application=\"set\" data=\"park_after_bridge=true\"/>
+            <action application=\"park\"/>
         </condition>  
     </extension>
 
-    <extension name=\"nkmedia_room\">
-        <condition field=\"destination_number\" expression=\"^nkmedia_room_(.*)$\">
-            <action application=\"event\" data=\"$${nkevent},op=room_$1\"/>
-            <action application=\"set\" data=\"nkstatus=room_$1\"/>
-            <action application=\"conference\" data=\"$1\"/>
-            <action application=\"transfer\" data=\"nkmedia_route\"/>
-        </condition>
-    </extension>
-
-    <extension name=\"nkmedia_route\">
-        <condition field=\"destination_number\" expression=\"^nkmedia_route$\">
-            <action application=\"set\" data=\"nkstatus=route\"/>
-            <action application=\"event\" data=\"$${nkevent},op=route\"/>
-            <action application=\"park\"/>      
-        </condition>
-    </extension>
-
-    <extension name=\"nkmedia_join\">
-        <condition field=\"destination_number\" expression=\"^nkmedia_join_(.*)$\">
-            <action application=\"set\" data=\"nkstatus=join_$1\"/>
-            <action application=\"event\" data=\"$${nkevent},op=join_$1\"/>
-            <action application=\"set\" data=\"api_result=${uuid_bridge ${uuid} $1}\"/>
-            <action application=\"transfer\" data=\"nkmedia_route\"/>
-        </condition>
-    </extension>     
-  
     <extension name=\"nkmedia_hangup\">
        <condition field=\"destination_number\" expression=\"^nkmedia_hangup_(.*)$\">
             <action application=\"hangup\" data=\"$1\"/>

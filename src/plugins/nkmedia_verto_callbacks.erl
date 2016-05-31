@@ -285,7 +285,7 @@ nkmedia_call_resolve(Dest, Call) ->
         [Pid|_] ->
             {ok, {nkmedia_verto, Pid}, Call};
         [] ->
-            lager:notice("Verto: user ~s not found", [Dest]),
+            lager:info("Verto: user ~s not found", [Dest]),
             continue
     end.
 

@@ -24,7 +24,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([start/0, stop/0, restart/0]).
--export([listener/1, listener2/2]).
+-export([listener/2, listener2/1, play/2, play2/1]).
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
 -export([nkmedia_verto_login/4, nkmedia_verto_call/3]).
 -export([nkmedia_call_resolve/2]).
@@ -72,7 +72,7 @@ restart() ->
 
 
 
-listener(Id) ->
+listener2(Id) ->
     {ok, SessId, Pid} = nkmedia_session:start(sample, #{}),
     {ok, Meta} = nkmedia_session:set_offer(SessId, {listen, 1234, Id}, 
                                            #{sync=>true, get_offer=>true}),
@@ -80,17 +80,45 @@ listener(Id) ->
     nkmedia_janus_proto:register_play(SessId, Pid, Offer).
 
 
-listener2(Sess, Dest) ->
+listener(Sess, Dest) ->
     case nkmedia_session:get_status(Sess) of
         {ok, publish, #{room:=Room}, _} ->
             {ok, SessId, _Pid} = nkmedia_session:start(sample, #{}),
             {ok, _} = nkmedia_session:set_offer(SessId, {listen, Room, Sess}, 
                                                 #{sync=>true}),
-            {ok, _} = nkmedia_session:set_answer(SessId, {call, Dest}, #{sync=>true});
+            case Dest of
+                {call, Call} ->
+                    {ok, _} = nkmedia_session:set_answer(SessId, {call, Call}, 
+                                                         #{sync=>true});
+                {room, Room2} ->
+                    nkmedia_session:set_answer(SessId, {publish, Room2}, 
+                                                        #{sync=>true})
+            end;
         _ ->
             {error, invalid_session}
     end.
 
+
+play(Id, Dest) ->
+    {ok, SessId, _Pid} = nkmedia_session:start(sample, #{}),
+    {ok, _} = nkmedia_session:set_offer(SessId, {play, Id}, #{sync=>true}),
+    case Dest of
+        {call, Call} ->
+            {ok, _} = nkmedia_session:set_answer(SessId, {call, Call}, 
+                                                 #{sync=>true});
+        {room, Room2} ->
+            nkmedia_session:set_answer(SessId, {publish, Room2}, 
+                                                #{sync=>true})
+    end,
+    listener(SessId, {call, "c"}).
+
+
+play2(Id) ->
+    {ok, SessId, Pid} = nkmedia_session:start(sample, #{}),
+    {ok, Meta} = nkmedia_session:set_offer(SessId, {play, Id}, 
+                                           #{sync=>true, get_offer=>true}),
+    #{offer:=Offer} = Meta,
+    nkmedia_janus_proto:register_play(SessId, Pid, Offer).
 
 
 
@@ -163,14 +191,21 @@ nkmedia_janus_call(SessId, Dest, Janus) ->
 %% ===================================================================
 
 %% @private
-nkmedia_call_resolve(Dest, Call) ->
-    {continue, [Dest, Call]}.
-
+nkmedia_call_resolve(Dest, #{srv_id:=SrvId}=Call) ->
+    case nksip_registrar:find(SrvId, sip, Dest, <<"nkmedia_sample">>) of
+        [] ->
+            continue;
+        [Uri|_] ->
+            Spec = [#{dest=>{nkmedia_sip, Uri, #{}}, sdp_type=>sip}],
+            {ok, Spec, Call}
+    end.
+            
 
 
 %% ===================================================================
 %% sip_callbacks
 %% ===================================================================
+
 
 sip_register(Req, Call) ->
     Req2 = nksip_registrar_util:force_domain(Req, <<"nkmedia_sample">>),
@@ -186,7 +221,7 @@ sip_register(Req, Call) ->
 send_call(SessId, Dest) ->
     case Dest of 
         <<"e">> ->
-           ok = nkmedia_session:set_answer(SessId, echo, #{});
+           ok = nkmedia_session:set_answer(SessId, echo, #{record=>true, filename=>"/tmp/echo"});
         <<"fe">> ->
             ok = nkmedia_session:set_answer(SessId, echo, #{type=>pbx});
         <<"m1">> ->
@@ -197,12 +232,15 @@ send_call(SessId, Dest) ->
             ok = nkmedia_session:set_answer(SessId, {publish, 1234}, #{});
         <<"p2">> ->
             ok = nkmedia_session:set_answer(SessId, {publish, "room2"}, #{});
+        <<"p2r">> ->
+            Opts = #{record=>true, filename=>"p2", info=>p2},
+            ok = nkmedia_session:set_answer(SessId, {publish, "room2"}, Opts);
         <<"d", Num/binary>> ->
             ok = nkmedia_session:set_answer(SessId, {call, Num}, #{type=>p2p});
         <<"f", Num/binary>> -> 
             ok = nkmedia_session:set_answer(SessId, {call, Num}, #{type=>pbx});
         <<"j", Num/binary>> ->
-            ok = nkmedia_session:set_answer(SessId, {call, Num}, #{type=>proxy});
+            ok = nkmedia_session:set_answer(SessId, {call, Num}, #{type=>proxy, record=>true, filename=>"/tmp/file1"});
         _ ->
             no_number
     end.

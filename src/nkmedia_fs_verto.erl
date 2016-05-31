@@ -145,7 +145,7 @@ bw_test(SessId, <<"#S", _/binary>>=Data) ->
     call(SessId, {bw_test, Data, self()}).
 
 
-%% @doc
+%% @doc Sends an INVITE to FS
 %% sdp and callee_id are expected, verto_params is supported
 -spec invite(id()|pid(), binary(), nkmedia:offer()) ->
     {ok, SDP::binary()} | {error, term()}.

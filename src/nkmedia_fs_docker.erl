@@ -190,19 +190,14 @@ notify(MonId, start, Name, Data) ->
         } ->
             case binary:split(Image, <<"/">>) of
                 [_Comp, <<"nk_freeswitch_run:", Rel/binary>>] -> 
-                    case lists:member(Rel, ?SUPPORTED_FS) of
-                        true ->
-                            Config = #{
-                                name => Name, 
-                                rel => Rel, 
-                                host => Host, 
-                                base => nklib_util:to_integer(Base),
-                                pass => Pass
-                            },
-                            connect_fs(MonId, Config);
-                        false ->
-                            lager:warning("Started unsupported nk_freeswitch")
-                    end;
+                    Config = #{
+                        name => Name, 
+                        rel => Rel, 
+                        host => Host, 
+                        base => nklib_util:to_integer(Base),
+                        pass => Pass
+                    },
+                    connect_fs(MonId, Config);
                 _ ->
                     lager:warning("Started unrecognized nk_freeswitch")
             end;

@@ -260,8 +260,8 @@ send_reply(Msg, #state{proxy=Pid}) ->
 
 
 %% @private
-do_send(Msg, NkPort, State) ->
-    case nkpacket_connection:send(NkPort, Msg, State) of
+do_send(Msg, NkPort, #state{pass=Pass}=State) ->
+    case nkpacket_connection:send(NkPort, Msg#{apisecret=>Pass}, State) of
         ok -> {ok, State};
         {error, Error} -> {stop, Error, State}
     end.

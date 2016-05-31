@@ -55,8 +55,7 @@ start(FsPid) ->
         class => ?MODULE,
         monitor => self(),
         idle_timeout => ?VERTO_WS_TIMEOUT,
-        user => #{proxy=>self(), pass=>Pass},
-        ws_proto => <<"janus-protocol">>
+        user => #{proxy=>self(), pass=>Pass}
     },
     {ok, Ip} = nklib_util:to_ip(Host),
     Conn = {?MODULE, ws, Ip, Base+1},

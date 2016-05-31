@@ -24,7 +24,7 @@
 
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
 -export([sip_bye/2]).
--export([nkmedia_session_invite/3, nkmedia_session_out_notify/4]).
+-export([nkmedia_session_invite/4, nkmedia_session_event/3]).
 
 
 %% ===================================================================
@@ -68,26 +68,38 @@ plugin_stop(Config, #{name:=Name}) ->
 %% Implemented Callbacks
 %% ===================================================================
 
+
+%% @private Called when a BYE is received from SIP
 sip_bye(Req, _Call) ->
 	{ok, Dialog} = nksip_dialog:get_handle(Req),
-	nkmedia_sip:recv_bye(Dialog),
+	nkmedia_sip:sip_bye(Dialog),
 	continue.
 
 
-nkmedia_session_invite(SessId, {sip, Uri, Opts}, Session) ->
-    #{srv_id:=SrvId, sdp_offer:=SDP} = Session,
-    {ok, Ref} = nkmedia_sip:send_invite(SessId, SrvId, Uri, Opts#{sdp=>SDP}),
-    {async, {sip_ref, Ref}, Session};
+%% @private
+nkmedia_session_invite(SessId, {nkmedia_sip, Uri, Opts}, Offer, Session) ->
+    #{srv_id:=SrvId} = Session,
+    case Offer of
+        #{sdp_type:=sip, sdp:=SDP} ->
+            ok = nkmedia_sip:send_invite(SrvId, SessId, Uri, Opts#{sdp=>SDP}),
+            {async, undefined, Session#{nkmedia_sip_out=>true}};
+        _ ->
+            {hangup, <<"Invalid SIP SDP">>, Session}
+    end;
 
-nkmedia_session_invite(_SessId, _Dest, _Session) ->
+nkmedia_session_invite(_SessId, _Dest, _Offer, _Session) ->
 	continue.
 
 
-nkmedia_session_out_notify(SessId, {hangup, _}, {sip_ref, Ref}, Session) ->
-    nkmedia_sip:send_bye(Ref, SessId),
-    {ok, Session};
+%% @private
+nkmedia_session_event(SessId, {hangup, _}, #{nkmedia_sip_out:=true}) ->
+    nkmedia_sip:send_hangup(SessId),
+    continue;
 
-nkmedia_session_out_notify(SessId, Event, Notify, _Session) ->
-    lager:warning("SIP SKIPPING EVENT ~s ~p (~p)", [SessId, Event, Notify]),
+nkmedia_session_event(_SessId, _Event, _Session) ->
     continue.
+
+
+
+
 

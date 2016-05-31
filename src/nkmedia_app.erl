@@ -55,7 +55,6 @@ start(_Type, _Args) ->
         docker_company => binary,
         fs_version => binary,
         fs_release => binary,
-        fs_password => binary,
         janus_version => binary,
         janus_release => binary,
         sip_port => integer,        
@@ -64,10 +63,9 @@ start(_Type, _Args) ->
     },
     Defaults = #{
         docker_company => <<"netcomposer">>,
-        fs_version => <<"v1.6.5">>,
+        fs_version => <<"v1.6.8">>,
         fs_release => <<"r01">>,
-        fs_password => <<"764123">>,
-        janus_version => <<"master">>,
+        janus_version => <<"1c8871e">>,
         janus_release => <<"r01">>,
         sip_port => 0,
         no_docker => false

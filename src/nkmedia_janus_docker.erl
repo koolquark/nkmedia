@@ -177,19 +177,14 @@ notify(MonId, start, Name, Data) ->
         } ->
             case binary:split(Image, <<"/">>) of
                 [_Comp, <<"nk_janus_run:", Rel/binary>>] -> 
-                    case lists:member(Rel, ?SUPPORTED_JANUS) of
-                        true ->
-                            Config = #{
-                                name => Name, 
-                                rel => Rel, 
-                                host => Host, 
-                                base => nklib_util:to_integer(Base),
-                                pass => Pass
-                            },
-                            connect_janus(MonId, Config);
-                        false ->
-                            lager:warning("Started unsupported nk_janus")
-                    end;
+                    Config = #{
+                        name => Name, 
+                        rel => Rel, 
+                        host => Host, 
+                        base => nklib_util:to_integer(Base),
+                        pass => Pass
+                    },
+                    connect_janus(MonId, Config);
                 _ ->
                     lager:warning("Started unrecognized nk_janus")
             end;

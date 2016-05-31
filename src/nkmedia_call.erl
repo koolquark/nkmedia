@@ -59,7 +59,8 @@
     #{
         dest => nkmedia_session:call_dest(),
         wait => integer(),                      %% secs
-        ring => integer()
+        ring => integer(),
+        sdp_type => webrtc | sip
     }.
 
 
@@ -119,6 +120,7 @@ session_event(CallId, SessId, Event) ->
     ring :: integer(),
     pos :: integer(),
     launched :: boolean(),
+    sdp_type :: webrtc | sip,
     pid :: pid()
 }).
 
@@ -296,7 +298,13 @@ launch_outs([CallOut|Rest], #state{outs=Outs, session=Session, out_pos=Pos}=Stat
         error -> maps:get(ring_timeout, Session, ?DEF_RING_TIMEOUT)
     end,
     SessId = nklib_util:uuid_4122(),
-    Out = #session_out{dest=Dest, ring=Ring, pos=Pos, launched=false},
+    Out = #session_out{
+        dest = Dest, 
+        ring = Ring, 
+        pos = Pos, 
+        launched = false,
+        sdp_type = maps:get(sdp_type, CallOut, webrtc)
+    },
     Outs2 = maps:put(SessId, Out, Outs),
     case Wait of
         0 -> self() ! {launch_out, SessId};
@@ -309,7 +317,7 @@ launch_outs(Dest, State) ->
 
 
 %% @private
-launch_out(SessId, #session_out{dest=Dest, pos=Pos}=Out, State) ->
+launch_out(SessId, #session_out{dest=Dest, pos=Pos, sdp_type=Type}=Out, State) ->
     #state{
         id = Id, 
         session = Session, 
@@ -324,7 +332,8 @@ launch_out(SessId, #session_out{dest=Dest, pos=Pos}=Out, State) ->
                 call => {Id, self()}
             },
             {ok, SessId, Pid} = nkmedia_session:start(SrvId, Config),
-            ok = nkmedia_session:set_answer(Pid, {invite, Dest}, #{async=>true}),
+            Opts = #{async=>true, sdp_type=>Type},
+            ok = nkmedia_session:set_answer(Pid, {invite, Dest}, Opts),
             Out2 = Out#session_out{launched=true, pid=Pid},
             Outs2 = maps:put(SessId, Out2, Outs),
             {noreply, State2#state{outs=Outs2}};
