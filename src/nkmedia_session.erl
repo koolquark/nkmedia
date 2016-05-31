@@ -55,7 +55,8 @@
         id => id(),                             % Generated if not included
         type => type(),
         offer => nkmedia:offer(),               
-        answer => nkmedia:offer(),              
+        answer => nkmedia:offer(),   
+        % sdp_type => webrtc | sip,               % Allows to force processing           
         mediaserver => mediaserver(),           % Forces mediaserver
         wait_timeout => integer(),              % Secs
         ring_timeout => integer(),          
@@ -103,6 +104,7 @@
 -type offer_op() ::
     nkmedia:offer()             |       % Set raw offer 
     pbx                         |       % Get offer from pbx
+    {play, play()}              |
     {listen, room(), id()}.             % Get offer from listen
 
 
@@ -125,15 +127,17 @@
 
 -type room() :: nkmedia_janus_room:room().
 
+-type play() :: nkmedia_janus_session:play().
+
 
 -type op_opts() ::  
     #{
-        type => type(),                     % You can set the type
+        type => type(),                     % You can set the session type
         sync => boolean(),                  % Wait for session reply
+        sdp_type => webrtc | sip,           % Only used when PBX makes offer
         get_offer => boolean(),             % Return the offer        
         get_answer => boolean(),            % Return the answer
         hangup_after_error => boolean()     % Only for async. Default 'true'
-
     }.
 
 
@@ -288,6 +292,8 @@ get_all() ->
     ok.
 
 pbx_event(SessId, FsId, Event) ->
+    lager:error("PBX: ~p", [Event]),
+
     case do_cast(SessId, {pbx_event, FsId, Event}) of
         ok -> 
             ok;
@@ -336,9 +342,9 @@ set_call_peer(SessId, PeerSessId) ->
     has_offer = false :: boolean(),
     has_answer = false :: boolean(),
     ms :: mediaserver(),
-    pbx_type :: inbound | outbound,
+    pbx_type :: inbound | {outbound, sip|webrtc},
     proxy_pid :: pid(),
-    after_answer2 = [] :: [{janus_call, pid()} | {janus_listen, pid()}],
+    after_answer = [] :: [{janus_call, pid()} | {janus_listen, pid()}],
     links :: nkmedia_links:links(link_id()),
     timer :: reference(),
     hangup_sent = false :: boolean(),
@@ -615,11 +621,29 @@ do_offer(#{sdp:=_}=Offer, Opts, From, State) ->
     op_reply(ok, Opts, From, State2);
 
 do_offer(pbx, Opts, From, #state{type=pbx}=State) ->
-    case get_pbx_offer(State) of
+    case get_pbx_offer(Opts, State) of
         {ok, State2} ->
             op_reply(ok, Opts, From, State2);
         {error, Error} ->
             op_reply({error, Error}, Opts, From, State)
+    end;
+
+do_offer({play, Play}, Opts, From, #state{id=Id, type=proxy}=State) ->
+    case get_proxy(State) of
+        {ok, Pid, State2} ->
+            case nkmedia_janus_session:play(Pid, Play, Id, Opts) of
+                {ok, #{sdp:=_}=Offer} ->
+                    #state{after_answer=After1} = State2,
+                    State3 = State2#state{
+                        proxy_pid = Pid,
+                        after_answer = [{janus_play, Pid}|After1]
+                    },
+                    do_offer(Offer, Opts, From, State3);
+                {error, Error} ->
+                    op_reply({error, Error}, Opts, From, State2)
+            end;
+        {error, Error} ->
+            op_reply({error, {proxy_error, Error}}, Opts,From, State)
     end;
 
 do_offer({listen, Room, SessB}, Opts, From, #state{id=Id, type=proxy}=State) ->
@@ -628,10 +652,10 @@ do_offer({listen, Room, SessB}, Opts, From, #state{id=Id, type=proxy}=State) ->
         {ok, Pid, State2} ->
             case nkmedia_janus_session:listen(Pid, Room2, Id, SessB, Opts) of
                 {ok, #{sdp:=_}=Offer} ->
-                    #state{after_answer2=After1} = State2,
+                    #state{after_answer=After1} = State2,
                     State3 = State2#state{
                         proxy_pid = Pid,
-                        after_answer2 = [{janus_listen, Pid}|After1]
+                        after_answer = [{janus_listen, Pid}|After1]
                     },
                     do_offer(Offer, Opts, From, State3);
                 {error, Error} ->
@@ -667,7 +691,7 @@ do_answer_op(AnswerOp, Opts, From, #state{type=OldType}=State) ->
                 {ok, #state{has_offer=true}=State2} ->
                     answer_op(AnswerOp, Opts, From, State2);
                 {ok, #state{type=pbx, has_offer=false}=State2} ->
-                    case get_pbx_offer(State2) of
+                    case get_pbx_offer(Opts, State2) of
                         {ok, State3} ->
                             % pbx_type will be 'outbound'
                             % most operations are not available! 
@@ -699,11 +723,11 @@ answer_op(pbx, Opts, From, #state{type=pbx}=State) ->
             op_reply({error, {pbx_error, Error}}, Opts, From, State)
     end;
 
-answer_op(echo, Opts, From, #state{type=proxy}=State) ->
+answer_op(echo, Opts, From, #state{id=Id, type=proxy}=State) ->
     #state{session=#{offer:=Offer}} = State,
     case get_proxy(State) of
         {ok, Pid, State2} ->
-            case nkmedia_janus_session:echo(Pid, Offer, Opts) of
+            case nkmedia_janus_session:echo(Pid, Id, Offer, Opts) of
                 {ok, #{sdp:=_}=Answer} ->
                     {ok, State3} = update_answer(Answer, State2),
                     op_reply(ok, Opts, From, status(echo, State3));
@@ -758,12 +782,12 @@ answer_op({call, Dest}, Opts, From, #state{type=p2p}=State) ->
     do_send_call(Dest, Opts, Offer, From, State);
 
 answer_op({call, Dest}, Opts, From, #state{type=proxy}=State) ->
-    #state{session=#{offer:=Offer}, after_answer2=After} = State,
+    #state{session=#{offer:=Offer}, after_answer=After, id=Id} = State,
     case get_proxy(State) of
         {ok, Pid, State2} ->
-            case nkmedia_janus_session:videocall(Pid, Offer, Opts) of
+            case nkmedia_janus_session:videocall(Pid, Id, Offer, Opts) of
                 {ok, #{sdp:=SDP}} ->
-                    State3 = State2#state{after_answer2=[{janus_call, Pid}|After]},
+                    State3 = State2#state{after_answer=[{janus_call, Pid}|After]},
                     do_send_call(Dest, Opts, Offer#{sdp=>SDP}, From, State3);
                 {error, Error} ->
                     op_reply({error, Error}, Opts, From, State)
@@ -901,7 +925,8 @@ op_reply({error, Error}, Opts, From, State) ->
 %% @private
 do_send_call(Dest, Opts, Offer, From, State) ->
     #state{session=Session} = State,
-    Shared = [id, srv_id, type, mediaserver, wait_timeout, ring_timeout, call_timeout],
+    Shared = [id, srv_id, type, sdp_type, mediaserver, 
+              wait_timeout, ring_timeout, call_timeout],
     Config1 = maps:with(Shared, Session),
     Config2 = Config1#{offer=>Offer}, 
     {ok, CallId, CallPid} = nkmedia_call:start(Dest, Config2),
@@ -1016,10 +1041,6 @@ do_peer_event(_PeerId, _Event, State) ->
 
 
 %% @private
-do_pbx_event(parked, #state{status=Status}=State)
-        when Status==answer; Status==ringing; Status==echo ->
-    noreply(State);
-
 do_pbx_event(parked, #state{status=Status}=State) ->
     ?LLOG(notice, "received parked in '~p'", [Status], State),
     noreply(State);
@@ -1102,6 +1123,24 @@ update_type_check(proxy, {janus, _}) -> ok;
 update_type_check(_, _) -> error.
 
 
+% %% @private
+% update_sdp_type(Opts, #state{session=Session}=State) ->
+%     case maps:find(sdp_type, Opts) of
+%         {ok, Type} when Type==webrtc; Type==sip ->
+%             case maps:find(sdp_type, Session) of
+%                 {ok, Type} ->
+%                     State;
+%                 {ok, _} ->
+%                     error({incompatiible_sdp_type, Type});
+%                 error ->
+%                     Session2 = Session#{sdp_type=>Type},
+%                     State#state{session=Session2}
+%             end;
+%         error ->
+%             State
+%     end.
+
+
 %% @private
 -spec update_offer(nkmedia:offer()|undefined, #state{}) ->
     {ok, #state{}} | {error, term()}.
@@ -1171,8 +1210,9 @@ update_answer(Answer, #state{has_answer=HasAnswer}=State) ->
 
 %% @private
 %% If pbx generated the offer, we must use this answer
-update_answer_ms(Answer, #state{id=SessId, ms={fs, _}, pbx_type=outbound}=State) ->
-    Mod = get_fs_mod(State),
+update_answer_ms(Answer, #state{ms={fs, _}, pbx_type={outbound, Type}}=State) ->
+    #state{id=SessId, session=#{offer:=#{sdp_type:=Type}}} = State,
+    Mod = fs_mod(Type),
     case Mod:answer_out(SessId, Answer) of
         ok ->
             {ok, Answer, State};
@@ -1182,7 +1222,7 @@ update_answer_ms(Answer, #state{id=SessId, ms={fs, _}, pbx_type=outbound}=State)
     end;
 
 %% For listens, we could get the response locally
-update_answer_ms(#{sdp:=_}=Answer, #state{type=proxy, after_answer2=After}=State) ->
+update_answer_ms(#{sdp:=_}=Answer, #state{type=proxy, after_answer=After}=State) ->
     process_after_answer(After, Answer, State);
 
 update_answer_ms(Answer, State) ->
@@ -1207,7 +1247,7 @@ update_call_answer(#{sdp:=_}, PeerId, #state{type=pbx, pbx_type=inbound}=State) 
 
 %% For proxy, we may need to perform aditional operations
 update_call_answer(#{sdp:=_}=AnswerB, _PeerId, #state{type=proxy}=State) ->
-    #state{after_answer2=After} = State,
+    #state{after_answer=After} = State,
     case process_after_answer(After, AnswerB, State) of
         {ok, AnswerB2, State2} ->
             update_answer(AnswerB2, State2);
@@ -1221,9 +1261,11 @@ update_call_answer(_Answer, _PeerId, _State) ->
 
 %% @private
 process_after_answer([], Answer, State) ->
-    {ok, Answer, State#state{after_answer2=[]}};
+    {ok, Answer, State#state{after_answer=[]}};
 
 process_after_answer([{janus_call, Pid}|Rest], Answer, State) ->
+    lager:error("JANUS CALL"),
+
     case nkmedia_janus_session:videocall_answer(Pid, Answer) of
         {ok, Answer2} ->
             process_after_answer(Rest, Answer2, State);
@@ -1231,7 +1273,20 @@ process_after_answer([{janus_call, Pid}|Rest], Answer, State) ->
             {error, Error}
     end;
 
+process_after_answer([{janus_play, Pid}|Rest], Answer, State) ->
+    lager:error("JANUS PLAY"),
+
+    case nkmedia_janus_session:play_answer(Pid, Answer) of
+        ok ->
+            process_after_answer(Rest, Answer, State);
+        {error, Error} ->
+            {error, Error}
+    end;
+
 process_after_answer([{janus_listen, Pid}|Rest], Answer, State) ->
+
+    lager:error("JANUS LISTEN"),
+
     case nkmedia_janus_session:listen_answer(Pid, Answer) of
         ok ->
             process_after_answer(Rest, Answer, State);
@@ -1246,6 +1301,7 @@ process_after_answer([{janus_listen, Pid}|Rest], Answer, State) ->
 
 get_default_offer_type(Map) when is_map(Map) -> undefined;
 get_default_offer_type(pbx) -> pbx;
+get_default_offer_type({play, _}) -> proxy;
 get_default_offer_type({listen, _, _}) -> proxy;
 get_default_offer_type(_) -> unknown.
 
@@ -1296,7 +1352,7 @@ get_proxy(#state{type=proxy, ms={janus, JanusId}}=State) ->
 place_in_pbx(#state{pbx_type=inbound}=State) ->
     {ok, State};
 
-place_in_pbx(#state{pbx_type=outbound}) ->
+place_in_pbx(#state{pbx_type={outbound, _}}) ->
     {error, incompatible_pbx_type};
 
 place_in_pbx(#state{type=pbx, ms=undefined}=State) ->
@@ -1328,31 +1384,38 @@ place_in_pbx(#state{type=pbx, ms={fs, FsId}, has_answer=false}=State) ->
 
 
 %% @private
-get_pbx_offer(#state{pbx_type=outbound}=State) ->
+get_pbx_offer(_Opts, #state{pbx_type={outbound, _}}=State) ->
     {ok, State};
 
-get_pbx_offer(#state{pbx_type=inbound}) ->
+get_pbx_offer(_Opts, #state{pbx_type=inbound}) ->
     {error, incompatible_pbx_type};
 
-get_pbx_offer(#state{type=pbx, ms=undefined}=State) ->
+get_pbx_offer(Opts, #state{type=pbx, ms=undefined}=State) ->
     case get_mediaserver(State) of
         {ok, #state{ms={fs, _}}=State2} ->
-            get_pbx_offer(State2);
+            get_pbx_offer(Opts, State2);
         {error, Error} ->
             {error, {get_pbx_offer_error, Error}}
     end;
 
-get_pbx_offer(#state{type=pbx, ms={fs, FsId}, has_offer=false}=State) ->
+get_pbx_offer(Opts, #state{type=pbx, ms={fs, FsId}, has_offer=false}=State) ->
     #state{id=SessId, session=Session} = State,
-    Mod = get_fs_mod(State),
+    Type = maps:get(sdp_type, Opts, webrtc),
+    Mod = fs_mod(Type),
     case Mod:start_out(SessId, FsId, #{}) of
         {ok, SDP} ->
             %% TODO Send and receive pings
-            Offer = maps:get(offer, Session, #{}),
-            update_offer(Offer#{sdp=>SDP}, State#state{pbx_type=outbound});
+            Offer1 = maps:get(offer, Session, #{}),
+            Offer2 = Offer1#{sdp=>SDP, sdp_type=>Type},
+            update_offer(Offer2, State#state{pbx_type={outbound, Type}});
         {error, Error} ->
             {error, {backend_out_error, Error}}
     end.
+
+
+%% @private
+fs_mod(webrtc) ->nkmedia_fs_verto;
+fs_mod(sip) -> nkmedia_fs_sip.
 
 
 % %% @private
@@ -1505,14 +1568,6 @@ do_cast(SessId, Msg) ->
     case find(SessId) of
         {ok, Pid} -> gen_server:cast(Pid, Msg);
         not_found -> {error, session_not_found}
-    end.
-
-
-%% @private
-get_fs_mod(#state{session=Session}) ->
-    case maps:get(sdp_type, Session, webrtc) of
-        webrtc -> nkmedia_fs_verto;
-        sip -> nkmedia_fs_sip
     end.
 
 
