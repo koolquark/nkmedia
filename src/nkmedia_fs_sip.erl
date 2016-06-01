@@ -121,7 +121,7 @@ init([FsId, SessId, _Opts]) ->
     Self = self(),
     Caller = spawn_link(
         fun() ->
-            Reply = nkmedia_fs_cmd:call(FsId, Dest, <<"nkmedia_out">>, CallOpts),
+            Reply = nkmedia_fs_cmd:call(FsId, Dest, <<"&park">>, CallOpts),
             gen_server:cast(Self, {originate, Reply})
         end),
     State = #state{fs_id=FsId, sess_id=SessId, originate=Caller},

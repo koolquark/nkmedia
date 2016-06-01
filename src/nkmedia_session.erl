@@ -994,14 +994,14 @@ do_call_event(_CallId, {ringing, PeerId, Answer}, State) ->
 
 do_call_event(CallId, {answer, PeerId, Answer}, State) ->
     ?LLOG(info, "receiving call answer", [], State),
-    #state{id=Id, has_answer=HasAnswer} = State,
+    #state{id=Id} = State,
     {ok, {From, Opts}} = get_link({call_out, CallId}, State),
     State2 = remove_link({call_out, CallId}, State),
     case nkmedia_session:set_call_peer(PeerId, Id) of
         {ok, PeerPid} ->
             State3 = add_link(peer, PeerId, PeerPid, State2),
             case Answer of
-                #{sdp:=_} when not HasAnswer ->
+                #{sdp:=_} ->
                     case update_call_answer(Answer, PeerId, State3) of
                         {ok, State4} ->
                             State5 = status(call, #{peer=>PeerId}, State4),
@@ -1014,9 +1014,6 @@ do_call_event(CallId, {answer, PeerId, Answer}, State) ->
                             ?LLOG(warning, "remote answer error: ~p", [Error], State),
                             do_hangup(<<"Answer Error">>, State)
                     end;    
-                _ when HasAnswer ->
-                    State4 = status(call, #{peer=>PeerId}, State3), 
-                    op_reply(ok, Opts, From, State4);
                 _ ->
                     do_hangup(<<"No SDP">>, State3)
             end;
@@ -1215,6 +1212,7 @@ update_answer_ms(Answer, #state{ms={fs, _}, pbx_type={outbound, Type}}=State) ->
     Mod = fs_mod(Type),
     case Mod:answer_out(SessId, Answer) of
         ok ->
+            fs_wait_park(State),
             {ok, Answer, State};
         {error, Error} ->
             ?LLOG(warning, "mediaserver error in answer_out: ~p", [Error], State),
@@ -1370,14 +1368,8 @@ place_in_pbx(#state{type=pbx, ms={fs, FsId}, has_answer=false}=State) ->
             % lager:warning("SDP to Verto: ~s", [maps:get(sdp, Offer)]),
             %% TODO Send and receive pings
             % lager:warning("SDP from Verto: ~s", [SDP]),
-            State2 = update_answer(#{sdp=>SDP}, State#state{pbx_type=inbound}),
-            receive
-                {'$gen_cast', {pbx_event, _, parked}} -> State2
-            after 
-                2000 -> 
-                    ?LLOG(warning, "parked not received", [], State),
-                    State2
-            end;
+            fs_wait_park(State),
+            update_answer(#{sdp=>SDP}, State#state{pbx_type=inbound});
         {error, Error} ->
             {error, Error}
     end.
@@ -1404,6 +1396,7 @@ get_pbx_offer(Opts, #state{type=pbx, ms={fs, FsId}, has_offer=false}=State) ->
     Mod = fs_mod(Type),
     case Mod:start_out(SessId, FsId, #{}) of
         {ok, SDP} ->
+            % fs_wait_park(State),
             %% TODO Send and receive pings
             Offer1 = maps:get(offer, Session, #{}),
             Offer2 = Offer1#{sdp=>SDP, sdp_type=>Type},
@@ -1416,6 +1409,19 @@ get_pbx_offer(Opts, #state{type=pbx, ms={fs, FsId}, has_offer=false}=State) ->
 %% @private
 fs_mod(webrtc) ->nkmedia_fs_verto;
 fs_mod(sip) -> nkmedia_fs_sip.
+
+
+%% @private
+fs_wait_park(State) ->
+    receive
+        {'$gen_cast', {pbx_event, _, parked}} -> ok
+    after 
+        2000 -> 
+            ?LLOG(warning, "parked not received", [], State)
+    end.
+
+
+
 
 
 % %% @private
@@ -1449,6 +1455,8 @@ pbx_transfer(Dest, #state{id=SessId, ms={fs, FsId}}) ->
 pbx_bridge(SessIdB, #state{id=SessIdA, ms={fs, FsId}}=State) ->
     case nkmedia_fs_cmd:set_var(FsId, SessIdA, "park_after_bridge", "true") of
         ok ->
+            lager:warning("BRIDGE: ~s, ~s", [SessIdA, SessIdB]),
+
             nkmedia_fs_cmd:bridge(FsId, SessIdA, SessIdB);
         {error, Error} ->
             ?LLOG(warning, "pbx bridge error: ~p", [Error], State),

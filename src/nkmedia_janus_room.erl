@@ -94,7 +94,8 @@ create(JanusId, Room, Config) ->
     ok | {error, term()}.
 
 destroy(Room) ->
-    do_call(Room, destroy).
+    Room2 = nklib_util:to_binary(Room),
+    do_call(Room2, destroy).
 
 
 %% @doc
@@ -102,8 +103,8 @@ destroy(Room) ->
     {ok, info()} | {error, term()}.
 
 get_info(Room) ->
-    do_call(Room, get_info).
-
+    Room2 = nklib_util:to_binary(Room),
+    do_call(Room2, get_info).
 
 
 

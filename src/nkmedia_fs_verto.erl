@@ -659,7 +659,7 @@ originate(CallId, Opts, #state{fs_id=FsId, sess_id=SessId, originates=Pids}=Stat
     Self = self(),
     Pid = spawn_link(
         fun() ->
-            case nkmedia_fs_cmd:call(FsId, Dest, <<"nkmedia_out">>, Opts2) of
+            case nkmedia_fs_cmd:call(FsId, Dest, <<"&park">>, Opts2) of
                 {ok, CallId} -> 
                     ok;
                 {error, Error} -> 

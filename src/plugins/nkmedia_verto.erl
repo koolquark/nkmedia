@@ -87,7 +87,7 @@ invite(Pid, CallId, Offer) ->
 
 
 %% @doc Sends an ANSWER (only sdp is used in answer())
--spec answer(pid(), call_id(), answer()) ->
+-spec answer(pid(), call_id(), answer()) -> 
     ok | {error, term()}.
 
 answer(Pid, CallId, Answer) ->

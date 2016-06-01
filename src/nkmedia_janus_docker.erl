@@ -55,7 +55,7 @@ start(Config) ->
     #{pass:=Pass} = Config2,
     Env = [
         {"NK_JANUS_IP", JanusIp},             
-        {"NK_EXT_IP", "192.168.0.102"}, %_ExtIp},  
+        {"NK_EXT_IP", _ExtIp},  
         {"NK_PASS", nklib_util:to_binary(Pass)},
         {"NK_BASE", nklib_util:to_binary(Base)}
     ],
