@@ -395,7 +395,7 @@ parse_event(<<"CHANNEL_BRIDGE">>, Data, State) ->
     CallIdA = maps:get(<<"Bridge-A-Unique-ID">>, Data),
     CallIdB = maps:get(<<"Bridge-B-Unique-ID">>, Data),
     send_event(CallIdA, {bridge, CallIdB}, State),
-	send_event(CallIdB, {bridge, CallIdB}, State);
+	send_event(CallIdB, {bridge, CallIdA}, State);
 
 parse_event(<<"CONFERENCE_DATA">>, Data, State) ->
     ?LLOG(notice, "CONF DATA: ~s", [nklib_json:encode_pretty(Data)], State);

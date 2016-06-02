@@ -292,8 +292,6 @@ get_all() ->
     ok.
 
 pbx_event(SessId, FsId, Event) ->
-    lager:error("PBX: ~p", [Event]),
-
     case do_cast(SessId, {pbx_event, FsId, Event}) of
         ok -> 
             ok;
@@ -481,6 +479,10 @@ handle_cast({peer_event, PeerId, Event}, #state{status=Status}=State) ->
     case get_link(peer, State) of
         {ok, PeerId} when Status==call ->
             do_peer_event(PeerId, Event, State);
+        {ok, Other} ->
+            ?LLOG(warning, "Received event from peer ~p, has ~p", 
+                  [PeerId, Other], State),
+            noreply(State);
         not_found ->
             case Event of
                 {hangup, _} ->
@@ -845,35 +847,31 @@ do_session_op(PbxOp, Opts, From, #state{has_answer=true}=State) ->
 
 %% @private
 session_op(echo, Opts, From, #state{type=pbx}=State) ->
-    case pbx_transfer("echo", State) of
+    State2 = remove_peer(State),
+    case pbx_transfer("echo", State2) of
         ok ->
-            % FS will send event and status will be updated
-            op_reply(ok, Opts, From, status(echo, State));
+            op_reply(ok, Opts, From, status(echo, State2));
         {error, Error} ->
-            op_reply({error, {echo_transfer_error, Error}}, Opts, From, State)
+            op_reply({error, {echo_transfer_error, Error}}, Opts, From, State2)
     end;
 
 
 session_op({mcu, Room}, Opts, From, #state{type=pbx}=State) ->
+    State2 = remove_peer(State),
     Type = maps:get(room_type, Opts, <<"video-mcu-stereo">>),
     Cmd = [<<"conference:">>, Room, <<"@">>, Type],
-    case pbx_transfer(Cmd, State) of
+    case pbx_transfer(Cmd, State2) of
         ok ->
-            % FS will send event and status will be updated
-            op_reply(ok, Opts, From, State);
+            op_reply(ok, Opts, From, State2);
         {error, Error} ->
-            op_reply({error, {mcu_transfer_error, Error}}, Opts, From, State)
+            op_reply({error, {mcu_transfer_error, Error}}, Opts, From, State2)
     end;
 
 session_op({call, Dest}, Opts, From, #state{type=pbx}=State) ->
-    #state{session=#{offer:=Offer}} = State,
+    State2 = remove_peer(State),
+    #state{session=#{offer:=Offer}} = State2,
     Offer2 = maps:remove(sdp, Offer),
-    do_send_call(Dest, Opts, Offer2, From, State);
-
-
-%% INVITE
-session_op({invite, Dest}, Opts, From, State) ->
-    answer_op({invite, Dest}, Opts, From, State);
+    do_send_call(Dest, Opts, Offer2, From, State2);
 
 
 %% ERROR
@@ -916,9 +914,9 @@ op_reply({error, Error}, Opts, From, State) ->
     case Stop of
         true ->
             ?LLOG(warning, "operation error: ~p", [Error], State),
-            do_hangup(<<"Operation Error">>, State);
+            do_hangup(<<"Operation Error">>, status(wait, State));
         false ->
-            noreply(State)
+            noreply(status(wait, State))
     end.
 
 
@@ -968,6 +966,18 @@ invite_answered(Answer, #state{status=inviting}=State) ->
 invite_answered(_Answer,State) ->
     ?LLOG(warning, "received unexpected answer", [], State),
     noreply(State).
+
+
+%% @private
+remove_peer(State) ->
+    case get_link(peer, State) of
+        {ok, PeerId} ->
+            State2 = event({peer_removed, PeerId}, State),
+            remove_link(peer, State2);
+        not_found ->
+            State
+    end.
+
 
 
 %% ===================================================================
@@ -1447,7 +1457,8 @@ get_mediaserver(State) ->
 
 
 %% @private
-pbx_transfer(Dest, #state{id=SessId, ms={fs, FsId}}) ->
+pbx_transfer(Dest, #state{id=SessId, ms={fs, FsId}}=State) ->
+    ?LLOG(notice, "sending transfer to ~s", [Dest], State),
     nkmedia_fs_cmd:transfer_inline(FsId, SessId, Dest).
 
 
@@ -1455,9 +1466,14 @@ pbx_transfer(Dest, #state{id=SessId, ms={fs, FsId}}) ->
 pbx_bridge(SessIdB, #state{id=SessIdA, ms={fs, FsId}}=State) ->
     case nkmedia_fs_cmd:set_var(FsId, SessIdA, "park_after_bridge", "true") of
         ok ->
-            lager:warning("BRIDGE: ~s, ~s", [SessIdA, SessIdB]),
-
-            nkmedia_fs_cmd:bridge(FsId, SessIdA, SessIdB);
+            case nkmedia_fs_cmd:set_var(FsId, SessIdB, "park_after_bridge", "true") of
+                ok ->
+                    ?LLOG(notice, "sending transfer to ~s", [SessIdB], State),
+                    nkmedia_fs_cmd:bridge(FsId, SessIdA, SessIdB);
+                {error, Error} ->
+                    ?LLOG(warning, "pbx bridge error: ~p", [Error], State),
+                    error
+            end;
         {error, Error} ->
             ?LLOG(warning, "pbx bridge error: ~p", [Error], State),
             error
