@@ -56,13 +56,10 @@
         type => type(),
         offer => nkmedia:offer(),               
         answer => nkmedia:offer(),   
-        % sdp_type => webrtc | sip,               % Allows to force processing           
         mediaserver => mediaserver(),           % Forces mediaserver
         wait_timeout => integer(),              % Secs
         ring_timeout => integer(),          
         call_timeout => integer(),
-        monitor => pid(),                       % Monitor this process
-        peer => {id(), pid()},                  % If this session must be linked
         call => {nkmedia_call:id(), pid()}      % If is started by nkmedia_call
 }.
 
@@ -330,7 +327,7 @@ set_call_peer(SessId, PeerSessId) ->
 %% ===================================================================
 
 -type link_id() ::
-    caller | {janus, nkmedia_janus_session:id()} | invite | call_in | peer |
+    offer | answer | invite | call_in | peer | {janus, nkmedia_janus_session:id()} |
     {call_out, nkmedia_call:id()}.
 
 -record(state, {
@@ -343,7 +340,7 @@ set_call_peer(SessId, PeerSessId) ->
     ms :: mediaserver(),
     pbx_type :: inbound | {outbound, sip|webrtc},
     proxy_pid :: pid(),
-    after_answer = [] :: [{janus_call, pid()} | {janus_listen, pid()}],
+    pending = [] :: [{janus_call, pid()} | {janus_listen, pid()}],
     links :: nkmedia_links:links(link_id()),
     timer :: reference(),
     hangup_sent = false :: boolean(),
@@ -368,25 +365,19 @@ init([#{id:=Id, srv_id:=SrvId}=Session]) ->
     },
     lager:info("NkMEDIA Session ~s starting (~p)", [Id, self()]),
     State2 = case Session of
-        #{monitor:=UserPid} -> 
-            add_link(caller, none, UserPid, State1); 
-        _ -> 
+        #{call:={CallId, CallPid}} ->
+            add_link(call_in, CallId, CallPid, State1);
+        _ ->
             State1
     end,
-    State3 = case Session of
-        #{call:={CallId, CallPid}} ->
-            add_link(call_in, CallId, CallPid, State2);
-        _ ->
-            State2
-    end,
-    {ok, State4} = handle(nkmedia_session_init, [Id], State3),
-    #state{session=Session5} = State4,
+    {ok, State3} = handle(nkmedia_session_init, [Id], State2),
+    #state{session=Session5} = State3,
     % Process type, offer and answer. Send offer and answer status.
-    case update_config(Session5, State4) of
-        {ok, State5} ->
-            {ok, status(wait, State5)};
-        {error, Error} ->
-            ?LLOG(warning, "session start error: ~p", [Error], State4),
+    case update_config(Session5, State3) of
+        {ok, State4} ->
+            {ok, status(wait, State4)};
+        {error, Error, _State4} ->
+            ?LLOG(warning, "session start error: ~p", [Error], State3),
             {stop, Error}
     end.
 
@@ -549,8 +540,12 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, State) ->
                     ?LLOG(notice, "linked ~p down (~p)", [Id, Reason], State)
             end,
             case Id of
-                caller ->
-                    do_hangup(<<"Caller Monitor Stop">>, State2);
+                offer ->
+                    do_hangup(<<"Offer Monitor Stop">>, State2);
+                answer ->
+                    do_hangup(<<"Answer Monitor Stop">>, State2);
+                invite ->
+                    do_hangup(<<"Invite Monitor Stop">>, State2);
                 call_in ->
                     do_hangup(<<"Call In Monitor Down">>, State2);
                 {call_out, _} ->
@@ -558,9 +553,6 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, State) ->
                     do_hangup(<<"Call Out Monitor Down">>, State2);
                 peer ->
                     do_hangup(<<"Peer Monitor Down">>, State2);
-                invite ->
-                    % do_hangup will send the reply
-                    do_hangup(<<"Invite Monitor Down">>, State2);
                 {janus, _} ->
                     do_hangup(<<"Janus Monitor Down">>, State2)
             end
@@ -612,8 +604,8 @@ do_offer_op(OfferOp, Opts, From, #state{type=OldType}=State) ->
             case update_type(Type, State) of
                 {ok, State2} ->
                     do_offer(OfferOp, Opts, From, State2);
-                {error, Error} ->
-                    op_reply({error, Error}, Opts, From, State)
+                {error, Error, State2} ->
+                    op_reply({error, Error}, Opts, From, State2)
             end
     end.
 
@@ -627,8 +619,8 @@ do_offer(pbx, Opts, From, #state{type=pbx}=State) ->
     case get_pbx_offer(Opts, State) of
         {ok, State2} ->
             op_reply(ok, Opts, From, State2);
-        {error, Error} ->
-            op_reply({error, Error}, Opts, From, State)
+        {error, Error, State2} ->
+            op_reply({error, Error}, Opts, From, State2)
     end;
 
 do_offer({play, Play}, Opts, From, #state{id=Id, type=proxy}=State) ->
@@ -636,10 +628,10 @@ do_offer({play, Play}, Opts, From, #state{id=Id, type=proxy}=State) ->
         {ok, Pid, State2} ->
             case nkmedia_janus_session:play(Pid, Play, Id, Opts) of
                 {ok, #{sdp:=_}=Offer} ->
-                    #state{after_answer=After1} = State2,
+                    #state{pending=Pending} = State2,
                     State3 = State2#state{
                         proxy_pid = Pid,
-                        after_answer = [{janus_play, Pid}|After1]
+                        pending = [{janus_play, Pid}|Pending]
                     },
                     do_offer(Offer, Opts, From, State3);
                 {error, Error} ->
@@ -655,10 +647,10 @@ do_offer({listen, Room, SessB}, Opts, From, #state{id=Id, type=proxy}=State) ->
         {ok, Pid, State2} ->
             case nkmedia_janus_session:listen(Pid, Room2, Id, SessB, Opts) of
                 {ok, #{sdp:=_}=Offer} ->
-                    #state{after_answer=After1} = State2,
+                    #state{pending=Pending} = State2,
                     State3 = State2#state{
                         proxy_pid = Pid,
-                        after_answer = [{janus_listen, Pid}|After1]
+                        pending = [{janus_listen, Pid}|Pending]
                     },
                     do_offer(Offer, Opts, From, State3);
                 {error, Error} ->
@@ -700,13 +692,13 @@ do_answer_op(AnswerOp, Opts, From, #state{type=OldType}=State) ->
                             % most operations are not available! 
                             % (only raw and invite)
                             answer_op(AnswerOp, Opts, From, State3);
-                        {error, Error} ->
-                            op_reply({error, Error}, Opts, From, State)
+                        {error, Error, State3} ->
+                            op_reply({error, Error}, Opts, From, State3)
                     end;
                 {ok, State2} ->
                     op_reply({error, offer_not_set}, Opts, From, State2);
-                {error, Error} ->
-                    op_reply({error, Error}, Opts, From, State)
+                {error, Error, State2} ->
+                    op_reply({error, Error}, Opts, From, State2)
             end
     end.
 
@@ -722,8 +714,8 @@ answer_op(pbx, Opts, From, #state{type=pbx}=State) ->
     case place_in_pbx(State) of
         {ok, State2} ->
             op_reply(ok, Opts, From, State2);
-        {error, Error} ->
-            op_reply({error, {pbx_error, Error}}, Opts, From, State)
+        {error, Error, State2} ->
+            op_reply({error, {pbx_error, Error}}, Opts, From, State2)
     end;
 
 answer_op(echo, Opts, From, #state{id=Id, type=proxy}=State) ->
@@ -734,8 +726,8 @@ answer_op(echo, Opts, From, #state{id=Id, type=proxy}=State) ->
                 {ok, #{sdp:=_}=Answer} ->
                     {ok, State3} = update_answer(Answer, State2),
                     op_reply(ok, Opts, From, status(echo, State3));
-                {error, Error} ->
-                    op_reply({error, Error}, Opts, From, State2)
+                {error, Error, State3} ->
+                    op_reply({error, Error}, Opts, From, State3)
             end;
         {error, Error} ->
             op_reply({error, {proxy_error, Error}}, Opts, From, State)
@@ -745,8 +737,8 @@ answer_op(echo, Opts, From, #state{type=pbx}=State) ->
     case place_in_pbx(State) of
         {ok, State2} ->
             do_session_op(echo, Opts, From, State2);
-        {error, Error} ->
-            op_reply({error, {pbx_error, Error}}, Opts, From, State)
+        {error, Error, State2} ->
+            op_reply({error, {pbx_error, Error}}, Opts, From, State2)
     end;
 
 
@@ -755,8 +747,8 @@ answer_op({mcu, Room}, Opts, From, #state{type=pbx}=State) ->
     case place_in_pbx(State) of
         {ok, State2} ->
             do_session_op({mcu, Room}, Opts, From, State2);
-        {error, Error} ->
-            op_reply({error, {pbx_error, Error}}, Opts, From, State)
+        {error, Error, State2} ->
+            op_reply({error, {pbx_error, Error}}, Opts, From, State2)
     end;
 
 
@@ -785,12 +777,12 @@ answer_op({call, Dest}, Opts, From, #state{type=p2p}=State) ->
     do_send_call(Dest, Opts, Offer, From, State);
 
 answer_op({call, Dest}, Opts, From, #state{type=proxy}=State) ->
-    #state{session=#{offer:=Offer}, after_answer=After, id=Id} = State,
+    #state{session=#{offer:=Offer}, pending=Pending, id=Id} = State,
     case get_proxy(State) of
         {ok, Pid, State2} ->
             case nkmedia_janus_session:videocall(Pid, Id, Offer, Opts) of
                 {ok, #{sdp:=SDP}} ->
-                    State3 = State2#state{after_answer=[{janus_call, Pid}|After]},
+                    State3 = State2#state{pending=[{janus_call, Pid}|Pending]},
                     do_send_call(Dest, Opts, Offer#{sdp=>SDP}, From, State3);
                 {error, Error} ->
                     op_reply({error, Error}, Opts, From, State)
@@ -803,8 +795,8 @@ answer_op({call, Dest}, Opts, From, #state{type=pbx}=State) ->
     case place_in_pbx(State) of
         {ok, State2} ->
             do_session_op({call, Dest}, Opts, From, State2);
-        {error, Error} ->
-            op_reply({error, {pbx_error, Error}}, Opts, From, State)
+        {error, Error, State2} ->
+            op_reply({error, {pbx_error, Error}}, Opts, From, State2)
     end;
 
 
@@ -813,20 +805,27 @@ answer_op({invite, Dest}, Opts, From, #state{id=Id, session=Session}=State) ->
     #{offer:=Offer} = Session,
     State2 = status(inviting, #{dest=>Dest}, State),
     case handle(nkmedia_session_invite, [Id, Dest, Offer], State2) of
-        {ringing, Answer, Pid, State3} ->
-            State4 = add_link(invite, {From, Dest, Opts}, Pid, State3),
+        {ringing, Answer, State3} ->
+            State4 = answer_op_link(Answer, Dest, Opts, From, State3),
             invite_ringing(Answer, State4);
-        {answer, Answer, Pid, State3} ->
+        {answer, Answer, State3} ->
             ?LLOG(info, "session answer", [], State3),
-            State4 = add_link(invite, {From, Dest, Opts}, Pid, State3),
+            State4 = answer_op_link(Answer, Dest, Opts, From, State3),
             invite_answered(Answer, State4);
-        {async, Pid, State3} ->
+        {async, Answer, State3} ->
             ?LLOG(info, "session delayed", [], State3),
-            State4 = add_link(invite, {From, Dest, Opts}, Pid, State3),
-            noreply(State4);
+            State4 = answer_op_link(Answer, Dest, Opts, From, State3),
+            case update_answer(Answer, State4) of
+                {ok, State5} ->
+                    noreply(State5);
+                {error, Error, State5} ->
+                    ?LLOG(warning, "could not set answer in invite_ringing", 
+                          [Error], State5),
+                    do_hangup(<<"Answer Error">>, State5)
+            end;
         {hangup, Reason, State3} ->
             ?LLOG(info, "session hangup: ~p", [Reason], State3),
-            op_reply({error, {hangup, Reason}}, Opts, From, State)
+            op_reply({error, {hangup, Reason}}, Opts, From, State3)
     end;
 
 
@@ -834,6 +833,11 @@ answer_op({invite, Dest}, Opts, From, #state{id=Id, session=Session}=State) ->
 answer_op(_AnswerOp, Opts, From, State) ->
     op_reply({error, invalid_answer_op}, Opts, From, State).
 
+
+%% @private
+answer_op_link(Answer, Dest, Opts, From, State) ->
+    Pid = maps:get(pid, Answer, undefined),
+    add_link(invite, #{from=>From, dest=>Dest, opts=>Opts}, Pid, State).
 
 
 
@@ -927,9 +931,10 @@ do_send_call(Dest, Opts, Offer, From, State) ->
     Shared = [id, srv_id, type, sdp_type, mediaserver, 
               wait_timeout, ring_timeout, call_timeout],
     Config1 = maps:with(Shared, Session),
-    Config2 = Config1#{offer=>Offer}, 
+    Offer2 = maps:remove(pid, Offer#{direction=>outbound}),
+    Config2 = Config1#{offer=>Offer2},
     {ok, CallId, CallPid} = nkmedia_call:start(Dest, Config2),
-    State2 = add_link({call_out, CallId}, {From, Opts}, CallPid, State),
+    State2 = add_link({call_out, CallId}, #{from=>From, opts=>Opts}, CallPid, State),
     % Now we will receive notifications from the call
     noreply(status(calling, #{dest=>Dest, call_id=>CallId}, State2)).
 
@@ -939,9 +944,9 @@ invite_ringing(Answer, #state{status=inviting}=State) ->
     case update_answer(Answer, State) of
         {ok, State2} ->
             noreply(event({ringing, Answer}, State2));
-        {error, Error} ->
+        {error, Error, State2} ->
             ?LLOG(warning, "could not set answer in invite_ringing", [Error], State),
-            do_hangup(<<"Answer Error">>, State)
+            do_hangup(<<"Answer Error">>, State2)
     end;
 
 invite_ringing(_Answer, State) ->
@@ -952,16 +957,16 @@ invite_ringing(_Answer, State) ->
 invite_answered(Answer, #state{status=inviting}=State) ->
     case update_answer(Answer, State) of
         {ok, #state{has_answer=true}=State2} ->
-            {ok, {From, Dest, Opts}} = get_link(invite, State2),
+            {ok, #{from:=From, dest:=Dest, opts:=Opts}} = get_link(invite, State2),
             {ok, State3} = update_link(invite, undefined, State2),
             State4 = status(invite, #{dest=>Dest}, State3),
             op_reply(ok, Opts, From, State4);
         {ok, State2} ->
             ?LLOG(warning, "invite without SDP!", [], State),
             do_hangup(<<"No SDP">>, State2);
-        {error, Error} ->
+        {error, Error, State2} ->
             ?LLOG(warning, "could not set answer in invite_answered", [Error], State),
-            do_hangup(<<"Answer Error">>, State)
+            do_hangup(<<"Answer Error">>, State2)
     end;
 
 invite_answered(_Answer,State) ->
@@ -996,9 +1001,9 @@ do_call_event(_CallId, {ringing, PeerId, Answer}, State) ->
                     noreply(event({ringing, Answer}, State2));
                 not_upated ->
                     noreply(event({ringing, Answer}, State));
-                {error, Error} ->
+                {error, Error, State2} ->
                     ?LLOG(warning, "remote answer error: ~p", [Error], State),
-                    do_hangup(<<"Answer Error">>, State)
+                    do_hangup(<<"Answer Error">>, State2)
             end;    
         _ ->
             noreply(event({ringing, Answer}, State))
@@ -1007,7 +1012,7 @@ do_call_event(_CallId, {ringing, PeerId, Answer}, State) ->
 do_call_event(CallId, {answer, PeerId, Answer}, State) ->
     ?LLOG(info, "receiving call answer", [], State),
     #state{id=Id} = State,
-    {ok, {From, Opts}} = get_link({call_out, CallId}, State),
+    {ok, #{from:=From, opts:=Opts}} = get_link({call_out, CallId}, State),
     State2 = remove_link({call_out, CallId}, State),
     case nkmedia_session:set_call_peer(PeerId, Id) of
         {ok, PeerPid} ->
@@ -1022,9 +1027,9 @@ do_call_event(CallId, {answer, PeerId, Answer}, State) ->
                             ?LLOG(warning, "remote answer error: not_updated", 
                                   [], State),
                             do_hangup(<<"Answer Error">>, State);
-                        {error, Error} ->
+                        {error, Error, State4} ->
                             ?LLOG(warning, "remote answer error: ~p", [Error], State),
-                            do_hangup(<<"Answer Error">>, State)
+                            do_hangup(<<"Answer Error">>, State4)
                     end;    
                 _ ->
                     do_hangup(<<"No SDP">>, State3)
@@ -1094,7 +1099,7 @@ do_pbx_event(Event, State) ->
 
 %% @private
 -spec update_config(config(), #state{}) ->
-    {ok, #state{}} | {error, term()}.
+    {ok, #state{}} | {error, term(), #state{}}.
 
 update_config(Config, State) ->
     Type = maps:get(type, Config, undefined),
@@ -1105,17 +1110,17 @@ update_config(Config, State) ->
                 {ok, State3} ->
                     Answer = maps:get(answer, Config, undefined),
                     update_answer(Answer, State3);
-                {error, Error} ->
-                    {error, Error}
+                {error, Error, State2} ->
+                    {error, Error, State2}
             end;
-        {error, Error} ->
-            {error, Error}
+        {error, Error, State2} ->
+            {error, Error, State2}
     end.
               
 
 %% @private
 -spec update_type(type()|undefined, #state{}) ->
-    {ok, #state{}} | {error, term()}.
+    {ok, #state{}} | {error, term(), #state{}}.
 
 update_type(undefined, State) ->
     {ok, State};
@@ -1126,14 +1131,14 @@ update_type(Type, State) ->
         OldType ->
             {ok, State};
         _ when OldType /= undefined ->
-            {error, type_cannot_be_changed};
+            {error, type_cannot_be_changed, State};
         _ ->
             case update_type_check(Type, MS) of
                 ok ->
                     Session2 = Session#{type=>Type},
                     {ok, State#state{type=Type, session=Session2}};
                 error ->
-                    {error, incompatible_type}
+                    {error, incompatible_type, State}
             end
     end.
 
@@ -1149,68 +1154,82 @@ update_type_check(_, _) -> error.
 
 %% @private
 -spec update_offer(nkmedia:offer()|undefined, #state{}) ->
-    {ok, #state{}} | {error, term()}.
+    {ok, #state{}} | {error, term(), #state{}}.
 
 update_offer(undefined, State) ->
     {ok, State};
 
 update_offer(Offer, State) ->
     #state{has_offer=HasOffer, session=Session} = State,
+    State2 = case Offer of
+        #{pid:=Pid} ->
+            add_link(offer, none, Pid, State);
+        _ ->
+            State
+    end,
+    OldOffer = maps:get(offer, Session, #{}),
+    Offer2 = maps:merge(OldOffer, Offer),
     case Offer of
         _ when HasOffer ->
-            SDP1 = maps:get(sdp, Offer, <<>>),
-            OldOffer = maps:get(offer, Session, #{}),
-            SDP2 = maps:get(sdp, OldOffer, <<>>),
-            case SDP1==SDP2 of
-                true ->
-                    {ok, update_session(offer, Offer, State)};
-                false ->
-                    {error, duplicated_offer}
+            SDP = maps:get(sdp, Offer, <<>>),
+            case maps:get(sdp, OldOffer) of
+                SDP ->
+                    {ok, update_session(offer, Offer2, State2)};
+                _ ->
+                    {error, duplicated_offer, State2}
             end;
         #{sdp:=_SDP} ->
-            Session2 = Session#{offer=>Offer},
-            State2 = State#state{has_offer=true, session=Session2},
-            {ok, event({offer, Offer}, State2)};
+            Session2 = Session#{offer=>Offer2},
+            State3 = State2#state{has_offer=true, session=Session2},
+            {ok, event({offer, Offer2}, State3)};
         #{} ->
-            {ok, update_session(offer, Offer, State)};
+            {ok, update_session(offer, Offer2, State2)};
         _ ->
-            {error, invalid_sdp}
+            {error, invalid_sdp, State2}
     end.
 
 
 %% @private
 -spec update_answer(nkmedia:answer()|undefined, #state{}) ->
-    {ok, #state{}} | {error, term()}.
+    {ok, #state{}} | {error, term(), #state{}}.
 
 update_answer(undefined, State) ->
     {ok, State};
 
 update_answer(Answer, #state{has_answer=HasAnswer}=State) ->
     #state{has_answer=HasAnswer, session=Session} = State,
+    State2 = case Answer of
+        #{pid:=Pid} ->
+            add_link(answer, none, Pid, State);
+        _ ->
+            State
+    end,
+    OldAnswer = maps:get(answer, Session, #{}),
     case Answer of
         _ when HasAnswer ->
-            SDP1 = maps:get(sdp, Answer, <<>>),
-            OldAnswer = maps:get(answer, Session, #{}),
-            SDP2 = maps:get(sdp, OldAnswer, <<>>),
-            case SDP1==SDP2 of
-                true ->
-                    {ok, update_session(answer, Answer, State)};
+            SDP = maps:get(sdp, Answer, <<>>),
+            case maps:get(sdp, OldAnswer) of
+                SDP ->
+                    Answer2 = maps:merge(OldAnswer, Answer),
+                    {ok, update_session(answer, Answer2, State2)};
                 false ->
-                    {error, duplicated_answer}
+                    {error, duplicated_answer, State2}
             end;
         #{sdp:=_SDP} ->
-            case update_answer_ms(Answer, State) of
-                {ok, Answer2, State2} ->
-                    Session2 = Session#{answer=>Answer2},
-                    State3 = State2#state{has_answer=true, session=Session2},
-                    {ok, event({answer, Answer2}, State3)};
+            case update_answer_ms(Answer, State2) of
+                {ok, Answer2, State3} ->
+                    Answer3 = maps:merge(Answer2, OldAnswer),
+                    Session3 = Session#{answer=>Answer3},
+                    State4 = State3#state{has_answer=true, session=Session3},
+                    {ok, event({answer, Answer3}, State4)};
                 {error, Error} ->
-                    {error, Error}
+                    {error, Error, State2}
             end;
         #{} ->
-            {ok, update_session(answer, Answer, State)};
+            Answer2 = maps:merge(OldAnswer, Answer),
+            {ok, update_session(answer, Answer2, State2)};
         _ ->
-            {error, invalid_sdp}
+            {error, invalid_sdp, State2}
     end.
 
 
@@ -1229,8 +1248,8 @@ update_answer_ms(Answer, #state{ms={fs, _}, pbx_type={outbound, Type}}=State) ->
     end;
 
 %% For listens, we could get the response locally
-update_answer_ms(#{sdp:=_}=Answer, #state{type=proxy, after_answer=After}=State) ->
-    process_after_answer(After, Answer, State);
+update_answer_ms(#{sdp:=_}=Answer, #state{type=proxy, pending=Pending}=State) ->
+    process_pending(Pending, Answer, State);
 
 update_answer_ms(Answer, State) ->
     {ok, Answer, State}.
@@ -1249,17 +1268,17 @@ update_call_answer(#{sdp:=_}, PeerId, #state{type=pbx, pbx_type=inbound}=State) 
             % Wait for FS event for status change
             {ok, State};
         error ->
-            {error, pbx_error}
+            {error, pbx_error, State}
     end;
 
 %% For proxy, we may need to perform aditional operations
 update_call_answer(#{sdp:=_}=AnswerB, _PeerId, #state{type=proxy}=State) ->
-    #state{after_answer=After} = State,
-    case process_after_answer(After, AnswerB, State) of
+    #state{pending=Pending} = State,
+    case process_pending(Pending, AnswerB, State) of
         {ok, AnswerB2, State2} ->
             update_answer(AnswerB2, State2);
         {error, Error} ->
-            {error, Error}
+            {error, Error, State}
     end;
 
 update_call_answer(_Answer, _PeerId, _State) ->
@@ -1267,36 +1286,29 @@ update_call_answer(_Answer, _PeerId, _State) ->
 
 
 %% @private
-process_after_answer([], Answer, State) ->
-    {ok, Answer, State#state{after_answer=[]}};
+process_pending([], Answer, State) ->
+    {ok, Answer, State#state{pending=[]}};
 
-process_after_answer([{janus_call, Pid}|Rest], Answer, State) ->
-    lager:error("JANUS CALL"),
-
+process_pending([{janus_call, Pid}|Rest], Answer, State) ->
     case nkmedia_janus_session:videocall_answer(Pid, Answer) of
         {ok, Answer2} ->
-            process_after_answer(Rest, Answer2, State);
+            process_pending(Rest, Answer2, State);
         {error, Error} ->
             {error, Error}
     end;
 
-process_after_answer([{janus_play, Pid}|Rest], Answer, State) ->
-    lager:error("JANUS PLAY"),
-
+process_pending([{janus_play, Pid}|Rest], Answer, State) ->
     case nkmedia_janus_session:play_answer(Pid, Answer) of
         ok ->
-            process_after_answer(Rest, Answer, State);
+            process_pending(Rest, Answer, State);
         {error, Error} ->
             {error, Error}
     end;
 
-process_after_answer([{janus_listen, Pid}|Rest], Answer, State) ->
-
-    lager:error("JANUS LISTEN"),
-
+process_pending([{janus_listen, Pid}|Rest], Answer, State) ->
     case nkmedia_janus_session:listen_answer(Pid, Answer) of
         ok ->
-            process_after_answer(Rest, Answer, State);
+            process_pending(Rest, Answer, State);
         {error, Error} ->
             {error, Error}
     end.
@@ -1359,15 +1371,15 @@ get_proxy(#state{type=proxy, ms={janus, JanusId}}=State) ->
 place_in_pbx(#state{pbx_type=inbound}=State) ->
     {ok, State};
 
-place_in_pbx(#state{pbx_type={outbound, _}}) ->
-    {error, incompatible_pbx_type};
+place_in_pbx(#state{pbx_type={outbound, _}}=State) ->
+    {error, incompatible_pbx_type, State};
 
 place_in_pbx(#state{type=pbx, ms=undefined}=State) ->
     case get_mediaserver(State) of
         {ok, #state{ms={fs, _}}=State2} ->
             place_in_pbx(State2);
         {error, Error} ->
-            {error, Error}
+            {error, Error, State}
     end;
 
 place_in_pbx(#state{type=pbx, ms={fs, FsId}, has_answer=false}=State) ->
@@ -1380,7 +1392,7 @@ place_in_pbx(#state{type=pbx, ms={fs, FsId}, has_answer=false}=State) ->
             fs_wait_park(State),
             update_answer(#{sdp=>SDP}, State#state{pbx_type=inbound});
         {error, Error} ->
-            {error, Error}
+            {error, Error, State}
     end.
 
 
@@ -1388,15 +1400,15 @@ place_in_pbx(#state{type=pbx, ms={fs, FsId}, has_answer=false}=State) ->
 get_pbx_offer(_Opts, #state{pbx_type={outbound, _}}=State) ->
     {ok, State};
 
-get_pbx_offer(_Opts, #state{pbx_type=inbound}) ->
-    {error, incompatible_pbx_type};
+get_pbx_offer(_Opts, #state{pbx_type=inbound}=State) ->
+    {error, incompatible_pbx_type, State};
 
 get_pbx_offer(Opts, #state{type=pbx, ms=undefined}=State) ->
     case get_mediaserver(State) of
         {ok, #state{ms={fs, _}}=State2} ->
             get_pbx_offer(Opts, State2);
         {error, Error} ->
-            {error, {get_pbx_offer_error, Error}}
+            {error, {get_pbx_offer_error, Error}, State}
     end;
 
 get_pbx_offer(Opts, #state{type=pbx, ms={fs, FsId}, has_offer=false}=State) ->
@@ -1411,7 +1423,7 @@ get_pbx_offer(Opts, #state{type=pbx, ms={fs, FsId}, has_offer=false}=State) ->
             Offer2 = Offer1#{sdp=>SDP, sdp_type=>Type},
             update_offer(Offer2, State#state{pbx_type={outbound, Type}});
         {error, Error} ->
-            {error, {backend_out_error, Error}}
+            {error, {backend_out_error, Error}, State}
     end.
 
 
@@ -1486,9 +1498,9 @@ do_hangup(_Reason, #state{hangup_sent=true}=State) ->
 do_hangup(Reason, #state{id=SessId, ms=MS}=State) ->
     iter_links(
         fun
-            (invite, {From, _Opts, _Dest}) ->
+            (invite, #{from:=From}) ->
                 nklib_util:reply(From, {hangup, Reason});
-            ({call_out, CallId}, {From, _Opts}) ->
+            ({call_out, CallId}, #{from:=From}) ->
                 nklib_util:reply(From, {hangup, Reason}),
                 nkmedia_call:hangup(CallId, <<"Caller Stopped">>);
             ({janus, JanusSessId}, none) ->

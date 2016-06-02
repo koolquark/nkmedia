@@ -133,8 +133,8 @@ nkmedia_verto_login(_VertoId, _Login, _Pass, Verto) ->
 
 nkmedia_verto_invite(SessId, Offer, #{srv_id:=SrvId}=Verto) ->
     #{dest:=Dest} = Offer,
-    Spec = #{id=>SessId, offer=>Offer, nkmedia_verto_in=>self(), monitor=>self()}, 
-    case nkmedia_session:start(SrvId, Spec) of
+    Offer2 = Offer#{pid=>self(), nkmedia_verto=>in},
+    case nkmedia_session:start(SrvId, #{id=>SessId, offer=>Offer2}) of
         {ok, SessId, SessPid} ->
             case SrvId:nkmedia_verto_call(SessId, Dest, Verto) of
                 {ok, Verto2} ->
@@ -226,32 +226,24 @@ nkmedia_verto_handle_info(Msg, Verto) ->
 
 
 %% @private
-nkmedia_session_event(SessId, {hangup, _}, #{nkmedia_verto_in:=Pid}) ->
-    nkmedia_verto:hangup(Pid, SessId),
-    continue;
-
-nkmedia_session_event(SessId, {hangup, _}, #{nkmedia_verto_out:=Pid}) ->
-    nkmedia_verto:hangup(Pid, SessId),
-    continue;
-
-nkmedia_session_event(SessId, {answer, Answer}, #{nkmedia_verto_in:=Pid}) ->
+nkmedia_session_event(SessId, {answer, Answer}, 
+                      #{offer:=#{nkmedia_verto:=in, pid:=Pid}}) ->
     #{sdp:=_} = Answer,
     lager:info("Verto calling media available"),
-    % lager:notice("Verto calling media available: ~s", [SDP]),
     ok = nkmedia_verto:answer(Pid, SessId, Answer),
     continue;
 
-nkmedia_session_event(_SessId, {answer, _Data}, #{nkmedia_verto_out:=_Pid}) ->
+nkmedia_session_event(SessId, {hangup, _}, 
+                      #{offer:=#{nkmedia_verto:=in, pid:=Pid}}) ->
+    lager:error("VERTO HANGUP IN"),
+
+    nkmedia_verto:hangup(Pid, SessId),
     continue;
 
-% nkmedia_session_event(SessId, {status, Status, Data}, 
-%                      #{offer:=#{module:=nkmedia_verto_in, pid:=Pid}}) ->
-%     lager:notice("Verto In status (~s): ~p, ~p", [SessId, Status, Data]),
-%     continue;
-
-% nkmedia_session_event(SessId, {status, Status, Data}, #{nkmedia_verto_out:=_}) ->
-%     lager:notice("Verto Out status (~s): ~p, ~p", [SessId, Status, Data]),
-%     continue;
+nkmedia_session_event(SessId, {hangup, _}, 
+                      #{answer:=#{nkmedia_verto:=out, pid:=Pid}}) ->
+    nkmedia_verto:hangup(Pid, SessId),
+    continue;
 
 nkmedia_session_event(_SessId, _Event, _Session) ->
     continue.
@@ -272,8 +264,7 @@ nkmedia_session_invite(SessId, {nkmedia_verto, Pid}, Offer, Session) ->
                     nkmedia_session:hangup(SessId, <<"Verto Invite Error">>)
             end
         end),
-    Session2 = maps:remove(nkmedia_verto_in, Session),
-    {ringing, #{}, Pid, Session2#{nkmedia_verto_out=>Pid}};
+    {ringing, #{nkmedia_verto=>out, pid=>Pid}, Session};
 
 nkmedia_session_invite(_SessId, _Dest, _Offer, _Session) ->
     continue.

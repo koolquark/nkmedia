@@ -106,13 +106,13 @@ nkmedia_session_event(_SessId, _Event, Session) ->
 
 				  
 %% @doc Called when a new call must be sent from the session
-%% The notify, is included, will be monitorized and stored and out_notify in the 
-%% session
+%% If an answer is included, it can contain a pid() tha will be monitorized
+%% New answers will be merged, but only one can contain an SDP
 -spec nkmedia_session_invite(session_id(), nkmedia_session:call_dest(), 
 						  nkmedia:offer(), session()) ->
-	{ringing, nkmedia:answer(), pid()|undefined,  session()} |	% Answer optional
-	{answer, nkmedia:answer(), pid()|undefined, session()} |    % Answer optional
-	{async, pid()|undefined, session()} | 			     	    %   (if not in ringing)
+	{ringing, nkmedia:answer(), session()} | 
+	{answer, nkmedia:answer(), session()}  | 
+	{async, nkmedia:answer(), session()}   |
 	{hangup, nkmedia:hangup_reason(), session()}.
 
 nkmedia_session_invite(_SessId, _CallDest, _Offer, Session) ->

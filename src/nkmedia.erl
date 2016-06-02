@@ -40,6 +40,7 @@
 		sdp => binary(),
 		sdp_type => sip | webrtc,
 		dest => binary(),
+		direction => in | out,		% nkmedia will set 'out' for b-leg
         caller_name => binary(),
         caller_id => binary(),
         callee_name => binary(),
@@ -51,7 +52,8 @@
         use_data => boolean(),
         in_bw => integer(),
         out_bw => integer(),
-		verto_params => map()
+        pid => pid(),				% if included, will be monitorized
+        module() => term()
 	}.
 
 
@@ -62,7 +64,9 @@
 		verto_params => map(),
         use_audio => boolean(),
         use_video => boolean(),
-        use_data => boolean()
+        use_data => boolean(),
+        pid => pid(),				% if included, will be monitorized
+        module() => term()
 	}.
 
 -type call_dest() :: binary().

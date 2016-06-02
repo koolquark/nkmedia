@@ -91,19 +91,25 @@ sip_invite(Req, Call) ->
             SDP = nksip_sdp:unparse(Body),
             {ok, Handle} = nksip_request:get_handle(Req),
             {ok, Dialog} = nksip_dialog:get_handle(Req),
-            Offer = #{sdp=>SDP, sdp_type=>sip},
-            Spec = #{offer=>Offer, nkmedia_sip_in=>{Handle, Dialog}, monitor=>self()},
-            {ok, SessId, _SessPid} = nkmedia_session:start(SrvId, Spec),
-            nklib_proc:put({?MODULE, dialog, Dialog}, SessId),
-            nklib_proc:put({?MODULE, cancel, Handle}, SessId),
+            Offer = #{
+                sdp => SDP, 
+                sdp_type => sip, 
+                direction => in,
+                nkmedia_sip => {in, Handle, Dialog}, 
+                pid => self()
+            },
+            {ok, SessId, _SessPid} = nkmedia_session:start(SrvId, #{offer=>Offer}),
+            nklib_proc:put({nkmedia_sip, dialog, Dialog}, SessId),
+            nklib_proc:put({nkmedia_sip, cancel, Handle}, SessId),
             case SrvId:nkmedia_sip_call(SessId, Dest) of
                 ok ->
                     noreply;
                 hangup ->
+                    lager:error("DEC1"),
                     {reply, decline}
             end;
         _ ->
-
+            lager:error("DEC2"),
             {reply, decline}
     end.
 
@@ -117,7 +123,7 @@ sip_reinvite(_Req, _Call) ->
 %% @private
 sip_cancel(InviteReq, _Request, _Call) ->
     {ok, Handle} = nksip_request:get_handle(InviteReq),
-    case nklib_proc:values({?MODULE, cancel, Handle}) of
+    case nklib_proc:values({nkmedia_sip, cancel, Handle}) of
         [{SessId, _}|_] ->
             nkmedia_session:hangup(SessId, <<"Sip Cancel">>),
             ok;
@@ -129,12 +135,11 @@ sip_cancel(InviteReq, _Request, _Call) ->
 %% @private Called when a BYE is received from SIP
 sip_bye(Req, _Call) ->
 	{ok, Dialog} = nksip_dialog:get_handle(Req),
-    case nklib_proc:values({?MODULE, dialog, Dialog}) of
+    case nklib_proc:values({nkmedia_sip, dialog, Dialog}) of
         [{SessId, _SessPid}] ->
             nkmedia_session:hangup(SessId);
         [] ->
-            lager:notice("Received SIP BYE for unknown session (~p): ~p", 
-                          [self(), nklib_proc:values({?MODULE, dialog})])
+            lager:notice("Received SIP BYE for unknown session")
     end,
 	continue.
 
@@ -145,7 +150,7 @@ nkmedia_session_invite(SessId, {nkmedia_sip, Uri, Opts}, Offer, Session) ->
     case Offer of
         #{sdp_type:=sip, sdp:=SDP} ->
             ok = nkmedia_sip:send_invite(SrvId, SessId, Uri, Opts#{sdp=>SDP}),
-            {async, undefined, Session#{nkmedia_sip_out=>true}};
+            {async, #{nkmedia_sip=>out}, Session};
         _ ->
             {hangup, <<"Invalid SIP SDP">>, Session}
     end;
@@ -156,20 +161,23 @@ nkmedia_session_invite(_SessId, _Dest, _Offer, _Session) ->
 
 %% @private
 nkmedia_session_event(_SessId, {answer, Answer}, 
-                      #{nkmedia_sip_in:={Handle, _Dialog}}) ->
+                      #{offer:=#{nkmedia_sip:={in, Handle, _Dialog}, direction:=in}}) ->
     #{sdp:=SDP1} = Answer,
     lager:info("SIP calling media available"),
     SDP2 = nksip_sdp:parse(SDP1),
     ok = nksip_request:reply({answer, SDP2}, Handle),
     continue;
 
-nkmedia_session_event(SessId, {hangup, _}, #{nkmedia_sip_out:=true}) ->
+nkmedia_session_event(_SessId, {hangup, _}, 
+                      #{offer:=#{nkmedia_sip:={in, _Handle, Dialog}, direction:=in}}) ->
+    spawn(fun() -> nksip_uac:bye(Dialog, []) end),
+    continue;
+
+nkmedia_session_event(SessId, {hangup, _}, 
+                      #{answer:=#{nkmedia_sip:=out}}) ->
     nkmedia_sip:send_hangup(SessId),
     continue;
 
-nkmedia_session_event(_SessId, {hangup, _}, #{nkmedia_sip_in:={_Handle, Dialog}}) ->
-    spawn(fun() -> nksip_uac:bye(Dialog, []) end),
-    continue;
 
 nkmedia_session_event(_SessId, _Event, _Session) ->
     continue.

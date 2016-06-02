@@ -123,8 +123,8 @@ nkmedia_janus_login(_JanusId, _Login, _Pass, Janus) ->
 
 nkmedia_janus_invite(SessId, Offer, #{srv_id:=SrvId}=Janus) ->
     #{dest:=Dest} = Offer,
-    Spec = #{id=>SessId, offer=>Offer, nkmedia_janus_in=>self(), monitor=>self()},
-    case nkmedia_session:start(SrvId, Spec) of
+    Offer2 = Offer#{pid=>self(), nkmedia_janus_proto=>in},
+    case nkmedia_session:start(SrvId, #{id=>SessId, offer=>Offer2}) of
         {ok, SessId, SessPid} ->
             case SrvId:nkmedia_janus_call(SessId, Dest, Janus) of
                 {ok, Janus2} ->
@@ -226,33 +226,22 @@ nkmedia_janus_handle_info(Msg, Janus) ->
 
 
 %% @private
-nkmedia_session_event(SessId, {answer, Answer}, #{nkmedia_janus_in:=Pid}) ->
+nkmedia_session_event(SessId, {answer, Answer}, 
+                      #{offer:=#{nkmedia_janus_proto:=in, pid:=Pid}}) ->
     #{sdp:=_} = Answer,
     lager:info("Janus calling media available"),
-    % lager:notice("Janus calling media available: ~s", [SDP]),
     ok = nkmedia_janus_proto:answer(Pid, SessId, Answer),
     continue;
 
-nkmedia_session_event(_SessId, {answer, _Data}, #{}) ->
+nkmedia_session_event(SessId, {hangup, _},
+                      #{offer:=#{nkmedia_janus_proto:=in, pid:=Pid}}) ->
+        nkmedia_janus_proto:hangup(Pid, SessId),
     continue;
 
-nkmedia_session_event(SessId, {hangup, _}, #{nkmedia_janus_in:=Pid}) ->
+nkmedia_session_event(SessId, {hangup, _}, 
+                      #{answer:=#{nkmedia_janus_proto:=out, pid:=Pid}}) ->
     nkmedia_janus_proto:hangup(Pid, SessId),
     continue;
-
-nkmedia_session_event(SessId, {hangup, _}, #{nkmedia_janus_out:=Pid}) ->
-    nkmedia_janus_proto:hangup(Pid, SessId),
-    continue;
-
-
-% nkmedia_session_event(SessId, {status, Status, Data}, 
-%                      #{offer:=#{module:=nkmedia_janus_in, pid:=Pid}}) ->
-%     lager:notice("Janus In status (~s): ~p, ~p", [SessId, Status, Data]),
-%     continue;
-
-% nkmedia_session_event(SessId, {status, Status, Data}, #{nkmedia_janus_out:=_}) ->
-%     lager:notice("Janus Out status (~s): ~p, ~p", [SessId, Status, Data]),
-%     continue;
 
 nkmedia_session_event(_SessId, _Event, _Session) ->
     continue.
@@ -262,7 +251,7 @@ nkmedia_session_event(_SessId, _Event, _Session) ->
 nkmedia_session_invite(SessId, {nkmedia_janus, Pid}, Offer, Session) ->
     case nkmedia_janus_proto:invite(Pid, SessId, Offer#{monitor=>self()}) of
         ok ->
-            {ringing, #{}, Pid, Session#{nkmedia_janus_out=>Pid}};
+            {ringing, #{nkmedia_janus_proto=>out, pid=>Pid}, Session};
         {error, Error} ->
             lager:warning("Error calling invite: ~p", [Error]),
             {hangup, <<"Janus Invite Error">>, Session}
@@ -281,10 +270,6 @@ nkmedia_call_resolve(Dest, Call) ->
             lager:info("Janus: user ~s not found", [Dest]),
             continue
     end.
-
-
-
-
 
 
 
