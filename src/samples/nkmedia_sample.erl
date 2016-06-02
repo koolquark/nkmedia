@@ -29,6 +29,7 @@
 -export([nkmedia_verto_login/4, nkmedia_verto_call/3]).
 -export([nkmedia_call_resolve/2]).
 -export([nkmedia_janus_call/3]).
+-export([nkmedia_sip_call/2]).
 % -export([nkmedia_call_event/3, nkmedia_session_event/3]).
 -export([sip_register/2]).
 
@@ -187,6 +188,22 @@ nkmedia_janus_call(SessId, Dest, Janus) ->
 
 
 %% ===================================================================
+%% nkmedia_sip callbacks
+%% ===================================================================
+
+
+nkmedia_sip_call(SessId, Dest) ->
+    case send_call(SessId, Dest) of
+        ok ->
+            ok;
+        no_number ->
+            hangup
+    end.
+
+
+
+
+%% ===================================================================
 %% nkmedia callbacks
 %% ===================================================================
 
@@ -194,8 +211,10 @@ nkmedia_janus_call(SessId, Dest, Janus) ->
 nkmedia_call_resolve(Dest, #{srv_id:=SrvId}=Call) ->
     case nksip_registrar:find(SrvId, sip, Dest, <<"nkmedia_sample">>) of
         [] ->
+            lager:info("sip not found: ~s", [Dest]),
             continue;
         [Uri|_] ->
+            lager:info("sip found: ~s", [Dest]),
             Spec = [#{dest=>{nkmedia_sip, Uri, #{}}, sdp_type=>sip}],
             {ok, Spec, Call}
     end.

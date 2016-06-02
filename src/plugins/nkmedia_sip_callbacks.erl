@@ -23,7 +23,8 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
--export([sip_bye/2]).
+-export([sip_get_user_pass/4, sip_authorize/3]).
+-export([sip_invite/2, sip_reinvite/2, sip_cancel/3, sip_bye/2]).
 -export([nkmedia_session_invite/4, nkmedia_session_event/3]).
 
 
@@ -68,11 +69,73 @@ plugin_stop(Config, #{name:=Name}) ->
 %% Implemented Callbacks
 %% ===================================================================
 
+%% @private
+sip_get_user_pass(_User, _Realm, _Req, _Call) ->
+    true.
+
+
+%% @private
+sip_authorize(_AuthList, _Req, _Call) ->
+    ok.
+
+
+%% @private
+sip_invite(Req, Call) ->
+    SrvId = nksip_call:srv_id(Call),
+    {ok, AOR} = nksip_request:meta(aor, Req),
+    {ok, Body} =  nksip_request:meta(body, Req),
+    HasSDP = nksip_sdp:is_sdp(Body),
+    case AOR of
+        {sip, Dest, Domain} when HasSDP ->
+            lager:notice("SIP call to ~s@~s (~p)", [Dest, Domain, self()]),
+            SDP = nksip_sdp:unparse(Body),
+            {ok, Handle} = nksip_request:get_handle(Req),
+            {ok, Dialog} = nksip_dialog:get_handle(Req),
+            Offer = #{sdp=>SDP, sdp_type=>sip},
+            Spec = #{offer=>Offer, nkmedia_sip_in=>{Handle, Dialog}, monitor=>self()},
+            {ok, SessId, _SessPid} = nkmedia_session:start(SrvId, Spec),
+            nklib_proc:put({?MODULE, dialog, Dialog}, SessId),
+            nklib_proc:put({?MODULE, cancel, Handle}, SessId),
+            case SrvId:nkmedia_sip_call(SessId, Dest) of
+                ok ->
+                    noreply;
+                hangup ->
+                    {reply, decline}
+            end;
+        _ ->
+
+            {reply, decline}
+    end.
+
+
+%% @private
+sip_reinvite(_Req, _Call) ->
+    lager:warning("Sample ignoring REINVITE"),
+    {reply, decline}.
+
+
+%% @private
+sip_cancel(InviteReq, _Request, _Call) ->
+    {ok, Handle} = nksip_request:get_handle(InviteReq),
+    case nklib_proc:values({?MODULE, cancel, Handle}) of
+        [{SessId, _}|_] ->
+            nkmedia_session:hangup(SessId, <<"Sip Cancel">>),
+            ok;
+        [] ->
+            ok
+    end.
+
 
 %% @private Called when a BYE is received from SIP
 sip_bye(Req, _Call) ->
 	{ok, Dialog} = nksip_dialog:get_handle(Req),
-	nkmedia_sip:sip_bye(Dialog),
+    case nklib_proc:values({?MODULE, dialog, Dialog}) of
+        [{SessId, _SessPid}] ->
+            nkmedia_session:hangup(SessId);
+        [] ->
+            lager:notice("Received SIP BYE for unknown session (~p): ~p", 
+                          [self(), nklib_proc:values({?MODULE, dialog})])
+    end,
 	continue.
 
 
@@ -92,8 +155,20 @@ nkmedia_session_invite(_SessId, _Dest, _Offer, _Session) ->
 
 
 %% @private
+nkmedia_session_event(_SessId, {answer, Answer}, 
+                      #{nkmedia_sip_in:={Handle, _Dialog}}) ->
+    #{sdp:=SDP1} = Answer,
+    lager:info("SIP calling media available"),
+    SDP2 = nksip_sdp:parse(SDP1),
+    ok = nksip_request:reply({answer, SDP2}, Handle),
+    continue;
+
 nkmedia_session_event(SessId, {hangup, _}, #{nkmedia_sip_out:=true}) ->
     nkmedia_sip:send_hangup(SessId),
+    continue;
+
+nkmedia_session_event(_SessId, {hangup, _}, #{nkmedia_sip_in:={_Handle, Dialog}}) ->
+    spawn(fun() -> nksip_uac:bye(Dialog, []) end),
     continue;
 
 nkmedia_session_event(_SessId, _Event, _Session) ->

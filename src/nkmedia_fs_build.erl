@@ -398,25 +398,10 @@ run_image_dialplan() ->
 
     <extension name=\"nkmedia_inbound\">
         <condition field=\"destination_number\" expression=\"^nkmedia_in$\">
-            <action application=\"set\" data=\"park_after_bridge=true\"/>
             <action application=\"answer\"/>
             <action application=\"park\"/>
         </condition>
     </extension>
-
-    <extension name=\"nkmedia_outgoing\">
-        <condition field=\"destination_number\" expression=\"^nkmedia_out$\">
-            <action application=\"set\" data=\"park_after_bridge=true\"/>
-            <action application=\"park\"/>
-        </condition>  
-    </extension>
-
-    <extension name=\"nkmedia_hangup\">
-       <condition field=\"destination_number\" expression=\"^nkmedia_hangup_(.*)$\">
-            <action application=\"hangup\" data=\"$1\"/>
-       </condition>
-     </extension>
-    
 </include>
 ">>.
 

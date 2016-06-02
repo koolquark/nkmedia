@@ -21,7 +21,7 @@
 %% @doc Plugin implementing a SIP server and client
 -module(nkmedia_sip).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([send_invite/4, send_hangup/1, sip_bye/1]).
+-export([send_invite/4, send_hangup/1]).
 
 -define(LLOG(Type, Txt, Args),
     lager:Type("NkMEDIA SIP Plugin (~s) "++Txt, [SessId|Args])).
@@ -136,15 +136,3 @@ send_hangup(SessId) ->
                     lager:notice("Sending Hangup for unknown SIP")
             end
     end.
-
-
-%% @private
-sip_bye(Dialog) ->
-    case nklib_proc:values({?MODULE, dialog, Dialog}) of
-        [{SessId, _SessPid}] ->
-            nkmedia_session:hangup(SessId);
-        [] ->
-            lager:notice("Received SIP BYE for unknown session")
-    end.
-
-

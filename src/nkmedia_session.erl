@@ -158,7 +158,8 @@
     {status, status(), ext_status()} | 
     {offer, nkmedia:offer()} | {answer, nkmedia:answer()} |
     {ringing, nkmedia:answer()} | {info, term()} |
-    {hangup, nkmedia:hangup_reason()}.
+    {hangup, nkmedia:hangup_reason()} |
+    {peer_removed, id()}.
 
 
 -type pbx_event() ::
@@ -475,12 +476,12 @@ handle_cast({call_event, CallId, Event}, #state{status=Status}=State) ->
             noreply(State)
     end;
 
-handle_cast({peer_event, PeerId, Event}, #state{status=Status}=State) ->
+handle_cast({peer_event, PeerId, Event}, State) ->
     case get_link(peer, State) of
-        {ok, PeerId} when Status==call ->
+        {ok, PeerId} ->
             do_peer_event(PeerId, Event, State);
         {ok, Other} ->
-            ?LLOG(warning, "Received event from peer ~p, has ~p", 
+            ?LLOG(warning, "received event from unknown peer ~s",
                   [PeerId, Other], State),
             noreply(State);
         not_found ->
@@ -972,6 +973,7 @@ invite_answered(_Answer,State) ->
 remove_peer(State) ->
     case get_link(peer, State) of
         {ok, PeerId} ->
+            ?LLOG(info, "removing peer ~s", [PeerId], State),
             State2 = event({peer_removed, PeerId}, State),
             remove_link(peer, State2);
         not_found ->
@@ -1038,19 +1040,34 @@ do_call_event(_CallId, {hangup, Reason}, State) ->
 
 
 %% @private
+do_peer_event(PeerId, {peer_removed, _Id}, #state{type=Type}=State) ->
+    ?LLOG(info, "received peer removed", [], State),
+    State2 = remove_link(peer, State),
+    State3 = event({peer_removed, PeerId}, State2),
+    %% TODO: Use variable to device if we must hangup
+    case Type of
+        pbx ->
+            noreply(status(wait, State3));
+        _ ->
+            do_hangup(<<"Peer Removed">>, State3)
+    end;
+
 do_peer_event(_PeerId, {hangup, Reason}, State) ->
     ?LLOG(info, "received peer hangup: ~p", [Reason], State),
     do_hangup(Reason, State);
 
 do_peer_event(_PeerId, _Event, State) ->
-    % ?LLOG(info, "unexpected peer event: ~p", [Event], State),
+    % ?LLOG(warning, "unexpected peer event from ~s: ~p", [_PeerId, _Event], State),
     noreply(State).
 
 
 %% @private
-do_pbx_event(parked, #state{status=Status}=State) ->
-    ?LLOG(notice, "received parked in '~p'", [Status], State),
+do_pbx_event(parked, #state{status=wait}=State) ->
     noreply(State);
+
+do_pbx_event(parked, #state{status=Status}=State) ->
+    ?LLOG(notice, "received parked!", [Status], State),
+    noreply(status(wait, State));
 
 do_pbx_event({bridge, Remote}, State) ->
     noreply(status(call, #{peer=>Remote}, State));
@@ -1128,24 +1145,6 @@ update_type_check(pbx, {fs, _}) -> ok;
 update_type_check(proxy, undefined) -> ok;
 update_type_check(proxy, {janus, _}) -> ok;
 update_type_check(_, _) -> error.
-
-
-% %% @private
-% update_sdp_type(Opts, #state{session=Session}=State) ->
-%     case maps:find(sdp_type, Opts) of
-%         {ok, Type} when Type==webrtc; Type==sip ->
-%             case maps:find(sdp_type, Session) of
-%                 {ok, Type} ->
-%                     State;
-%                 {ok, _} ->
-%                     error({incompatiible_sdp_type, Type});
-%                 error ->
-%                     Session2 = Session#{sdp_type=>Type},
-%                     State#state{session=Session2}
-%             end;
-%         error ->
-%             State
-%     end.
 
 
 %% @private
@@ -1458,7 +1457,7 @@ get_mediaserver(State) ->
 
 %% @private
 pbx_transfer(Dest, #state{id=SessId, ms={fs, FsId}}=State) ->
-    ?LLOG(notice, "sending transfer to ~s", [Dest], State),
+    ?LLOG(info, "sending transfer to ~s", [Dest], State),
     nkmedia_fs_cmd:transfer_inline(FsId, SessId, Dest).
 
 
@@ -1468,7 +1467,7 @@ pbx_bridge(SessIdB, #state{id=SessIdA, ms={fs, FsId}}=State) ->
         ok ->
             case nkmedia_fs_cmd:set_var(FsId, SessIdB, "park_after_bridge", "true") of
                 ok ->
-                    ?LLOG(notice, "sending transfer to ~s", [SessIdB], State),
+                    ?LLOG(info, "sending bridge to ~s", [SessIdB], State),
                     nkmedia_fs_cmd:bridge(FsId, SessIdA, SessIdB);
                 {error, Error} ->
                     ?LLOG(warning, "pbx bridge error: ~p", [Error], State),
