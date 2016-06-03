@@ -340,7 +340,7 @@ set_call_peer(SessId, PeerSessId) ->
     ms :: mediaserver(),
     pbx_type :: inbound | {outbound, sip|webrtc},
     proxy_pid :: pid(),
-    pending = [] :: [{janus_call, pid()} | {janus_listen, pid()}],
+    pending = [] :: [{janus, term(), pid()}],
     links :: nkmedia_links:links(link_id()),
     timer :: reference(),
     hangup_sent = false :: boolean(),
@@ -631,7 +631,7 @@ do_offer({play, Play}, Opts, From, #state{id=Id, type=proxy}=State) ->
                     #state{pending=Pending} = State2,
                     State3 = State2#state{
                         proxy_pid = Pid,
-                        pending = [{janus_play, Pid}|Pending]
+                        pending = [{janus, play, Pid}|Pending]
                     },
                     do_offer(Offer, Opts, From, State3);
                 {error, Error} ->
@@ -650,7 +650,7 @@ do_offer({listen, Room, SessB}, Opts, From, #state{id=Id, type=proxy}=State) ->
                     #state{pending=Pending} = State2,
                     State3 = State2#state{
                         proxy_pid = Pid,
-                        pending = [{janus_listen, Pid}|Pending]
+                        pending = [{janus, listen, Pid}|Pending]
                     },
                     do_offer(Offer, Opts, From, State3);
                 {error, Error} ->
@@ -778,17 +778,39 @@ answer_op({call, Dest}, Opts, From, #state{type=p2p}=State) ->
 
 answer_op({call, Dest}, Opts, From, #state{type=proxy}=State) ->
     #state{session=#{offer:=Offer}, pending=Pending, id=Id} = State,
-    case get_proxy(State) of
-        {ok, Pid, State2} ->
-            case nkmedia_janus_session:videocall(Pid, Id, Offer, Opts) of
-                {ok, #{sdp:=SDP}} ->
-                    State3 = State2#state{pending=[{janus_call, Pid}|Pending]},
-                    do_send_call(Dest, Opts, Offer#{sdp=>SDP}, From, State3);
+    case maps:get(sdp_type, Offer, webrtc) of
+        webrtc ->
+            case get_proxy(State) of
+                {ok, Pid, State2} ->
+                    case nkmedia_janus_session:videocall(Pid, Id, Offer, Opts) of
+                        {ok, #{sdp:=SDP}} ->
+                            State3 = State2#state{
+                                pending=[{janus, call, Pid}|Pending]
+                            },
+                            do_send_call(Dest, Opts, Offer#{sdp=>SDP}, From, State3);
+                        {error, Error} ->
+                            op_reply({error, Error}, Opts, From, State)
+                    end;
                 {error, Error} ->
-                    op_reply({error, Error}, Opts, From, State)
+                    op_reply({error, {proxy_error, Error}}, Opts, From, State)
             end;
-        {error, Error} ->
-            op_reply({error, {proxy_error, Error}}, Opts, From, State)
+        sip ->
+            case get_proxy(State) of
+                {ok, Pid, State2} ->
+                    case nkmedia_janus_session:from_sip(Pid, Offer) of
+                        {ok, #{sdp:=SDP2}} ->
+                            Offer2 = Offer#{sdp=>SDP2, sdp_type=>webrtc},
+                            State3 = State2#state{
+                                pending = [{janus, sip, Pid}|Pending]
+                            },
+                            do_send_call(Dest, Opts, Offer2, From, State3);
+                        {error, Error} ->
+                            op_reply({error, {proxy_invite_error, Error}}, 
+                                     Opts, From, State2)
+                    end;
+                {error, Error} ->
+                    op_reply({error, {proxy_error, Error}}, Opts, From, State)
+            end
     end;
 
 answer_op({call, Dest}, Opts, From, #state{type=pbx}=State) ->
@@ -801,33 +823,35 @@ answer_op({call, Dest}, Opts, From, #state{type=pbx}=State) ->
 
 
 %% INVITE
-answer_op({invite, Dest}, Opts, From, #state{id=Id, session=Session}=State) ->
+answer_op({invite, Dest}, Opts, From, State) ->
+    #state{session=Session, pending=Pending} = State,
     #{offer:=Offer} = Session,
-    State2 = status(inviting, #{dest=>Dest}, State),
-    case handle(nkmedia_session_invite, [Id, Dest, Offer], State2) of
-        {ringing, Answer, State3} ->
-            State4 = answer_op_link(Answer, Dest, Opts, From, State3),
-            invite_ringing(Answer, State4);
-        {answer, Answer, State3} ->
-            ?LLOG(info, "session answer", [], State3),
-            State4 = answer_op_link(Answer, Dest, Opts, From, State3),
-            invite_answered(Answer, State4);
-        {async, Answer, State3} ->
-            ?LLOG(info, "session delayed", [], State3),
-            State4 = answer_op_link(Answer, Dest, Opts, From, State3),
-            case update_answer(Answer, State4) of
-                {ok, State5} ->
-                    noreply(State5);
-                {error, Error, State5} ->
-                    ?LLOG(warning, "could not set answer in invite_ringing", 
-                          [Error], State5),
-                    do_hangup(<<"Answer Error">>, State5)
-            end;
-        {hangup, Reason, State3} ->
-            ?LLOG(info, "session hangup: ~p", [Reason], State3),
-            op_reply({error, {hangup, Reason}}, Opts, From, State3)
+    DestType = maps:get(sdp_type, Opts, webrtc),
+    OfferType = maps:get(sdp_type, Offer, webrtc),
+    case {OfferType, DestType} of
+        {webrtc, webrtc} ->
+            do_invite(Dest, Opts, Offer, From, State);
+        {webrtc, sip} ->
+            lager:error("i1"),
+            case get_proxy(State) of
+                {ok, Pid, State2} ->
+                    lager:error("i2"),
+                    case nkmedia_janus_session:to_sip(Pid, Offer) of
+                        {ok, #{sdp:=SDP2}} ->
+                            lager:error("i3"),
+                            Offer2 = Offer#{sdp=>SDP2, sdp_type=>webrtc},
+                            State3 = State2#state{
+                                pending = [{janus, sip2, Pid}|Pending]
+                            },
+                            do_invite(Dest, Opts, Offer2, From, State3);
+                        {error, Error} ->
+                            op_reply({error, {proxy_reg_error, Error}}, 
+                                      Opts, From, State)
+                    end;
+                {error, Error} ->
+                    op_reply({error, {proxy_error, Error}}, Opts, From, State)
+            end
     end;
-
 
 %% ERROR
 answer_op(_AnswerOp, Opts, From, State) ->
@@ -937,6 +961,34 @@ do_send_call(Dest, Opts, Offer, From, State) ->
     State2 = add_link({call_out, CallId}, #{from=>From, opts=>Opts}, CallPid, State),
     % Now we will receive notifications from the call
     noreply(status(calling, #{dest=>Dest, call_id=>CallId}, State2)).
+
+
+%% @private
+do_invite(Dest, Opts, Offer, From, #state{id=Id}=State) ->
+    State2 = status(inviting, #{dest=>Dest}, State),
+    case handle(nkmedia_session_invite, [Id, Dest, Offer], State2) of
+        {ringing, Answer, State3} ->
+            State4 = answer_op_link(Answer, Dest, Opts, From, State3),
+            invite_ringing(Answer, State4);
+        {answer, Answer, State3} ->
+            ?LLOG(info, "session answer", [], State3),
+            State4 = answer_op_link(Answer, Dest, Opts, From, State3),
+            invite_answered(Answer, State4);
+        {async, Answer, State3} ->
+            ?LLOG(info, "session delayed", [], State3),
+            State4 = answer_op_link(Answer, Dest, Opts, From, State3),
+            case update_answer(Answer, State4) of
+                {ok, State5} ->
+                    noreply(State5);
+                {error, Error, State5} ->
+                    ?LLOG(warning, "could not set answer in invite_ringing", 
+                          [Error], State5),
+                    do_hangup(<<"Answer Error">>, State5)
+            end;
+        {hangup, Reason, State3} ->
+            ?LLOG(info, "session hangup: ~p", [Reason], State3),
+            op_reply({error, {hangup, Reason}}, Opts, From, State3)
+    end.
 
 
 %% @private Called at the B-leg
@@ -1289,29 +1341,17 @@ update_call_answer(_Answer, _PeerId, _State) ->
 process_pending([], Answer, State) ->
     {ok, Answer, State#state{pending=[]}};
 
-process_pending([{janus_call, Pid}|Rest], Answer, State) ->
-    case nkmedia_janus_session:videocall_answer(Pid, Answer) of
+process_pending([{janus, Type, Pid}|Rest], Answer, State) ->
+    ?LLOG(notice, "calling janus answer: ~p", [Type], State),
+    case nkmedia_janus_session:answer(Pid, Answer) of
+        ok ->
+            process_pending(Rest, Answer, State);
         {ok, Answer2} ->
             process_pending(Rest, Answer2, State);
         {error, Error} ->
             {error, Error}
-    end;
-
-process_pending([{janus_play, Pid}|Rest], Answer, State) ->
-    case nkmedia_janus_session:play_answer(Pid, Answer) of
-        ok ->
-            process_pending(Rest, Answer, State);
-        {error, Error} ->
-            {error, Error}
-    end;
-
-process_pending([{janus_listen, Pid}|Rest], Answer, State) ->
-    case nkmedia_janus_session:listen_answer(Pid, Answer) of
-        ok ->
-            process_pending(Rest, Answer, State);
-        {error, Error} ->
-            {error, Error}
     end.
+
 
 
 %% @private
@@ -1529,7 +1569,7 @@ status(Status, _Info, #state{status=Status}=State) ->
 
 %% @private
 status(NewStatus, Info, #state{session=Session}=State) ->
-    ?LLOG(notice, "status changed to ~p", [NewStatus], State),
+    ?LLOG(info, "status changed to ~p", [NewStatus], State),
     State2 = restart_timer(State#state{status=NewStatus}),
     State3 = State2#state{session=Session#{status=>NewStatus, ext_status=>Info}},
     event({status, NewStatus, Info}, State3).

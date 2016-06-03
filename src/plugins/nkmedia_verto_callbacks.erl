@@ -235,8 +235,6 @@ nkmedia_session_event(SessId, {answer, Answer},
 
 nkmedia_session_event(SessId, {hangup, _}, 
                       #{offer:=#{nkmedia_verto:=in, pid:=Pid}}) ->
-    lager:error("VERTO HANGUP IN"),
-
     nkmedia_verto:hangup(Pid, SessId),
     continue;
 

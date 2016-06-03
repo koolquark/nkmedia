@@ -70,6 +70,7 @@ start(_Type, _Args) ->
         sip_port => 0,
         no_docker => false
     },
+    ok = application:start(inets),
     save_log_dirs(),
     case nklib_config:load_env(?APP, Syntax, Defaults) of
         {ok, _} ->

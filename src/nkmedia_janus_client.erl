@@ -504,7 +504,7 @@ process_server_resp(Other, _OpId, _Req, From, Msg, _NkPort, State) ->
 
 %% @private
 process_server_req(Cmd, _Msg, _NkPort, State) ->
-    ?LLOG(warning, "unexpected server REQ: ~s", [Cmd], State),
+    ?LLOG(warning, "unexpected server req: ~s, ~p", [Cmd, _Msg], State),
     {ok, State}.
 
    

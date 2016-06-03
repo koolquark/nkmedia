@@ -23,8 +23,8 @@
 -module(nkmedia_core_sip).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/0, stop/0, register_session/2]).
--export([sip_invite/2, sip_reinvite/2, sip_bye/2]).
+-export([start/0, stop/0, register_session/2, invite/2]).
+-export([sip_invite/2, sip_reinvite/2, sip_bye/2, sip_register/2]).
 
 
 %% ===================================================================
@@ -54,8 +54,8 @@ start() ->
     end,
     Opts = #{
         class => nkmedia_core_sip,
-        plugins => [?MODULE, nksip, nksip_uac_auto_auth],
-        % nksip_trace => {console, all},
+        plugins => [?MODULE, nksip, nksip_uac_auto_auth, nksip_registrar, nksip_trace],
+        nksip_trace => {console, all},
         sip_listen => <<"sip:all:", (nklib_util:to_binary(Port))/binary>>
     },
     {ok, SrvId} = nkservice:start(nkmedia_core_sip, Opts),
@@ -78,6 +78,11 @@ register_session(SessId, Module) ->
     nklib_proc:put({?MODULE, session, SessId}, Module).
 
 
+%% @private
+invite(Contact, #{sdp:=SDP}) ->
+    SDP2 = nksip_sdp:parse(SDP),
+    Opts = [{body, SDP2}, auto_2xx_ack, {meta, [body]}],
+    nksip_uac:invite(nkmedia_core_sip, Contact, Opts).
 
 
 
@@ -90,6 +95,7 @@ register_session(SessId, Module) ->
 
 sip_invite(Req, Call) ->
     {ok, AOR} = nksip_request:meta(aor, Req),
+    {ok, Handle} = nksip_request:get_handle(Req),
     {ok, Dialog} = nksip_dialog:get_handle(Req),
     case AOR of
         {sip, <<"nkmedia-", SessId/binary>>, _Domain} ->
@@ -106,6 +112,17 @@ sip_invite(Req, Call) ->
                 [] ->
                     lager:notice("Unmanaged NkMEDIA Core SIP INVITE"),
                     {reply, internal_error}
+            end;
+        {sip, <<"janus-", SessId/binary>>, _Domain} ->
+            {ok, Body} = nksip_request:body(Req),
+            SDP = nksip_sdp:unparse(Body),
+            case 
+                nkmedia_janus_session:sip_offer(SessId, Handle, Dialog, #{sdp=>SDP})
+            of
+                ok ->
+                    noreply;
+                {error, _Error} ->
+                    {reply, forbidden}
             end;
         _ ->
             lager:warning("Unexpected NkMEDIA Core SIP: ~p", [AOR]),
@@ -146,3 +163,34 @@ sip_bye(Req, Call) ->
     end.
     
     
+sip_register(Req, _Call) ->
+    case nksip_request:meta(from_user, Req) of
+        {ok, <<"janus-", Id/binary>>} ->
+            case nksip_request:meta(contacts, Req) of
+                {ok, [Contact]} ->
+                    case catch 
+                        nkmedia_janus_session:sip_registered(Id, Contact) 
+                    of
+                        true -> 
+                            lager:info("Core SIP Janus reg: ~s", [Id]),
+                            continue;
+                        _Error ->
+                            % lager:info("Core SIP janus reg error: ~p (~s)", 
+                            %            [_Error, Id]),
+                            {reply, forbidden}
+                    end;
+                Other ->
+                    lager:warning("Core SIP: invalid Janus Contact: ~p", [Other]),
+                    {reply, forbidden}
+            end;
+        _ ->
+            lager:warning("UNEXPECTED SIP CORE REG"),
+            {reply, forbidden}
+    end.
+
+
+
+
+
+
+
