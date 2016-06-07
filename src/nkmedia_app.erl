@@ -70,10 +70,9 @@ start(_Type, _Args) ->
         sip_port => 0,
         no_docker => false
     },
-    ok = application:start(inets),
-    save_log_dirs(),
     case nklib_config:load_env(?APP, Syntax, Defaults) of
         {ok, _} ->
+            save_log_dir(),
             {ok, Vsn} = application:get_key(?APP, vsn),
             lager:info("NkMEDIA v~s is starting", [Vsn]),
             MainIp = nkpacket_config_cache:main_ip(),
@@ -94,19 +93,7 @@ start(_Type, _Args) ->
                                           nklib_util:to_host(DockerIp)]),
                             nkmedia_app:put(erlang_ip, MainIp),
                             nkmedia_app:put(docker_ip, DockerIp)
-                    end,
-                    case nkdocker_monitor:register(nkmedia_callbacks) of
-                        {ok, DockerMonId} ->
-                            nkmedia_app:put(docker_mon_id, DockerMonId),
-                            lager:info("Installed images: ~s", 
-                                [nklib_util:bjoin(find_images(DockerMonId))]);
-                        {error, Error} ->
-                            lager:error("Could not start Docker Monitor: ~p", [Error]),
-                            error(docker_monitor)
                     end;
-
-                    % Images = nkmedia_docker:find_images(),
-                    % lager:info("Installed images: ~s", [Images]);
                 true ->
                     lager:warning("No docker support in config")
             end,
@@ -156,25 +143,12 @@ get_env(Key, Default) ->
 set_env(Key, Value) ->
     application:set_env(?APP, Key, Value).
 
-%% @private
-find_images(MonId) ->
-    {ok, Docker} = nkdocker_monitor:get_docker(MonId),
-    {ok, Images} = nkdocker:images(Docker),
-    Tags = lists:flatten([T || #{<<"RepoTags">>:=T} <- Images]),
-    lists:filter(fun(Img) -> length(binary:split(Img, <<"/nk_">>))==2 end, Tags).
-
 
 %% @private
-save_log_dirs() ->
+save_log_dir() ->
     Dir = filename:absname(filename:join(code:priv_dir(?APP), "../log")),
     Path = nklib_parse:fullpath(Dir),
-    ok = filelib:ensure_dir(<<Path/binary, "/janus/log">>),
-    ok = filelib:ensure_dir(<<Path/binary, "/freeswitch/log">>),
     nkmedia_app:put(log_dir, Path).
-
-
-
-
 
 
 

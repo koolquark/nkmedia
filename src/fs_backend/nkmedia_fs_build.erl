@@ -43,7 +43,7 @@ build_base_image() ->
 %% @doc 
 build_base_image(Config) ->
     Name = base_image_name(Config),
-    #{vsn:=Vsn} = nkmedia_fs_docker:defaults(Config),
+    #{vsn:=Vsn} = defaults(Config),
     Tar = nkdocker_util:make_tar([{"Dockerfile", base_image_dockerfile(Vsn)}]),
     nkdocker_util:build(Name, Tar).
 
@@ -103,7 +103,7 @@ remove_run_image() ->
 
 %% @doc 
 remove_run_image(Config) ->
-    Config2 = nkmedia_fs_docker:defaults(Config),
+    Config2 = defaults(Config),
     Name = run_image_name(Config2),
     case nkdocker:start_link() of
         {ok, Pid} ->
@@ -119,6 +119,15 @@ remove_run_image(Config) ->
     end.
 
 
+%% @private
+defaults(Config) ->
+    Defs = #{
+        comp => <<"netcomposer">>,
+        vsn => <<"v1.6.8">>,        
+        rel => <<"r01">>
+    },
+    maps:merge(Defs, Config).
+
 
 %% ===================================================================
 %% Base image (Comp/nk_freeswitch_base:vXXX-rXXX)
@@ -127,7 +136,7 @@ remove_run_image(Config) ->
 
 %% @private
 base_image_name(Config) ->
-    Config2 = nkmedia_fs_docker:defaults(Config),
+    Config2 = defaults(Config),
     #{comp:=Comp, vsn:=Vsn, rel:=Rel} = Config2,
     list_to_binary([Comp, "/nk_freeswitch_base:", Vsn, "-", Rel]).
 
@@ -176,7 +185,7 @@ RUN ln -s /usr/local/freeswitch/bin/fs_cli /usr/local/bin/fs_cli
 
 %% @private
 run_image_name(Config) -> 
-    Config2 = nkmedia_fs_docker:defaults(Config),
+    Config2 = defaults(Config),
     #{comp:=Comp, vsn:=Vsn, rel:=Rel} = Config2,
     list_to_binary([Comp, "/nk_freeswitch_run:", Vsn, "-", Rel]).
 

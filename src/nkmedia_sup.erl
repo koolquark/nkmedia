@@ -23,32 +23,10 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(supervisor).
 
--export([start_fs_engine/1, start_janus_engine/1]).
+-export([start_janus_engine/1]).
 -export([init/1, start_link/0]).
 
 -include("nkmedia.hrl").
-
-start_fs_engine(#{name:=Name}=Config) ->
-    ChildId = {nkmedia_fs_engine, Name},
-	Spec = {
-        ChildId,
-        {nkmedia_fs_engine, start_link, [Config]},
-        transient,
-        5000,
-        worker,
-        [nkmedia_fs_engine]
-    },
-	case supervisor:start_child(?MODULE, Spec) of
-        {ok, Pid} -> 
-            {ok, Pid};
-        {error, already_present} ->
-            ok = supervisor:delete_child(?MODULE, ChildId),
-            start_fs_engine(Config);
-        {error, {already_started, Pid}} -> 
-            {ok, Pid};
-        {error, Error} -> 
-            {error, Error}
-    end.
 
 
 start_janus_engine(#{name:=Name}=Config) ->

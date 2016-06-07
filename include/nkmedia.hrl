@@ -31,9 +31,9 @@
 -define(SUPPORTED_FS, [<<"v1.6.5-r01">>]).
 -define(SUPPORTED_JANUS, [<<"master-r01">>]).
 
--define(DEF_WAIT_TIMEOUT, 300).
+-define(DEF_WAIT_TIMEOUT, 60).
 -define(DEF_RING_TIMEOUT, 30).
--define(DEF_CALL_TIMEOUT, 24*60*60).
+-define(DEF_READY_TIMEOUT, 24*60*60).
 
 -define(FS_DEF_BASE, 50000).
 -define(JANUS_DEF_BASE, 50010).

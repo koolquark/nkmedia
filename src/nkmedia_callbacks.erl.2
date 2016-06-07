@@ -25,13 +25,9 @@
 
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
 -export([nkmedia_session_init/2, nkmedia_session_terminate/2, 
-		 nkmedia_session_event/3, nkmedia_session_peer_event/4, 
-		 nkmedia_session_invite/4, 
+		 nkmedia_session_event/3, nkmedia_session_invite/4, 
 		 nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2, 
 		 nkmedia_session_handle_info/2]).
--export([nkmedia_session_offer_op/3, nkmedia_session_answer_op/3,
-		 nkmedia_session_update/3, nkmedia_session_hangup/2,
-		 nkmedia_session_updated_offer/2, nkmedia_session_updated_answer/2]).
 -export([nkmedia_session_get_mediaserver/2]).
 -export([nkmedia_call_init/2, nkmedia_call_terminate/2, 
 		 nkmedia_call_resolve/2, nkmedia_call_invite/3, 
@@ -88,10 +84,10 @@ plugin_stop(Config, #{name:=Name}) ->
 
 %% @doc Called when a new session starts
 -spec nkmedia_session_init(session_id(), session()) ->
-	{ok, session()} | {stop, Reason::term()}.
+	{ok, session()}.
 
 nkmedia_session_init(_Id, Session) ->
-	{ok, Session}. 
+	{ok, Session}.
 
 %% @doc Called when the session stops
 -spec nkmedia_session_terminate(Reason::term(), session()) ->
@@ -109,15 +105,6 @@ nkmedia_session_event(_SessId, _Event, Session) ->
 	{ok, Session}.
 
 				  
-%% @doc Called when the status of the session changes
--spec nkmedia_session_peer_event(nkmedia_session:id(), nkmedia_session:event(), 
-								 a|b, session()) ->
-	{ok, session()} | continue().
-
-nkmedia_session_peer_event(_SessId, _Type, _Event, Session) ->
-	{ok, Session}.
-
-
 %% @doc Called when a new call must be sent from the session
 %% If an answer is included, it can contain a pid() tha will be monitorized
 %% New answers will be merged, but only one can contain an SDP
@@ -157,60 +144,6 @@ nkmedia_session_handle_cast(Msg, Session) ->
 nkmedia_session_handle_info(Msg, Session) ->
 	lager:warning("Module nkmedia_session received unexpected info: ~p", [Msg]),
 	{noreply, Session}.
-
-
-%% @private You must generte an offer() for this offer_op()
-%% ReplyOpts will only we used for user notification
--spec nkmedia_session_offer_op(nkmedia:offer_op(), nkmedia:op_opts(), session()) ->
-	{ok, nkmedia:offer(), ReplyOpts::map(), session()} |
-	{error, term(), session()} | continue().
-
-nkmedia_session_offer_op(OfferOp, Opts, Session) ->
-	{ok, OfferOp, Opts, Session}.
-
-
-%% @private
--spec nkmedia_session_answer_op(nkmedia:answer_op(), nkmedia:op_opts(), session()) ->
-	{ok, nkmedia:answer(), ReplyOpts::map(), session()} |
-	{error, term(), session()} | continue().
-
-nkmedia_session_answer_op(AnswerOp, Opts, Session) ->
-	{ok, AnswerOp, Opts, Session}.
-
-
-%% @private
--spec nkmedia_session_update(nkmedia:update(), nkmedia:op_opts(), session()) ->
-	{ok, nkmedia:op_opts(), session()} |
-	{error, term(), session()} | continue().
-
-nkmedia_session_update(_Update, _Opts, Session) ->
-	{error, unknown_op, Session}.
-
-
-%% @private
--spec nkmedia_session_updated_offer(nkmedia:offer(), session()) ->
-	{ok, nkmedia:offer(), session()} |
-	{error, term(), session()} | continue().
-
-nkmedia_session_updated_offer(Offer, Session) ->
-	{ok, Offer, Session}.
-
-
-%% @private
--spec nkmedia_session_updated_answer(nkmedia:answer(), session()) ->
-	{ok, nkmedia:answer(), session()} |
-	{error, term(), session()} | continue().
-
-nkmedia_session_updated_answer(Answer, Session) ->
-	{ok, Answer, Session}.
-
-
-%% @private
--spec nkmedia_session_hangup(nkmedia:hangup_reason(), session()) ->
-	{ok, session()} | continue().
-
-nkmedia_session_hangup(_Reason, Session) ->
-	{ok, Session}.
 
 
 %% @private

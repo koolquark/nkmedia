@@ -26,7 +26,7 @@
 -export([start/0, stop/0, restart/0]).
 -export([listener/2, listener2/1, play/2, play2/1]).
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
--export([nkmedia_verto_login/4, nkmedia_verto_call/3]).
+-export([nkmedia_verto_login/3, nkmedia_verto_call/3]).
 -export([nkmedia_call_resolve/2]).
 -export([nkmedia_janus_call/3]).
 -export([nkmedia_sip_call/2]).
@@ -48,7 +48,7 @@
 start() ->
     _CertDir = code:priv_dir(nkpacket),
     Spec = #{
-        plugins => [?MODULE, nksip_registrar, nksip_trace],
+        plugins => [?MODULE, nkmedia_fs, nksip_registrar, nksip_trace],
         verto_listen => "verto:all:8082",
         % verto_listen => "verto_proxy:all:8082",
         verto_communicator => "https:all:8082/vc",
@@ -151,11 +151,11 @@ plugin_stop(Config, #{name:=Name}) ->
 %% ===================================================================
 
 
-nkmedia_verto_login(VertoId, Login, Pass, Verto) ->
+nkmedia_verto_login(Login, Pass, Verto) ->
     case binary:split(Login, <<"@">>) of
         [User, _] ->
             Verto2 = Verto#{user=>User},
-            ?LOG_SAMPLE(info, "login: ~s (pass ~s, ~s)", [User, Pass, VertoId], Verto2),
+            ?LOG_SAMPLE(info, "login: ~s (pass ~s)", [User, Pass], Verto2),
             {true, User, Verto2};
         _ ->
             {false, Verto}
@@ -166,8 +166,8 @@ nkmedia_verto_call(SessId, Dest, Verto) ->
     case send_call(SessId, Dest) of
         ok ->
             {ok, Verto};
-        no_number ->
-            {hangup, "No Number", Verto} 
+        {error, Error} ->
+            {rejected, Error, Verto}
     end.
 
 
@@ -181,8 +181,8 @@ nkmedia_janus_call(SessId, Dest, Janus) ->
     case send_call(SessId, Dest) of
         ok ->
             {ok, Janus};
-        no_number ->
-            {hangup, "No Number", Janus} 
+        not_found ->
+            {rejected, "User Not Found", Janus} 
     end.
 
 
@@ -196,7 +196,7 @@ nkmedia_sip_call(SessId, Dest) ->
     case send_call(SessId, Dest) of
         ok ->
             ok;
-        no_number ->
+        not_found ->
             hangup
     end.
 
@@ -206,6 +206,8 @@ nkmedia_sip_call(SessId, Dest) ->
 %% ===================================================================
 %% nkmedia callbacks
 %% ===================================================================
+
+
 
 %% @private
 nkmedia_call_resolve(Dest, #{srv_id:=SrvId}=Call) ->
@@ -237,32 +239,92 @@ sip_register(Req, Call) ->
 %% Internal
 %% ===================================================================
 
-send_call(SessId, Dest) ->
+send_call(SessId, #{dest:=Dest}=Offer) ->
+    Opts = #{async=>true},
     case Dest of 
         <<"e">> ->
-           ok = nkmedia_session:set_answer(SessId, echo, #{record=>true, filename=>"/tmp/echo"});
+            Opts2 = Opts#{backend=>janus, record=>true, filename=>"/tmp/echo"},
+            ok = nkmedia_session:set_answer(SessId, echo, Opts2);
         <<"fe">> ->
-            ok = nkmedia_session:set_answer(SessId, echo, #{type=>pbx});
+            Opts2 = Opts#{backend=>freeswitch, record=>true, filename=>"/tmp/echo"},
+            ok = nkmedia_session:set_answer(SessId, echo, Opts2);
         <<"m1">> ->
-            ok = nkmedia_session:set_answer(SessId, {mcu, "mcu1"}, #{});
+            Opts2 = Opts#{room=>"mcu1"},
+            ok = nkmedia_session:set_answer(SessId, mcu, Opts2);
         <<"m2">> ->
-            ok = nkmedia_session:set_answer(SessId, {mcu, "mcu2"}, #{});
+            Opts2 = Opts#{room=>"mcu2"},
+            ok = nkmedia_session:set_answer(SessId, mcu, Opts2);
         <<"p">> ->
-            ok = nkmedia_session:set_answer(SessId, {publish, 1234}, #{});
+            ok = nkmedia_session:set_answer(SessId, publish, Opts);
         <<"p2">> ->
-            ok = nkmedia_session:set_answer(SessId, {publish, <<"room2">>}, #{});
+            Opts2 = Opts#{room=>"room2"},
+            ok = nkmedia_session:set_answer(SessId, publish, Opts2);
         <<"p2r">> ->
-            Opts = #{record=>true, filename=>"p2", info=>p2},
-            ok = nkmedia_session:set_answer(SessId, {publish, "room2"}, Opts);
+            Opts2 = Opts#{room=>"room2", record=>true, filename=>"p2", info=>p2},
+            ok = nkmedia_session:set_answer(SessId, publish, Opts2);
         <<"d", Num/binary>> ->
-            ok = nkmedia_session:set_answer(SessId, {call, Num}, #{type=>p2p});
-        <<"f", Num/binary>> -> 
-            ok = nkmedia_session:set_answer(SessId, {call, Num}, #{type=>pbx});
+            {ok, _} = nkmedia_session:set_offer(SessId, {offer, Offer}, #{}),
+            case find_user(Num) of
+                {ok, Dest2} ->
+                    Opts2 = Opts#{backend=>p2p},
+                    ok = nkmedia_session:set_answer(SessId, {invite, Dest2}, Opts2);
+                not_found ->
+                    {error, <<"User Not Found">>}
+            end;
+        <<"f", Num/binary>> ->
+            case find_user(Num) of
+                {ok, Dest2} ->
+                    {ok, _} = nkmedia_session:set_offer(SessId, {offer, Offer}, #{}),
+                    {ok, _} = nkmedia_session:set_answer(SessId, pbx, #{}),
+                    {ok, _} = nkmedia_session:update(SessId, {invite, Dest2}, #{});
+                not_found ->
+                    {error, <<"User Not Found">>}
+            end;
+
+
+
         <<"j", Num/binary>> ->
-            ok = nkmedia_session:set_answer(SessId, {call, Num}, #{type=>proxy, record=>true, filename=>"/tmp/file1"});
+            _OfferOp = {proxy, #{offer=>Offer}},
+            {ok, _} = nkmedia_session:set_offer(SessId, {offer, Offer}, #{}),
+            case find_user(Num) of
+                {ok, Dest2} ->
+                    Opts2 = Opts#{backend=>p2p},
+                    ok = nkmedia_session:set_answer(SessId, {invite, Dest2}, Opts2);
+                not_found ->
+                    {error, <<"User Not Found">>}
+            end;
+
+
+
+        % <<"f", Num/binary>> -> 
+        %     case find_user(Num) of
+        %         {ok, Dest} ->
+        %             Opts2 = #{backend=>},
+        %             ok = nkmedia_session:set_answer(SessId, {invite, Dest}, Opts2);
+        %         not_found ->
+        %             {rejected, <<"User Not Found">>}
+        %     end;
+        % <<"j", Num/binary>> ->
+
+        %     case find_user(Num) of
+        %         {ok, Dest} ->
+        %             Opts2 = #{backend=>p2p},
+        %             ok = nkmedia_session:set_answer(SessId, {invite, Dest}, Opts2);
+        %         not_found ->
+        %             {rejected, <<"User Not Found">>}
+        %     end;
+
+        %     ok = nkmedia_session:set_answer(SessId, {call, Num}, #{type=>proxy, record=>true, filename=>"/tmp/file1"});
         _ ->
-            no_number
+            {error, <<"Unknown Destination">>}
     end.
 
 
+find_user(User) ->
+    case nkmedia_verto:find_user(User) of
+        [Pid|_] ->
+            {ok, {nkmedia_verto, Pid}};
+        [] ->
+            not_found
+    end.
 

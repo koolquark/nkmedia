@@ -24,14 +24,13 @@
 
 -export([plugin_deps/0, plugin_syntax/0, plugin_listen/2, 
          plugin_start/2, plugin_stop/2]).
--export([nkmedia_verto_init/2, nkmedia_verto_login/4, nkmedia_verto_call/3,
-         nkmedia_verto_invite/3, nkmedia_verto_answer/3, nkmedia_verto_bye/2,
-         nkmedia_verto_dtmf/3, nkmedia_verto_terminate/2,
+-export([nkmedia_verto_init/2, nkmedia_verto_login/3, nkmedia_verto_call/3,
+         nkmedia_verto_invite/3, nkmedia_verto_answer/4, nkmedia_verto_bye/3,
+         nkmedia_verto_dtmf/4, nkmedia_verto_terminate/2,
          nkmedia_verto_handle_call/3, nkmedia_verto_handle_cast/2,
          nkmedia_verto_handle_info/2]).
 -export([nkmedia_session_invite/4, nkmedia_session_event/3]).
 -export([nkmedia_call_resolve/2]).
-
 
 -define(VERTO_WS_TIMEOUT, 60*60*1000).
 -include_lib("nkservice/include/nkservice.hrl").
@@ -44,6 +43,8 @@
 
 -type continue() :: continue | {continue, list()}.
 
+-type call_id() :: nkmedia_verto:call_id().
+-type session_id() :: nkmedia_session:id().
 
 
 %% ===================================================================
@@ -103,7 +104,6 @@ plugin_stop(Config, #{name:=Name}) ->
 %% ===================================================================
 
 -type verto() :: nkmedia_verto:verto().
--type call_id() :: nkmedia_verto:call_id().
 
 
 %% @doc Called when a new verto connection arrives
@@ -115,33 +115,31 @@ nkmedia_verto_init(_NkPort, Verto) ->
 
 
 %% @doc Called when a login request is received
--spec nkmedia_verto_login(VertoSessId::binary(), Login::binary(), Pass::binary(),
-                          verto()) ->
+-spec nkmedia_verto_login(Login::binary(), Pass::binary(), verto()) ->
     {boolean(), verto()} | {true, Login::binary(), verto()} | continue().
 
-nkmedia_verto_login(_VertoId, _Login, _Pass, Verto) ->
+nkmedia_verto_login(_Login, _Pass, Verto) ->
     {false, Verto}.
 
 
 %% @doc Called when the client sends an INVITE
-%% If {ok, verto(), pid()} is returned, we must call nkmedia_verto:answer/3 ourselves
-%% A call will be added. If pid() is included, it will be associated to it
+%% If {ok, ...} is returned, we must call nkmedia_verto:answer/3.
 -spec nkmedia_verto_invite(call_id(), nkmedia_verto:offer(), verto()) ->
-    {ok, pid()|undefined, verto()} | 
-    {answer, nkmedia_verto:answer(), pid()|undefined, verto()} | 
-    {hangup, nkmedia:hangup_reason(), verto()} | continue().
+    {ok, nkmedia_session:id(), pid()|undefined, verto()} | 
+    {answer, nkmedia_verto:answer(), nkmedia_session:id(), pid()|undefined, verto()} | 
+    {rejected, nkmedia:hangup_reason(), verto()} | continue().
 
-nkmedia_verto_invite(SessId, Offer, #{srv_id:=SrvId}=Verto) ->
-    #{dest:=Dest} = Offer,
+nkmedia_verto_invite(_CallId, Offer, #{srv_id:=SrvId}=Verto) ->
+    #{sdp_type:=webrtc} = Offer,
     Offer2 = Offer#{pid=>self(), nkmedia_verto=>in},
-    case nkmedia_session:start(SrvId, #{id=>SessId, offer=>Offer2}) of
+    case nkmedia_session:start(SrvId, #{}) of
         {ok, SessId, SessPid} ->
-            case SrvId:nkmedia_verto_call(SessId, Dest, Verto) of
+            case SrvId:nkmedia_verto_call(SessId, Offer2, Verto) of
                 {ok, Verto2} ->
-                    {ok, SessPid, Verto2};
-                {hangup, Reason, Verto2} ->
+                    {ok, SessId, SessPid, Verto2};
+                {rejected, Reason, Verto2} ->
                     nkmedia_session:hangup(SessId, Reason),
-                    {hangup, Reason, Verto2}
+                    {rejected, Reason, Verto2}
             end;
         {error, Error} ->
             lager:warning("Verto start_inbound error: ~p", [Error]),
@@ -150,36 +148,37 @@ nkmedia_verto_invite(SessId, Offer, #{srv_id:=SrvId}=Verto) ->
 
 
 %% @doc Sends after an INVITE, if the previous function has not been modified
--spec nkmedia_verto_call(call_id(), binary(), verto()) ->
-    {ok, verto()} | {hangup, nkmedia:hangup_reason(), verto()} | continue().
+-spec nkmedia_verto_call(session_id(), binary(), verto()) ->
+    {ok, verto()} | {rejected, nkmedia:hangup_reason(), verto()} | continue().
 
-nkmedia_verto_call(CallId, Dest, Verto) ->
-    ok = nkmedia_session:set_answer(CallId, {call, Dest}, #{}),
+nkmedia_verto_call(SessId, Dest, Verto) ->
+    ok = nkmedia_session:set_answer(SessId, {call, Dest}, #{}),
     {ok, Verto}.
 
 
 %% @doc Called when the client sends an ANSWER
--spec nkmedia_verto_answer(call_id(), nkmedia_verto:answer(), verto()) ->
+-spec nkmedia_verto_answer(call_id(), session_id(), nkmedia_verto:answer(), verto()) ->
     {ok, verto()} |{hangup, nkmedia:hangup_reason(), verto()} | continue().
 
-nkmedia_verto_answer(_CallId, _Answer, Verto) ->
+nkmedia_verto_answer(_CallId, _SessId, _Answer, Verto) ->
     {ok, Verto}.
 
 
 %% @doc Sends when the client sends a BYE
--spec nkmedia_verto_bye(call_id(), verto()) ->
+-spec nkmedia_verto_bye(call_id(), session_id(), verto()) ->
     {ok, verto()} | continue().
 
-nkmedia_verto_bye(CallId, Verto) ->
-    nkmedia_session:hangup(CallId, <<"User Hangup">>),
+nkmedia_verto_bye(CallId, SessId, Verto) ->
+    lager:info("Verto BYE from ~s (~s)", [CallId, SessId]),
+    nkmedia_session:hangup(SessId, <<"User Hangup">>),
     {ok, Verto}.
 
 
 %% @doc
--spec nkmedia_verto_dtmf(call_id(), DTMF::binary(), verto()) ->
+-spec nkmedia_verto_dtmf(call_id(), session_id(), DTMF::binary(), verto()) ->
     {ok, verto()} | continue().
 
-nkmedia_verto_dtmf(_CallId, _DTMF, Verto) ->
+nkmedia_verto_dtmf(_CallId, _SessId, _DTMF, Verto) ->
     {ok, Verto}.
 
 
@@ -233,14 +232,21 @@ nkmedia_session_event(SessId, {answer, Answer},
     ok = nkmedia_verto:answer(Pid, SessId, Answer),
     continue;
 
-nkmedia_session_event(SessId, {hangup, _}, 
-                      #{offer:=#{nkmedia_verto:=in, pid:=Pid}}) ->
-    nkmedia_verto:hangup(Pid, SessId),
-    continue;
-
-nkmedia_session_event(SessId, {hangup, _}, 
-                      #{answer:=#{nkmedia_verto:=out, pid:=Pid}}) ->
-    nkmedia_verto:hangup(Pid, SessId),
+nkmedia_session_event(SessId, {hangup, _}, Session) ->
+    case Session of
+        #{offer:=#{nkmedia_verto:=in, pid:=Pid1}} ->
+            lager:info("Verto In captured hangup"),
+            nkmedia_verto:hangup(Pid1, SessId);
+        _ -> 
+            ok
+    end,
+    case Session of
+        #{answer:=#{nkmedia_verto:=out, pid:=Pid2}} ->
+            lager:info("Verto Out captured hangup"),
+            nkmedia_verto:hangup(Pid2, SessId);
+        _ ->
+            ok
+    end,
     continue;
 
 nkmedia_session_event(_SessId, _Event, _Session) ->
@@ -252,15 +258,16 @@ nkmedia_session_invite(SessId, {nkmedia_verto, Pid}, Offer, Session) ->
     Self = self(),
     spawn_link(
         fun() ->
-            case nkmedia_verto:invite(Pid, SessId, Offer#{monitor=>Self}) of
-                {answered, Answer} ->
-                    ok = nkmedia_session:invite_reply(SessId, {answered, Answer});
-                hangup ->
-                    nkmedia_session:hangup(SessId, <<"Verto User Hangup">>);
+            Reply = case nkmedia_verto:invite(Pid, SessId, Offer, #{pid=>Self}) of
+                {answer, #{sdp:=_}=Answer} ->
+                    {answered, Answer};
+                rejected ->
+                    {rejected, <<"Verto User Rejected">>};
                 {error, Error} ->
                     lager:warning("Error calling invite: ~p", [Error]),
-                    nkmedia_session:hangup(SessId, <<"Verto Invite Error">>)
-            end
+                    {rejected, <<"Verto Invite Error">>}
+            end,
+            ok = nkmedia_session:invite_reply(SessId, Reply)
         end),
     {ringing, #{nkmedia_verto=>out, pid=>Pid}, Session};
 

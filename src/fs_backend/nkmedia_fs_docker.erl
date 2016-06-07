@@ -22,8 +22,8 @@
 -module(nkmedia_fs_docker).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/0, start/1, stop/1, stop_all/0]).
--export([defaults/1, notify/4]).
+-export([start/1, stop/1, stop_all/0]).
+-export([notify/4]).
 
 -include("nkmedia.hrl").
 
@@ -37,69 +37,74 @@
         
 
 %% @doc Starts a FS instance
--spec start() ->
-    {ok, Name::binary()} | {error, term()}.
-
-start() ->
-    start(#{}).
-
-
-%% @doc Starts a FS instance
 %% BASE+0: Event port
 %% BASE+1: WS verto port
 %% BASE+2: SIP Port
--spec start(nkmedia_fs:config()) ->
+-spec start(nkservice:name()) ->
     {ok, Name::binary()} | {error, term()}.
 
-start(Config) ->
-    Config2 = defaults(Config),
-    Image = nkmedia_fs_build:run_image_name(Config2),
-    ErlangIp = nklib_util:to_host(nkmedia_app:get(erlang_ip)),
-    FsIp = nklib_util:to_host(nkmedia_app:get(docker_ip)),
-    #{base:=Base, pass:=Pass} = Config2,
-    Name = list_to_binary(["nk_fs_", nklib_util:to_binary(Base)]),
-    LogDir = <<(nkmedia_app:get(log_dir))/binary, $/, Name/binary>>,
-    ExtIp = nklib_util:to_host(nkpacket_app:get(ext_ip)),
-    Env = [
-        {"NK_FS_IP", FsIp},                
-        {"NK_ERLANG_IP", ErlangIp},         
-        {"NK_RTP_IP", "$${local_ip_v4}"},       
-        {"NK_EXT_IP", ExtIp},  
-        {"NK_BASE", nklib_util:to_binary(Base)},
-        {"NK_PASS", nklib_util:to_list(Pass)}
-    ],
-    Labels = [
-        {"nkmedia", "freeswitch"}
-    ],
-    % Cmds = ["bash"],
-    Cmds = ["bash", "/usr/local/freeswitch/start.sh"],
-    DockerOpts = #{
-        name => Name,
-        env => Env,
-        cmds => Cmds,
-        net => host,
-        interactive => true,
-        labels => Labels,
-        volumes => [{LogDir, "/usr/local/freeswitch/log"}]
-    },
-    case get_docker_pid() of
-        {ok, DockerPid} ->
-            nkdocker:rm(DockerPid, Name),
-            case nkdocker:create(DockerPid, Image, DockerOpts) of
-                {ok, _} -> 
-                    lager:info("NkMEDIA FS Docker: starting instance ~s", [Name]),
-                    case nkdocker:start(DockerPid, Name) of
-                        ok ->
-                            {ok, Name};
-                        {error, Error} ->
-                            {error, Error}
-                    end;
-                {error, Error} -> 
-                    {error, Error}
-            end;
-        {error, Error} ->
-            {error, Error}
+start(Service) ->
+    try
+        SrvId = case nkservice_srv:get_srv_id(Service) of
+            {ok, SrvId0} -> SrvId0;
+            not_found -> throw(unknown_service)
+        end,
+        Config = nkservice_srv:get_item(SrvId, config_nkmedia_fs),
+        BasePort = crypto:rand_uniform(32768, 65535),
+        Pass = nklib_util:luid(),
+        Image = nkmedia_fs_build:run_image_name(Config),
+        ErlangIp = nklib_util:to_host(nkmedia_app:get(erlang_ip)),
+        FsIp = nklib_util:to_host(nkmedia_app:get(docker_ip)),
+        Name = list_to_binary([
+            "nk_fs_", 
+            nklib_util:to_binary(SrvId), "_",
+            nklib_util:to_binary(BasePort)
+        ]),
+        LogDir = <<(nkmedia_app:get(log_dir))/binary, $/, Name/binary>>,
+        ExtIp = nklib_util:to_host(nkpacket_app:get(ext_ip)),
+        Env = [
+            {"NK_FS_IP", FsIp},                
+            {"NK_ERLANG_IP", ErlangIp},         
+            {"NK_RTP_IP", "$${local_ip_v4}"},       
+            {"NK_EXT_IP", ExtIp},  
+            {"NK_BASE", nklib_util:to_binary(BasePort)},
+            {"NK_PASS", nklib_util:to_binary(Pass)},
+            {"NK_SRV_ID", nklib_util:to_binary(SrvId)}
+        ],
+        Labels = [
+            {"nkmedia", "freeswitch"}
+        ],
+        % Cmds = ["bash"],
+        Cmds = ["bash", "/usr/local/freeswitch/start.sh"],
+        DockerOpts = #{
+            name => Name,
+            env => Env,
+            cmds => Cmds,
+            net => host,
+            interactive => true,
+            labels => Labels,
+            volumes => [{LogDir, "/usr/local/freeswitch/log"}]
+        },
+        DockerPid = case get_docker_pid() of
+            {ok, DockerPid0} -> DockerPid0;
+            {error, Error1} -> throw(Error1)
+        end,
+        nkdocker:rm(DockerPid, Name),
+        case nkdocker:create(DockerPid, Image, DockerOpts) of
+            {ok, _} -> ok;
+            {error, Error2} -> throw(Error2)
+        end,
+        lager:info("NkMEDIA FS Docker: starting instance ~s", [Name]),
+        case nkdocker:start(DockerPid, Name) of
+            ok ->
+                {ok, Name};
+            {error, Error3} ->
+                {error, Error3}
+        end
+    catch
+        throw:Throw -> {error, Throw}
     end.
+
 
 
 %% @doc Stops a FS instance
@@ -151,24 +156,8 @@ stop_all() ->
     {ok, pid()} | {error, term()}.
 
 get_docker_pid() ->
-    DockerMonId = nkmedia_app:get(docker_mon_id),
+    DockerMonId = nkmedia_app:get(docker_fs_mon_id),
     nkdocker_monitor:get_docker(DockerMonId).
-
-
-
-%% @private
--spec defaults(map()) ->
-    nkmedia_fs:config().
-
-defaults(Config) ->
-    Defs = #{
-        comp => nkmedia_app:get(docker_company), 
-        vsn => nkmedia_app:get(fs_version), 
-        rel => nkmedia_app:get(fs_release),
-        base => ?FS_DEF_BASE,
-        pass => nklib_util:luid()
-    },
-    maps:merge(Defs, Config).
 
 
 
@@ -184,7 +173,8 @@ notify(MonId, start, Name, Data) ->
             env := #{
                 <<"NK_FS_IP">> := Host, 
                 <<"NK_BASE">> := Base, 
-                <<"NK_PASS">> := Pass
+                <<"NK_PASS">> := Pass,
+                <<"NK_SRV_ID">> := SrvId
             },
             image := Image
         } ->
@@ -192,6 +182,7 @@ notify(MonId, start, Name, Data) ->
                 [_Comp, <<"nk_freeswitch_run:", Rel/binary>>] -> 
                     Config = #{
                         name => Name, 
+                        srv_id => nklib_util:to_atom(SrvId),
                         rel => Rel, 
                         host => Host, 
                         base => nklib_util:to_integer(Base),

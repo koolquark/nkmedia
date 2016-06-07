@@ -572,7 +572,7 @@ process_server_event(_Event, _NkPort, State) ->
 
 %% @private
 session_event(Status, #state{sess_id=SessId, fs_id=FsId}=State) ->
-   nkmedia_session:pbx_event(SessId, FsId, Status),
+   nkmedia_fs_session:fs_event(SessId, FsId, Status),
    State.
 
 
