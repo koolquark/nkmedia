@@ -26,10 +26,10 @@
          plugin_start/2, plugin_stop/2]).
 -export([nkmedia_fs_get_mediaserver/1]).
 -export([nkmedia_session_init/2, nkmedia_session_terminate/2]).
--export([nkmedia_session_offer_op/3, nkmedia_session_answer_op/3,
+-export([nkmedia_session_offer_op/3, nkmedia_session_session_op/3,
          nkmedia_session_update/3, nkmedia_session_hangup/2]).
 -export([nkmedia_session_updated_answer/2]).
--export([nkmedia_session_event/3, nkmedia_session_handle_cast/2]).
+-export([nkmedia_session_peer_event/4, nkmedia_session_handle_cast/2]).
 -export([nkdocker_notify/2]).
 
 -include_lib("nkservice/include/nkservice.hrl").
@@ -142,7 +142,7 @@ nkmedia_session_offer_op(OfferOp, Opts, Session) ->
 
 
 %% @private
-nkmedia_session_answer_op(AnswerOp, Opts, Session) ->
+nkmedia_session_session_op(AnswerOp, Opts, Session) ->
     case maps:get(backend, Session, freeswitch) of
         freeswitch ->
             #{nkmedia_fs:=State} = Session,
@@ -164,27 +164,29 @@ nkmedia_session_update(Update, Opts, Session) ->
 
 
 %% @private
-nkmedia_session_event(_SessId, Event, Session) ->
-    case Session of
-        #{nkmedia_fs:=#{peer:={_PeerId, _Ref}}=State} ->
-            nkmedia_fs_session:peer_event(Event, State, Session),
-            continue;
-        _ ->
-            continue
-    end.
-
+nkmedia_session_peer_event(SessId, Type, Event, Session) ->
+    case Event of
+        {offer, _} -> ok;
+        _ -> nkmedia_fs_session:peer_event(SessId, Type, Event, Session)
+    end,
+    continue.
+        
 
 %% @private
 nkmedia_session_hangup(Reason, Session) ->
     #{nkmedia_fs:=State} = Session,
-    nkmedia_fs_session:hangup(Reason, State, State, Session).
+    nkmedia_fs_session:hangup(Reason, State, Session).
 
 
 
 %% @private
-nkmedia_session_updated_answer(Answer, Session) ->
+nkmedia_session_updated_answer(#{sdp:=_}=Answer, Session) ->
     #{nkmedia_fs:=State} = Session,
-    nkmedia_fs_session:updated_answer(Answer, State, Session).
+    nkmedia_fs_session:updated_answer(Answer, State, Session);
+
+nkmedia_session_updated_answer(_Answer, _Session) ->
+    continue.
+
 
 
 %% @private

@@ -75,8 +75,7 @@ restart() ->
 
 listener2(Id) ->
     {ok, SessId, Pid} = nkmedia_session:start(sample, #{}),
-    {ok, Meta} = nkmedia_session:set_offer(SessId, {listen, "room2", Id}, 
-                                           #{sync=>true, get_offer=>true}),
+    {ok, Meta} = nkmedia_session:set_offer(SessId, {listen, "room2", Id}, #{}),
     #{offer:=Offer} = Meta,
     nkmedia_janus_proto:register_play(SessId, Pid, Offer).
 
@@ -85,15 +84,12 @@ listener(Sess, Dest) ->
     case nkmedia_session:get_status(Sess) of
         {ok, publish, #{room:=Room}, _} ->
             {ok, SessId, _Pid} = nkmedia_session:start(sample, #{}),
-            {ok, _} = nkmedia_session:set_offer(SessId, {listen, Room, Sess}, 
-                                                #{sync=>true}),
+            {ok, _} = nkmedia_session:set_offer(SessId, {listen, Room, Sess}, #{}),
             case Dest of
                 {call, Call} ->
-                    {ok, _} = nkmedia_session:set_answer(SessId, {call, Call}, 
-                                                         #{sync=>true});
+                    {ok, _} = nkmedia_session:set_op(SessId, {call, Call}, #{});
                 {room, Room2} ->
-                    nkmedia_session:set_answer(SessId, {publish, Room2}, 
-                                                        #{sync=>true})
+                    nkmedia_session:set_op(SessId, {publish, Room2}, #{})
             end;
         _ ->
             {error, invalid_session}
@@ -102,22 +98,19 @@ listener(Sess, Dest) ->
 
 play(Id, Dest) ->
     {ok, SessId, _Pid} = nkmedia_session:start(sample, #{}),
-    {ok, _} = nkmedia_session:set_offer(SessId, {play, Id}, #{sync=>true}),
+    {ok, _} = nkmedia_session:set_offer(SessId, {play, Id}, #{}),
     case Dest of
         {call, Call} ->
-            {ok, _} = nkmedia_session:set_answer(SessId, {call, Call}, 
-                                                 #{sync=>true});
+            {ok, _} = nkmedia_session:set_op(SessId, {call, Call}, #{});
         {room, Room2} ->
-            nkmedia_session:set_answer(SessId, {publish, Room2}, 
-                                                #{sync=>true})
+            nkmedia_session:set_op(SessId, {publish, Room2}, #{})
     end,
     listener(SessId, {call, "c"}).
 
 
 play2(Id) ->
     {ok, SessId, Pid} = nkmedia_session:start(sample, #{}),
-    {ok, Meta} = nkmedia_session:set_offer(SessId, {play, Id}, 
-                                           #{sync=>true, get_offer=>true}),
+    {ok, Meta} = nkmedia_session:set_offer(SessId, {play, Id}, #{}),
     #{offer:=Offer} = Meta,
     nkmedia_janus_proto:register_play(SessId, Pid, Offer).
 
@@ -217,7 +210,7 @@ nkmedia_call_resolve(Dest, #{srv_id:=SrvId}=Call) ->
             continue;
         [Uri|_] ->
             lager:info("sip found: ~s", [Dest]),
-            Spec = [#{dest=>{nkmedia_sip, Uri, #{}}, sdp_type=>sip}],
+            Spec = [#{dest=>{nkmedia_sip, Uri, #{}}, sdp_type=>rtp}],
             {ok, Spec, Call}
     end.
             
@@ -240,43 +233,44 @@ sip_register(Req, Call) ->
 %% ===================================================================
 
 send_call(SessId, #{dest:=Dest}=Offer) ->
-    Opts = #{async=>true},
     case Dest of 
         <<"e">> ->
-            Opts2 = Opts#{backend=>janus, record=>true, filename=>"/tmp/echo"},
-            ok = nkmedia_session:set_answer(SessId, echo, Opts2);
+            Opts2 = #{backend=>janus, record=>true, filename=>"/tmp/echo"},
+            ok = nkmedia_session:set_op_async(SessId, echo, Opts2);
         <<"fe">> ->
-            Opts2 = Opts#{backend=>freeswitch, record=>true, filename=>"/tmp/echo"},
-            ok = nkmedia_session:set_answer(SessId, echo, Opts2);
+            {ok, _} = nkmedia_session:set_offer(SessId, sdp, #{offer=>Offer}),
+            Opts2 = #{backend=>freeswitch},
+            ok = nkmedia_session:set_op_async(SessId, echo, Opts2);
         <<"m1">> ->
-            Opts2 = Opts#{room=>"mcu1"},
-            ok = nkmedia_session:set_answer(SessId, mcu, Opts2);
+            {ok, _} = nkmedia_session:set_offer(SessId, sdp, #{offer=>Offer}),
+            Opts2 = #{room=>"mcu1"},
+            ok = nkmedia_session:set_op_async(SessId, mcu, Opts2);
         <<"m2">> ->
-            Opts2 = Opts#{room=>"mcu2"},
-            ok = nkmedia_session:set_answer(SessId, mcu, Opts2);
+            {ok, _} = nkmedia_session:set_offer(SessId, sdp, #{offer=>Offer}),
+            Opts2 = #{room=>"mcu2"},
+            ok = nkmedia_session:set_op_async(SessId, mcu, Opts2);
         <<"p">> ->
-            ok = nkmedia_session:set_answer(SessId, publish, Opts);
+            ok = nkmedia_session:set_op_async(SessId, publish, #{});
         <<"p2">> ->
-            Opts2 = Opts#{room=>"room2"},
-            ok = nkmedia_session:set_answer(SessId, publish, Opts2);
+            Opts2 = #{room=>"room2"},
+            ok = nkmedia_session:set_op_async(SessId, publish, Opts2);
         <<"p2r">> ->
-            Opts2 = Opts#{room=>"room2", record=>true, filename=>"p2", info=>p2},
-            ok = nkmedia_session:set_answer(SessId, publish, Opts2);
+            Opts2 = #{room=>"room2", record=>true, filename=>"p2", info=>p2},
+            ok = nkmedia_session:set_op_async(SessId, publish, Opts2);
         <<"d", Num/binary>> ->
-            {ok, _} = nkmedia_session:set_offer(SessId, {offer, Offer}, #{}),
             case find_user(Num) of
                 {ok, Dest2} ->
-                    Opts2 = Opts#{backend=>p2p},
-                    ok = nkmedia_session:set_answer(SessId, {invite, Dest2}, Opts2);
+                    {ok, _} = nkmedia_session:set_offer(SessId, sdp, #{offer=>Offer}),
+                    Opts2 = #{backend=>p2p, dest=>Dest2},
+                    ok = nkmedia_session:set_op_async(SessId, invite, Opts2);
                 not_found ->
                     {error, <<"User Not Found">>}
             end;
         <<"f", Num/binary>> ->
             case find_user(Num) of
                 {ok, Dest2} ->
-                    {ok, _} = nkmedia_session:set_offer(SessId, {offer, Offer}, #{}),
-                    {ok, _} = nkmedia_session:set_answer(SessId, pbx, #{}),
-                    {ok, _} = nkmedia_session:update(SessId, {invite, Dest2}, #{});
+                    {ok, _} = nkmedia_session:set_offer(SessId, sdp, #{offer=>Offer}),
+                    ok = nkmedia_session:set_op_async(SessId, call, #{dest=>Dest2});
                 not_found ->
                     {error, <<"User Not Found">>}
             end;
@@ -285,11 +279,11 @@ send_call(SessId, #{dest:=Dest}=Offer) ->
 
         <<"j", Num/binary>> ->
             _OfferOp = {proxy, #{offer=>Offer}},
-            {ok, _} = nkmedia_session:set_offer(SessId, {offer, Offer}, #{}),
+            {ok, _} = nkmedia_session:set_offer(SessId, sdp, #{offer=>Offer}),
             case find_user(Num) of
                 {ok, Dest2} ->
-                    Opts2 = Opts#{backend=>p2p},
-                    ok = nkmedia_session:set_answer(SessId, {invite, Dest2}, Opts2);
+                    Opts2 = #{backend=>p2p},
+                    ok = nkmedia_session:set_op_async(SessId, {invite, Dest2}, Opts2);
                 not_found ->
                     {error, <<"User Not Found">>}
             end;
@@ -300,7 +294,7 @@ send_call(SessId, #{dest:=Dest}=Offer) ->
         %     case find_user(Num) of
         %         {ok, Dest} ->
         %             Opts2 = #{backend=>},
-        %             ok = nkmedia_session:set_answer(SessId, {invite, Dest}, Opts2);
+        %             ok = nkmedia_session:set_op(SessId, {invite, Dest}, Opts2);
         %         not_found ->
         %             {rejected, <<"User Not Found">>}
         %     end;
@@ -309,12 +303,12 @@ send_call(SessId, #{dest:=Dest}=Offer) ->
         %     case find_user(Num) of
         %         {ok, Dest} ->
         %             Opts2 = #{backend=>p2p},
-        %             ok = nkmedia_session:set_answer(SessId, {invite, Dest}, Opts2);
+        %             ok = nkmedia_session:set_op(SessId, {invite, Dest}, Opts2);
         %         not_found ->
         %             {rejected, <<"User Not Found">>}
         %     end;
 
-        %     ok = nkmedia_session:set_answer(SessId, {call, Num}, #{type=>proxy, record=>true, filename=>"/tmp/file1"});
+        %     ok = nkmedia_session:set_op(SessId, {call, Num}, #{type=>proxy, record=>true, filename=>"/tmp/file1"});
         _ ->
             {error, <<"Unknown Destination">>}
     end.

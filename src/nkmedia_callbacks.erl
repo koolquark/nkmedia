@@ -29,7 +29,7 @@
 		 nkmedia_session_invite/4, 
 		 nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2, 
 		 nkmedia_session_handle_info/2]).
--export([nkmedia_session_offer_op/3, nkmedia_session_answer_op/3,
+-export([nkmedia_session_offer_op/3, nkmedia_session_session_op/3,
 		 nkmedia_session_update/3, nkmedia_session_hangup/2,
 		 nkmedia_session_updated_offer/2, nkmedia_session_updated_answer/2]).
 -export([nkmedia_session_get_mediaserver/2]).
@@ -111,7 +111,7 @@ nkmedia_session_event(_SessId, _Event, Session) ->
 				  
 %% @doc Called when the status of the session changes
 -spec nkmedia_session_peer_event(nkmedia_session:id(), nkmedia_session:event(), 
-								 a|b, session()) ->
+								 caller|callee, session()) ->
 	{ok, session()} | continue().
 
 nkmedia_session_peer_event(_SessId, _Type, _Event, Session) ->
@@ -162,20 +162,29 @@ nkmedia_session_handle_info(Msg, Session) ->
 %% @private You must generte an offer() for this offer_op()
 %% ReplyOpts will only we used for user notification
 -spec nkmedia_session_offer_op(nkmedia:offer_op(), nkmedia:op_opts(), session()) ->
-	{ok, nkmedia:offer(), ReplyOpts::map(), session()} |
+	{ok, nkmedia:offer(), Op::atom(), Opts::map(), session()} |
 	{error, term(), session()} | continue().
 
-nkmedia_session_offer_op(OfferOp, Opts, Session) ->
-	{ok, OfferOp, Opts, Session}.
+nkmedia_session_offer_op(sdp, Opts, Session) ->
+	{ok, maps:get(offer, Opts, #{}), sdp, Opts, Session};
+
+nkmedia_session_offer_op(OfferOp, _Opts, Session) ->
+	{error, {unknown_op, OfferOp}, Session}.
 
 
 %% @private
--spec nkmedia_session_answer_op(nkmedia:answer_op(), nkmedia:op_opts(), session()) ->
-	{ok, nkmedia:answer(), ReplyOpts::map(), session()} |
+-spec nkmedia_session_session_op(nkmedia:answer_op(), nkmedia:op_opts(), session()) ->
+	{ok, nkmedia:answer(), Op::atom(), Opts::map(), session()} |
 	{error, term(), session()} | continue().
 
-nkmedia_session_answer_op(AnswerOp, Opts, Session) ->
-	{ok, AnswerOp, Opts, Session}.
+nkmedia_session_session_op(sdp, Opts, Session) ->
+	{ok, maps:get(answer, Opts, #{}), sdp, Opts, Session};
+
+nkmedia_session_session_op(invite, Opts, Session) ->
+	{ok, maps:get(answer, Opts, #{}), invite, Opts, Session};
+
+nkmedia_session_session_op(AnswerOp, _Opts, Session) ->
+	{error, {unknown_op, AnswerOp}, Session}.
 
 
 %% @private
@@ -183,8 +192,8 @@ nkmedia_session_answer_op(AnswerOp, Opts, Session) ->
 	{ok, nkmedia:op_opts(), session()} |
 	{error, term(), session()} | continue().
 
-nkmedia_session_update(_Update, _Opts, Session) ->
-	{error, unknown_op, Session}.
+nkmedia_session_update(Update, Opts, Session) ->
+	{ok, Update, Opts, Session}.
 
 
 %% @private

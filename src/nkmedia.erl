@@ -38,7 +38,7 @@
 -type offer() ::
 	#{
 		sdp => binary(),
-		sdp_type => sip | webrtc,
+		sdp_type => rtp | webrtc,
 		dest => binary(),
 		direction => in | out,		% nkmedia will set 'out' for b-leg
         caller_name => binary(),
@@ -60,7 +60,7 @@
 -type answer() ::
 	#{
 		sdp => binary(),
-		sdp_type => sip | webrtc,
+		sdp_type => rtp | webrtc,
 		verto_params => map(),
         use_audio => boolean(),
         use_video => boolean(),

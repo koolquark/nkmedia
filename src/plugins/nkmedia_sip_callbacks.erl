@@ -93,7 +93,7 @@ sip_invite(Req, Call) ->
             {ok, Dialog} = nksip_dialog:get_handle(Req),
             Offer = #{
                 sdp => SDP, 
-                sdp_type => sip, 
+                sdp_type => rtp, 
                 direction => in,
                 nkmedia_sip => {in, Handle, Dialog}, 
                 pid => self()
@@ -148,7 +148,7 @@ sip_bye(Req, _Call) ->
 nkmedia_session_invite(SessId, {nkmedia_sip, Uri, Opts}, Offer, Session) ->
     #{srv_id:=SrvId} = Session,
     case Offer of
-        #{sdp_type:=sip, sdp:=SDP} ->
+        #{sdp_type:=rtp, sdp:=SDP} ->
             ok = nkmedia_sip:send_invite(SrvId, SessId, Uri, Opts#{sdp=>SDP}),
             {async, #{nkmedia_sip=>out}, Session};
         _ ->

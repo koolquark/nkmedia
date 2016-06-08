@@ -152,7 +152,7 @@ nkmedia_verto_invite(_CallId, Offer, #{srv_id:=SrvId}=Verto) ->
     {ok, verto()} | {rejected, nkmedia:hangup_reason(), verto()} | continue().
 
 nkmedia_verto_call(SessId, Dest, Verto) ->
-    ok = nkmedia_session:set_answer(SessId, {call, Dest}, #{}),
+    ok = nkmedia_session:set_op_async(SessId, {invite, Dest}, #{}),
     {ok, Verto}.
 
 
@@ -267,7 +267,8 @@ nkmedia_session_invite(SessId, {nkmedia_verto, Pid}, Offer, Session) ->
                     lager:warning("Error calling invite: ~p", [Error]),
                     {rejected, <<"Verto Invite Error">>}
             end,
-            ok = nkmedia_session:invite_reply(SessId, Reply)
+            % Could be already hangup
+            nkmedia_session:invite_reply(SessId, Reply)
         end),
     {ringing, #{nkmedia_verto=>out, pid=>Pid}, Session};
 
