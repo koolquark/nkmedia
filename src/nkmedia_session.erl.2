@@ -27,17 +27,17 @@
 
 -export([start/2, get_status/1, get_session/1]).
 -export([hangup/1, hangup/2, hangup_all/0]).
--export([offer/3, offer_async/3, answer/3, answer_async/3]).
--export([invite_reply/2]).
--export([link_session/3, get_all/0,  peer_event/3]).
+-export([set_offer/3, set_offer_async/3, set_op/3, set_op_async/3]).
+-export([update/3, update_async/3, invite_reply/2, link_session/3]).
+-export([get_all/0,  peer_event/3]).
 -export([find/1, do_cast/2, do_call/2, do_call/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
 -export_type([id/0, config/0, session/0, event/0, invite_dest/0]).
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkMEDIA Session ~s (~p, ~p) "++Txt, 
-               [State#state.id, State#state.op_offer, State#state.op_answer | Args])).
+    lager:Type("NkMEDIA Session ~s (~p) "++Txt, 
+               [State#state.id, State#state.op | Args])).
 
 -include("nkmedia.hrl").
 
@@ -76,9 +76,18 @@
 
 
 -type answer_op() ::
-    sdp      |   % Must include 'answer' in opts
-    invite   |   % Must include 'dest' in opts
-    atom().      % See backends and plugins for supprted operations
+    sdp     |   % Must include 'answer' in opts
+    ringing |   % Can include 'answer' in opts
+    invite  |   % Must include 'dest' in opts. Later sdp and ringing will update.
+    atom().     % See backends and plugins for supprted operations
+
+
+-type update_op() ::
+    atom().     % See backends and plugins for supprted operations
+
+
+-type session_op() :: 
+    answer_op() | update_op().
 
 
 -type backend() :: 
@@ -111,10 +120,9 @@
 
 
 -type event() ::
-    {offer_op, offer_op(), map()}       |   % An operation is set for offer
-    {answer_op, answer_op(), map()}     |   % An operation is set for answer
-    {offer, nkmedia:offer()}            |   % Offer SDP is available
-    {answer, nkmedia:answer()}          |   % Answer SDP is available
+    {offer, nkmedia:offer()}            |   % Offer is available
+    {answer, nkmedia:answer()}          |   % Answer is available
+    {session_op, session_op(), map()}   |   % An operation is set
     {info, term()}                      |   % User info
     {hangup, nkmedia:hangup_reason()}   |   % Session is about to hangup
     {peer_down, term(), term()}.            % Linked session is down
@@ -151,7 +159,7 @@ get_session(SessId) ->
 
 %% @doc Get current status and remaining time to timeout
 -spec get_status(id()) ->
-    {ok, offer_op(), answer_op(), integer()}.
+    {ok, session_op(), integer()}.
 
 get_status(SessId) ->
     do_call(SessId, get_status).
@@ -179,39 +187,55 @@ hangup_all() ->
 
 
 %% @doc Sets the session's offer operation, if not already set
-%% See each operation's doc for returned info
-%% Some backends my support updating offer (like Freeswitch)
--spec offer(id(), offer_op(), op_opts()) ->
+%% See each operaion's doc for returned info
+-spec set_offer(id(), offer_op(), op_opts()) ->
     {ok, map()} | {error, term()}.
 
-offer(SessId, OfferOp, Opts) ->
+set_offer(SessId, OfferOp, Opts) ->
     do_call(SessId, {offer_op, OfferOp, Opts}).
 
 
-%% @doc Equivalent to offer/3, but does not wait for operation's result
--spec offer_async(id(), offer_op(), op_opts()) ->
+%% @doc Equivalent to set_offer/3, but does not wait for operation's result
+-spec set_offer_async(id(), offer_op(), op_opts()) ->
     ok | {error, term()}.
 
-offer_async(SessId, OfferOp, Opts) ->
+set_offer_async(SessId, OfferOp, Opts) ->
     do_cast(SessId, {offer_op, OfferOp, Opts}).
 
 
-%% @doc Sets the session's current answer operation.
-%% See each operation's doc for returned info
-%% Some backends my support updating answer (like Freeswitch)
--spec answer(id(), answer_op(), op_opts()) ->
+%% @doc Sets the session's answer, if not already set
+%% See each operaion's doc for returned info
+-spec set_op(id(), answer_op(), op_opts()) ->
     {ok, map()} | {error, term()}.
 
-answer(SessId, AnswerOp, Opts) ->
+set_op(SessId, AnswerOp, Opts) ->
     do_call(SessId, {answer_op, AnswerOp, Opts}).
 
 
-%% @doc Equivalent to answer/3, but does not wait for operation's result
--spec answer_async(id(), answer_op(), op_opts()) ->
+%% @doc Equivalent to set_op/3, but does not wait for operation's result
+-spec set_op_async(id(), answer_op(), op_opts()) ->
     ok | {error, term()}.
 
-answer_async(SessId, AnswerOp, Opts) ->
+set_op_async(SessId, AnswerOp, Opts) ->
     do_cast(SessId, {answer_op, AnswerOp, Opts}).
+
+
+%% @doc Update session's operation.
+%% Only some specific operations and backends allow to be updated
+%% See each operaion's doc for returned info
+-spec update(id(), update_op(), op_opts()) ->
+    ok | {ok, map()} | {error, term()}.
+
+update(SessId, OfferOp, Opts) ->
+    do_call(SessId, {update, OfferOp, Opts}).
+
+
+%% @doc Equivalent to update/3, but does not wait for operation's result
+-spec update_async(id(), answer_op(), op_opts()) ->
+    ok | {error, term()}.
+
+update_async(SessId, OfferOp, #{async:=true}=Opts) ->
+    do_cast(SessId, {update, OfferOp, Opts}).
 
 
 %% @doc Informs the session of a ringing or answered status for an invite
@@ -228,7 +252,7 @@ invite_reply(SessId, Reply) ->
     ok | {error, term()}.
 
 link_session(SessId, SessIdB, Opts) ->
-    do_cast(SessId, {link_session, SessIdB, Opts}).
+    do_cast(SessId, {link_session_b, SessIdB, Opts}).
 
 
 %% @private
@@ -264,8 +288,7 @@ peer_event(Id, IdB, Event) ->
     srv_id :: nkservice:id(),
     has_offer = false :: boolean(),
     has_answer = false :: boolean(),
-    op_offer :: noop | offer_op(),
-    op_answer :: noop | answer_op(),
+    op :: noop | session_op(),
     links :: nkmedia_links:links(link_id()),
     timer :: reference(),
     hangup_sent = false :: boolean(),
@@ -287,10 +310,9 @@ init([#{id:=Id, srv_id:=SrvId}=Session]) ->
         links = nkmedia_links:new(),
         session = Session
     },
-    State2 = update_offer_op(noop, #{}, State1),
-    State3 = update_answer_op(noop, #{}, State2),
+    State2 = update_op(noop, #{}, State1),
     lager:info("NkMEDIA Session ~s starting (~p)", [Id, self()]),
-    handle(nkmedia_session_init, [Id], State3).
+    handle(nkmedia_session_init, [Id], State2).
         
 
 %% @private
@@ -301,18 +323,25 @@ init([#{id:=Id, srv_id:=SrvId}=Session]) ->
 handle_call(get_session, _From, #state{session=Session}=State) ->
     {reply, {ok, Session}, State};
 
-handle_call(get_status, _From, State) ->
-    #state{op_offer=Offer, op_answer=Answer, timer=Timer} = State,
-    {reply, {ok, Offer, Answer, erlang:read_timer(Timer) div 1000}, State};
+handle_call(get_status, _From, #state{op=Op, timer=Timer}=State) ->
+    {reply, {ok, Op, erlang:read_timer(Timer) div 1000}, State};
 
-handle_call({offer_op, OfferOp, Opts}, From, State) ->
+handle_call({offer_op, OfferOp, Opts}, From, #state{has_offer=false}=State) ->
     do_offer_op(OfferOp, Opts, From, State);
 
-handle_call({answer_op, AnswerOp, Opts}, From,#state{has_offer=true}=State) ->
+handle_call({offer_op, _OfferOp, _Opts}, _From, State) ->
+    {reply, {error, invalid_status}, State};
+
+handle_call({answer_op, AnswerOp, Opts}, From,
+            #state{has_offer=true, has_answer=false}=State) ->
     do_answer_op(AnswerOp, Opts, From, State);
 
 handle_call({answer_op, _AnswerOp, _Opts}, _From, State) ->
-    {reply, {error, offer_not_set}, State};
+    {reply, {error, invalid_status}, State};
+
+handle_call({update, Update, Opts}, From,
+            #state{has_offer=true, has_answer=true}=State) ->
+    do_update_op(Update, Opts, From, State);
 
 handle_call(get_state, _From, State) -> 
     {reply, State, State};
@@ -325,45 +354,54 @@ handle_call(Msg, From, State) ->
 -spec handle_cast(term(), #state{}) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
-handle_cast({offer_op, OfferOp, Opts}, State) ->
+handle_cast({offer_op, OfferOp, Opts}, #state{has_offer=false}=State) ->
     do_offer_op(OfferOp, Opts, undefined, State);
 
-handle_cast({answer_op, AnswerOp, Opts}, #state{has_offer=true}=State) ->
+handle_cast({offer_op, _OfferOp, _Opts}, State) ->
+    ?LLOG(warning, "invalid status for offer_op", [], State),
+    noreply(State);
+
+handle_cast({answer_op, AnswerOp, Opts}, 
+            #state{has_offer=true, has_answer=false}=State) ->
     do_answer_op(AnswerOp, Opts, undefined, State);
 
 handle_cast({answer_op, _AnswerOp, _Opts}, State) ->
-    {stop, offer_not_set, State};
+    ?LLOG(warning, "invalid status for answer_op", [], State),
+    noreply(State);
+
+handle_cast({update, Update, Opts}, 
+            #state{has_offer=true, has_answer=true}=State) ->
+    do_update_op(Update, Opts, undefined, State);
 
 handle_cast({info, Info}, State) ->
     noreply(event({info, Info}, State));
 
-handle_cast({invite_reply, Reply}, #state{op_answer=invite}=State) ->
-    % ?LLOG(error, "invite reply: ~p", [Reply], State),
+handle_cast({invite_reply, Reply}, #state{op=invite}=State) ->
     do_invite_reply(Reply, State);
 
 handle_cast({invite_reply, {rejected, _}}, State) ->
     noreply(State);
 
 handle_cast({invite_reply, Reply}, State) ->
-    ?LLOG(info, "received unexpected invite_reply: ~p", [Reply], State),
+    ?LLOG(notice, "received unexpected invite_reply: ~p", [Reply], State),
     noreply(State);
 
-handle_cast({link_session, IdA, Opts}, #state{id=IdB}=State) ->
-    case find(IdA) of
+handle_cast({link_session_b, IdB, Opts}, #state{id=IdA}=State) ->
+    case find(IdB) of
         {ok, Pid} ->
             Events = maps:get(send_events, Opts, false),
-            ?LLOG(info, "linked to ~s (events:~p)", [IdA, Events], State),
-            gen_server:cast(Pid, {link_session_back, IdB, self(), Events}),
-            State2 = add_link({peer, IdA}, {caller, Events}, Pid, State),
+            ?LLOG(info, "linked to ~s (link_b, events:~p)", [IdB, Events], State),
+            gen_server:cast(Pid, {link_session_a, IdA, self(), Events}),
+            State2 = add_link({peer, IdB}, {b_link, Events}, Pid, State),
             noreply(State2);
         not_found ->
             ?LLOG(warning, "trying to link unknown session ~s", [IdB], State),
             {stop, normal, State}
     end;
 
-handle_cast({link_session_back, IdB, Pid, Events}, State) ->
-    ?LLOG(info, "linked back from ~s (events:~p)", [IdB, Events], State),
-    State2 = add_link({peer, IdB}, {callee, Events}, Pid, State),
+handle_cast({link_session_a, IdA, Pid, Events}, State) ->
+    ?LLOG(info, "linked to ~s (link_a, events:~p)", [IdA, Events], State),
+    State2 = add_link({peer, IdA}, {a_link, Events}, Pid, State),
     noreply(State2);
 
 handle_cast({peer_event, PeerId, Event}, State) ->
@@ -415,8 +453,7 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, State) ->
                 invite ->
                     do_hangup(<<"Invite Monitor Stop">>, State2);
                 {peer, IdB} ->
-                    {Type, _} = Data,
-                    event({peer_down, IdB, Type, Reason}, State),
+                    event({peer_down, {IdB, Data}, Reason}, State),
                     noreply(State2)
             end
     end;
@@ -440,8 +477,8 @@ code_change(OldVsn, State, Extra) ->
 
 terminate(Reason, State) ->
     ?LLOG(info, "terminate: ~p", [Reason], State),
-    _ = do_hangup(<<"Process Terminate">>, State),
-    _ = handle(nkmedia_session_terminate, [Reason], State).
+    {ok, State2} = handle(nkmedia_session_terminate, [Reason], State),
+    _ = do_hangup(<<"Process Terminate">>, State2).
 
 
 
@@ -451,12 +488,12 @@ terminate(Reason, State) ->
 %% ===================================================================
 
 %% @private
-do_offer_op(Op, Opts, From, #state{has_offer=HasOffer}=State) ->
-    case handle(nkmedia_session_offer_op, [Op, Opts, HasOffer], State) of
-        {ok, Offer, Op2, Opts2, State2} ->
+do_offer_op(OfferOp, Opts, From, State) ->
+    case handle(nkmedia_session_offer_op, [OfferOp, Opts], State) of
+        {ok, Offer, OfferOp2, Opts2, State2} ->
             case update_offer(Offer, State2) of
                 {ok, State3} ->
-                   State4 = update_offer_op(Op2, Opts2, State3),
+                   State4 = update_offer_op(OfferOp2, Opts2, State3),
                    reply_ok({ok, Opts2}, From, State4);
                 {error, Error, State3} ->
                     reply_error(Error, From, State3)
@@ -467,24 +504,17 @@ do_offer_op(Op, Opts, From, #state{has_offer=HasOffer}=State) ->
 
 
 %% @private
-do_answer_op(Op, Opts, From, #state{has_answer=HasAnswer}=State) ->
-    case handle(nkmedia_session_answer_op, [Op, Opts, HasAnswer], State) of
-        {ok, Answer, Op2, Opts2, State2} ->
+do_answer_op(AnswerOp, Opts, From, State) ->
+    case handle(nkmedia_session_answer_op, [AnswerOp, Opts], State) of
+        {ok, Answer, AnswerOp2, Opts2, State2} ->
             case update_answer(Answer, State2) of
                 {ok, State3} ->
-                    case Op2 of
+                    State4 = update_answer_op(AnswerOp2, Opts2, State3),
+                    case AnswerOp2 of
                         invite ->
                             Dest = maps:get(dest, Opts2),
-                            State4 = update_answer_op(invite, 
-                                                      Opts2#{status=>start}, State3),
-                            case maps:get(fake, Opts2, false) of
-                                false ->
-                                    do_invite(Dest, Opts2, From, State4);
-                                true ->
-                                    do_fake_invite(Dest, Opts2, From, State4)
-                            end;
+                            do_invite(Dest, Opts2, From, State4);
                         _ ->
-                            State4 = update_answer_op(Op2, Opts2, State3),
                             reply_ok({ok, Opts2}, From, State4)
                     end;
                 {error, Error, State3} ->
@@ -496,28 +526,33 @@ do_answer_op(Op, Opts, From, #state{has_answer=HasAnswer}=State) ->
 
 
 %% @private
-do_invite(Dest, Opts, From, #state{id=Id, session=Session, op_answer=invite}=State) ->
+do_update_op(UpdateOp, Opts, From, State) ->
+    case handle(nkmedia_session_update, [UpdateOp, Opts], State) of
+        {ok, UpdateOp2, Opts2, State2} ->
+            State3 = update_op(UpdateOp2, Opts2, State2),
+            reply_ok({ok, Opts2}, From, State3);
+        {error, Error, State2} ->
+            reply_error(Error, From, State2)
+    end.
+
+
+%% @private
+do_invite(Dest, Opts, From, #state{id=Id, session=Session, op=invite}=State) ->
     #{offer:=Offer} = Session,
     case handle(nkmedia_session_invite, [Id, Dest, Offer], State) of
         {ringing, Answer, State2} ->
-            State3 = invite_link(Answer, Dest, Opts, From, State2),
+            State3 = answer_op_link(Answer, Dest, Opts, From, State2),
             do_invite_reply({ringing, Answer}, State3);
         {answer, Answer, State2} ->
-            State3 = invite_link(Answer, Dest, Opts, From, State2),
+            State3 = answer_op_link(Answer, Dest, Opts, From, State2),
             do_invite_reply({answer, Answer}, State3);
         {rejected, Reason, State2} ->
             do_invite_reply({rejected, Reason}, State2);
         {async, Answer, State2} ->
             ?LLOG(info, "invite delayed", [], State2),
-            State3 = invite_link(Answer, Dest, Opts, From, State2),
+            State3 = answer_op_link(Answer, Dest, Opts, From, State2),
             noreply(State3)
     end.
-
-
-%% @private
-do_fake_invite(Dest, Opts, From, #state{op_answer=invite}=State) ->
-    State2 = invite_link(#{}, Dest, Opts, From, State),
-    noreply(State2).
 
 
 %% @private
@@ -528,8 +563,8 @@ do_invite_reply({ringing, Answer}, State) ->
     case update_answer(Answer, State) of
         {ok, State2} ->
             {ok, #{opts:=Opts}} = get_link(invite, State2),
-            Opts2 =  Opts#{status=>ringing, answer=>Answer},
-            State3 = update_answer_op(invite, Opts2, State2),
+            Answer2 = maps:remove(sdp, Answer),
+            State3 = update_op(invite, Opts#{status=>ringing, answer=>Answer2}, State2),
             noreply(State3);
         {error, Error, State2} ->
             ?LLOG(warning, "could not set answer in invite_ringing", [Error], State),
@@ -541,8 +576,8 @@ do_invite_reply({answered, Answer}, State) ->
         {ok, #state{has_answer=true}=State2} ->
             {ok, #{from:=From, opts:=Opts}} = get_link(invite, State2),
             {ok, State3} = update_link(invite, undefined, State2),
-            Opts2 =  Opts#{status=>answered, answer=>Answer},
-            State4 = update_answer_op(invite, Opts2, State3),
+            Answer2 = maps:remove(sdp, Answer),
+            State4 = update_op(invite, Opts#{status=>answered, answer=>Answer2}, State3),
             reply_ok({ok, Opts}, From, State4);
         {ok, State2} ->
             ?LLOG(warning, "invite without SDP!", [], State),
@@ -555,20 +590,18 @@ do_invite_reply({answered, Answer}, State) ->
 do_invite_reply({rejected, Reason}, State) ->
     {ok, #{from:=From, opts:=Opts}} = get_link(invite, State),
     State2 = remove_link(invite, State),
-    Opts2 = Opts#{status=>rejected, reason=>Reason},
-    State3 = update_answer_op(invite, Opts2, State2),
+    State3 = update_op(invite, Opts#{status=>rejected, reason=>Reason}, State2),
     case maps:get(hangup_after_rejected, Opts, true) of
         true ->
             do_hangup(<<"Call Rejected">>, State3);
         false ->
-            State4 = update_answer_op(noop, #{}, State3),
+            State4 = update_op(noop, #{}, State3),
             reply_ok({rejected, Reason}, From, State4)
     end.
 
 
-
 %% @private
-invite_link(Answer, Dest, Opts, From, State) ->
+answer_op_link(Answer, Dest, Opts, From, State) ->
     Pid = maps:get(pid, Answer, undefined),
     add_link(invite, #{dest=>Dest, opts=>Opts, from=>From}, Pid, State).
 
@@ -616,15 +649,10 @@ set_updated_offer(Offer, #state{has_offer=HasOffer}=State) ->
         {ok, Offer2, State2} ->
             State3 = update_session(offer, Offer2, State2),
             case Offer2 of
-                #{sdp:=_} ->
-                    case HasOffer of
-                        false ->
-                            State4 = State3#state{has_offer=true},
-                            {ok, event({offer, Offer2}, State4)};
-                        true ->
-                            {ok, State3}
-                    end;
-                _ when not HasOffer ->
+                #{sdp:=_} when not HasOffer ->
+                    State4 = State3#state{has_offer=true},
+                    {ok, event({offer, Offer2}, State4)};
+                _ ->
                     {ok, State3}
             end;
         {error, Error} ->
@@ -633,14 +661,11 @@ set_updated_offer(Offer, #state{has_offer=HasOffer}=State) ->
 
 
 %% @private
-update_offer_op(Op, Data, #state{op_offer=Old}=State) ->
-    Data2 = remove_op_sdp(Op, Data),
-    State2 = update_session(offer_op, {Op, Data2}, State#state{op_offer=Op}),
-    case Old of
-        undefined -> State2;
-        _ -> event({offer_op, Op, Data2}, State2)
-    end.
-    
+update_offer_op(OfferOp, Data, State) ->
+    Data2 = maps:remove(offer, Data),
+    update_session(offer_op, {OfferOp, Data2}, State).
+
+
 
 %% @private
 -spec update_answer(nkmedia:answer(), #state{}) ->
@@ -661,14 +686,14 @@ update_answer(Answer, State) when is_map(Answer) ->
     Answer2 = maps:merge(OldAnswer, Answer),
     case HasAnswer of
         false ->
-            set_updated_answer(Answer2, State2);        
+            set_updated_answer(Answer2, State2);
         true ->
             SDP = maps:get(sdp, OldAnswer),
             case Answer2 of
                 #{sdp:=SDP2} when SDP2 /= SDP ->
                     {error, duplicated_answer, State};
                 _ ->
-                    set_updated_answer(Answer2, State2)
+                    set_updated_answer(Answer, State2)
             end
     end;
 
@@ -682,15 +707,10 @@ set_updated_answer(Answer, #state{has_answer=HasAnswer}=State) ->
         {ok, Answer2, State2} ->
             State3 = update_session(answer, Answer2, State2),
             case Answer2 of
-                #{sdp:=_} ->
-                    case HasAnswer of
-                        false ->
-                            State4 = State3#state{has_answer=true},
-                            {ok, event({answer, Answer2}, State4)};
-                        true ->
-                            {ok, State3}
-                    end;
-                _ when not HasAnswer ->
+                #{sdp:=_} when not HasAnswer ->
+                    State4 = State3#state{has_answer=true},
+                    {ok, event({answer, Answer2}, State4)};
+                _ ->
                     {ok, State3}
             end;
         {error, Error} ->
@@ -699,52 +719,36 @@ set_updated_answer(Answer, #state{has_answer=HasAnswer}=State) ->
 
 
 %% @private
-update_answer_op(Op, Data, #state{op_answer=Old}=State) ->
-    State2 = restart_timer(Op, Data, State),
-    Hibernate = Op /= noop,
-    % We store it without the 'answer' field
-    Data2 = remove_op_sdp(Op, Data),
-    State3 = update_session(answer_op, {Op, Data2}, State2),
-    State4 = case Old of
-        undefined -> State3;
-        _ -> event({answer_op, Op, Data2}, State3)
-    end,
-    State4#state{op_answer=Op, hibernate=Hibernate}.
+update_answer_op(AnswerOp, Data, State) ->
+    Data2 = maps:remove(answer, Data),
+    State2 = update_session(answer_op, {AnswerOp, Data2}, State),
+    update_op(AnswerOp, Data, State2).
 
 
 %% @private
-restart_timer(Op, Data, #state{timer=Timer, session=Session}=State) ->
+update_op(Op, Data, #state{timer=Timer, session=Session, has_offer=HasOffer}=State) ->
     nklib_util:cancel_timer(Timer),
     Time = case Op of
         noop ->
             maps:get(wait_timeout, Session, ?DEF_WAIT_TIMEOUT);
         invite ->
             case Data of
-                #{status:=Status} when Status==start; Status==ringing ->
-                    maps:get(ring_timeout, Session, ?DEF_RING_TIMEOUT);
+                #{status:=answered} ->
+                    maps:get(ready_timeout, Session, ?DEF_READY_TIMEOUT);
                 _ ->
-                    maps:get(ready_timeout, Session, ?DEF_READY_TIMEOUT)
+                    maps:get(ring_timeout, Session, ?DEF_RING_TIMEOUT)
             end;
         _ ->
             maps:get(ready_timeout, Session, ?DEF_READY_TIMEOUT)
     end,
     NewTimer = erlang:start_timer(1000*Time, self(), op_timeout),
-    State#state{timer=NewTimer}.
-
-
-%% @private
-remove_op_sdp(sdp, #{offer:=#{sdp:=_}=Offer}=Data) ->
-    Data#{offer:=maps:remove(sdp, Offer)};
-
-remove_op_sdp(sdp, #{answer:=#{sdp:=_}=Answer}=Data) ->
-    Data#{answer:=maps:remove(sdp, Answer)};
-
-remove_op_sdp(invite, #{answer:=#{sdp:=_}=Answer}=Data) ->
-    Data#{answer:=maps:remove(sdp, Answer)};
-
-remove_op_sdp(_Op, Data) ->
-    Data.
-
+    Hibernate = Op /= noop,
+    State2 = update_session(session_op, {Op, Data}, State#state{op=Op}),
+    State3 = case HasOffer of
+        true -> event({session_op, Op, Data}, State2);
+        false -> State2
+    end,
+    State3#state{timer=NewTimer, op=Op, hibernate=Hibernate}.
 
 
 %% @private
@@ -879,9 +883,3 @@ extract_link_mon(Mon, State) ->
 %% @private
 iter_links(Fun, State) ->
     nkmedia_links:iter(Fun, #state.links, State).
-
-
-
-
-
-

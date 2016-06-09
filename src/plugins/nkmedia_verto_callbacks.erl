@@ -152,7 +152,7 @@ nkmedia_verto_invite(_CallId, Offer, #{srv_id:=SrvId}=Verto) ->
     {ok, verto()} | {rejected, nkmedia:hangup_reason(), verto()} | continue().
 
 nkmedia_verto_call(SessId, Dest, Verto) ->
-    ok = nkmedia_session:set_op_async(SessId, {invite, Dest}, #{}),
+    ok = nkmedia_session:answer_async(SessId, {invite, Dest}, #{}),
     {ok, Verto}.
 
 
@@ -228,21 +228,21 @@ nkmedia_verto_handle_info(Msg, Verto) ->
 nkmedia_session_event(SessId, {answer, Answer}, 
                       #{offer:=#{nkmedia_verto:=in, pid:=Pid}}) ->
     #{sdp:=_} = Answer,
-    lager:info("Verto calling media available"),
+    lager:info("Verto (~s) calling media available", [SessId]),
     ok = nkmedia_verto:answer(Pid, SessId, Answer),
     continue;
 
 nkmedia_session_event(SessId, {hangup, _}, Session) ->
     case Session of
         #{offer:=#{nkmedia_verto:=in, pid:=Pid1}} ->
-            lager:info("Verto In captured hangup"),
+            lager:info("Verto (~s) In captured hangup", [SessId]),
             nkmedia_verto:hangup(Pid1, SessId);
         _ -> 
             ok
     end,
     case Session of
         #{answer:=#{nkmedia_verto:=out, pid:=Pid2}} ->
-            lager:info("Verto Out captured hangup"),
+            lager:info("Verto (~s) Out captured hangup", [SessId]),
             nkmedia_verto:hangup(Pid2, SessId);
         _ ->
             ok
@@ -270,7 +270,16 @@ nkmedia_session_invite(SessId, {nkmedia_verto, Pid}, Offer, Session) ->
             % Could be already hangup
             nkmedia_session:invite_reply(SessId, Reply)
         end),
-    {ringing, #{nkmedia_verto=>out, pid=>Pid}, Session};
+    % If we copied the offer from a caller session to this session,
+    % and includes a verto '¡n' must be removed so that is not detected in the
+    % answer here, since we already sent it in the invite_reply
+    Session2 = case Session of
+        #{offer:=#{nkmedia_verto:=in}=Offer} ->
+            Session#{offer:=maps:remove(nkmedia_verto, Offer)};
+        _ ->
+            Session
+    end,
+    {ringing, #{nkmedia_verto=>out, pid=>Pid}, Session2};
 
 nkmedia_session_invite(_SessId, _Dest, _Offer, _Session) ->
     continue.

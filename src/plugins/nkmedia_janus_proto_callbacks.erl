@@ -144,7 +144,7 @@ nkmedia_janus_invite(SessId, Offer, #{srv_id:=SrvId}=Janus) ->
     {ok, janus()} | {hangup, nkmedia:hangup_reason(), janus()} | continue().
 
 nkmedia_janus_call(CallId, Dest, Janus) ->
-    ok = nkmedia_session:set_op_async(CallId, {call, Dest}, #{}),
+    ok = nkmedia_session:answer_async(CallId, {call, Dest}, #{}),
     {ok, Janus}.
 
 
@@ -176,7 +176,7 @@ nkmedia_janus_bye(CallId, Janus) ->
     ok | {hangup, nkmedia:hangup_reason(), janus()} | continue().
 
 nkmedia_janus_start(SessId, Answer, Janus) ->
-    case nkmedia_session:set_op_async(SessId, Answer, #{}) of
+    case nkmedia_session:answer_async(SessId, Answer, #{}) of
         ok ->
             {ok, Janus};
         {error, Error} ->

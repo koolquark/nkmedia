@@ -29,10 +29,9 @@
 		 nkmedia_session_invite/4, 
 		 nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2, 
 		 nkmedia_session_handle_info/2]).
--export([nkmedia_session_offer_op/3, nkmedia_session_session_op/3,
-		 nkmedia_session_update/3, nkmedia_session_hangup/2,
+-export([nkmedia_session_offer_op/4, nkmedia_session_answer_op/4,
+		 nkmedia_session_hangup/2,
 		 nkmedia_session_updated_offer/2, nkmedia_session_updated_answer/2]).
--export([nkmedia_session_get_mediaserver/2]).
 -export([nkmedia_call_init/2, nkmedia_call_terminate/2, 
 		 nkmedia_call_resolve/2, nkmedia_call_invite/3, 
 		 nkmedia_call_event/3, 
@@ -161,39 +160,41 @@ nkmedia_session_handle_info(Msg, Session) ->
 
 %% @private You must generte an offer() for this offer_op()
 %% ReplyOpts will only we used for user notification
--spec nkmedia_session_offer_op(nkmedia:offer_op(), nkmedia:op_opts(), session()) ->
+-spec nkmedia_session_offer_op(nkmedia:offer_op(), nkmedia:op_opts(), 
+							   HasOffer::boolean(), session()) ->
 	{ok, nkmedia:offer(), Op::atom(), Opts::map(), session()} |
 	{error, term(), session()} | continue().
 
-nkmedia_session_offer_op(sdp, Opts, Session) ->
+nkmedia_session_offer_op(sdp, Opts, false, Session) ->
 	{ok, maps:get(offer, Opts, #{}), sdp, Opts, Session};
 
-nkmedia_session_offer_op(OfferOp, _Opts, Session) ->
+nkmedia_session_offer_op(sdp, _Opts, teue, Session) ->
+	{error, offer_already_set, Session};
+
+nkmedia_session_offer_op(OfferOp, _Opts, _HasOffer, Session) ->
 	{error, {unknown_op, OfferOp}, Session}.
 
 
 %% @private
--spec nkmedia_session_session_op(nkmedia:answer_op(), nkmedia:op_opts(), session()) ->
+-spec nkmedia_session_answer_op(nkmedia:answer_op(), nkmedia:op_opts(), 
+							     HasAnswer::boolean(), session()) ->
 	{ok, nkmedia:answer(), Op::atom(), Opts::map(), session()} |
 	{error, term(), session()} | continue().
 
-nkmedia_session_session_op(sdp, Opts, Session) ->
+nkmedia_session_answer_op(sdp, Opts, false, Session) ->
 	{ok, maps:get(answer, Opts, #{}), sdp, Opts, Session};
 
-nkmedia_session_session_op(invite, Opts, Session) ->
+nkmedia_session_answer_op(sdp, _Opts, true, Session) ->
+	{error, answer_already_set, Session};
+
+nkmedia_session_answer_op(invite, Opts, false, Session) ->
 	{ok, maps:get(answer, Opts, #{}), invite, Opts, Session};
 
-nkmedia_session_session_op(AnswerOp, _Opts, Session) ->
+nkmedia_session_answer_op(invite, _Opts, true, Session) ->
+	{error, answer_already_set, Session};
+
+nkmedia_session_answer_op(AnswerOp, _Opts, _HasAnswer, Session) ->
 	{error, {unknown_op, AnswerOp}, Session}.
-
-
-%% @private
--spec nkmedia_session_update(nkmedia:update(), nkmedia:op_opts(), session()) ->
-	{ok, nkmedia:op_opts(), session()} |
-	{error, term(), session()} | continue().
-
-nkmedia_session_update(Update, Opts, Session) ->
-	{ok, Update, Opts, Session}.
 
 
 %% @private
@@ -220,34 +221,6 @@ nkmedia_session_updated_answer(Answer, Session) ->
 
 nkmedia_session_hangup(_Reason, Session) ->
 	{ok, Session}.
-
-
-%% @private
--spec nkmedia_session_get_mediaserver(nkmedia_session:type(), session()) ->
-	{ok, nkmedia_session:mediaserver(), session()} | {error, term()}.
-
-nkmedia_session_get_mediaserver(p2p, Session) ->
-	{ok, none, Session};
-
-nkmedia_session_get_mediaserver(pbx, Session) ->
-	case nkmedia_fs_engine:get_all() of
-        [{FsId, _}|_] ->
-			{ok, {fs, FsId}, Session};
-       	[] ->
-       		{error, no_mediaserver_available}
-    end;
-
-nkmedia_session_get_mediaserver(proxy, Session) ->
-	case nkmedia_janus_engine:get_all() of
-        [{JanusId, _}|_] ->
-			{ok, {janus, JanusId}, Session};
-       	[] ->
-       		{error, no_mediaserver_available}
-    end;
-
-nkmedia_session_get_mediaserver(Backend, _Session) ->
-	{error, {unknown_backend, Backend}}.
-
 
 
 %% ===================================================================

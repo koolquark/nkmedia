@@ -26,7 +26,7 @@
 -export([set_var/4, set_vars/3, unset_var/3, get_var/3, dump/2]).
 -export([transfer/3, transfer_inline/3, bridge/3, park/2, break/2, break_all/2]).
 -export([mute/2, silence/2, clean/2, dtmf/3, reloadxml/1]).
--export([conference_users/2]).
+-export([conference_users/2, channels/1, channel_info/2]).
 
 -type fs_id() :: nkmedia_fs_engine:id().
 
@@ -312,6 +312,27 @@ conference_users(FsId, ConfName) ->
 	end.
 
 
+%% @doc
+-spec channels(fs_id()) ->
+	{ok, [map()]} | {error, term()}.
+
+channels(FsId) ->
+	case api(FsId, "show channels") of
+		{ok, Data} ->
+			{ok, get_list(Data)};
+		{error, Error} ->
+			{error, Error}
+	end.
+
+
+channel_info(FsId, ChId) ->
+	case api(FsId, ["uuid_dump ", ChId]) of
+		{ok, Data} ->
+			{ok, get_vars(Data)};
+		{error, Error} ->
+			{error, Error}
+	end.
+
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%% Utilities %%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -349,6 +370,48 @@ vars_to_list([], Acc) ->
 vars_to_list([{K,V}|Rest], Acc) -> 
 	NewAcc = [nklib_util:to_list(K) ++ "=" ++ nklib_util:to_list(V) | Acc],
 	vars_to_list(Rest, NewAcc).
+
+
+%% @private
+get_list(Data) ->
+	[First|Lines] = binary:split(Data, <<"\n">>, [global]),
+	Keys = binary:split(First, <<",">>, [global]),
+	get_list_iter(Lines, Keys, length(Keys), []).
+
+
+get_list_iter([], _Keys, _L, Acc) ->
+	Acc;
+
+get_list_iter([Line|Rest], Keys, L, Acc) ->
+	case binary:split(Line, <<",">>, [global]) of
+		List when length(List) == L ->
+			Data = maps:from_list(lists:zip(Keys, List)),
+			get_list_iter(Rest, Keys, L, [Data|Acc]);
+		_ ->
+			get_list_iter(Rest, Keys, L, Acc)
+	end.
+
+
+%% @private
+get_vars(Data) ->
+	Lines = binary:split(Data, <<"\n">>, [global]),
+	get_vars_iter(Lines, []).
+
+
+get_vars_iter([], Acc) ->
+	maps:from_list(Acc);
+
+get_vars_iter([Var|Rest], Acc) ->
+	case binary:split(Var, <<": ">>) of
+		[Key, Val] ->
+			get_vars_iter(Rest, [{Key, Val}|Acc]);
+		_ ->
+			get_vars_iter(Rest, Acc)
+	end.
+
+
+
+
 
 
 

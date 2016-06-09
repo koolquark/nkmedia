@@ -333,7 +333,7 @@ launch_out(SessId, #session_out{dest=Dest, pos=Pos, sdp_type=Type}=Out, State) -
             },
             {ok, SessId, Pid} = nkmedia_session:start(SrvId, Config),
             Opts = #{async=>true, sdp_type=>Type},
-            ok = nkmedia_session:set_op_async(Pid, {invite, Dest}, Opts),
+            ok = nkmedia_session:answer_async(Pid, {invite, Dest}, Opts),
             Out2 = Out#session_out{launched=true, pid=Pid},
             Outs2 = maps:put(SessId, Out2, Outs),
             {noreply, State2#state{outs=Outs2}};
