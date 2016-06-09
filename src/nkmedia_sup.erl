@@ -23,10 +23,36 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(supervisor).
 
--export([start_janus_engine/1]).
+-export([start_child/2, start_janus_engine/1]).
 -export([init/1, start_link/0]).
 
 -include("nkmedia.hrl").
+
+
+%% @private
+start_child(Module, #{name:=Name}=Config) ->
+    ChildId = {Module, Name},
+    Spec = {
+        ChildId,
+        {Module, start_link, [Config]},
+        transient,
+        5000,
+        worker,
+        [Module]
+    },
+    case supervisor:start_child(?MODULE, Spec) of
+        {ok, Pid} -> 
+            {ok, Pid};
+        {error, already_present} ->
+            ok = supervisor:delete_child(?MODULE, ChildId),
+            start_child(Module, Config);
+        {error, {already_started, Pid}} -> 
+            {ok, Pid};
+        {error, Error} -> 
+            {error, Error}
+    end.
+
+
 
 
 start_janus_engine(#{name:=Name}=Config) ->

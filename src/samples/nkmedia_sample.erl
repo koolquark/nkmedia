@@ -48,13 +48,15 @@
 start() ->
     _CertDir = code:priv_dir(nkpacket),
     Spec = #{
-        plugins => [?MODULE, nkmedia_fs, nksip_registrar, nksip_trace],
+        plugins => [?MODULE, nkmedia_fs, nkmedia_kms, nksip_registrar, nksip_trace],
         verto_listen => "verto:all:8082",
         % verto_listen => "verto_proxy:all:8082",
         verto_communicator => "https:all:8082/vc",
         janus_listen => "janus:all:8989, janus_proxy:all:8990",
         % janus_listen => "janus:all:8989",
         janus_demos => "https://all:8083/janus",
+        kurento_listen => "kurento_proxy:all:8433",
+        kurento_samples => "https:all:8084",
         log_level => debug,
         nksip_trace => {console, all},
         sip_listen => <<"sip:all:5060">>,
@@ -124,7 +126,7 @@ play2(Id) ->
 
 
 plugin_deps() ->
-    [nkmedia, nkmedia_sip, nkmedia_verto, nkmedia_janus_proto].
+    [nkmedia, nkmedia_sip, nkmedia_verto, nkmedia_janus_proto, nkmedia_kurento].
 
 
 plugin_start(Config, #{name:=Name}) ->

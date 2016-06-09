@@ -94,7 +94,7 @@ connect(#{name:=Name, rel:=Rel, host:=Host, base:=Base, pass:=Pass}=Config) ->
 		not_found ->
 			case connect_fs(Host, Base, Pass, 10) of
 				ok ->
-					add_child(Config);
+					nkmedia_sup:start_child(?MODULE, Config);
 				error ->
 					{error, no_connection}
 			end;
@@ -106,31 +106,6 @@ connect(#{name:=Name, rel:=Rel, host:=Host, base:=Base, pass:=Pass}=Config) ->
 					{error, incompatible_version}
 			end
 	end.
-
-
-%% @private
-add_child(#{name:=Name}=Config) ->
-    ChildId = {?MODULE, Name},
-	Spec = {
-        ChildId,
-        {?MODULE, start_link, [Config]},
-        transient,
-        5000,
-        worker,
-        [?MODULE]
-    },
-	case supervisor:start_child(nkmedia_sup, Spec) of
-        {ok, Pid} -> 
-            {ok, Pid};
-        {error, already_present} ->
-            ok = supervisor:delete_child(nmedia_sup, ChildId),
-            add_child(Config);
-        {error, {already_started, Pid}} -> 
-            {ok, Pid};
-        {error, Error} -> 
-            {error, Error}
-    end.
-
 
 
 
