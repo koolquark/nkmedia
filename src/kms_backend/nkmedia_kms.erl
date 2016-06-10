@@ -23,29 +23,14 @@
 -module(nkmedia_kms).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/0, start/1, stop/1, stop_all/0]).
--export_type([config/0, status/0]).
+-export_type([id/0]).
 
 
 %% ===================================================================
 %% Types
 %% ===================================================================
 
--type id() :: nkmedia_freeswitch_engine:id().
-
-
--type config() ::
-    #{
-        comp => binary(),
-        vsn => binary(),
-        rel => binary(),
-        base => inet:port_number(),
-        name => binary()
-    }.
-
-
--type status() ::
-	connecting | ready.
+-type id() :: nkmedia_fs_engine:id().
 
 
 
@@ -53,34 +38,4 @@
 %% ===================================================================
 %% Public functions
 %% ===================================================================
-
-%% @doc Starts a FREESWITCH instance
--spec start() ->
-    {ok, id()} | {error, term()}.
-
-start() ->
-    start(#{}).
-
-
-%% @doc Starts a FREESWITCH instance
--spec start(config()) ->
-    {ok, id()} | {error, term()}.
-
-start(Config) ->
-	nkmedia_kms_docker:start(Config).
-
-
-%% @doc Stops a FREESWITCH instance
--spec stop(id()) ->
-    ok | {error, term()}.
-
-stop(Id) ->    
-	nkmedia_kms_docker:stop(Id).
-
-
-%% @doc
-stop_all() ->
-	nkmedia_kms_docker:stop_all().
-
-
 

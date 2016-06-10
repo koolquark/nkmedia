@@ -49,7 +49,7 @@ start(Service) ->
         Config = nkservice_srv:get_item(SrvId, config_nkmedia_kms),
         BasePort = crypto:rand_uniform(32768, 65535),
         Pass = nklib_util:luid(),
-        Image = nkmedia_kms_build:run_image_name(Config),
+        Image = nkmedia_kms_build:run_name(Config),
         KmsIp = nklib_util:to_host(nkmedia_app:get(docker_ip)),
         Name = list_to_binary([
             "nk_kms_", 
@@ -168,10 +168,13 @@ notify(MonId, start, Name, Data) ->
             image := Image
         } ->
             case binary:split(Image, <<"/">>) of
-                [_Comp, <<"nk_kurento_run:", Rel/binary>>] -> 
+                [Comp, <<"nk_kurento:", Tag/binary>>] -> 
+                    [Vsn, Rel] = binary:split(Tag, <<"-">>),
                     Config = #{
-                        name => Name, 
                         srv_id => nklib_util:to_atom(SrvId),
+                        name => Name, 
+                        comp => Comp,
+                        vsn => Vsn,
                         rel => Rel, 
                         host => Host, 
                         base => nklib_util:to_integer(Base)
@@ -181,7 +184,7 @@ notify(MonId, start, Name, Data) ->
                     lager:warning("Started unrecognized kurento")
             end;
         _ ->
-            lager:warning("Started unrecognized kurento: ~p")
+            lager:warning("Started unrecognized kurento")
     end;
 
 notify(MonId, stop, Name, Data) ->
@@ -189,7 +192,6 @@ notify(MonId, stop, Name, Data) ->
         #{
             name := Name,
             labels := #{<<"nkmedia">> := <<"kurento">>}
-            % env := #{<<"NK_KMS_IP">> := Host}
         } ->
             remove_kms(MonId, Name);
         _ ->

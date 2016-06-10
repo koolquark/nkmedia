@@ -22,14 +22,17 @@
 -module(nkmedia_kms_build).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([build_base_image/0, build_base_image/1]).
--export([remove_base_image/0, remove_base_image/1]).
--export([build_run_image/0, build_run_image/1]).
--export([remove_run_image/0, remove_run_image/1]).
--export([run_image_name/1]).
--export([defaults/1]).
+-export([build_base/0, build_base/1, remove_base/0, remove_base/1]).
+-export([build_run/0, build_run/1, remove_run/0, remove_run/1]).
+-export([run_name/1, defaults/1]).
 
 -include("nkmedia.hrl").
+
+-define(KMS_COMP, <<"netcomposer">>).
+-define(KMS_VSN, <<"6.5.0.20160530172436.trusty">>).
+-define(KMS_REL, <<"r01">>).
+
+
 
 %% ===================================================================
 %% Public
@@ -37,26 +40,26 @@
         
 
 %% @doc Builds base image (netcomposer/nk_kurento_base:v1.6.5-r01)
-build_base_image() ->
-    build_base_image(#{}).
+build_base() ->
+    build_base(#{}).
 
 
 %% @doc 
-build_base_image(Config) ->
-    Name = base_image_name(Config),
+build_base(Config) ->
+    Name = base_name(Config),
     #{vsn:=Vsn} = defaults(Config),
-    Tar = nkdocker_util:make_tar([{"Dockerfile", base_image_dockerfile(Vsn)}]),
+    Tar = nkdocker_util:make_tar([{"Dockerfile", base_dockerfile(Vsn)}]),
     nkdocker_util:build(Name, Tar).
 
 
 %% @doc
-remove_base_image() ->
-    remove_base_image(#{}).
+remove_base() ->
+    remove_base(#{}).
 
 
 %% @doc 
-remove_base_image(Config) ->
-    Name = base_image_name(Config),
+remove_base(Config) ->
+    Name = base_name(Config),
     case nkdocker:start_link() of
         {ok, Pid} ->
             Res = case nkdocker:rmi(Pid, Name, #{force=>true}) of
@@ -72,29 +75,29 @@ remove_base_image(Config) ->
 
 
 %% @doc
-build_run_image() ->
-    build_run_image(#{}).
+build_run() ->
+    build_run(#{}).
 
 
-%% @doc Builds run image (netcomposer/nk_kurento_run:...)
-build_run_image(Config) ->
-    Name = run_image_name(Config),
+%% @doc Builds run image (netcomposer/nk_kurento:...)
+build_run(Config) ->
+    Name = run_name(Config),
     Tar = nkdocker_util:make_tar([
-        {"Dockerfile", run_image_dockerfile(Config)},
-        {"start.sh", run_image_start()}
+        {"Dockerfile", run_dockerfile(Config)},
+        {"start.sh", run_start()}
     ]),
     nkdocker_util:build(Name, Tar).
 
 
 %% @doc
-remove_run_image() ->
-    remove_run_image(#{}).
+remove_run() ->
+    remove_run(#{}).
 
 
 %% @doc 
-remove_run_image(Config) ->
+remove_run(Config) ->
     Config2 = defaults(Config),
-    Name = run_image_name(Config2),
+    Name = run_name(Config2),
     case nkdocker:start_link() of
         {ok, Pid} ->
             Res = case nkdocker:rmi(Pid, Name, #{force=>true}) of
@@ -112,9 +115,9 @@ remove_run_image(Config) ->
 %% @private
 defaults(Config) ->
     Defs = #{
-        comp => <<"netcomposer">>,
-        vsn => <<"6.5.0.20160530172436.trusty">>,        
-        rel => <<"r01">>
+        comp => ?KMS_COMP,
+        vsn => ?KMS_VSN,        
+        rel => ?KMS_REL
     },
     maps:merge(Defs, Config).
 
@@ -126,14 +129,14 @@ defaults(Config) ->
 
 
 %% @private
-base_image_name(Config) ->
+base_name(Config) ->
     Config2 = defaults(Config),
     #{comp:=Comp, vsn:=Vsn, rel:=Rel} = Config2,
     list_to_binary([Comp, "/nk_kurento_base:", Vsn, "-", Rel]).
 
 
 %% @private
-base_image_dockerfile(Vsn) -> 
+base_dockerfile(Vsn) -> 
 <<"
 FROM ubuntu:14.04
 RUN apt-get update && apt-get install -y wget vim nano telnet && \\
@@ -147,27 +150,27 @@ RUN apt-get update && apt-get install -y wget vim nano telnet && \\
 
 
 %% ===================================================================
-%% Instance build files (Comp/nk_kurento_run:vXXX-rXXX)
+%% Instance build files (Comp/nk_kurento:vXXX-rXXX)
 %% ===================================================================
 
 
 %% @private
-run_image_name(Config) -> 
+run_name(Config) -> 
     Config2 = defaults(Config),
     #{comp:=Comp, vsn:=Vsn, rel:=Rel} = Config2,
-    list_to_binary([Comp, "/nk_kurento_run:", Vsn, "-", Rel]).
+    list_to_binary([Comp, "/nk_kurento:", Vsn, "-", Rel]).
 
 
-run_image_dockerfile(Config) ->
+run_dockerfile(Config) ->
     list_to_binary([
-"FROM ", base_image_name(Config), "\n"
+"FROM ", base_name(Config), "\n"
 "WORKDIR /root\n"
 "ADD start.sh /usr/local/bin\n"
 "ENTRYPOINT [\"sh\", \"/usr/local/bin/start.sh\"]\n"
 ]).
 
 
-run_image_start() ->
+run_start() ->
 <<"
 #!/bin/bash
 set -e

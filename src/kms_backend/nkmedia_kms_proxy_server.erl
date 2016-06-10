@@ -83,7 +83,7 @@ default_port(wss) -> 8002.
     {ok, #state{}}.
 
 conn_init(NkPort) ->
-    {ok, SrvId, _} = nkpacket:get_user(NkPort),
+    {ok, {_, SrvId}, _} = nkpacket:get_user(NkPort),
     {ok, Remote} = nkpacket:get_remote_bin(NkPort),
     State = #state{srv_id=SrvId, remote=Remote},
     ?LLOG(notice, "new connection (~p)", [self()], State),

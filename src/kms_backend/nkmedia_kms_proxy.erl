@@ -102,7 +102,7 @@ nkmedia_kms_proxy_init(_NkPort, State) ->
     {ok, [nkmedia_kms_engine:id()], state()}.
 
 nkmedia_kms_proxy_find_kms(SrvId, State) ->
-    {ok, List} = nkmedia_kms_engine:get_all(SrvId),
+    List = [Name || {Name, _} <- nkmedia_kms_engine:get_all(SrvId)],
     {ok, List, State}.
 
 

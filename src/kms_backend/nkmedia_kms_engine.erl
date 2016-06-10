@@ -47,6 +47,8 @@
 
 -type config() :: nkmedia:engine_config().
 
+-type status() :: connecting | ready.
+
 
 %% ===================================================================
 %% Public functions
@@ -56,7 +58,7 @@
 -spec connect(config()) ->
 	{ok, pid()} | {error, term()}.
 
-connect(#{name:=Name, rel:=Rel, host:=Host, base:=Base}=Config) ->
+connect(#{name:=Name, host:=Host, base:=Base}=Config) ->
 	case find(Name) of
 		not_found ->
 			case connect_kms(Host, Base, 10) of
@@ -66,8 +68,9 @@ connect(#{name:=Name, rel:=Rel, host:=Host, base:=Base}=Config) ->
 					{error, no_connection}
 			end;
 		{ok, _Status, KmsPid, _ConnPid} ->
+			#{vsn:=Vsn, rel:=Rel} = Config,
 			case get_config(KmsPid) of
-				{ok, #{rel:=Rel}} ->
+				{ok, #{vsn:=Vsn, rel:=Rel}} ->
 					{error, {already_started, KmsPid}};
 				_ ->
 					{error, {incompatible_version}}
@@ -112,7 +115,7 @@ get_config(Id) ->
 	[{nkservice:id(), id(), pid()}].
 
 get_all() ->
-	nklib_proc:values(?MODULE).
+	[{SrvId, Id, Pid} || {{SrvId, Id}, Pid}<- nklib_proc:values(?MODULE)].
 
 
 %% @doc
@@ -159,7 +162,7 @@ start_link(Config) ->
 -record(state, {
 	id :: id(),
 	config :: config(),
-	status :: nkmedia_fs:status(),
+	status :: status(),
 	conn :: pid()
 }).
 
@@ -284,7 +287,7 @@ connect_kms(Host, Base, Tries) ->
 			gen_tcp:close(Socket),
 			ok;
 		{error, _} ->
-			lager:info("Waiting for Kms at ~s to start (~p) ...", [Host, Tries]),
+			lager:info("Waiting for KMS at ~s to start (~p) ...", [Host, Tries]),
 			timer:sleep(1000),
 			connect_kms(Host2, Base, Tries-1)
 	end.
