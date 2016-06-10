@@ -52,7 +52,7 @@ start() ->
         plugins => [?MODULE],
         webserver => "https:all:8081",
         verto_listen => "verto:all:8082",
-        % verto_listen => "verto_proxy:all:8082",
+        % verto_proxy => "verto_proxy:all:8082",
         janus_listen => "janus:all:8989, janus_proxy:all:8990",
         % janus_listen => "janus:all:8989",
         kurento_proxy => "kms:all:8433",
@@ -125,7 +125,7 @@ play2(Id) ->
 
 
 plugin_deps() ->
-    [nkmedia, nkmedia_sip, nkmedia_verto, nkmedia_fs, 
+    [nkmedia, nkmedia_sip, nkmedia_verto, nkmedia_fs, nkmedia_fs_verto_proxy,
      nkmedia_janus_proto, nkmedia_kms, nkmedia_kms_proxy].
 
 

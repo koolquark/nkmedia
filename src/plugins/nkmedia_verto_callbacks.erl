@@ -58,7 +58,6 @@ plugin_deps() ->
 
 plugin_syntax() ->
     nkpacket:register_protocol(verto, nkmedia_verto),
-    nkpacket:register_protocol(verto_proxy, nkmedia_fs_verto_proxy_server),
     #{
         verto_listen => fun parse_listen/3
     }.
@@ -299,7 +298,7 @@ parse_listen(_Key, [{[{_, _, _, _}|_], Opts}|_]=Multi, _Ctx) when is_map(Opts) -
     {ok, Multi};
 
 parse_listen(verto_listen, Url, _Ctx) ->
-    Opts = #{valid_schemes=>[verto, verto_proxy], resolve_type=>listen},
+    Opts = #{valid_schemes=>[verto], resolve_type=>listen},
     case nkpacket:multi_resolve(Url, Opts) of
         {ok, List} -> {ok, List};
         _ -> error
