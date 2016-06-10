@@ -146,7 +146,7 @@ stop_all() ->
     {ok, pid()} | {error, term()}.
 
 get_docker_pid() ->
-    DockerMonId = nkmedia_app:get(docker_fs_mon_id),
+    DockerMonId = nkmedia_app:get(docker_kms_mon_id),
     nkdocker_monitor:get_docker(DockerMonId).
 
 

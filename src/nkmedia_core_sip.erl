@@ -117,7 +117,7 @@ sip_invite(Req, Call) ->
             {ok, Body} = nksip_request:body(Req),
             SDP = nksip_sdp:unparse(Body),
             case 
-                nkmedia_janus_session:sip_offer(SessId, Handle, Dialog, #{sdp=>SDP})
+                nkmedia_janus_op:sip_offer(SessId, Handle, Dialog, #{sdp=>SDP})
             of
                 ok ->
                     noreply;
@@ -169,7 +169,7 @@ sip_register(Req, _Call) ->
             case nksip_request:meta(contacts, Req) of
                 {ok, [Contact]} ->
                     case catch 
-                        nkmedia_janus_session:sip_registered(Id, Contact) 
+                        nkmedia_janus_op:sip_registered(Id, Contact) 
                     of
                         true -> 
                             lager:info("Core SIP Janus reg: ~s", [Id]),

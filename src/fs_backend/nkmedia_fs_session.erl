@@ -26,7 +26,7 @@
 -export([fs_event/3, do_fs_event/3]).
 -export([updated_answer/3, hangup/3]).
 
--export_type([config/0, offer_op/0, answer_op/0, update/0, op_opts/0]).
+-export_type([config/0, offer_op/0, answer_op/0, op_opts/0]).
 
 -define(LLOG(Type, Txt, Args, Session),
     lager:Type("NkMEDIA FS Session ~s "++Txt, 
@@ -46,8 +46,8 @@
 -type config() :: 
     nkmedia_session:config() |
     #{
-}.
-
+    }.
+    
 -type offer_op() ::
     nkmedia_session:offer_op() |
     park.
@@ -61,13 +61,6 @@
     join    |
     call.
 
-
--type update() ::
-    nkmedia_session:update() |
-    echo    |
-    mcu     |
-    join    |
-    call.
 
 -type op_opts() ::  
     nkmedia_session:op_opts() |

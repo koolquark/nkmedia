@@ -191,7 +191,7 @@ conn_init(NkPort) ->
         pos = erlang:phash2(make_ref())
     },
     nklib_proc:put(?MODULE, <<>>),
-    lager:info("NkMEDIA Janus new connection (~s, ~p)", [Remote, self()]),
+    lager:info("NkMEDIA Janus Proto new connection (~s, ~p)", [Remote, self()]),
     {ok, State2} = handle(nkmedia_janus_init, [NkPort], State1),
     {ok, State2}.
 

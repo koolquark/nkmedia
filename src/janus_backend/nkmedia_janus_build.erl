@@ -22,13 +22,17 @@
 -module(nkmedia_janus_build).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([build_base_image/0, build_base_image/1]).
--export([remove_base_image/0, remove_base_image/1]).
--export([build_run_image/0, build_run_image/1]).
--export([remove_run_image/0, remove_run_image/1]).
--export([run_image_name/1]).
+-export([build_base/0, build_base/1, remove_base/0, remove_base/1]).
+-export([build_run/0, build_run/1, remove_run/0, remove_run/1]).
+-export([run_name/1]).
+-export([defaults/1]).
 
 -include("nkmedia.hrl").
+
+-define(JANUS_COMP, <<"netcomposer">>).
+-define(JANUS_VSN, <<"1c8871e">>).
+-define(JANUS_REL, <<"r01">>).
+
 
 %% ===================================================================
 %% Public
@@ -36,26 +40,26 @@
         
 
 %% @doc Builds base image (netcomposer/nk_janus_base:v1.6.5-r01)
-build_base_image() ->
-    build_base_image(#{}).
+build_base() ->
+    build_base(#{}).
 
 
 %% @doc 
-build_base_image(Config) ->
-    Name = base_image_name(Config),
-    #{vsn:=Vsn} = nkmedia_janus_docker:defaults(Config),
-    Tar = nkdocker_util:make_tar([{"Dockerfile", base_image_dockerfile(Vsn)}]),
+build_base(Config) ->
+    Name = base_name(Config),
+    #{vsn:=Vsn} = defaults(Config),
+    Tar = nkdocker_util:make_tar([{"Dockerfile", base_dockerfile(Vsn)}]),
     nkdocker_util:build(Name, Tar).
 
 
 %% @doc
-remove_base_image() ->
-    remove_base_image(#{}).
+remove_base() ->
+    remove_base(#{}).
 
 
 %% @doc 
-remove_base_image(Config) ->
-    Name = base_image_name(Config),
+remove_base(Config) ->
+    Name = base_name(Config),
     case nkdocker:start_link() of
         {ok, Pid} ->
             Res = case nkdocker:rmi(Pid, Name, #{force=>true}) of
@@ -71,30 +75,30 @@ remove_base_image(Config) ->
 
 
 %% @doc
-build_run_image() ->
-    build_run_image(#{}).
+build_run() ->
+    build_run(#{}).
 
 
-%% @doc Builds run image (netcomposer/nk_janus_run:v1.6.5-r01)
+%% @doc Builds run image (netcomposer/nk_janus:v1.6.5-r01)
 %% Environment variables:
-build_run_image(Config) ->
-    Name = run_image_name(Config),
+build_run(Config) ->
+    Name = run_name(Config),
     Tar = nkdocker_util:make_tar([
-        {"Dockerfile", run_image_dockerfile(Config)},
-        {"start.sh", run_image_start()}
+        {"Dockerfile", run_dockerfile(Config)},
+        {"start.sh", run_start()}
     ]),
     nkdocker_util:build(Name, Tar).
 
 
 %% @doc
-remove_run_image() ->
-    remove_run_image(#{}).
+remove_run() ->
+    remove_run(#{}).
 
 
 %% @doc 
-remove_run_image(Config) ->
-    Config2 = nkmedia_janus_docker:defaults(Config),
-    Name = run_image_name(Config2),
+remove_run(Config) ->
+    Config2 = defaults(Config),
+    Name = run_name(Config2),
     case nkdocker:start_link() of
         {ok, Pid} ->
             Res = case nkdocker:rmi(Pid, Name, #{force=>true}) of
@@ -107,6 +111,19 @@ remove_run_image(Config) ->
         {error, Error} ->
             {error, Error}
     end.
+
+
+
+%% @private
+defaults(Config) ->
+    Defs = #{
+        comp => ?JANUS_COMP,
+        vsn => ?JANUS_VSN,        
+        rel => ?JANUS_REL
+    },
+    maps:merge(Defs, Config).
+
+
 
 
 
@@ -116,8 +133,8 @@ remove_run_image(Config) ->
 
 
 %% @private
-base_image_name(Config) ->
-    Config2 = nkmedia_janus_docker:defaults(Config),
+base_name(Config) ->
+    Config2 = defaults(Config),
     #{comp:=Comp, vsn:=Vsn, rel:=Rel} = Config2,
     list_to_binary([Comp, "/nk_janus_base:", Vsn, "-", Rel]).
 
@@ -127,7 +144,7 @@ base_image_name(Config) ->
 
  
 %% @private
-base_image_dockerfile(Vsn) -> 
+base_dockerfile(Vsn) -> 
 <<"
 FROM ubuntu:xenial
 #ENV DEBIAN_FRONTEND noninteractive
@@ -183,7 +200,7 @@ WORKDIR /usr/local/
 
 
 % %% @private
-% base_image_dockerfile(Vsn) -> 
+% base_dockerfile(Vsn) -> 
 % <<"
 % FROM debian:jessie
 % ENV DEBIAN_FRONTEND noninteractive
@@ -230,21 +247,21 @@ WORKDIR /usr/local/
 % WORKDIR /usr/local/
 % ">>.
 %% ===================================================================
-%% Instance build files (Comp/nk_janus_run:vXXX-rXXX)
+%% Instance build files (Comp/nk_janus:vXXX-rXXX)
 %% ===================================================================
 
 
 %% @private
-run_image_name(Config) -> 
-    Config2 = nkmedia_janus_docker:defaults(Config),
+run_name(Config) -> 
+    Config2 = defaults(Config),
     #{comp:=Comp, vsn:=Vsn, rel:=Rel} = Config2,
-    list_to_binary([Comp, "/nk_janus_run:", Vsn, "-", Rel]).
+    list_to_binary([Comp, "/nk_janus:", Vsn, "-", Rel]).
 
 
 
-run_image_dockerfile(Config) ->
+run_dockerfile(Config) ->
     list_to_binary([
-"FROM ", base_image_name(Config), "\n"
+"FROM ", base_name(Config), "\n"
 "ADD start.sh /usr/local/bin/\n"
 "WORKDIR /usr/local/\n"
 "RUN mkdir /var/log/janus\n"
@@ -254,7 +271,7 @@ run_image_dockerfile(Config) ->
 
 
 %% @private
-run_image_start() ->
+run_start() ->
     Base = config_base(),
     Http = config_http(),
     WS = config_ws(),

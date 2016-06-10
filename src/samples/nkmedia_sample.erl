@@ -52,9 +52,9 @@ start() ->
         plugins => [?MODULE],
         webserver => "https:all:8081",
         verto_listen => "verto:all:8082",
-        % verto_proxy => "verto_proxy:all:8082",
-        janus_listen => "janus:all:8989, janus_proxy:all:8990",
-        % janus_listen => "janus:all:8989",
+        verto_proxy => "verto_proxy:all:8083",
+        janus_listen => "janus:all:8989", 
+        janus_proxy=> "janus_proxy:all:8990",
         kurento_proxy => "kms:all:8433",
         log_level => debug,
         nksip_trace => {console, all},
@@ -125,8 +125,12 @@ play2(Id) ->
 
 
 plugin_deps() ->
-    [nkmedia, nkmedia_sip, nkmedia_verto, nkmedia_fs, nkmedia_fs_verto_proxy,
-     nkmedia_janus_proto, nkmedia_kms, nkmedia_kms_proxy].
+    [
+        nkmedia_sip, 
+        nkmedia_verto, nkmedia_fs, nkmedia_fs_verto_proxy,
+        nkmedia_janus_proto, nkmedia_janus_proxy, nkmedia_janus,
+        nkmedia_kms, nkmedia_kms_proxy
+    ].
 
 
 plugin_syntax() ->
@@ -193,8 +197,8 @@ nkmedia_janus_call(SessId, Dest, Janus) ->
     case send_call(SessId, Dest) of
         ok ->
             {ok, Janus};
-        not_found ->
-            {rejected, "User Not Found", Janus} 
+        {error, Error} ->
+            {rejected, Error, Janus}
     end.
 
 
@@ -208,7 +212,7 @@ nkmedia_sip_call(SessId, Dest) ->
     case send_call(SessId, Dest) of
         ok ->
             ok;
-        not_found ->
+        {error, _} ->
             hangup
     end.
 
@@ -293,41 +297,14 @@ send_call(SessId, #{dest:=Dest}=Offer) ->
                 not_found ->
                     {error, <<"User Not Found">>}
             end;
-
-
-
         <<"j", Num/binary>> ->
-            _OfferOp = {proxy, #{offer=>Offer}},
-            {ok, _} = nkmedia_session:offer(SessId, sdp, #{offer=>Offer}),
             case find_user(Num) of
                 {ok, Dest2} ->
-                    Opts2 = #{backend=>p2p},
-                    ok = nkmedia_session:answer_async(SessId, {invite, Dest2}, Opts2);
+                    {ok, _} = nkmedia_session:offer(SessId, proxy, #{offer=>Offer}),
+                    ok = nkmedia_session:answer_async(SessId, invite, #{dest=>Dest2});
                 not_found ->
                     {error, <<"User Not Found">>}
             end;
-
-
-
-        % <<"f", Num/binary>> -> 
-        %     case find_user(Num) of
-        %         {ok, Dest} ->
-        %             Opts2 = #{backend=>},
-        %             ok = nkmedia_session:answer(SessId, {invite, Dest}, Opts2);
-        %         not_found ->
-        %             {rejected, <<"User Not Found">>}
-        %     end;
-        % <<"j", Num/binary>> ->
-
-        %     case find_user(Num) of
-        %         {ok, Dest} ->
-        %             Opts2 = #{backend=>p2p},
-        %             ok = nkmedia_session:answer(SessId, {invite, Dest}, Opts2);
-        %         not_found ->
-        %             {rejected, <<"User Not Found">>}
-        %     end;
-
-        %     ok = nkmedia_session:answer(SessId, {call, Num}, #{type=>proxy, record=>true, filename=>"/tmp/file1"});
         _ ->
             {error, <<"Unknown Destination">>}
     end.
@@ -338,7 +315,12 @@ find_user(User) ->
         [Pid|_] ->
             {ok, {nkmedia_verto, Pid}};
         [] ->
-            not_found
+            case nkmedia_janus_proto:find_user(User) of
+                [Pid|_] ->
+                    {ok, {nkmedia_janus_proto, Pid}};
+                [] ->
+                    not_found
+            end
     end.
 
 

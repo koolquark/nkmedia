@@ -125,10 +125,10 @@ nkmedia_session_peer_event(_SessId, _Type, _Event, Session) ->
 	{ringing, nkmedia:answer(), session()} | 
 	{answer, nkmedia:answer(), session()}  | 
 	{async, nkmedia:answer(), session()}   |
-	{hangup, nkmedia:hangup_reason(), session()}.
+	{rejected, nkmedia:hangup_reason(), session()}.
 
 nkmedia_session_invite(_SessId, _CallDest, _Offer, Session) ->
-	{hangup, <<"Unrecognized Destination">>, Session}.
+	{rejected, <<"Unrecognized Destination">>, Session}.
 
 
 %% @doc

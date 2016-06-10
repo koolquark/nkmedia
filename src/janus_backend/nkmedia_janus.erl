@@ -23,8 +23,7 @@
 -module(nkmedia_janus).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/0, start/1, stop/1, stop_all/0]).
--export_type([config/0]).
+-export_type([id/0]).
 
 
 %% ===================================================================
@@ -34,58 +33,11 @@
 -type id() :: nkmedia_janus_engine:id().
 
 
--type config() ::
-    #{
-        comp => binary(),
-        vsn => binary(),
-        rel => binary(),
-        base => inet:port_number(),
-        pass => binary(),
-        name => binary()
-    }.
 
 
 
 
 %% ===================================================================
 %% Public functions
-%% ===================================================================
-
-%% @doc Starts a JANUS instance
--spec start() ->
-    {ok, id()} | {error, term()}.
-
-start() ->
-    start(#{}).
-
-
-%% @doc Starts a JANUS instance
--spec start(config()) ->
-    {ok, id()} | {error, term()}.
-
-start(Config) ->
-	nkmedia_janus_docker:start(Config).
-
-
-%% @doc Stops a JANUS instance
--spec stop(id()) ->
-    ok | {error, term()}.
-
-stop(Id) ->    
-	nkmedia_janus_docker:stop(Id).
-
-
-%% @doc
-stop_all() ->
-	nkmedia_janus_docker:stop_all().
-
-
-
-
-
-
-
-%% ===================================================================
-%% Internal
 %% ===================================================================
 

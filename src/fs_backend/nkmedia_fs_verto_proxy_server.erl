@@ -169,15 +169,6 @@ conn_handle_cast(Msg, _NkPort, State) ->
 -spec conn_handle_info(term(), nkpacket:nkport(), #state{}) ->
     {ok, #state{}} | {stop, Reason::term(), #state{}}.
 
-conn_handle_info({send_reply, Event}, NkPort, State) ->
-    case nkpacket_connection:send(NkPort, Event) of
-        ok -> 
-            {ok, State};
-        {error, Error} -> 
-            ?LLOG(notice, "error sending event: ~p", [Error], State),
-            {stop, normal, State}
-    end;
-
 conn_handle_info({'DOWN', _Ref, process, Pid, Reason}, _NkPort, 
                  #state{proxy=Pid}=State) ->
     ?LLOG(notice, "stopped because server stopped (~p)", [Reason], State),

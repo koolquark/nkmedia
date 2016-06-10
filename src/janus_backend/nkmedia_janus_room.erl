@@ -80,7 +80,7 @@
 
 create(JanusId, Room, Config) ->
     Room2 = nklib_util:to_binary(Room),
-    case nkmedia_janus_session:create_room(JanusId, Room2, Config) of
+    case nkmedia_janus_op:create_room(JanusId, Room2, Config) of
         ok ->
             {ok, Pid} = gen_server:start(?MODULE, [JanusId, Room2, Config], []),
             {ok, Pid};
@@ -244,7 +244,7 @@ code_change(_OldVsn, State, _Extra) ->
     ok.
 
 terminate(_Reason, #state{janus_id=JanusId, room=Room}=State) ->    
-    case nkmedia_janus_session:destroy_room(JanusId, Room) of
+    case nkmedia_janus_op:destroy_room(JanusId, Room) of
         ok ->
             ?LLOG(notice, "stopping, destroying room", [], State);
         {error, Error} ->

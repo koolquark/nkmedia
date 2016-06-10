@@ -65,16 +65,13 @@ plugin_syntax() ->
 
 plugin_listen(Config, #{id:=SrvId}) ->
     % verto_listen will be already parsed
-    Listen1 = maps:get(verto_listen, Config, []),
-    % With the 'user' parameter we tell nkmedia_verto protocol
-    % to use the service callback module, so it will find
-    % nkmedia_verto_* funs there.
-    Opts1 = #{
+    Listen = maps:get(verto_listen, Config, []),
+    Opts = #{
         class => {nkmedia_verto, SrvId},
         % get_headers => [<<"user-agent">>],
         idle_timeout => ?VERTO_WS_TIMEOUT
     },                                  
-    [{Conns, maps:merge(ConnOpts, Opts1)} || {Conns, ConnOpts} <- Listen1].
+    [{Conns, maps:merge(ConnOpts, Opts)} || {Conns, ConnOpts} <- Listen].
 
 
 plugin_start(Config, #{name:=Name}) ->

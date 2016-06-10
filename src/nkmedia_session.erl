@@ -506,7 +506,8 @@ do_invite(Dest, Opts, From, #state{id=Id, session=Session, op_answer=invite}=Sta
             State3 = invite_link(Answer, Dest, Opts, From, State2),
             do_invite_reply({answer, Answer}, State3);
         {rejected, Reason, State2} ->
-            do_invite_reply({rejected, Reason}, State2);
+            State3 = invite_link(#{}, Dest, Opts, From, State2),
+            do_invite_reply({rejected, Reason}, State3);
         {async, Answer, State2} ->
             ?LLOG(info, "invite delayed", [], State2),
             State3 = invite_link(Answer, Dest, Opts, From, State2),

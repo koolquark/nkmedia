@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([start/1, stop/1, stop_all/0]).
--export([defaults/1, notify/4]).
+-export([notify/4]).
 
 -include("nkmedia.hrl").
 
@@ -40,54 +40,64 @@
 %% @doc Starts a JANUS instance
 %% BASE+0: WS port
 %% BASE+1: WS admin port
--spec start(nkmedia_janus:config()) ->
+-spec start(nkservice:name()) ->
     {ok, Name::binary()} | {error, term()}.
 
-start(Config) ->
-    Config2 = defaults(Config),
-    Image = nkmedia_janus_build:run_image_name(Config2),
-    JanusIp  = nklib_util:to_host(nkmedia_app:get(docker_ip)),
-    #{base:=Base, pass:=Pass} = Config2,
-    Name = list_to_binary(["nk_janus_", nklib_util:to_binary(Base)]),
-    LogDir = <<(nkmedia_app:get(log_dir))/binary, $/, Name/binary>>,
-    ok = filelib:ensure_dir(<<LogDir/binary, "dummy">>),
-    _ExtIp = nklib_util:to_host(nkpacket_app:get(ext_ip)),
-    #{pass:=Pass} = Config2,
-    Env = [
-        {"NK_JANUS_IP", JanusIp},             
-        {"NK_EXT_IP", _ExtIp},  
-        {"NK_PASS", nklib_util:to_binary(Pass)},
-        {"NK_BASE", nklib_util:to_binary(Base)}
-    ],
-    Labels = [
-        {"nkmedia", "janus"}
-    ],
-    % Cmds = ["bash"],
-    DockerOpts = #{
-        name => Name,
-        env => Env,
-        net => host,
-        interactive => true,
-        labels => Labels,
-        volumes => [{LogDir, "/var/log/janus"}]
-    },
-    case get_docker_pid() of
-        {ok, DockerPid} ->
-            nkdocker:rm(DockerPid, Name),
-            case nkdocker:create(DockerPid, Image, DockerOpts) of
-                {ok, _} -> 
-                    lager:info("NkMEDIA Janus Docker: starting instance ~s", [Name]),
-                    case nkdocker:start(DockerPid, Name) of
-                        ok ->
-                            {ok, Name};
-                        {error, Error} ->
-                            {error, Error}
-                    end;
-                {error, Error} -> 
-                    {error, Error}
-            end;
-        {error, Error} ->
-            {error, Error}
+start(Service) ->
+    try
+        SrvId = case nkservice_srv:get_srv_id(Service) of
+            {ok, SrvId0} -> SrvId0;
+            not_found -> throw(unknown_service)
+        end,
+        Config = nkservice_srv:get_item(SrvId, config_nkmedia_janus),
+        BasePort = crypto:rand_uniform(32768, 65535),
+        Pass = nklib_util:luid(),
+        Image = nkmedia_janus_build:run_name(Config),
+        JanusIp  = nklib_util:to_host(nkmedia_app:get(docker_ip)),
+            Name = list_to_binary([
+            "nk_janus_", 
+            nklib_util:to_binary(SrvId), "_",
+            nklib_util:to_binary(BasePort)
+        ]),
+        LogDir = <<(nkmedia_app:get(log_dir))/binary, $/, Name/binary>>,
+        ExtIp = nklib_util:to_host(nkpacket_app:get(ext_ip)),
+        Env = [
+            {"NK_JANUS_IP", JanusIp},             
+            {"NK_EXT_IP", ExtIp},  
+            {"NK_PASS", nklib_util:to_binary(Pass)},
+            {"NK_BASE", nklib_util:to_binary(BasePort)},
+            {"NK_SRV_ID", nklib_util:to_binary(SrvId)}
+        ],
+        Labels = [
+            {"nkmedia", "janus"}
+        ],
+        % Cmds = ["bash"],
+        DockerOpts = #{
+            name => Name,
+            env => Env,
+            net => host,
+            interactive => true,
+            labels => Labels,
+            volumes => [{LogDir, "/var/log/janus"}]
+        },
+        DockerPid = case get_docker_pid() of
+            {ok, DockerPid0} -> DockerPid0;
+            {error, Error1} -> throw(Error1)
+        end,
+        nkdocker:rm(DockerPid, Name),
+        case nkdocker:create(DockerPid, Image, DockerOpts) of
+            {ok, _} -> ok;
+            {error, Error2} -> throw(Error2)
+        end,
+        lager:info("NkMEDIA JANUS Docker: starting instance ~s", [Name]),
+        case nkdocker:start(DockerPid, Name) of
+            ok ->
+                {ok, Name};
+            {error, Error3} ->
+                {error, Error3}
+        end
+    catch
+        throw:Throw -> {error, Throw}
     end.
 
 
@@ -140,26 +150,11 @@ stop_all() ->
     {ok, pid()} | {error, term()}.
 
 get_docker_pid() ->
-    DockerMonId = nkmedia_app:get(docker_mon_id),
+    DockerMonId = nkmedia_app:get(docker_janus_mon_id),
     nkdocker_monitor:get_docker(DockerMonId).
 
 
-
 %% @private
--spec defaults(map()) ->
-    nkmedia_janus:config().
-
-defaults(Config) ->
-    Defs = #{
-        comp => nkmedia_app:get(docker_company), 
-        vsn => nkmedia_app:get(janus_version), 
-        rel => nkmedia_app:get(janus_release),
-        base => ?JANUS_DEF_BASE,
-        pass => nklib_util:luid()
-    },
-    maps:merge(Defs, Config).
-
-
 notify(MonId, ping, Name, Data) ->
     notify(MonId, start, Name, Data);
 
@@ -171,14 +166,19 @@ notify(MonId, start, Name, Data) ->
             env := #{
                 <<"NK_JANUS_IP">> := Host, 
                 <<"NK_BASE">> := Base, 
-                <<"NK_PASS">> := Pass
+                <<"NK_PASS">> := Pass,
+                <<"NK_SRV_ID">> := SrvId
             },
             image := Image
         } ->
             case binary:split(Image, <<"/">>) of
-                [_Comp, <<"nk_janus_run:", Rel/binary>>] -> 
+                [Comp, <<"nk_janus:", Tag/binary>>] -> 
+                    [Vsn, Rel] = binary:split(Tag, <<"-">>),
                     Config = #{
+                        srv_id => nklib_util:to_atom(SrvId),
                         name => Name, 
+                        comp => Comp,
+                        vsn => Vsn,
                         rel => Rel, 
                         host => Host, 
                         base => nklib_util:to_integer(Base),
@@ -186,10 +186,10 @@ notify(MonId, start, Name, Data) ->
                     },
                     connect_janus(MonId, Config);
                 _ ->
-                    lager:warning("Started unrecognized nk_janus")
+                    lager:warning("Started unrecognized janus")
             end;
         _ ->
-            lager:warning("Started unrecognized nk_janus")
+            lager:warning("Started unrecognized janus")
     end;
 
 notify(MonId, stop, Name, Data) ->
@@ -197,15 +197,14 @@ notify(MonId, stop, Name, Data) ->
         #{
             name := Name,
             labels := #{<<"nkmedia">> := <<"janus">>}
-            % env := #{<<"NK_FS_IP">> := Host}
         } ->
             remove_janus(MonId, Name);
         _ ->
             ok
     end;
 
-notify(_MonId, stats, _Name, _Stats) ->
-    ok.
+notify(_MonId, stats, Name, Stats) ->
+    nkmedia_janus_engine:stats(Name, Stats).
 
 
 
@@ -218,7 +217,6 @@ notify(_MonId, stats, _Name, _Stats) ->
 connect_janus(MonId, #{name:=Name}=Config) ->
     spawn(
         fun() -> 
-            % timer:sleep(2000),
             case nkmedia_janus_engine:connect(Config) of
                 {ok, _Pid} -> 
                     ok = nkdocker_monitor:start_stats(MonId, Name);

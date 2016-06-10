@@ -183,7 +183,7 @@ find(Id) ->
 
 %% @private
 stop_all() ->
-	lists:foreach(fun({_, Pid}) -> stop(Pid) end, get_all()).
+	lists:foreach(fun({_, _, Pid}) -> stop(Pid) end, get_all()).
 
 
 %% @private 
