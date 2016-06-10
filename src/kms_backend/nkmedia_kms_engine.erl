@@ -24,8 +24,7 @@
 -behaviour(gen_server).
 
 -export([connect/1, stop/1, find/1]).
--export([stats/2, get_config/1, get_conn/1]).
--export([get_all/0, stop_all/0]).
+-export([stats/2, get_config/1, get_all/0, get_all/1, stop_all/0]).
 -export([start_link/1, init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
 -export_type([id/0, config/0]).
@@ -33,7 +32,7 @@
 -define(CONNECT_RETRY, 5000).
 
 -define(LLOG(Type, Txt, Args, State),
-	lager:Type("NkMEDIA Kms Engine '~s' "++Txt, [State#state.name|Args])).
+	lager:Type("NkMEDIA KMS Engine '~s' "++Txt, [State#state.id|Args])).
 
 -define(CALL_TIME, 30000).
 -define(KEEPALIVE, 30000).
@@ -44,15 +43,9 @@
 %% Types
 %% ===================================================================
 
--type id() :: Name:: binary().
+-type id() :: nkmedia:engine_id().
 
--type config() ::
-	#{
-		name => binary(),
-		rel => binary(),
-		host => binary(),
-		base => integer()
-	}.
+-type config() :: nkmedia:engine_config().
 
 
 %% ===================================================================
@@ -114,25 +107,20 @@ get_config(Id) ->
 	end.
 
 
-%% @private
--spec get_conn(id()) ->
-	{ok, pid()} | {error, term()}.
-
-get_conn(Id) ->
-	case find(Id) of
-		{ok, ready, _KmsPid, ConnPid} ->
-			{ok, ConnPid};
-		_ ->
-			{error, no_connection}
-	end.
-
-
 %% @doc
 -spec get_all() ->
-	[{Name::binary(), pid()}].
+	[{nkservice:id(), id(), pid()}].
 
 get_all() ->
 	nklib_proc:values(?MODULE).
+
+
+%% @doc
+-spec get_all(nkservice:id()) ->
+	[{id(), pid()}].
+
+get_all(SrvId) ->
+	[{Id, Pid} || {S, Id, Pid} <- get_all(), S==SrvId].
 
 
 %% @private
@@ -169,10 +157,10 @@ start_link(Config) ->
 
 
 -record(state, {
+	id :: id(),
 	config :: config(),
-	name :: binary(),
 	status :: nkmedia_fs:status(),
-	kms_conn :: pid()
+	conn :: pid()
 }).
 
 
@@ -181,11 +169,10 @@ start_link(Config) ->
     {ok, tuple()} | {ok, tuple(), timeout()|hibernate} |
     {stop, term()} | ignore.
 
-init([#{name:=Name}=Config]) ->
-	State = #state{config=Config, name=Name},
-	true = nklib_proc:reg({?MODULE, Name}, {connecting, undefined}),
-	nklib_proc:put({?MODULE, self()}, {connecting, undefined}),
-	nklib_proc:put(?MODULE, Name),
+init([#{name:=Id, srv_id:=SrvId}=Config]) ->
+	State = #state{id=Id, config=Config},
+	nklib_proc:put(?MODULE, {SrvId, Id}),
+	true = nklib_proc:reg({?MODULE, Id}, {connecting, undefined}),
 	self() ! connect,
 	?LLOG(info, "started (~p)", [self()], State),
 	{ok, update_status(ready, State)}.
@@ -226,27 +213,27 @@ handle_cast(Msg, State) ->
 -spec handle_info(term(), #state{}) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
-handle_info(connect, #state{kms_conn=Pid}=State) when is_pid(Pid) ->
+handle_info(connect, #state{conn=Pid}=State) when is_pid(Pid) ->
 	true = is_process_alive(Pid),
 	{noreply, State};
 
-handle_info(connect, #state{name=Name, config=Config}=State) ->
-	State2 = update_status(connecting, State#state{kms_conn=undefined}),
-	case nkmedia_kms_client:start(Name, Config) of
+handle_info(connect, #state{id=Id, config=Config}=State) ->
+	State2 = update_status(connecting, State#state{conn=undefined}),
+	case nkmedia_kms_client:start(Id, Config) of
 		{ok, Pid, Info} ->
 			print_info(Info, State),
 			monitor(process, Pid),
-			State3 = State2#state{kms_conn = Pid},
+			State3 = State2#state{conn = Pid},
 			{noreply, update_status(ready, State3)};
 		{error, Error} ->
 			?LLOG(warning, "could not connect: ~p", [Error], State2),
 			{stop, normal, State2}
 	end;
 
-handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{kms_conn=Pid}=State) ->
+handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{conn=Pid}=State) ->
 	?LLOG(warning, "connection event down", [], State),
 	erlang:send_after(?CONNECT_RETRY, self(), connect),
-	{noreply, update_status(connecting, State#state{kms_conn=undefined})};
+	{noreply, update_status(connecting, State#state{conn=undefined})};
 
 handle_info(Info, State) -> 
     lager:warning("Module ~p received unexpected info: ~p (~p)", [?MODULE, Info, State]),
@@ -279,8 +266,8 @@ terminate(Reason, State) ->
 update_status(Status, #state{status=Status}=State) ->
 	State;
 
-update_status(NewStatus, #state{name=Name, status=OldStatus, kms_conn=Pid}=State) ->
-	nklib_proc:put({?MODULE, Name}, {NewStatus, Pid}),
+update_status(NewStatus, #state{id=Id, status=OldStatus, conn=Pid}=State) ->
+	nklib_proc:put({?MODULE, Id}, {NewStatus, Pid}),
 	nklib_proc:put({?MODULE, self()}, {NewStatus, Pid}),
 	?LLOG(info, "status ~p -> ~p", [OldStatus, NewStatus], State),
 	State#state{status=NewStatus}.

@@ -65,12 +65,12 @@ plugin_listen(Config, #{id:=SrvId}) ->
 
 
 plugin_start(Config, #{name:=Name}) ->
-    lager:info("Plugin NkMEDIA Janus Demo (~s) starting", [Name]),
+    lager:info("Plugin NkMEDIA JANUS Demo (~s) starting", [Name]),
     {ok, Config}.
 
 
 plugin_stop(Config, #{name:=Name}) ->
-    lager:info("Plugin NkMEDIA Janus Demo (~p) stopping", [Name]),
+    lager:info("Plugin NkMEDIA JANUS Demo (~p) stopping", [Name]),
     {ok, Config}.
 
 

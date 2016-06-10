@@ -22,7 +22,7 @@
 -module(nkmedia_fs_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([plugin_deps/0, plugin_syntax/0, plugin_defaults/0, plugin_config/2,
+-export([plugin_deps/0, plugin_syntax/0, plugin_config/2,
          plugin_start/2, plugin_stop/2]).
 -export([nkmedia_fs_get_mediaserver/1]).
 -export([nkmedia_session_init/2, nkmedia_session_terminate/2]).
@@ -56,22 +56,15 @@ plugin_deps() ->
 
 plugin_syntax() ->
     #{
-        docker_company => binary,
-        fs_version => binary,
-        fs_release => binary
-    }.
-
-
-plugin_defaults() ->
-    #{
-        docker_company => <<"netcomposer">>,
-        fs_version => <<"v1.6.8">>,
-        fs_release => <<"r01">>
+        fs_docker_image => fun parse_image/3
     }.
 
 
 plugin_config(Config, _Service) ->
-    Cache = maps:with([docker_company, fs_version, fs_release], Config),
+    Cache = case Config of
+        #{fs_docker_image:=FsConfig} -> FsConfig;
+        _ -> nkmedia_fs_build:defaults(#{})
+    end,
     {ok, Config, Cache}.
 
 
@@ -253,9 +246,26 @@ session(State, Session) ->
     Session#{nkmedia_fs:=State}.
 
 
+
+%% @private
+parse_image(_Key, Map, _Ctx) when is_map(Map) ->
+    {ok, Map};
+
+parse_image(_, Image, _Ctx) ->
+    case binary:split(Image, <<"/">>) of
+        [Comp, <<"nk_freeswitch:", Tag/binary>>] -> 
+            [Vsn, Rel] = binary:split(Tag, <<"-">>),
+            Def = #{comp=>Comp, vsn=>Vsn, rel=>Rel},
+            {ok, nkmedia_fs_build:defaults(Def)};
+        _ ->
+            error
+    end.
+
+
 %% @private
 find_images(MonId) ->
     {ok, Docker} = nkdocker_monitor:get_docker(MonId),
     {ok, Images} = nkdocker:images(Docker),
     Tags = lists:flatten([T || #{<<"RepoTags">>:=T} <- Images]),
-    lists:filter(fun(Img) -> length(binary:split(Img, <<"/nk_fs_">>))==2 end, Tags).
+    lists:filter(
+        fun(Img) -> length(binary:split(Img, <<"/nk_freeswitch_">>))==2 end, Tags).

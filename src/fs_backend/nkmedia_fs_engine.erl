@@ -67,17 +67,12 @@
 %% Types
 %% ===================================================================
 
--type id() :: binary().
+-type id() :: nkmedia:engine_id().
 
--type config() ::
-	#{
-		name => binary(),
-		srv_id => nkservice:id(),
-		rel => binary(),
-		host => binary(),
-		pass => binary(),
-		base => integer()
-	}.
+-type config() :: nkmedia:engine_config().
+
+-type status() :: connecting | ready.
+
 
 
 
@@ -89,7 +84,7 @@
 -spec connect(config()) ->
 	{ok, pid()} | {error, term()}.
 
-connect(#{name:=Name, rel:=Rel, host:=Host, base:=Base, pass:=Pass}=Config) ->
+connect(#{name:=Name, host:=Host, base:=Base, pass:=Pass}=Config) ->
 	case find(Name) of
 		not_found ->
 			case connect_fs(Host, Base, Pass, 10) of
@@ -99,9 +94,10 @@ connect(#{name:=Name, rel:=Rel, host:=Host, base:=Base, pass:=Pass}=Config) ->
 					{error, no_connection}
 			end;
 		{ok, _Status, FsPid, _ConnPid} ->
+			#{vsn:=Vsn, rel:=Rel} = Config,
 			case get_config(FsPid) of
-				{ok, #{rel:=Rel, pass:=Pass}} ->
-					{ok, FsPid};
+				{ok, #{vsn:=Vsn, rel:=Rel, pass:=Pass}} ->
+					{error, {already_started, FsPid}};
 				_ ->
 					{error, incompatible_version}
 			end
@@ -207,10 +203,10 @@ start_link(Config) ->
 
 
 -record(state, {
-	id :: binary(),
+	id :: id(),
 	config :: config(),
-	status :: nkmedia_fs:status(),
-	fs_conn :: pid()
+	status :: status(),
+	conn :: pid()
 }).
 
 
@@ -235,9 +231,6 @@ init([#{name:=Id, srv_id:=SrvId}=Config]) ->
 
 handle_call(get_state, _From, State) ->
 	{reply, State, State};
-
-handle_call(_, _From, #state{status=Status}=State) when Status/=ready ->
-	{reply, {error, {not_ready, Status}}, State};
 
 handle_call(get_config, _From, #state{config=Config}=State) ->
     {reply, {ok, Config}, State};
@@ -266,16 +259,16 @@ handle_cast(Msg, State) ->
 -spec handle_info(term(), #state{}) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
-handle_info(connect, #state{fs_conn=Pid}=State) when is_pid(Pid) ->
+handle_info(connect, #state{conn=Pid}=State) when is_pid(Pid) ->
 	true = is_process_alive(Pid),
 	{noreply, State};
 
 handle_info(connect, #state{config=#{host:=Host, base:=Base, pass:=Pass}}=State) ->
-	State2 = update_status(connecting, State#state{fs_conn=undefined}),
+	State2 = update_status(connecting, State#state{conn=undefined}),
 	case nkmedia_fs_event_protocol:start(Host, Base, Pass) of
 		{ok, Pid} ->
 			monitor(process, Pid),
-			State3 = State2#state{fs_conn=Pid},
+			State3 = State2#state{conn=Pid},
 			{noreply, update_status(ready, State3)};
 		{error, Error} ->
 			?LLOG(warning, "could not connect: ~p", [Error], State2),
@@ -309,10 +302,10 @@ handle_info({nkmedia_fs_event, _Pid, Name, Event}, State) ->
 			end
 	end;
 
-handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{fs_conn=Pid}=State) ->
+handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{conn=Pid}=State) ->
 	?LLOG(warning, "connection event down", [], State),
 	erlang:send_after(?CONNECT_RETRY, self(), connect),
-	{noreply, update_status(connecting, State#state{fs_conn=undefined})};
+	{noreply, update_status(connecting, State#state{conn=undefined})};
 
 handle_info(Info, State) -> 
     lager:warning("Module ~p received unexpected info: ~p (~p)", [?MODULE, Info, State]),
@@ -345,7 +338,7 @@ terminate(Reason, State) ->
 update_status(Status, #state{status=Status}=State) ->
 	State;
 
-update_status(NewStatus, #state{id=Id, status=OldStatus, fs_conn=Pid}=State) ->
+update_status(NewStatus, #state{id=Id, status=OldStatus, conn=Pid}=State) ->
 	nklib_proc:put({?MODULE, Id}, {NewStatus, Pid}),
 	nklib_proc:put({?MODULE, self()}, {NewStatus, Pid}),
 	?LLOG(info, "status ~p -> ~p", [OldStatus, NewStatus], State),

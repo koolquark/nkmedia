@@ -22,13 +22,17 @@
 -module(nkmedia_fs_build).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([build_base_image/0, build_base_image/1]).
--export([remove_base_image/0, remove_base_image/1]).
--export([build_run_image/0, build_run_image/1]).
--export([remove_run_image/0, remove_run_image/1]).
--export([run_image_name/1]).
+-export([build_base/0, build_base/1, remove_base/0, remove_base/1]).
+-export([build_run/0, build_run/1, remove_run/0, remove_run/1]).
+-export([run_name/1]).
+-export([defaults/1]).
 
 -include("nkmedia.hrl").
+
+-define(FS_COMP, <<"netcomposer">>).
+-define(FS_VSN, <<"v1.6.8">>).
+-define(FS_REL, <<"r01">>).
+
 
 %% ===================================================================
 %% Public
@@ -36,26 +40,26 @@
         
 
 %% @doc Builds base image (netcomposer/nk_freeswitch_base:v1.6.5-r01)
-build_base_image() ->
-    build_base_image(#{}).
+build_base() ->
+    build_base(#{}).
 
 
 %% @doc 
-build_base_image(Config) ->
-    Name = base_image_name(Config),
+build_base(Config) ->
+    Name = base_name(Config),
     #{vsn:=Vsn} = defaults(Config),
-    Tar = nkdocker_util:make_tar([{"Dockerfile", base_image_dockerfile(Vsn)}]),
+    Tar = nkdocker_util:make_tar([{"Dockerfile", base_dockerfile(Vsn)}]),
     nkdocker_util:build(Name, Tar).
 
 
 %% @doc
-remove_base_image() ->
-    remove_base_image(#{}).
+remove_base() ->
+    remove_base(#{}).
 
 
 %% @doc 
-remove_base_image(Config) ->
-    Name = base_image_name(Config),
+remove_base(Config) ->
+    Name = base_name(Config),
     case nkdocker:start_link() of
         {ok, Pid} ->
             Res = case nkdocker:rmi(Pid, Name, #{force=>true}) of
@@ -71,40 +75,40 @@ remove_base_image(Config) ->
 
 
 %% @doc
-build_run_image() ->
-    build_run_image(#{}).
+build_run() ->
+    build_run(#{}).
 
 
-%% @doc Builds run image (netcomposer/nk_freeswitch_run:v1.6.5-r01)
+%% @doc Builds run image (netcomposer/nk_freeswitch:v1.6.5-r01)
 %% Environment variables:
 %% - NK_FS_IP: Default "$${local_ip_v4}". Maps to local_ip_v4 inside freeswitch
 %% - NK_RTP_IP: Default "$${local_ip_v4}".
 %% - NK_ERLANG_IP: Host for FS to connect to. Used in rtp-ip
 %% - NK_EXT_IP: Default "stun:stun.freeswitch.org". Used in ext-rtp-ip
 %% - NK_PASS: Default "6666"
-build_run_image(Config) ->
-    Name = run_image_name(Config),
+build_run(Config) ->
+    Name = run_name(Config),
     Tar = nkdocker_util:make_tar([
-        {"Dockerfile", run_image_dockerfile(Config)},
-        {"modules.conf.xml", run_image_modules()},
-        {"nkmedia_dp.xml", run_image_dialplan()},
-        {"event_socket.conf.xml", run_image_event_socket()},
-        {"sip.xml", run_image_sip()},
-        {"verto.conf.xml", run_image_verto()},
-        {"start.sh", run_image_start()}
+        {"Dockerfile", run_dockerfile(Config)},
+        {"modules.conf.xml", run_modules()},
+        {"nkmedia_dp.xml", run_dialplan()},
+        {"event_socket.conf.xml", run_event_socket()},
+        {"sip.xml", run_sip()},
+        {"verto.conf.xml", run_verto()},
+        {"start.sh", run_start()}
     ]),
     nkdocker_util:build(Name, Tar).
 
 
 %% @doc
-remove_run_image() ->
-    remove_run_image(#{}).
+remove_run() ->
+    remove_run(#{}).
 
 
 %% @doc 
-remove_run_image(Config) ->
+remove_run(Config) ->
     Config2 = defaults(Config),
-    Name = run_image_name(Config2),
+    Name = run_name(Config2),
     case nkdocker:start_link() of
         {ok, Pid} ->
             Res = case nkdocker:rmi(Pid, Name, #{force=>true}) of
@@ -122,11 +126,13 @@ remove_run_image(Config) ->
 %% @private
 defaults(Config) ->
     Defs = #{
-        comp => <<"netcomposer">>,
-        vsn => <<"v1.6.8">>,        
-        rel => <<"r01">>
+        comp => ?FS_COMP,
+        vsn => ?FS_VSN,        
+        rel => ?FS_REL
     },
     maps:merge(Defs, Config).
+
+
 
 
 %% ===================================================================
@@ -135,14 +141,14 @@ defaults(Config) ->
 
 
 %% @private
-base_image_name(Config) ->
+base_name(Config) ->
     Config2 = defaults(Config),
     #{comp:=Comp, vsn:=Vsn, rel:=Rel} = Config2,
     list_to_binary([Comp, "/nk_freeswitch_base:", Vsn, "-", Rel]).
 
 
 %% @private
-base_image_dockerfile(Vsn) -> 
+base_dockerfile(Vsn) -> 
 <<"
 FROM debian:jessie
 ENV DEBIAN_FRONTEND noninteractive
@@ -179,15 +185,15 @@ RUN ln -s /usr/local/freeswitch/bin/fs_cli /usr/local/bin/fs_cli
 
 
 %% ===================================================================
-%% Instance build files (Comp/nk_freeswitch_run:vXXX-rXXX)
+%% Instance build files (Comp/nk_freeswitch:vXXX-rXXX)
 %% ===================================================================
 
 
 %% @private
-run_image_name(Config) -> 
+run_name(Config) -> 
     Config2 = defaults(Config),
     #{comp:=Comp, vsn:=Vsn, rel:=Rel} = Config2,
-    list_to_binary([Comp, "/nk_freeswitch_run:", Vsn, "-", Rel]).
+    list_to_binary([Comp, "/nk_freeswitch:", Vsn, "-", Rel]).
 
 
 -define(VAR(Name), "\\\\$\\\\$\\\\{" ++ nklib_util:to_list(Name) ++ "}").
@@ -197,9 +203,9 @@ run_image_name(Config) ->
 
 
 
-run_image_dockerfile(Config) ->
+run_dockerfile(Config) ->
     list_to_binary([
-"FROM ", base_image_name(Config), "\n"
+"FROM ", base_name(Config), "\n"
 "WORKDIR /usr/local/freeswitch/\n"
 "RUN mkdir -p certs\n"
 "WORKDIR /usr/local/freeswitch/conf/\n"
@@ -247,7 +253,7 @@ run_image_dockerfile(Config) ->
 ]).
 
 
-run_image_event_socket() -> <<"
+run_event_socket() -> <<"
 <configuration name=\"event_socket.conf\" description=\"Socket Client\">
   <settings>
     <param name=\"nat-map\" value=\"false\"/>
@@ -260,7 +266,7 @@ run_image_event_socket() -> <<"
 </configuration>
 ">>.
 
-run_image_verto() -> <<"
+run_verto() -> <<"
 <configuration name=\"verto.conf\" description=\"HTML5 Verto Endpoint\">
   <settings>
     <param name=\"debug\" value=\"0\"/>
@@ -289,7 +295,7 @@ run_image_verto() -> <<"
 ">>.
 
 
-run_image_sip() -> <<"
+run_sip() -> <<"
 <profile name=\"internal\">
   <aliases>
   </aliases>
@@ -359,7 +365,7 @@ run_image_sip() -> <<"
 
 
 
-run_image_modules() -> <<"
+run_modules() -> <<"
 <configuration name=\"modules.conf\" description=\"Modules\">
   <modules>
     <load module=\"mod_event_socket\"/>
@@ -401,7 +407,7 @@ run_image_modules() -> <<"
 ">>.
 
 
-run_image_dialplan() -> 
+run_dialplan() -> 
 <<"
 <include>
 
@@ -422,7 +428,7 @@ run_image_dialplan() ->
 %% - NK_EXT_IP
 %% - NK_PASS
 
-run_image_start() ->
+run_start() ->
 <<"
 #!/bin/bash\n
 set -e\n

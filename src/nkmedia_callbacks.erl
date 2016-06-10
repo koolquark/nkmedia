@@ -63,12 +63,12 @@ plugin_deps() ->
 
 
 plugin_start(Config, #{name:=Name}) ->
-    lager:info("Plugin NkMEDIA (~s) starting", [Name]),
+    lager:info("Plugin NkMEDIA CORE (~s) starting", [Name]),
     {ok, Config}.
 
 
 plugin_stop(Config, #{name:=Name}) ->
-    lager:info("Plugin NkMEDIA (~p) stopping", [Name]),
+    lager:info("Plugin NkMEDIA CORE (~p) stopping", [Name]),
     {ok, Config}.
 
 

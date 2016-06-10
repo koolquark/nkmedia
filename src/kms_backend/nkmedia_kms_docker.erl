@@ -178,10 +178,10 @@ notify(MonId, start, Name, Data) ->
                     },
                     connect_kms(MonId, Config);
                 _ ->
-                    lager:warning("Started unrecognized1 nk_kurento")
+                    lager:warning("Started unrecognized kurento")
             end;
-        O ->
-            lager:warning("Started unrecognized2 nk_kurento: ~p", [O])
+        _ ->
+            lager:warning("Started unrecognized kurento: ~p")
     end;
 
 notify(MonId, stop, Name, Data) ->
@@ -191,7 +191,7 @@ notify(MonId, stop, Name, Data) ->
             labels := #{<<"nkmedia">> := <<"kurento">>}
             % env := #{<<"NK_KMS_IP">> := Host}
         } ->
-            remove_fs(MonId, Name);
+            remove_kms(MonId, Name);
         _ ->
             ok
     end;
@@ -224,7 +224,7 @@ connect_kms(MonId, #{name:=Name}=Config) ->
 
 
 %% @private
-remove_fs(MonId, Name) ->
+remove_kms(MonId, Name) ->
     spawn(
         fun() ->
             nkmedia_kms_engine:stop(Name),

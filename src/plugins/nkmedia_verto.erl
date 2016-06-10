@@ -31,7 +31,7 @@
 -export_type([answer/0, call_id/0, verto/0]).
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkMEDIA Verto (~s) "++Txt, [State#state.user | Args])).
+    lager:Type("NkMEDIA VERTO (~s) "++Txt, [State#state.user | Args])).
 
 -define(PRINT(Txt, Args, State), 
         % print(Txt, Args, State),    % Uncomment this for detailed logs

@@ -125,8 +125,8 @@ play2(Id) ->
 
 
 plugin_deps() ->
-    [nkmedia, nkmedia_sip, nkmedia_verto, nkmedia_janus_proto, 
-     nkmedia_kms, nkmedia_kms_proxy].
+    [nkmedia, nkmedia_sip, nkmedia_verto, nkmedia_fs, 
+     nkmedia_janus_proto, nkmedia_kms, nkmedia_kms_proxy].
 
 
 plugin_syntax() ->

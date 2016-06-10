@@ -52,7 +52,7 @@ start(Service) ->
         Config = nkservice_srv:get_item(SrvId, config_nkmedia_fs),
         BasePort = crypto:rand_uniform(32768, 65535),
         Pass = nklib_util:luid(),
-        Image = nkmedia_fs_build:run_image_name(Config),
+        Image = nkmedia_fs_build:run_name(Config),
         ErlangIp = nklib_util:to_host(nkmedia_app:get(erlang_ip)),
         FsIp = nklib_util:to_host(nkmedia_app:get(docker_ip)),
         Name = list_to_binary([
@@ -179,10 +179,13 @@ notify(MonId, start, Name, Data) ->
             image := Image
         } ->
             case binary:split(Image, <<"/">>) of
-                [_Comp, <<"nk_freeswitch_run:", Rel/binary>>] -> 
+                [Comp, <<"nk_freeswitch:", Tag/binary>>] -> 
+                    [Vsn, Rel] = binary:split(Tag, <<"-">>),
                     Config = #{
-                        name => Name, 
                         srv_id => nklib_util:to_atom(SrvId),
+                        name => Name, 
+                        comp => Comp,
+                        vsn => Vsn,
                         rel => Rel, 
                         host => Host, 
                         base => nklib_util:to_integer(Base),
@@ -190,10 +193,10 @@ notify(MonId, start, Name, Data) ->
                     },
                     connect_fs(MonId, Config);
                 _ ->
-                    lager:warning("Started unrecognized nk_freeswitch")
+                    lager:warning("Started unrecognized freeswitch")
             end;
         _ ->
-            lager:warning("Started unrecognized nk_freeswitch")
+            lager:warning("Started unrecognized freeswitch")
     end;
 
 notify(MonId, stop, Name, Data) ->
@@ -201,7 +204,6 @@ notify(MonId, stop, Name, Data) ->
         #{
             name := Name,
             labels := #{<<"nkmedia">> := <<"freeswitch">>}
-            % env := #{<<"NK_FS_IP">> := Host}
         } ->
             remove_fs(MonId, Name);
         _ ->
@@ -225,6 +227,8 @@ connect_fs(MonId, #{name:=Name}=Config) ->
             case nkmedia_fs_engine:connect(Config) of
                 {ok, _Pid} -> 
                     ok = nkdocker_monitor:start_stats(MonId, Name);
+                {error, {already_started, _Pid}} ->
+                    ok;
                 {error, Error} -> 
                     lager:warning("Could not connect to Freeswitch ~s: ~p", 
                                   [Name, Error])

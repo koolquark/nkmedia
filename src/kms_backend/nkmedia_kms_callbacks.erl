@@ -25,11 +25,6 @@
 -export([plugin_deps/0, plugin_syntax/0, plugin_defaults/0, plugin_config/2,
          plugin_start/2, plugin_stop/2]).
 -export([nkmedia_kms_get_mediaserver/1]).
--export([nkmedia_session_init/2, nkmedia_session_terminate/2]).
--export([nkmedia_session_offer_op/4, nkmedia_session_answer_op/4,
-         nkmedia_session_hangup/2]).
--export([nkmedia_session_updated_answer/2]).
--export([nkmedia_session_peer_event/4, nkmedia_session_handle_cast/2]).
 -export([nkdocker_notify/2]).
 
 -include_lib("nkservice/include/nkservice.hrl").
@@ -77,7 +72,7 @@ plugin_config(Config, _Service) ->
 
 
 plugin_start(Config, #{name:=Name}) ->
-    lager:info("Plugin NkMEDIA KMS (~s) starting", [Name]),
+    lager:info("Plugin NkMEDIA Kurento (~s) starting", [Name]),
     case nkdocker_monitor:register(?MODULE) of
         {ok, DockerMonId} ->
             nkmedia_app:put(docker_kms_mon_id, DockerMonId),
@@ -91,7 +86,7 @@ plugin_start(Config, #{name:=Name}) ->
 
 
 plugin_stop(Config, #{name:=Name}) ->
-    lager:info("Plugin NkMEDIA KMS (~p) stopping", [Name]),
+    lager:info("Plugin NkMEDIA Kurento (~p) stopping", [Name]),
     nkdocker_monitor:unregister(?MODULE),
     {ok, Config}.
 
@@ -121,109 +116,6 @@ nkmedia_kms_get_mediaserver(#{srv_id:=SrvId}) ->
 %% Implemented Callbacks - nkmedia_session
 %% ===================================================================
 
-%% @private
-nkmedia_session_init(Id, Session) ->
-    State = maps:get(nkmedia_kms, Session, #{}),
-    {ok, State2} = nkmedia_kms_session:init(Id, Session, State),
-    {ok, Session#{nkmedia_kms=>State2}}.
-
-
-%% @private
-nkmedia_session_terminate(Reason, Session) ->
-    nkmedia_kms_session:terminate(Reason, Session, state(Session)),
-    {ok, maps:remove(nkmedia_kms, Session)}.
-
-
-%% @private
-nkmedia_session_offer_op(Op, Opts, HasOffer, Session) ->
-    case maps:get(backend, Session, freeswitch) of
-        freeswitch ->
-            State = state(Session),
-            case 
-                nkmedia_kms_session:offer_op(Op, Opts, HasOffer, Session, State)
-            of
-                {ok, Offer, Op2, Opts2, State2} ->
-                    {ok, Offer, Op2, Opts2, session(State2, Session)};
-                {error, Error, State2} ->
-                    {error, Error, session(State2, Session)};
-                continue ->
-                    continue
-            end;
-        _ ->
-            continue
-    end.
-
-
-%% @private
-nkmedia_session_answer_op(Op, Opts, HasAnswer, Session) ->
-    case maps:get(backend, Session, freeswitch) of
-        freeswitch ->
-            State = state(Session),
-            case 
-                nkmedia_kms_session:answer_op(Op, Opts, HasAnswer, Session, State)
-            of
-                {ok, Answer, Op2, Opts2, State2} ->
-                    {ok, Answer, Op2, Opts2, session(State2, Session)};
-                {error, Error, State2} ->
-                    {error, Error, session(State2, Session)};
-                continue ->
-                    continue
-            end;
-        _ ->
-            continue
-    end.
-
-
-%% @private
-nkmedia_session_updated_answer(#{sdp:=_}=Answer, Session) ->
-    case nkmedia_kms_session:updated_answer(Answer, Session, state(Session)) of
-        {ok, Answer2, State2} ->
-            {ok, Answer2, session(State2, Session)};
-        {error, Error, State2} ->
-            {error, Error, session(State2, Session)};
-        continue ->
-            continue
-    end;
-
-nkmedia_session_updated_answer(_Answer, _Session) ->
-    continue.
-
-
-%% @private
-nkmedia_session_peer_event(SessId, Type, Event, Session) ->
-    case Event of
-        {answer_op, _, _} ->
-            State = state(Session),
-            nkmedia_kms_session:peer_event(SessId, Type, Event, Session, State);
-        {hangup, _} ->
-            State = state(Session),
-            nkmedia_kms_session:peer_event(SessId, Type, Event, Session, State);
-        _ ->
-            ok
-    end,
-    continue.
-        
-
-%% @private
-nkmedia_session_hangup(Reason, Session) ->
-    {ok, State2} = nkmedia_kms_session:hangup(Reason, Session, state(Session)),
-    {continue, [Reason, session(State2, Session)]}.
-
-
-%% @private
-nkmedia_session_handle_cast({kms_event, FsId, Event}, Session) ->
-    case Session of
-        #{nkmedia_kms:=#{kms_id:=FsId}} ->
-            State = state(Session),
-            {ok, State2} = nkmedia_kms_session:do_kms_event(Event, Session, State),
-            {noreply, session(State2, Session)};
-        _ ->
-            lager:warning("NkMEDIA FS received unexpected FS event"),
-            {ok, Session}
-    end;
-
-nkmedia_session_handle_cast(_Msg, _Session) ->
-    continue.
 
 
 
@@ -244,19 +136,22 @@ nkdocker_notify(_MonId, _Op) ->
 %% ===================================================================
 
 
-%% @private
-state(#{nkmedia_kms:=State}) ->
-    State.
+% %% @private
+% state(#{nkmedia_kms:=State}) ->
+%     State.
 
 
-%% @private
-session(State, Session) ->
-    Session#{nkmedia_kms:=State}.
+% %% @private
+% session(State, Session) ->
+%     Session#{nkmedia_kms:=State}.
 
+
+-compile([export_all]).
 
 %% @private
 find_images(MonId) ->
     {ok, Docker} = nkdocker_monitor:get_docker(MonId),
     {ok, Images} = nkdocker:images(Docker),
     Tags = lists:flatten([T || #{<<"RepoTags">>:=T} <- Images]),
-    lists:filter(fun(Img) -> length(binary:split(Img, <<"/nk_kms_">>))==2 end, Tags).
+    lists:filter(
+        fun(Img) -> length(binary:split(Img, <<"/nk_kurento_">>))==2 end, Tags).

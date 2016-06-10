@@ -22,17 +22,12 @@
 
 -module(nkmedia).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([start_fs/0, start_fs/1, stop_fs/0, stop_fs/1]).
--export([nkdocker_event/2]).
--export_type([backend/0, offer/0, answer/0, call_dest/0]).
--export_type([hangup_reason/0, fs_start_opts/0]).
+-export_type([offer/0, answer/0, hangup_reason/0]).
+-export_type([engine_id/0, engine_config/0]).
 
 %% ===================================================================
 %% Types
 %% ===================================================================
-
-
--type backend() :: p2p | freeswitch | janus.
 
 
 -type offer() ::
@@ -69,88 +64,27 @@
         module() => term()
 	}.
 
--type call_dest() :: binary().
-
 
 -type hangup_reason() :: nkmedia_util:hangup_reason().
 
 
--type fs_start_opts() ::
+-type engine_id() :: binary().
+
+
+-type engine_config() ::
 	#{
-		index => pos_integer(),
-		version => binary(),
-		release => binary(),
-		password => binary(),
-		docker_company => binary()
+		srv_id => nkservice:id(),		% Service Id
+		name => binary(),				% Engine Id (docker name)
+		comp => binary(),				% Docker Company
+		vsn => binary(),				% Version
+		rel => binary(),				% Release
+		host => binary(),				% Host
+		pass => binary(),				% Pass		
+		base => integer()				% Base Port
 	}.
 
 
-% Ports
-% 
-% 
-% 
-% 
-% 
-% 
-% 
-% 
-% 
-% 
-% 
-% 
-% 
-% 
-% 
 
 %% ===================================================================
 %% Public functions
 %% ===================================================================
-
-
-%% @doc equivalent to start_fs(#{})
--spec start_fs() ->
-	ok | {error, term()}.
-
-start_fs() ->
-	start_fs(#{}).
-
-
-%% @doc Manually starts a local freeswitch
--spec start_fs(fs_start_opts()) ->
-	ok | {error, term()}.
-
-start_fs(Spec) ->
-	nkmedia_fs:start(Spec).
-
-
-%% @doc equivalent to stop_fs(#{})
--spec stop_fs() ->
-	ok | {error, term()}.
-
-stop_fs() ->
-	stop_fs(#{}).
-
-
-%% @doc Manually starts a local freeswitch
--spec stop_fs(fs_start_opts()) ->
-	ok | {error, term()}.
-
-stop_fs(Spec) ->
-	nkmedia_fs:stop_fs(Spec).
-
-
-
-
-
-
-
-
-
-
-%% ===================================================================
-%% Private
-%% ===================================================================
-
-
-nkdocker_event(Id, Event) ->
-	lager:warning("EVENT: ~p, ~p", [Id, Event]).
