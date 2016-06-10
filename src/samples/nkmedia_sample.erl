@@ -25,7 +25,8 @@
 
 -export([start/0, stop/0, restart/0]).
 -export([listener/2, listener2/1, play/2, play2/1]).
--export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
+-export([plugin_deps/0, plugin_start/2, plugin_stop/2,
+         plugin_syntax/0, plugin_listen/2]).
 -export([nkmedia_verto_login/3, nkmedia_verto_call/3]).
 -export([nkmedia_call_resolve/2]).
 -export([nkmedia_janus_call/3]).
@@ -48,15 +49,13 @@
 start() ->
     _CertDir = code:priv_dir(nkpacket),
     Spec = #{
-        plugins => [?MODULE, nkmedia_fs, nkmedia_kms, nksip_registrar, nksip_trace],
+        plugins => [?MODULE],
+        webserver => "https:all:8081",
         verto_listen => "verto:all:8082",
         % verto_listen => "verto_proxy:all:8082",
-        verto_communicator => "https:all:8082/vc",
         janus_listen => "janus:all:8989, janus_proxy:all:8990",
         % janus_listen => "janus:all:8989",
-        janus_demos => "https://all:8083/janus",
-        kurento_listen => "kurento_proxy:all:8433",
-        kurento_samples => "https:all:8084",
+        kurento_proxy => "kms:all:8433",
         log_level => debug,
         nksip_trace => {console, all},
         sip_listen => <<"sip:all:5060">>,
@@ -126,7 +125,25 @@ play2(Id) ->
 
 
 plugin_deps() ->
-    [nkmedia, nkmedia_sip, nkmedia_verto, nkmedia_janus_proto, nkmedia_kurento].
+    [nkmedia, nkmedia_sip, nkmedia_verto, nkmedia_janus_proto, 
+     nkmedia_kms, nkmedia_kms_proxy].
+
+
+plugin_syntax() ->
+    #{
+        webserver => fun parse_listen/3
+    }.
+
+
+plugin_listen(Config, #{id:=SrvId}) ->
+    Web1 = maps:get(webserver, Config, []),
+    Path1 = list_to_binary(code:priv_dir(nkmedia)),
+    Path2 = <<Path1/binary, "/www">>,
+    Opts2 = #{
+        class => {sample_webserver, SrvId},
+        http_proto => {static, #{path=>Path2, index_file=><<"index.html">>}}
+    },
+    [{Conns, maps:merge(ConnOpts, Opts2)} || {Conns, ConnOpts} <- Web1].
 
 
 plugin_start(Config, #{name:=Name}) ->
@@ -324,3 +341,13 @@ find_user(User) ->
             not_found
     end.
 
+
+parse_listen(_Key, [{[{_, _, _, _}|_], Opts}|_]=Multi, _Ctx) when is_map(Opts) ->
+    {ok, Multi};
+
+parse_listen(webserver, Url, _Ctx) ->
+    Opts = #{valid_schemes=>[http, https], resolve_type=>listen},
+    case nkpacket:multi_resolve(Url, Opts) of
+        {ok, List} -> {ok, List};
+        _ -> error
+    end.

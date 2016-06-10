@@ -30,13 +30,10 @@
 
 -include("nkmedia.hrl").
 
--define(CHECK_TIME, 10000).
--define(MAX_REQ_TIME, 60000).
- 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkMEDIA Kurento proxy client (~s) "++Txt, [State#state.remote | Args])).
+    lager:Type("NkMEDIA KMS Proxy client (~s) "++Txt, [State#state.remote | Args])).
 
--define(KMS_WS_TIMEOUT, 60*60*1000).
+-define(WS_TIMEOUT, 60*60*1000).
 
 -define(PRINT(Msg, Args, State),
     % ?LLOG(notice, Msg, Args, State),
@@ -51,16 +48,16 @@
 
 
 %% @doc Starts a new verto session to Kurento
--spec start(pid()) ->
+-spec start(nkmedia_kms_engine:id()) ->
     {ok, pid()} | {error, term()}.
 
-start(KurentoPid) ->
-    {ok, Config} = nkmedia_kms_engine:get_config(KurentoPid),
+start(KmsId) ->
+    {ok, Config} = nkmedia_kms_engine:get_config(KmsId),
     #{host:=Host, base:=Base} = Config,
     ConnOpts = #{
         class => ?MODULE,
         monitor => self(),
-        idle_timeout => ?KMS_WS_TIMEOUT,
+        idle_timeout => ?WS_TIMEOUT,
         user => #{proxy=>self()},
         path => <<"/kurento">>
     },
@@ -119,8 +116,8 @@ transports(_) -> [wss, ws].
 -spec default_port(nkpacket:transport()) ->
     inet:port_number() | invalid.
 
-default_port(ws) -> 8188;
-default_port(wss) -> 8989.
+default_port(ws) -> 8000;
+default_port(wss) -> 8001.
 
 
 -spec conn_init(nkpacket:nkport()) ->
@@ -132,7 +129,6 @@ conn_init(NkPort) ->
     State = #state{remote=Remote, proxy=Pid},
     ?LLOG(notice, "new connection (~p)", [self()], State),
     nklib_proc:put(?MODULE),
-    % self() ! check_old_trans,
     {ok, State}.
 
 
@@ -152,7 +148,8 @@ conn_parse({text, Data}, _NkPort, #state{proxy=_Pid}=State) ->
         _ ->
             ok
     end,
-    ?PRINT("from server to client ~p\n~s", [_Pid, nklib_json:encode_pretty(Msg)], State),
+    ?PRINT("from server to client ~p\n~s", 
+           [_Pid, nklib_json:encode_pretty(Msg)], State),
     send_reply(Msg, State),
     {ok, update(s2c, Msg, State)}.
 
@@ -185,7 +182,8 @@ conn_handle_call(Msg, _From, _NkPort, State) ->
     {ok, #state{}} | {stop, term(), #state{}}.
 
 conn_handle_cast({send, _Pid, Msg}, NkPort, State) ->
-    ?PRINT("from client ~p to server\n~s", [_Pid, nklib_json:encode_pretty(Msg)], State),
+    ?PRINT("from client ~p to server\n~s", 
+           [_Pid, nklib_json:encode_pretty(Msg)], State),
     case do_send(Msg, NkPort, State) of
         {ok, State2} -> 
             {ok, update(c2s, Msg, State2)};
@@ -201,12 +199,6 @@ conn_handle_cast(Msg, _NkPort, State) ->
 %% @private
 -spec conn_handle_info(term(), nkpacket:nkport(), #state{}) ->
     {ok, #state{}} | {stop, term(), #state{}}.
-
-% conn_handle_info(check_old_trans, _NkPort, #state{trans=AllTrans}=State) ->
-%     Now = nklib_util:timestamp(),
-%     AllTrans1 = check_old_trans(Now, maps:to_list(AllTrans), []),
-%     erlang:send_after(?CHECK_TIME, self(), check_old_trans),
-%     {ok, State#state{trans=AllTrans1}};
 
 conn_handle_info(Msg, _NkPort, State) ->
     lager:warning("Module ~p received unexpected info: ~p", [?MODULE, Msg]),
@@ -266,9 +258,6 @@ update(_Dir, Msg, State) ->
     State.
 
 
-
-
-
 %% @private
 -spec send_reply(binary()|map(), #state{}) ->
     ok.
@@ -283,22 +272,6 @@ do_send(Msg, NkPort, State) ->
         ok -> {ok, State};
         {error, Error} -> {stop, Error, State}
     end.
-
-
-%% @private
-% check_old_trans(_Now, [], Acc) ->
-%     maps:from_list(Acc);
-
-% check_old_trans(Now, [{{Type, Id}, #trans{time=Time}=Trans}|Rest], Acc) ->
-%     Acc1 = case Now - Time > (?MAX_REQ_TIME div 1000) of
-%         true ->
-%             lager:warning("NkMEDIA verto removing old request: ~p", [Trans]),
-%             Acc;
-%         false ->
-%             [{{Type, Id}, Trans}|Acc]
-%     end,
-    % check_old_trans(Now, Rest, Acc1).
-
 
 
 %% @private
@@ -317,25 +290,3 @@ print_trans(#trans{dir=Dir, method=Req, params=Params, result=Result}) ->
 
 
         
-
-
-
-
-%% ===================================================================
-%% Util
-%% ===================================================================
-
-
-% parse_kms(#{<<"kms">>:=Kurento, <<"transaction">>:=TransId}) ->
-%     case Kurento of
-%         <<"success">> -> {resp, Kurento, TransId};
-%         <<"error">> -> {resp, Kurento, TransId};
-%         <<"ack">> -> {ack, TransId};
-%         <<"event">> -> {event, TransId};
-%         _ -> {req, Kurento, TransId}
-%     end;
-
-% parse_kms(#{<<"kms">>:=Kurento}) ->
-%     {cmd, Kurento}.
-
-

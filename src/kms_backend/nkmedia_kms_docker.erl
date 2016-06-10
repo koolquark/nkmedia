@@ -213,6 +213,8 @@ connect_kms(MonId, #{name:=Name}=Config) ->
             case nkmedia_kms_engine:connect(Config) of
                 {ok, _Pid} -> 
                     ok = nkdocker_monitor:start_stats(MonId, Name);
+                {error, {already_started, _Pid}} ->
+                    ok;
                 {error, Error} -> 
                     lager:warning("Could not connect to Kurento ~s: ~p", 
                                   [Name, Error])

@@ -186,8 +186,7 @@ init([#{name:=Name}=Config]) ->
 	true = nklib_proc:reg({?MODULE, Name}, {connecting, undefined}),
 	nklib_proc:put({?MODULE, self()}, {connecting, undefined}),
 	nklib_proc:put(?MODULE, Name),
-	% self() ! connect,
-	% self() ! keepalive,
+	self() ! connect,
 	?LLOG(info, "started (~p)", [self()], State),
 	{ok, update_status(ready, State)}.
 
@@ -234,7 +233,8 @@ handle_info(connect, #state{kms_conn=Pid}=State) when is_pid(Pid) ->
 handle_info(connect, #state{name=Name, config=Config}=State) ->
 	State2 = update_status(connecting, State#state{kms_conn=undefined}),
 	case nkmedia_kms_client:start(Name, Config) of
-		{ok, Pid} ->
+		{ok, Pid, Info} ->
+			print_info(Info, State),
 			monitor(process, Pid),
 			State3 = State2#state{kms_conn = Pid},
 			{noreply, update_status(ready, State3)};
@@ -303,6 +303,14 @@ connect_kms(Host, Base, Tries) ->
 	end.
 
 
+%% @private
+print_info(Info, State) ->
+	#{
+		<<"sessionId">> := SessId, 
+		<<"value">> := #{<<"type">>:=Type, <<"version">>:=Vsn}
+	} = Info,
+	?LLOG(info, "connected to KMS (type:~s, vsn:~s, id:~s)", 
+		  [Type, Vsn, SessId], State).
 
 
 

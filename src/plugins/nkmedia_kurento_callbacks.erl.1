@@ -52,10 +52,9 @@ plugin_deps() ->
 
 plugin_syntax() ->
     nkpacket:register_protocol(kurento, nkmedia_kurento),
-    nkpacket:register_protocol(kurento_proxy, nkmedia_kms_proxy_server),
     #{
         kurento_listen => fun parse_listen/3,
-        kurento_samples => fun parse_listen/3
+        kurento_web => fun parse_listen/3
     }.
 
 
@@ -71,11 +70,11 @@ plugin_listen(Config, #{id:=SrvId}) ->
         idle_timeout => ?KMS_WS_TIMEOUT
     },                                  
     Listen2 = [{Conns, maps:merge(ConnOpts, Opts1)} || {Conns, ConnOpts} <- Listen1],
-    Web1 = maps:get(kurento_samples, Config, []),
+    Web1 = maps:get(kurento_web, Config, []),
     Path1 = list_to_binary(code:priv_dir(nkmedia)),
-    Path2 = <<Path1/binary, "/www/kurento_samples">>,
+    Path2 = <<Path1/binary, "/www/kurento_web">>,
     Opts2 = #{
-        class => {nkmedia_kurento_samples, SrvId},
+        class => {nkmedia_kurento_web, SrvId},
         http_proto => {static, #{path=>Path2, index_file=><<"index.html">>}}
     },
     Web2 = [{Conns, maps:merge(ConnOpts, Opts2)} || {Conns, ConnOpts} <- Web1],
@@ -162,12 +161,8 @@ nkmedia_kurento_handle_info(Msg, Verto) ->
 parse_listen(_Key, [{[{_, _, _, _}|_], Opts}|_]=Multi, _Ctx) when is_map(Opts) ->
     {ok, Multi};
 
-parse_listen(Key, Url, _Ctx) ->
-    Schemes = case Key of
-        kurento_listen -> [kurento, kurento_proxy];
-        kurento_samples -> [https]
-    end,
-    Opts = #{valid_schemes=>Schemes, resolve_type=>listen},
+parse_listen(kurento_listen, Url, _Ctx) ->
+    Opts = #{valid_schemes=>[kurento], resolve_type=>listen},
     case nkpacket:multi_resolve(Url, Opts) of
         {ok, List} -> {ok, List};
         _ -> error

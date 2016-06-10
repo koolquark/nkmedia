@@ -48,8 +48,7 @@ plugin_syntax() ->
     nkpacket:register_protocol(janus, nkmedia_janus_proto),
     nkpacket:register_protocol(janus_proxy, nkmedia_janus_proxy_server),
     #{
-        janus_listen => fun parse_listen/3,
-        janus_demos => fun parse_listen/3
+        janus_listen => fun parse_listen/3
     }.
 
 
@@ -62,16 +61,7 @@ plugin_listen(Config, #{id:=SrvId}) ->
         idle_timeout => ?JANUS_WS_TIMEOUT,
         ws_proto => <<"janus-protocol">>
     },                                  
-    Listen2 = [{Conns, maps:merge(ConnOpts, Opts1)} || {Conns, ConnOpts} <- Listen1],     
-    Web1 = maps:get(janus_demos, Config, []),
-    Path1 = list_to_binary(code:priv_dir(nkmedia)),
-    Path2 = <<Path1/binary, "/www/janus">>,
-    Opts2 = #{
-        class => {nkmedia_janus_proto, SrvId},
-        http_proto => {static, #{path=>Path2, index_file=><<"index.html">>}}
-    },
-    Web2 = [{Conns, maps:merge(ConnOpts, Opts2)} || {Conns, ConnOpts} <- Web1],
-    Listen2++Web2.
+    [{Conns, maps:merge(ConnOpts, Opts1)} || {Conns, ConnOpts} <- Listen1].
 
 
 plugin_start(Config, #{name:=Name}) ->
@@ -281,12 +271,8 @@ nkmedia_call_resolve(Dest, Call) ->
 parse_listen(_Key, [{[{_, _, _, _}|_], Opts}|_]=Multi, _Ctx) when is_map(Opts) ->
     {ok, Multi};
 
-parse_listen(Key, Url, _Ctx) ->
-    Schemes = case Key of
-        janus_listen -> [janus, janus_proxy];
-        janus_demos -> [http, https]
-    end,
-    Opts = #{valid_schemes=>Schemes, resolve_type=>listen},
+parse_listen(janus_listen, Url, _Ctx) ->
+    Opts = #{valid_schemes=>[janus, janus_proxy], resolve_type=>listen},
     case nkpacket:multi_resolve(Url, Opts) of
         {ok, List} -> {ok, List};
         _ -> error

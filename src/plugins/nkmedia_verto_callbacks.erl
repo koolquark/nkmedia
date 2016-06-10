@@ -60,8 +60,7 @@ plugin_syntax() ->
     nkpacket:register_protocol(verto, nkmedia_verto),
     nkpacket:register_protocol(verto_proxy, nkmedia_fs_verto_proxy_server),
     #{
-        verto_listen => fun parse_listen/3,
-        verto_communicator => fun parse_listen/3
+        verto_listen => fun parse_listen/3
     }.
 
 
@@ -76,16 +75,7 @@ plugin_listen(Config, #{id:=SrvId}) ->
         % get_headers => [<<"user-agent">>],
         idle_timeout => ?VERTO_WS_TIMEOUT
     },                                  
-    Listen2 = [{Conns, maps:merge(ConnOpts, Opts1)} || {Conns, ConnOpts} <- Listen1],
-    Web1 = maps:get(verto_communicator, Config, []),
-    Path1 = list_to_binary(code:priv_dir(nkmedia)),
-    Path2 = <<Path1/binary, "/www/verto_communicator">>,
-    Opts2 = #{
-        class => {nkmedia_verto_vc, SrvId},
-        http_proto => {static, #{path=>Path2, index_file=><<"index.html">>}}
-    },
-    Web2 = [{Conns, maps:merge(ConnOpts, Opts2)} || {Conns, ConnOpts} <- Web1],
-    Listen2 ++ Web2.
+    [{Conns, maps:merge(ConnOpts, Opts1)} || {Conns, ConnOpts} <- Listen1].
 
 
 plugin_start(Config, #{name:=Name}) ->
@@ -308,12 +298,8 @@ nkmedia_call_resolve(Dest, Call) ->
 parse_listen(_Key, [{[{_, _, _, _}|_], Opts}|_]=Multi, _Ctx) when is_map(Opts) ->
     {ok, Multi};
 
-parse_listen(Key, Url, _Ctx) ->
-    Schemes = case Key of
-        verto_listen -> [verto, verto_proxy];
-        verto_communicator -> [https]
-    end,
-    Opts = #{valid_schemes=>Schemes, resolve_type=>listen},
+parse_listen(verto_listen, Url, _Ctx) ->
+    Opts = #{valid_schemes=>[verto, verto_proxy], resolve_type=>listen},
     case nkpacket:multi_resolve(Url, Opts) of
         {ok, List} -> {ok, List};
         _ -> error
