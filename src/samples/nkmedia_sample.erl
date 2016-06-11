@@ -82,15 +82,28 @@ listener2(Id) ->
 
 
 listener(Sess, Dest) ->
-    case nkmedia_session:get_status(Sess) of
-        {ok, publish, #{room:=Room}, _} ->
+    case nkmedia_session:get_status_opts(Sess) of
+        {ok, _, {publish, #{room:=Room}}, _} ->
             {ok, SessId, _Pid} = nkmedia_session:start(sample, #{}),
-            {ok, _} = nkmedia_session:offer(SessId, {listen, Room, Sess}, #{}),
+            {ok, _} = nkmedia_session:offer(SessId, listen, 
+                                            #{room=>Room, publisher=>Sess}),
             case Dest of
-                {call, Call} ->
-                    {ok, _} = nkmedia_session:answer(SessId, {call, Call}, #{});
+                {invite, User} ->
+                    case find_user(User) of
+                        {ok, Inv} ->
+                            {ok, _} = nkmedia_session:answer(SessId, invite, 
+                                                             #{dest=>Inv}),
+                            {ok, SessId};
+                        not_found ->
+                            nkmedia_session:hangup(SessId),
+                            {error, user_not_found}
+                    end;
                 {room, Room2} ->
-                    nkmedia_session:answer(SessId, {publish, Room2}, #{})
+                    nkmedia_session:answer(SessId, publish, #{room=>Room2}),
+                    {ok, SessId};
+                {mcu, Room2} ->
+                    nkmedia_session:answer(SessId, mcu, #{room=>Room2}),
+                    {ok, SessId}
             end;
         _ ->
             {error, invalid_session}
@@ -258,6 +271,7 @@ sip_register(Req, Call) ->
 send_call(SessId, #{dest:=Dest}=Offer) ->
     case Dest of 
         <<"e">> ->
+            {ok, _} = nkmedia_session:offer(SessId, sdp, #{offer=>Offer}),
             Opts2 = #{backend=>janus, record=>true, filename=>"/tmp/echo"},
             ok = nkmedia_session:answer_async(SessId, echo, Opts2);
         <<"fe">> ->

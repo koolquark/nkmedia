@@ -25,7 +25,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([start/2, get_status/1, get_session/1]).
+-export([start/2, get_status/1, get_status_opts/1, get_session/1]).
 -export([hangup/1, hangup/2, hangup_all/0]).
 -export([offer/3, offer_async/3, answer/3, answer_async/3]).
 -export([invite_reply/2]).
@@ -155,6 +155,14 @@ get_session(SessId) ->
 
 get_status(SessId) ->
     do_call(SessId, get_status).
+
+
+%% @doc Get current status and remaining time to timeout
+-spec get_status_opts(id()) ->
+    {ok, {offer_op(), op_opts()}, {answer_op(), op_opts()}, integer()}.
+
+get_status_opts(SessId) ->
+    do_call(SessId, get_status_opts).
 
 
 %% @doc Hangups the session
@@ -304,6 +312,12 @@ handle_call(get_session, _From, #state{session=Session}=State) ->
 handle_call(get_status, _From, State) ->
     #state{op_offer=Offer, op_answer=Answer, timer=Timer} = State,
     {reply, {ok, Offer, Answer, erlang:read_timer(Timer) div 1000}, State};
+
+handle_call(get_status_opts, _From, State) ->
+    #state{session=Session, timer=Timer} = State,
+    OfferOp = maps:get(offer_op, Session),
+    AnswerOp = maps:get(answer_op, Session),
+    {reply, {ok, OfferOp, AnswerOp, erlang:read_timer(Timer) div 1000}, State};
 
 handle_call({offer_op, OfferOp, Opts}, From, State) ->
     do_offer_op(OfferOp, Opts, From, State);

@@ -23,10 +23,10 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([start/1, stop/1, videocall/4, echo/4, play/4]).
+-export([start/2, stop/1, videocall/3, echo/3, play/3]).
 -export([list_rooms/1, create_room/3, destroy_room/2]).
--export([publish/5, unpublish/1]).
--export([listen/5, listen_switch/3, unlisten/1]).
+-export([publish/4, unpublish/1]).
+-export([listen/4, listen_switch/3, unlisten/1]).
 -export([from_sip/2, to_sip/2]).
 -export([sip_registered/2, sip_offer/2]).
 -export([answer/2]).
@@ -35,28 +35,27 @@
          handle_cast/2, handle_info/2]).
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkMEDIA Janus Session ~s (~p) "++Txt, 
-               [State#state.id, State#state.status | Args])).
+    lager:Type("NkMEDIA Janus Session ~p (~p) "++Txt, 
+               [State#state.janus_sess_id, State#state.status | Args])).
 
 -include("nkmedia.hrl").
 
 
--define(OP_TIMEOUT, 50).
--define(RING_TIMEOUT, 50).
--define(CALL_TIMEOUT, 4*60*60).
+-define(WAIT_TIMEOUT, 10).      % Secs
+-define(OP_TIMEOUT, 4*60*60).   
 -define(KEEPALIVE, 20).
 
 %% ===================================================================
 %% Types
 %% ===================================================================
 
--type id() :: binary().
+
+-type janus_id() :: nkmedia_janus_engine:id().
 
 -type room() :: binary().
 
 -type play() :: binary().
 
--type session() :: nkmedia_session:id().
 
 -type room_opts() ::
     #{
@@ -89,7 +88,7 @@
 
 
 -type status() ::
-    wait | videocall | echo | publish | listen.
+    wait | videocall | echo | publish | listen | sdp.
 
 
 
@@ -98,17 +97,15 @@
 %% ===================================================================
 
 %% @doc Starts a new session
--spec start(nkmedia_janus:id()) ->
-    {ok, id(), pid()}.
+-spec start(janus_id(), nkmedia_session:id()) ->
+    {ok, pid()}.
 
-start(JanusId) ->
-    Id = nklib_util:uuid_4122(),
-    {ok, Pid} = gen_server:start(?MODULE, {Id, JanusId, self()}, []),
-    {ok, Id, Pid}.
+start(JanusId, SessionId) ->
+    gen_server:start(?MODULE, {JanusId, SessionId, self()}, []).
 
 
 %% @doc Stops a session
--spec stop(id()|pid()) ->
+-spec stop(pid()|janus_id()) ->
     ok.
 
 stop(Id) ->
@@ -127,33 +124,33 @@ stop_all() ->
 %% @doc Starts a videocall inside the session.
 %% The SDP offer for the remote party is returned.
 %% You must call answer/2
--spec videocall(id()|pid(), session(), nkmedia:offer(), media_opts()) ->
+-spec videocall(pid()|janus_id(), nkmedia:offer(), media_opts()) ->
     {ok, nkmedia:offer()} | {error, term()}.
 
-videocall(Id, Session, Offer, Opts) ->
-    do_call(Id, {videocall, Session, Offer, Opts}).
+videocall(Id, Offer, Opts) ->
+    do_call(Id, {videocall, Offer, Opts}).
 
 
 %% @doc Starts a echo inside the session.
 %% The SDP is returned.
--spec echo(id()|pid(), session(), nkmedia:offer(), media_opts()) ->
+-spec echo(pid()|janus_id(), nkmedia:offer(), media_opts()) ->
     {ok, nkmedia:answer()} | {error, term()}.
 
-echo(Id, Session, Offer, Opts) ->
-    do_call(Id, {echo, Session, Offer, Opts}).
+echo(Id, Offer, Opts) ->
+    do_call(Id, {echo, Offer, Opts}).
 
 
 %% @doc Starts playing a file
 %% The offer SDP is returned.
--spec play(id()|pid(), play(), session(), media_opts()) ->
+-spec play(pid()|janus_id(), play(), media_opts()) ->
     {ok, nkmedia:offer()} | {error, term()}.
 
-play(Id, Play, Session, Opts) ->
-    do_call(Id, {play, Session, Play, Opts}).
+play(Id, Play, Opts) ->
+    do_call(Id, {play, Play, Opts}).
 
 
 %% @doc List all videorooms
--spec list_rooms(id()|pid()) ->
+-spec list_rooms(pid()|janus_id()) ->
     {ok, list()} | {error, term()}.
 
 list_rooms(Id) ->
@@ -161,7 +158,7 @@ list_rooms(Id) ->
 
 
 %% @doc Creates a new videoroom
--spec create_room(id()|pid(), room(), room_opts()) ->
+-spec create_room(pid()|janus_id(), room(), room_opts()) ->
     {ok, room()} | {error, term()}.
 
 create_room(Id, Room, Opts) ->
@@ -169,7 +166,7 @@ create_room(Id, Room, Opts) ->
 
 
 %% @doc Destroys a videoroom
--spec destroy_room(id()|pid(), room()) ->
+-spec destroy_room(pid()|janus_id(), room()) ->
     ok | {error, term()}.
 
 destroy_room(Id, Room) ->
@@ -178,16 +175,16 @@ destroy_room(Id, Room) ->
 
 %% @doc Starts a conection to a videoroom.
 %% caller_id is taked from offer.
--spec publish(id()|pid(), room(), session(), nkmedia:offer(), media_opts()) ->
+-spec publish(pid()|janus_id(), room(), nkmedia:offer(), media_opts()) ->
     {ok, nkmedia:answer()} | {error, term()}.
 
-publish(Id, Room, Session, Offer, Opts) when is_binary(Session) ->
-    do_call(Id, {publish, to_room(Room), Session, Offer, Opts}).
+publish(Id, Room, Offer, Opts) ->
+    do_call(Id, {publish, to_room(Room), Offer, Opts}).
 
 
 %% @doc Starts a conection to a videoroom.
 %% caller_id is taked from offer.
--spec unpublish(id()|pid()) ->
+-spec unpublish(pid()|janus_id()) ->
     ok | {error, term()}.
 
 unpublish(Id) ->
@@ -195,15 +192,15 @@ unpublish(Id) ->
 
 
 %% @doc Starts a conection to a videoroom
--spec listen(id()|pid(), room(), session(), session(), listen_opts()) ->
+-spec listen(pid()|janus_id(), room(), nkmedia_session:id(), listen_opts()) ->
     {ok, nkmedia:offer()} | {error, term()}.
 
-listen(Id, Room, Session, Listen, Opts) when is_binary(Session), is_binary(Listen) ->
-    do_call(Id, {listen, to_room(Room), Session, Listen, Opts}).
+listen(Id, Room, Listen, Opts) ->
+    do_call(Id, {listen, to_room(Room), Listen, Opts}).
 
 
 %% @doc Answers a listen
--spec listen_switch(id()|pid(), session(), listen_opts()) ->
+-spec listen_switch(pid()|janus_id(), nkmedia_session:id(), listen_opts()) ->
     ok | {error, term()}.
 
 listen_switch(Id, Listen, Opts) ->
@@ -212,7 +209,7 @@ listen_switch(Id, Listen, Opts) ->
 
 
 %% @doc
--spec unlisten(id()|pid()) ->
+-spec unlisten(pid()|janus_id()) ->
     ok | {error, term()}.
 
 unlisten(Id) ->
@@ -221,7 +218,7 @@ unlisten(Id) ->
 
 %% @doc Receives a SIP offer, generates a WebRTC offer
 %% You must call answer/2 when you have the WebRTC answer
--spec from_sip(id()|pid(), nkmedia:offer()) ->
+-spec from_sip(pid()|janus_id(), nkmedia:offer()) ->
     {ok, nkmedia:offer()} | {error, term()}.
 
 from_sip(Id, Offer) ->
@@ -230,7 +227,7 @@ from_sip(Id, Offer) ->
 
 %% @doc Receives an WebRTC offer, generates a SIP offer
 %% You must call answer/2 when you have the SIP answer
--spec to_sip(id()|pid(), nkmedia:offer()) ->
+-spec to_sip(pid()|janus_id(), nkmedia:offer()) ->
     {ok, nkmedia:offer()} | {error, term()}.
 
 to_sip(Id, Offer) ->
@@ -239,7 +236,7 @@ to_sip(Id, Offer) ->
 
 %% @doc Answers a pending request
 %% Get Janus' answer (except for listen and play)
--spec answer(id()|pid(), nkmedia:answer()) ->
+-spec answer(pid()|janus_id(), nkmedia:answer()) ->
     ok | {ok, nkmedia:answer()} | {error, term()}.
 
 answer(Id, Answer) ->
@@ -259,13 +256,13 @@ get_all() ->
 %% Internal
 %% ===================================================================
 
-janus_event({?MODULE, Pid}, JanusSessId, JanusHandle, Msg) ->
+janus_event(Pid, JanusSessId, JanusHandle, Msg) ->
     % lager:error("Event: ~p", [Msg]),
     gen_server:cast(Pid, {event, JanusSessId, JanusHandle, Msg}).
 
 
 %% @private
--spec sip_registered(id(), nklib:uri()) ->
+-spec sip_registered(integer(), nklib:uri()) ->
     boolean() | {error, term()}.
 
 sip_registered(Id, Contact) ->
@@ -273,7 +270,7 @@ sip_registered(Id, Contact) ->
 
 
 %% @private
--spec sip_offer(id(), nkmedia:offer()) ->
+-spec sip_offer(integer(), nkmedia:offer()) ->
     ok | {error, term()}.
 
 sip_offer(Id, Offer) ->
@@ -287,16 +284,18 @@ sip_offer(Id, Offer) ->
 
 
 -record(state, {
-    id :: id(),
     janus_id :: nkmedia_janus:id(),
-    mon :: reference(),
+    nkmedia_id ::nkmedia_session:id(),
+    conn ::  pid(),
+    conn_mon :: reference(),
+    user_mon :: reference(),
     status = init :: status() | init,
-    session_id :: integer(),
+    wait :: term(),
+    janus_sess_id :: integer(),
     handle_id :: integer(),
     handle_id2 :: integer(),
     room :: room(),
     room_mon :: reference(),
-    session ::session(),
     sip_handle :: term(),
     sip_dialog :: term(),
     sip_contact :: nklib:uri(),
@@ -311,19 +310,25 @@ sip_offer(Id, Offer) ->
 -spec init(term()) ->
     {ok, tuple()}.
 
-init({Id, JanusId, CallerPid}) ->
-    {ok, Pid} = nkmedia_janus_engine:get_conn(JanusId),
-    {ok, SessId} = nkmedia_janus_client:create(Pid, ?MODULE, {?MODULE, self()}),
-    State = #state{
-        id = Id, 
-        janus_id = JanusId, 
-        mon = monitor(process, CallerPid),
-        session_id = SessId
-    },
-    true = nklib_proc:reg({?MODULE, Id}),
-    nklib_proc:put(?MODULE, Id),
-    self() ! send_keepalive,
-    {ok, status(wait, State)}.
+init({JanusId, MediaSessId, CallerPid}) ->
+    case nkmedia_janus_client:start(JanusId) of
+        {ok, Pid} ->
+            {ok, JanusSessId} = nkmedia_janus_client:create(Pid, ?MODULE, self()),
+            State = #state{
+                janus_id = JanusId, 
+                nkmedia_id = MediaSessId,
+                janus_sess_id = JanusSessId,
+                conn = Pid,
+                conn_mon = monitor(process, Pid),
+                user_mon = monitor(process, CallerPid)
+            },
+            true = nklib_proc:reg({?MODULE, JanusSessId}),
+            nklib_proc:put(?MODULE, JanusSessId),
+            self() ! send_keepalive,
+            {ok, status(wait, State)};
+        {error, Error} ->
+            {stop, Error}
+    end.
 
 
 %% @private
@@ -331,26 +336,28 @@ init({Id, JanusId, CallerPid}) ->
     {noreply, #state{}} | {reply, term(), #state{}} |
     {stop, Reason::term(), #state{}} | {stop, Reason::term(), Reply::term(), #state{}}.
 
-handle_call({echo, Session, Offer, Opts}, _From, #state{status=wait}=State) -> 
+handle_call({echo, Offer, Opts}, _From, #state{status=wait}=State) -> 
     Opts2 = case Opts of
         #{filename:=File} -> 
             Opts#{filename:=nklib_util:to_binary(File)};
         _ ->
-            Opts#{filename=><<"/tmp/echo_", Session/binary>>}
+            #state{nkmedia_id=SessId} = State,
+            Opts#{filename=><<"/tmp/echo_", SessId/binary>>}
     end,
-    do_echo(Offer, State#state{session=Session, opts=Opts2});
+    do_echo(Offer, State#state{opts=Opts2});
 
-handle_call({play, Session, File, Opts}, _From, #state{status=wait}=State) -> 
-    do_play(File, State#state{session=Session, opts=Opts});
+handle_call({play, File, Opts}, _From, #state{status=wait}=State) -> 
+    do_play(File, State#state{opts=Opts});
 
-handle_call({videocall, Session, Offer, Opts}, From, #state{status=wait}=State) -> 
+handle_call({videocall, Offer, Opts}, From, #state{status=wait}=State) -> 
     Opts2 = case Opts of
         #{filename:=File} -> 
             Opts#{filename:=<<(nklib_util:to_binary(File))/binary, "_a">>};
         _ ->
-            Opts#{filename=><<"/tmp/call_", Session/binary, "_a">>}
+            #state{nkmedia_id=SessId} = State,
+            Opts#{filename=><<"/tmp/call_", SessId/binary, "_a">>}
     end,
-    do_videocall(Offer, From, State#state{session=Session, opts=Opts2});
+    do_videocall(Offer, From, State#state{opts=Opts2});
 
 handle_call(list_rooms, _From, #state{status=wait}=State) -> 
     do_list_rooms(State);
@@ -361,20 +368,21 @@ handle_call({create_room, Room, Opts}, _From, #state{status=wait}=State) ->
 handle_call({destroy_room, Room}, _From, #state{status=wait}=State) -> 
     do_destroy_room(State#state{room=Room});
 
-handle_call({publish, Room, Session, Offer, Opts}, _From, #state{status=wait}=State) -> 
+handle_call({publish, Room, Offer, Opts}, _From, #state{status=wait}=State) -> 
     Opts2 = case Opts of
         #{filename:=File} -> 
             Opts#{filename:=nklib_util:to_binary(File)};
         _ ->
-            Opts#{filename=><<"publish_", Session/binary>>}
+            #state{nkmedia_id=SessId} = State,
+            Opts#{filename=><<"publish_", SessId/binary>>}
     end,
-    do_publish(Offer, State#state{session=Session, room=Room, opts=Opts2});
+    do_publish(Offer, State#state{room=Room, opts=Opts2});
 
 handle_call(upublish, _From, #state{status=publish}=State) -> 
     do_unpublish(State);
 
-handle_call({listen, Room, Session, Listen, Opts}, _From, #state{status=wait}=State) -> 
-    do_listen(Listen, State#state{session=Session, room=Room, opts=Opts});
+handle_call({listen, Room, Listen, Opts}, _From, #state{status=wait}=State) -> 
+    do_listen(Listen, State#state{room=Room, opts=Opts});
 
 handle_call({listen_switch, Listen, Opts}, _From, #state{status=listen}=State) -> 
     do_listen_switch(Listen, State#state{opts=Opts});
@@ -388,27 +396,28 @@ handle_call({from_sip, Offer}, From, #state{status=wait}=State) ->
 handle_call({to_sip, Offer}, From, #state{status=wait}=State) ->
     sip_register(to_sip, State#state{from=From, offer=Offer});
 
-handle_call({sip_registered, Contact}, _From, #state{status=Status}=State) ->
-    case Status of
+handle_call({sip_registered, Contact}, _From, #state{status=Status, wait=Wait}=State) ->
+    case {Status, Wait} of
         {wait, to_sip} ->
             reply(true, State#state{sip_contact=Contact});
         {wait, from_sip} ->
             reply(true, State#state{sip_contact=Contact});
-        sip ->
+        {sip, _} ->
             reply(true, State);
         _ ->
             reply(false, State)
     end;
 
 handle_call({sip_offer, Handle, Dialog, Offer}, From, 
-            #state{status={wait, sip_offer}}=State) ->
+            #state{status=wait, wait=sip_offer}=State) ->
     #state{from=From} = State,
     gen_server:reply(From, {ok, Offer}),
     State2 = State#state{sip_handle=Handle, sip_dialog=Dialog, from=undefined},
-    reply(ok, status({wait, to_sip_answer}, State2));
+    reply(ok, wait(to_sip_answer, State2));
 
-handle_call({answer, #{sdp:=SDP}=Answer}, From, #state{status=Status}=State) ->
-    case Status of
+handle_call({answer, #{sdp:=SDP}=Answer}, From, State) ->
+    #state{status=Status, wait=Wait} = State,
+    case {Status, Wait} of
         {wait, videocall_answer} ->
             do_videocall_answer(Answer, From, State);
         {wait, listen_answer} ->
@@ -421,10 +430,13 @@ handle_call({answer, #{sdp:=SDP}=Answer}, From, #state{status=Status}=State) ->
             #state{sip_handle=Handle} = State,
             case nksip_request:reply(Handle, {answer, SDP}) of
                 ok ->
-                    noreply(status({wait, to_sip_reply}, State#state{from=From}));
+                    noreply(wait(to_sip_reply, State#state{from=From}));
                 {error, Error} ->
                     reply_error({sip_error, Error}, State)
-            end
+            end;
+        _ ->
+            reply_error(invalid_state, State)
+
     end;
 
    
@@ -451,12 +463,12 @@ handle_cast({event, Id, Handle, Msg}, State) ->
             do_event(Id, Handle, Event, State)
     end;
 
-handle_cast({invite, {ok, Body}}, #state{status={wait, from_sip_invite}}=State) ->
+handle_cast({invite, {ok, Body}}, #state{status=wait, wait=from_sip_invite}=State) ->
     #state{from=From} =State,
     gen_server:reply(From, {ok, #{sdp=>nksip_sdp:unparse(Body)}}),
     noreply(status(sdp, State#state{from=undefined}));
 
-handle_cast({invite, {error, Error}}, #state{status={wait, from_sip_invite}}=State) ->
+handle_cast({invite, {error, Error}}, #state{status=wait, wait=rom_sip_invite}=State) ->
     #state{from=From} =State,
     ?LLOG(notice, "invite error: ~p", [Error], State),
     gen_server:reply(From, {error, Error}),
@@ -484,7 +496,7 @@ handle_info({timeout, _, status_timeout}, State) ->
     ?LLOG(info, "status timeout", [], State),
     {stop, normal, State};
 
-handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{mon=Ref}=State) ->
+handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{user_mon=Ref}=State) ->
     case Reason of
         normal ->
             ?LLOG(info, "caller monitor stop", [], State);
@@ -524,15 +536,15 @@ terminate(_Reason, State) ->
     destroy(State),
     case Status of
         publisher ->
-            #state{room=Room, session=Session} = State,
-            _ = nkmedia_janus_room:event(Room, {unpublish, Session});
+            #state{room=Room, nkmedia_id=SessId} = State,
+            _ = nkmedia_janus_room:event(Room, {unpublish, SessId});
         listener ->
-            #state{room=Room, session=Session} = State,
-            _ = nkmedia_janus_room:event(Room, {unlisten, Session});
+            #state{room=Room, nkmedia_id=SessId} = State,
+            _ = nkmedia_janus_room:event(Room, {unlisten, SessId});
         _ ->
             ok
     end,
-    nklib_util:reply(From, {error, stopped}),
+    nklib_util:reply(From, {error, process_stopped}),
     ok.
 
 
@@ -541,13 +553,13 @@ terminate(_Reason, State) ->
 %% ===================================================================
 
 %% @private Echo plugin
-do_echo(#{sdp:=SDP}, #state{session_id=Id}=State) ->
+do_echo(#{sdp:=SDP}, State) ->
     {ok, Handle} = attach(echotest, State),
     Body = get_body(#{}, State),
     Jsep = #{sdp=>SDP, type=>offer, trickle=>false},
     case message(Handle, Body, Jsep, State) of
         {ok, #{<<"result">>:=<<"ok">>}, #{<<"sdp">>:=SDP2}} ->
-            State2 = State#state{session_id=Id, handle_id=Handle},
+            State2 = State#state{handle_id=Handle},
             reply({ok, #{sdp=>SDP2}}, status(echo, State2));
         {error, Error} ->
             reply_error({echo_error, Error}, State)
@@ -574,13 +586,12 @@ do_play(File, State) ->
                             #{<<"result">>:=#{<<"status">>:=<<"preparing">>}}, 
                             #{<<"sdp">>:=SDP}
                         } ->
-                            State3 = status({wait, play_answer}, State2),
+                            State3 = wait(play_answer, State2),
                             reply({ok, #{sdp=>SDP}}, State3);
                         {ok, #{<<"error">>:=Error}, _} ->
-                            {error, {could_not_join, Error}}
+                            reply_error({could_not_join, Error}, State2)
                     end;
                 {error, Error} ->
-                    
                     reply_error({list_error, Error}, State2)
             end;
         {error, Error} ->
@@ -605,17 +616,13 @@ do_play_answer(#{sdp:=SDP}, #state{handle_id=Handle} = State) ->
 %% ===================================================================
 
 %% @private First node registers
-do_videocall(#{sdp:=SDP}, From, #state{session_id=Id}=State) ->
+do_videocall(#{sdp:=SDP}, From, State) ->
     {ok, Handle} = attach(videocall, State),
     UserName = nklib_util:to_binary(Handle),
     Body = #{request=>register, username=>UserName},
     case message(Handle, Body, #{}, State) of
         {ok, #{<<"result">>:=#{<<"event">>:=<<"registered">>}}, _} ->
-            State2 = State#state{
-                session_id = Id,
-                handle_id = Handle,
-                from = From
-            },
+            State2 = State#state{handle_id = Handle, from = From},
             do_videocall_2(SDP, State2);
         {error, Error} ->
             reply_error({could_not_register, Error}, State)
@@ -624,14 +631,12 @@ do_videocall(#{sdp:=SDP}, From, #state{session_id=Id}=State) ->
 
 %% @private Second node registers
 do_videocall_2(SDP, State) ->
-    {ok, Handle2} = attach(<<"videocall">>, State),
+    {ok, Handle2} = attach(videocall, State),
     UserName2 = nklib_util:to_binary(Handle2),
     Body = #{request=>register, username=>UserName2},
     case message(Handle2, Body, #{}, State) of
         {ok, #{<<"result">>:=#{<<"event">>:=<<"registered">>}}, _} ->
-            State2 = State#state{
-                handle_id2 = Handle2
-            },
+            State2 = State#state{handle_id2 = Handle2},
             do_videocall_3(SDP, State2);
         {error, Error} ->
             reply({could_not_register, Error}, State)
@@ -640,15 +645,12 @@ do_videocall_2(SDP, State) ->
 
 %% @private We launch the call and wait for Juanus
 do_videocall_3(SDP, State) ->
-    #state{
-        handle_id = Handle, 
-        handle_id2 = Handle2
-    } = State,
+    #state{handle_id = Handle, handle_id2 = Handle2} = State,
     Body = #{request=>call, username=>nklib_util:to_binary(Handle2)},
     Jsep = #{sdp=>SDP, type=>offer, trickle=>false},
     case message(Handle, Body, Jsep, State) of
         {ok, #{<<"result">>:=#{<<"event">>:=<<"calling">>}}, _} ->
-            noreply(status({wait, videocall_offer}, State));
+            noreply(wait(videocall_offer, State));
         {error, Error} ->
             reply_error({could_not_call, Error}, State)
     end.
@@ -673,7 +675,7 @@ do_videocall_answer(#{sdp:=SDP}, From, State) ->
                     case message(Handle2, Body3, #{}, State) of
                         {ok, #{<<"result">>:=#{<<"event">>:=<<"set">>}}, _} ->
                             State2 = State#state{from=From},
-                            noreply(status({wait, videocall_reply}, State2));
+                            noreply(wait(videocall_reply, State2));
                         {error, Error} ->
                             reply_error({set_error, Error}, State)
                     end;
@@ -697,7 +699,8 @@ do_list_rooms(State) ->
     case message(Handle, Body, #{}, State) of
         {ok, #{<<"list">>:=List}, _} ->
             List2 = [{Desc, Data} || #{<<"description">>:=Desc}=Data <- List],
-            reply_stop({ok, maps:from_list(List2)}, State);
+            detach(Handle, State),
+            reply({ok, maps:from_list(List2)}, status(wait, State));
         {error, Error} ->
             reply_error({create_error, Error}, State)
     end.
@@ -722,12 +725,17 @@ do_create_room(#state{room=Room, opts=Opts}=State) ->
         % fir_freq
     },
     case message(Handle, Body, #{}, State) of
-        {ok, #{<<"videoroom">>:=<<"created">>, <<"room">>:=RoomId}, _} ->
-            reply_stop(ok, State);
-        {ok, #{<<"error_code">>:=427}, _} ->
-            reply_error(already_exists, State);
-        {ok, #{<<"error">>:=Error}, _} ->
-            reply_error({create_error, Error}, State);
+        {ok, Msg, _} ->
+            Reply = case Msg of
+                #{<<"videoroom">>:=<<"created">>, <<"room">>:=RoomId} ->
+                    ok;
+                #{<<"error_code">>:=427} ->
+                    {error, already_exists};
+                #{<<"error">>:=Error} ->
+                    {error, {create_error, Error}}
+            end,
+            detach(Handle, State),
+            reply(Reply, status(wait, State));
         {error, Error} ->
             reply_error({create_error, Error}, State)
     end.
@@ -739,17 +747,20 @@ do_destroy_room(#state{room=Room}=State) ->
     RoomId = to_room_id(Room),
     Body = #{request => destroy, room => RoomId},
     case message(Handle, Body, #{}, State) of
-        {ok, #{<<"videoroom">>:=<<"destroyed">>}, _} ->
-            reply_stop(ok, State);
-        {ok, #{<<"error_code">>:=426}, _} ->
-            reply_error(room_not_found, State);
-        {ok, #{<<"error">>:=Error}, _} ->
-            reply_error(Error, State);
+        {ok, Msg, _} ->
+            Reply = case Msg of
+                #{<<"videoroom">>:=<<"destroyed">>} ->
+                    ok;
+                #{<<"error_code">>:=426} ->
+                    {error, room_not_found};
+                #{<<"error">>:=Error} ->
+                    {error, {destroy_error, Error}}
+            end,
+            detach(Handle, State),
+            reply(Reply, status(wait, State));
         {error, Error} ->
             reply_error({destroy_error, Error}, State)
     end.
-
-
 
 
 
@@ -758,15 +769,15 @@ do_destroy_room(#state{room=Room}=State) ->
 %% ===================================================================
 
 %% @private Create session and join
-do_publish(#{sdp:=SDP}, #state{room=Room, session=Session} = State) ->
+do_publish(#{sdp:=SDP}, #state{room=Room, nkmedia_id=SessId} = State) ->
     {ok, Handle} = attach(videoroom, State),
     RoomId = to_room_id(Room),
-    Feed = erlang:phash2(Session),
+    Feed = erlang:phash2(SessId),
     Body = #{
         request => join, 
         room => RoomId,
         ptype => publisher,
-        display => Session,
+        display => SessId,
         id => Feed
     },
     case message(Handle, Body, #{}, State) of
@@ -787,10 +798,10 @@ do_publish_2(SDP_A, State) ->
     #state{
         handle_id = Handle, 
         room = Room, 
-        session = Session,
+        nkmedia_id = SessId,
         opts = Opts
     } = State,
-    DefFile = <<"publish_", Session/binary>>,
+    DefFile = <<"publish_", SessId/binary>>,
     Body = #{
         request => configure,
         audio => maps:get(audio, Opts, true),
@@ -803,7 +814,7 @@ do_publish_2(SDP_A, State) ->
     Jsep = #{sdp=>SDP_A, type=>offer, trickle=>false},
     case message(Handle, Body, Jsep, State) of
         {ok, #{<<"configured">>:=<<"ok">>}, #{<<"sdp">>:=SDP_B}} ->
-            case nkmedia_janus_room:event(Room, {publish, Session, Opts}) of
+            case nkmedia_janus_room:event(Room, {publish, SessId, Opts}) of
                 {ok, Pid} ->
                     Mon = erlang:monitor(process, Pid),
                     State2 = State#state{room_mon=Mon},
@@ -836,7 +847,7 @@ do_unpublish(#state{handle_id=Handle} = State) ->
 
 
 %% @private Create session and join
-do_listen(Listen, #state{room=Room, session=Session, opts=Opts}=State) ->
+do_listen(Listen, #state{room=Room, nkmedia_id=SessId, opts=Opts}=State) ->
     {ok, Handle} = attach(videoroom, State),
     Feed = erlang:phash2(Listen),
     Body = #{
@@ -851,11 +862,11 @@ do_listen(Listen, #state{room=Room, session=Session, opts=Opts}=State) ->
     case message(Handle, Body, #{}, State) of
         {ok, #{<<"videoroom">>:=<<"attached">>}, #{<<"sdp">>:=SDP}} ->
             State2 = State#state{handle_id=Handle},
-            case nkmedia_janus_room:event(Room, {listen, Session, Opts}) of
+            case nkmedia_janus_room:event(Room, {listen, SessId, Opts}) of
                 {ok, Pid} ->
                     Mon = erlang:monitor(process, Pid),
                     State3 = State2#state{room_mon=Mon},
-                    reply({ok, #{sdp=>SDP}}, status({wait, listen_answer}, State3));
+                    reply({ok, #{sdp=>SDP}}, wait(listen_answer, State3));
                 {error, Error} ->
                     reply_error({nkmedia_room_error, Error}, State2)
             end;
@@ -929,7 +940,7 @@ do_from_sip(#state{sip_contact=Contact, offer=Offer}=State) ->
             end,
             gen_server:cast(Self, {invite, Result})
         end),
-    noreply(status({wait, janus_from_sip_answer_1}, State#state{offer=undefined})).
+    noreply(wait(janus_from_sip_answer_1, State#state{offer=undefined})).
 
 
 %% @private
@@ -939,23 +950,23 @@ do_from_sip_answer(#{sdp:=SDP}, From, State) ->
     Jsep = #{sdp=>SDP, type=>answer, trickle=>false},
     case message(Handle, Body, Jsep, State) of
         {ok, #{<<"result">>:=#{<<"event">>:=<<"accepted">>}}, _} ->
-            noreply(status({wait, from_sip_invite}, State#state{from=From}));
+            noreply(wait(from_sip_invite, State#state{from=From}));
         {error, Error} ->
             reply_error({accepted_error, Error}, State)
     end.
 
 
 %% @private
-do_to_sip(#state{id=Id, handle_id=Handle, offer=#{sdp:=SDP}}=State) ->
+do_to_sip(#state{janus_sess_id=Id, handle_id=Handle, offer=#{sdp:=SDP}}=State) ->
     Body = #{
         request => call,
-        uri => <<"sip:janus-", Id/binary, "@nkmedia">>
+        uri => <<"sip:janus-", (nklib_util:to_binary(Id))/binary, "@nkmedia">>
     },
     Jsep = #{sdp=>SDP, type=>offer},
     case message(Handle, Body, Jsep, State) of
         {ok, #{<<"result">>:=#{<<"event">>:=<<"calling">>}}, _} ->
             State2 = State#state{offer=undefined},
-            noreply(status({wait, sip_offer}, State2));
+            noreply(wait(sip_offer, State2));
         {error, Error} ->
             reply_error({accepted_error, Error}, State)
     end.
@@ -971,16 +982,17 @@ do_to_sip(#state{id=Id, handle_id=Handle, offer=#{sdp:=SDP}}=State) ->
 %% @private
 do_event(Id, Handle, {event, <<"incomingcall">>, _, #{<<"sdp">>:=SDP}}, State) ->
     case State of
-        #state{status={wait, videocall_offer}, session_id=Id, handle_id2=Handle} ->
+        #state{status=wait, wait=videocall_offer, janus_sess_id=Id, handle_id2=Handle} ->
             #state{from=From} = State,
             gen_server:reply(From, {ok, #{sdp=>SDP}}),
             State2 = State#state{from=undefined},
-            noreply(status({wait, videocall_answer}, State2));
-        #state{status={wait, janus_from_sip_answer_1}, session_id=Id, handle_id=Handle} ->
+            noreply(wait(videocall_answer, State2));
+        #state{status=wait, wait=janus_from_sip_answer_1, 
+               janus_sess_id=Id, handle_id=Handle} ->
             #state{from=From} = State,
             gen_server:reply(From, {ok, #{sdp=>SDP, sdp_type=>webrtc}}),
             State2 = State#state{from=undefined},
-            noreply(status({wait, from_sip_answer_2}, State2));
+            noreply(wait(from_sip_answer_2, State2));
         _ ->
             ?LLOG(warning, "unexpected incomingcall", [], State),
             {stop, normal, State}
@@ -988,7 +1000,7 @@ do_event(Id, Handle, {event, <<"incomingcall">>, _, #{<<"sdp">>:=SDP}}, State) -
 
 do_event(Id, Handle, {event, <<"accepted">>, _, #{<<"sdp">>:=SDP}}, State) ->
     case State of
-        #state{status={wait, videocall_reply}, session_id=Id, handle_id=Handle} ->
+        #state{status=wait, wait=videocall_reply, janus_sess_id=Id, handle_id=Handle} ->
             #state{from=From} = State,
             gen_server:reply(From, {ok, #{sdp=>SDP}}),
             Body = get_body(#{request=>set}, State),
@@ -1000,7 +1012,7 @@ do_event(Id, Handle, {event, <<"accepted">>, _, #{<<"sdp">>:=SDP}}, State) ->
                     ?LLOG(warning, "error sending set: ~p", [Error], State),
                     {stop, normal, State}
             end;
-        #state{status={wait, to_sip_reply}, session_id=Id, handle_id=Handle} ->
+        #state{status=wait, wait=to_sip_reply, janus_sess_id=Id, handle_id=Handle} ->
             #state{from=From} = State,
             gen_server:reply(From, {ok, #{sdp=>SDP}}),
             State2 = State#state{from=undefined},
@@ -1019,9 +1031,9 @@ do_event(_Id, _Handle, {data, #{<<"videoroom">>:=<<"destroyed">>}}, State) ->
 
 do_event(_Id, _Handle, {event, <<"registered">>, _, _}, State) ->
     case State of
-        #state{status={wait, from_sip}, sip_contact=Uri} when Uri /= undefined ->
+        #state{status=wait, wait=from_sip, sip_contact=Uri} when Uri /= undefined ->
             do_from_sip(State);
-        #state{status={wait, to_sip}} ->
+        #state{status=wait, wait=to_sip} ->
             timer:sleep(2000),
             do_to_sip(State);
         _ ->
@@ -1049,14 +1061,17 @@ do_event(_Id, _Handle, Event, State) ->
 %% ===================================================================
 
 %% @private
-attach(Plugin, #state{session_id=SessId}=State) ->
-    {ok, Pid} = get_janus_pid(State),
+attach(Plugin, #state{janus_sess_id=SessId, conn=Pid}) ->
     nkmedia_janus_client:attach(Pid, SessId, nklib_util:to_binary(Plugin)).
 
 
 %% @private
-message(Handle, Body, Jsep, #state{session_id=SessId}=State) ->
-    {ok, Pid} = get_janus_pid(State),
+detach(Handle, #state{janus_sess_id=SessId, conn=Pid}) ->
+    nkmedia_janus_client:detach(Pid, SessId, Handle).
+
+
+%% @private
+message(Handle, Body, Jsep, #state{janus_sess_id=SessId, conn=Pid}) ->
     case nkmedia_janus_client:message(Pid, SessId, Handle, Body, Jsep) of
         {ok, #{<<"data">>:=Data}, Jsep2} ->
             {ok, Data, Jsep2};
@@ -1066,24 +1081,18 @@ message(Handle, Body, Jsep, #state{session_id=SessId}=State) ->
 
 
 %% @private
-destroy(#state{session_id=SessId}=State) ->
-    {ok, Pid} = get_janus_pid(State),
+destroy(#state{janus_sess_id=SessId, conn=Pid}) ->
     nkmedia_janus_client:destroy(Pid, SessId).
 
 
 %% @private
-keepalive(#state{session_id=SessId}=State) ->
-    {ok, Pid} = get_janus_pid(State),
+keepalive(#state{janus_sess_id=SessId, conn=Pid}) ->
     nkmedia_janus_client:keepalive(Pid, SessId).
 
 
-%% @private
-get_janus_pid(#state{janus_id=JanusId}) ->
-    nkmedia_janus_engine:get_conn(JanusId).
-
 
 %% @private
-sip_register(Status, #state{id=Id}=State) ->
+sip_register(Status, #state{janus_sess_id=Id}=State) ->
     {ok, Handle} = attach(sip, State),
     Ip = nklib_util:to_host(nkmedia_app:get(erlang_ip)),
     Port = nkmedia_app:get(sip_port),
@@ -1091,13 +1100,13 @@ sip_register(Status, #state{id=Id}=State) ->
         request => register,
         proxy => <<"sip:", Ip/binary, ":",(nklib_util:to_binary(Port))/binary>>,
         % username => <<"sip:jb@test">>,
-        username => <<"sip:janus-", Id/binary, "@nkmedia">>,
+        username => <<"sip:janus-", (nklib_util:to_binary(Id))/binary, "@nkmedia">>,
         secret => <<"test">>
     },
     case message(Handle, Body, #{}, State) of
         {ok, #{<<"result">>:=#{<<"event">>:=<<"registering">>}}, _} ->
             State2 = State#state{handle_id=Handle},
-            noreply(status({wait, Status}, State2));
+            noreply(wait(Status, State2));
         {ok, #{<<"error">>:=Error}, _} ->
             reply_error(Error, State);
         {error, Error} ->
@@ -1125,6 +1134,11 @@ parse_event(Msg) ->
     end.
 
 
+%% @private
+wait(Reason, State) ->
+    State2 = status(wait, State),
+    State2#state{wait=Reason}.
+
 
 %% @private
 status(NewStatus, #state{status=OldStatus, timer=Timer}=State) ->
@@ -1134,11 +1148,11 @@ status(NewStatus, #state{status=OldStatus, timer=Timer}=State) ->
     end,
     nklib_util:cancel_timer(Timer),
     Time = case NewStatus of
-        {wait, _} -> ?OP_TIMEOUT;
-        _ -> ?CALL_TIMEOUT
+        wait -> ?WAIT_TIMEOUT;
+        _ -> ?OP_TIMEOUT
     end,
     NewTimer = erlang:start_timer(1000*Time, self(), status_timeout),
-    State#state{status=NewStatus, timer=NewTimer}.
+    State#state{status=NewStatus, wait=undefined, timer=NewTimer}.
 
 
 %% @private
@@ -1183,7 +1197,7 @@ find(SessId) ->
 
 %% @private
 do_call(SessId, Msg) ->
-    do_call(SessId, Msg, 1000*?RING_TIMEOUT).
+    do_call(SessId, Msg, 1000*?WAIT_TIMEOUT).
 
 
 %% @private
@@ -1192,8 +1206,8 @@ do_call(SessId, Msg, Timeout) ->
         {ok, Pid} -> 
             nklib_util:call(Pid, Msg, Timeout);
         not_found -> 
-            case start(SessId) of
-                {ok, _, Pid} ->
+            case start(SessId, <<>>) of
+                {ok, Pid} ->
                     nklib_util:call(Pid, Msg, Timeout);
                 _ ->
                     {error, session_not_found}

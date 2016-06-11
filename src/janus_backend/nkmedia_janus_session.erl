@@ -105,7 +105,7 @@ terminate(_Reason, _Session, State) ->
 offer_op(proxy, #{offer:=Offer}=Opts, false, #{id:=Id}=Session, State) ->
     case get_janus(Opts, Session, State) of
         {ok, Pid, State2} ->
-            case nkmedia_janus_op:videocall(Pid, Id, Offer, Opts) of
+            case nkmedia_janus_op:videocall(Pid, Offer, Opts) of
                 {ok, #{sdp:=SDP}} ->
                     State3 = State2#{janus_op=>answer},
                     lager:error("OFFER UPDATED OK"),
@@ -117,6 +117,34 @@ offer_op(proxy, #{offer:=Offer}=Opts, false, #{id:=Id}=Session, State) ->
             {error, Error, State}
     end;
 
+offer_op(listen, #{room:=Room, publisher:=Publisher}=Opts, false, Session, State) ->
+    case get_janus(Opts, Session, State) of
+        {ok, Pid, State2} ->
+            case nkmedia_janus_op:listen(Pid, Room, Publisher, Opts) of
+                {ok, #{sdp:=SDP}} ->
+                    State3 = State2#{janus_op=>answer},
+                    lager:error("OFFER UPDATED OK"),
+                    {ok, #{sdp=>SDP}, listen, Opts, State3};
+                {error, Error} ->
+                    {error, {listen_error, Error}, State2}
+            end;
+        {error, Error} ->
+            {error, Error, State}
+    end;
+
+offer_op(listen_switch, #{publisher:=Publisher}=Opts, true, 
+         #{offer_op:={listen, Opts0}}, #{janus_pid:=Pid}=State) ->
+    case nkmedia_janus_op:listen_switch(Pid, Publisher, Opts) of
+        ok ->
+            {ok, #{}, listen, maps:merge(Opts0, Opts), State};
+        {error, Error} ->
+            {error, {listen_switch_error, Error}, State}
+    end;
+
+offer_op(listen_switch, Opts, false, Session, State) ->
+    lager:error("O: ~p, S: ~p T: ~p", [Opts, Session, State]),
+    continue;
+
 offer_op(_Op, _Opts, _HasOffer, _Session, _State) ->
     continue.
 
@@ -126,10 +154,10 @@ offer_op(_Op, _Opts, _HasOffer, _Session, _State) ->
     {ok, nkmedia:answer(), ReplyOpts::map(), session()} |
     {error, term(), state()} | continue().
 
-answer_op(echo, Opts, false, #{id:=Id, offer:=Offer}=Session, State) ->
+answer_op(echo, Opts, false, #{offer:=Offer}=Session, State) ->
     case get_janus(Opts, Session, State) of
         {ok, Pid, State2} ->
-            case nkmedia_janus_op:echo(Pid, Id, Offer, Opts) of
+            case nkmedia_janus_op:echo(Pid, Offer, Opts) of
                 {ok, #{sdp:=_}=Answer} ->
                     {ok, Answer, echo, #{}, State2};
                 {error, Error} ->
@@ -139,7 +167,7 @@ answer_op(echo, Opts, false, #{id:=Id, offer:=Offer}=Session, State) ->
             {error, Error, State}
     end;
 
-answer_op(publish, Opts, false, #{id:=Id, offer:=Offer}=Session, State) ->
+answer_op(publish, Opts, false, #{offer:=Offer}=Session, State) ->
     try
         Room = case maps:find(room, Opts) of
             {ok, Room0} -> nklib_util:to_binary(Room0);
@@ -157,7 +185,7 @@ answer_op(publish, Opts, false, #{id:=Id, offer:=Offer}=Session, State) ->
                     {ok, _} ->
                         ok
                 end,
-                case nkmedia_janus_op:publish(Pid, Room, Id, Offer, Opts) of
+                case nkmedia_janus_op:publish(Pid, Room, Offer, Opts) of
                     {ok, #{sdp:=_}=Answer} ->
                         {ok, Answer, publish, #{room=>Room}, State2};
                     {error, Error2} ->
@@ -213,9 +241,9 @@ hangup(_Reason, _Session, State) ->
 
 
 %% @private
-get_janus(_Opts, _Session, #{janus_id:=JanusId}=State) ->
-    case nkmedia_janus_op:start(JanusId) of
-        {ok, _JanusSessId, Pid} ->
+get_janus(_Opts, #{id:=SessId}, #{janus_id:=JanusId}=State) ->
+    case nkmedia_janus_op:start(JanusId, SessId) of
+        {ok, Pid} ->
             State2 = State#{janus_pid=>Pid, janus_mon=>monitor(process, Pid)},
             {ok, Pid, State2};
         {error, Error} ->

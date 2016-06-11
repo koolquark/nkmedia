@@ -63,8 +63,6 @@
     }.
 
 
-
-
 -type event() ::
     {publish, session(), map()} | {unpublish, session()} |
     {listen, session(), map()} | {unlisten, session()}.
@@ -248,7 +246,7 @@ terminate(_Reason, #state{janus_id=JanusId, room=Room}=State) ->
         ok ->
             ?LLOG(notice, "stopping, destroying room", [], State);
         {error, Error} ->
-            ?LLOG(warning, "could not destroy room: ~p", [Room, Error], State)
+            ?LLOG(warning, "could not destroy room: ~p: ~p", [Room, Error], State)
     end.
 
 
