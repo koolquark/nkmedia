@@ -273,11 +273,14 @@ send_call(SessId, #{dest:=Dest}=Offer) ->
             Opts2 = #{room=>"mcu2"},
             ok = nkmedia_session:answer_async(SessId, mcu, Opts2);
         <<"p">> ->
+            {ok, _} = nkmedia_session:offer(SessId, sdp, #{offer=>Offer}),
             ok = nkmedia_session:answer_async(SessId, publish, #{});
         <<"p2">> ->
+            {ok, _} = nkmedia_session:offer(SessId, sdp, #{offer=>Offer}),
             Opts2 = #{room=>"room2"},
             ok = nkmedia_session:answer_async(SessId, publish, Opts2);
         <<"p2r">> ->
+            {ok, _} = nkmedia_session:offer(SessId, sdp, #{offer=>Offer}),
             Opts2 = #{room=>"room2", record=>true, filename=>"p2", info=>p2},
             ok = nkmedia_session:answer_async(SessId, publish, Opts2);
         <<"d", Num/binary>> ->

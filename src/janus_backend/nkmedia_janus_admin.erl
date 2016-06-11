@@ -24,6 +24,7 @@
 
 -export([list_sessions/1, list_handles/2, handle_info/3, set_log_level/2]).
 -export([print_handle_info/3]).
+-export([print_all/1]).
 
 
 %% ===================================================================
@@ -101,6 +102,32 @@ set_log_level(Id, Level) when Level>=0, Level=<7 ->
         {error, Error} ->
             {error, Error}
     end.
+
+
+%% @private
+print_all(Id) ->
+    {ok, Sessions} = list_sessions(Id),
+    print_all(Id, Sessions).
+
+
+print_all(_Id, []) ->
+    ok;
+print_all(Id, [Session|Rest]) ->
+    {ok, Handles} = list_handles(Id, Session),
+    print_all(Id, Session, Handles),
+    print_all(Id, Rest).
+
+print_all(_Id, _Session, []) ->
+    ok;
+print_all(Id, Session, [Handle|Rest]) ->
+    {ok, Info} = handle_info(Id, Session, Handle),
+    io:format("\n\nSession ~p Handle ~p:\n", [Session, Handle]),
+    io:format("~s\n", [nklib_json:encode_pretty(Info)]),
+    print_all(Id, Session, Rest).
+
+
+
+
 
 
 

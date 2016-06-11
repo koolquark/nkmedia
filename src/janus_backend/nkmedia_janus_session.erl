@@ -67,7 +67,10 @@
 
 -type state() ::
     #{
-        janus_id => nmedia_janus_engine:id()
+        janus_id => nkmedia_janus_engine:id(),
+        janus_pid => pid(),
+        janus_mon => reference(),
+        janus_op => answer
     }.
 
 
@@ -104,7 +107,8 @@ offer_op(proxy, #{offer:=Offer}=Opts, false, #{id:=Id}=Session, State) ->
         {ok, Pid, State2} ->
             case nkmedia_janus_op:videocall(Pid, Id, Offer, Opts) of
                 {ok, #{sdp:=SDP}} ->
-                    State3 = State2#{janus_op=>proxy},
+                    State3 = State2#{janus_op=>answer},
+                    lager:error("OFFER UPDATED OK"),
                     {ok, Offer#{sdp=>SDP}, proxy, #{}, State3};
                 {error, Error} ->
                     {error, {videocall_error, Error}, State2}
@@ -135,6 +139,37 @@ answer_op(echo, Opts, false, #{id:=Id, offer:=Offer}=Session, State) ->
             {error, Error, State}
     end;
 
+answer_op(publish, Opts, false, #{id:=Id, offer:=Offer}=Session, State) ->
+    try
+        Room = case maps:find(room, Opts) of
+            {ok, Room0} -> nklib_util:to_binary(Room0);
+            error -> nklib_util:uuid_4122()
+        end,
+        case get_janus(Opts, Session, State) of
+            {ok, Pid, State2} ->
+                case nkmedia_janus_room:get_info(Room) of
+                    {error, not_found} ->
+                        #{janus_id:=JanusId} = State2,
+                        case nkmedia_janus_room:create(JanusId, Room, #{}) of
+                            {ok, _} -> ok;
+                            {error, Error} -> throw({room_creation_error, Error})
+                        end;
+                    {ok, _} ->
+                        ok
+                end,
+                case nkmedia_janus_op:publish(Pid, Room, Id, Offer, Opts) of
+                    {ok, #{sdp:=_}=Answer} ->
+                        {ok, Answer, publish, #{room=>Room}, State2};
+                    {error, Error2} ->
+                        {error, {echo_error, Error2}, State2}
+                end;
+            {error, Error3} ->
+                {error, Error3, State}
+        end
+    catch
+        throw:Throw -> {error, Throw, State}
+    end;
+
 answer_op(_Op, _Opts, _HasAnswer, _Session, _State) ->
     continue.
 
@@ -144,6 +179,19 @@ answer_op(_Op, _Opts, _HasAnswer, _Session, _State) ->
 -spec updated_answer(nkmedia:answer(), session(), state()) ->
     {ok, nkmedia:answer(), state()} |
     {error, term(), state()} | continue().
+
+updated_answer(Answer, _Session, #{janus_op:=answer}=State) ->
+    #{janus_pid:=Pid} = State,
+    case nkmedia_janus_op:answer(Pid, Answer) of
+        ok ->
+            lager:error("UPDATED OK"),
+            {ok, Answer, maps:remove(janus_op, State)};
+        {ok, Answer2} ->
+            lager:error("UPDATED OK2"),
+            {ok, Answer2, maps:remove(janus_op, State)};
+        {error, Error} ->
+            {error, {janus_answer_error, Error}, State}
+    end;
 
 updated_answer(_Answer, _Session, _State) ->
     continue.
@@ -198,9 +246,6 @@ get_mediaserver(#{srv_id:=SrvId}=Session, State) ->
         {error, Error} ->
             {error, Error}
     end.
-
-
-
 
 
 % %% @private

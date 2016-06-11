@@ -24,7 +24,7 @@
 -behaviour(gen_server).
 
 -export([connect/1, stop/1, find/1]).
--export([stats/2, get_config/1]).
+-export([stats/2, get_config/1, get_conn/1]).
 -export([get_all/0, get_all/1, stop_all/0]).
 -export([start_link/1, init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
@@ -112,17 +112,17 @@ get_config(Id) ->
 	end.
 
 
-% %% @private
-% -spec get_conn(id()) ->
-% 	{ok, pid()} | {error, term()}.
+%% @private
+-spec get_conn(id()) ->
+	{ok, pid()} | {error, term()}.
 
-% get_conn(Id) ->
-% 	case find(Id) of
-% 		{ok, ready, _JanusPid, ConnPid} ->
-% 			{ok, ConnPid};
-% 		_ ->
-% 			{error, no_connection}
-% 	end.
+get_conn(Id) ->
+	case find(Id) of
+		{ok, ready, _JanusPid, ConnPid} ->
+			{ok, ConnPid};
+		_ ->
+			{error, no_connection}
+	end.
 
 
 %% @doc

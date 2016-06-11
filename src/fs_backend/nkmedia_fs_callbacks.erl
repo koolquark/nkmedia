@@ -128,7 +128,7 @@ nkmedia_session_terminate(Reason, Session) ->
 
 %% @private
 nkmedia_session_offer_op(Op, Opts, HasOffer, Session) ->
-    case maps:get(backend, Session, freeswitch) of
+    case maps:get(backend, Opts, freeswitch) of
         freeswitch ->
             State = state(Session),
             case 
@@ -148,7 +148,7 @@ nkmedia_session_offer_op(Op, Opts, HasOffer, Session) ->
 
 %% @private
 nkmedia_session_answer_op(Op, Opts, HasAnswer, Session) ->
-    case maps:get(backend, Session, freeswitch) of
+    case maps:get(backend, Opts, freeswitch) of
         freeswitch ->
             State = state(Session),
             case 
