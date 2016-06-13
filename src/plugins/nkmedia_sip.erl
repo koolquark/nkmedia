@@ -21,7 +21,7 @@
 %% @doc Plugin implementing a SIP server and client
 -module(nkmedia_sip).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([send_invite/4, send_hangup/1]).
+-export([find_registered/3, send_invite/4, send_hangup/1]).
 
 -define(LLOG(Type, Txt, Args),
     lager:Type("NkMEDIA SIP Plugin (~s) "++Txt, [SessId|Args])).
@@ -49,6 +49,11 @@
 %% Public
 %% ===================================================================
 
+
+
+find_registered(SrvId, User, Domain) ->
+    nksip_registrar:find(SrvId, sip, User, Domain).
+    
 
 
 %% @private

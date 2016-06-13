@@ -236,7 +236,7 @@ invite_reply(SessId, Reply) ->
     ok | {error, term()}.
 
 link_session(SessId, SessIdB, Opts) ->
-    do_cast(SessId, {link_session, SessIdB, Opts}).
+    do_call(SessId, {link_session, SessIdB, Opts}).
 
 
 %% @private
@@ -331,6 +331,20 @@ handle_call({answer_op, _AnswerOp, _Opts}, _From, State) ->
 handle_call(get_state, _From, State) -> 
     {reply, State, State};
 
+handle_call({link_session, IdA, Opts}, From, #state{id=IdB}=State) ->
+    case find(IdA) of
+        {ok, Pid} ->
+            Events = maps:get(send_events, Opts, false),
+            ?LLOG(info, "linked to ~s (events:~p)", [IdA, Events], State),
+            gen_server:cast(Pid, {link_session_back, IdB, self(), Events}),
+            State2 = add_link({peer, IdA}, {caller, Events}, Pid, State),
+            gen_server:reply(From, ok),
+            noreply(State2);
+        not_found ->
+            ?LLOG(warning, "trying to link unknown session ~s", [IdB], State),
+            {stop, normal, State}
+    end;
+
 handle_call(Msg, From, State) -> 
     handle(nkmedia_session_handle_call, [Msg, From], State).
 
@@ -361,19 +375,6 @@ handle_cast({invite_reply, {rejected, _}}, State) ->
 handle_cast({invite_reply, Reply}, State) ->
     ?LLOG(info, "received unexpected invite_reply: ~p", [Reply], State),
     noreply(State);
-
-handle_cast({link_session, IdA, Opts}, #state{id=IdB}=State) ->
-    case find(IdA) of
-        {ok, Pid} ->
-            Events = maps:get(send_events, Opts, false),
-            ?LLOG(info, "linked to ~s (events:~p)", [IdA, Events], State),
-            gen_server:cast(Pid, {link_session_back, IdB, self(), Events}),
-            State2 = add_link({peer, IdA}, {caller, Events}, Pid, State),
-            noreply(State2);
-        not_found ->
-            ?LLOG(warning, "trying to link unknown session ~s", [IdB], State),
-            {stop, normal, State}
-    end;
 
 handle_cast({link_session_back, IdB, Pid, Events}, State) ->
     ?LLOG(info, "linked back from ~s (events:~p)", [IdB, Events], State),
@@ -519,13 +520,19 @@ do_invite(Dest, Opts, From, #state{id=Id, session=Session, op_answer=invite}=Sta
         {answer, Answer, State2} ->
             State3 = invite_link(Answer, Dest, Opts, From, State2),
             do_invite_reply({answer, Answer}, State3);
-        {rejected, Reason, State2} ->
-            State3 = invite_link(#{}, Dest, Opts, From, State2),
-            do_invite_reply({rejected, Reason}, State3);
         {async, Answer, State2} ->
             ?LLOG(info, "invite delayed", [], State2),
             State3 = invite_link(Answer, Dest, Opts, From, State2),
-            noreply(State3)
+            case update_answer(Answer, State3) of
+                {ok, State4} -> 
+                    noreply(State4);
+                {error, Error, State4} ->
+                    ?LLOG(warning, "could not set answer in invite", [Error], State4),
+                    do_hangup(<<"Answer Error">>, State4)
+            end;
+        {rejected, Reason, State2} ->
+            State3 = invite_link(#{}, Dest, Opts, From, State2),
+            do_invite_reply({rejected, Reason}, State3)
     end.
 
 

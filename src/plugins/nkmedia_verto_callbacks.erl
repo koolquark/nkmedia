@@ -92,20 +92,28 @@ plugin_stop(Config, #{name:=Name}) ->
 -type verto() :: nkmedia_verto:verto().
 
 
-%% @doc Called when a new verto connection arrives
--spec nkmedia_verto_init(nkpacket:nkport(), verto()) ->
-    {ok, verto()}.
-
-nkmedia_verto_init(_NkPort, Verto) ->
-    {ok, Verto}.
-
-
 %% @doc Called when a login request is received
 -spec nkmedia_verto_login(Login::binary(), Pass::binary(), verto()) ->
     {boolean(), verto()} | {true, Login::binary(), verto()} | continue().
 
 nkmedia_verto_login(_Login, _Pass, Verto) ->
     {false, Verto}.
+
+
+%% @private. Must be implemented
+-spec nkmedia_verto_call(session_id(), nkmedia:offer(), verto()) ->
+    {ok, verto()} | {rejected, nkmedia:hangup_reason(), verto()} | continue().
+
+nkmedia_verto_call(_SessId, _Offer, _Verto) ->
+    {rejected, <<"Not Implemented">>}.
+
+
+%% @doc Called when a new verto connection arrives
+-spec nkmedia_verto_init(nkpacket:nkport(), verto()) ->
+    {ok, verto()}.
+
+nkmedia_verto_init(_NkPort, Verto) ->
+    {ok, Verto}.
 
 
 %% @doc Called when the client sends an INVITE
@@ -131,15 +139,6 @@ nkmedia_verto_invite(_CallId, Offer, #{srv_id:=SrvId}=Verto) ->
             lager:warning("Verto start_inbound error: ~p", [Error]),
             {hangup, <<"MediaServer Error">>, Verto}
     end.
-
-
-%% @doc Sends after an INVITE, if the previous function has not been modified
--spec nkmedia_verto_call(session_id(), binary(), verto()) ->
-    {ok, verto()} | {rejected, nkmedia:hangup_reason(), verto()} | continue().
-
-nkmedia_verto_call(SessId, Dest, Verto) ->
-    ok = nkmedia_session:answer_async(SessId, {invite, Dest}, #{}),
-    {ok, Verto}.
 
 
 %% @doc Called when the client sends an ANSWER

@@ -27,7 +27,7 @@
 -export([nkmedia_janus_get_mediaserver/1]).
 -export([nkmedia_session_init/2, nkmedia_session_terminate/2]).
 -export([nkmedia_session_offer_op/4, nkmedia_session_answer_op/4,
-         nkmedia_session_hangup/2]).
+         nkmedia_session_hangup/2, nkmedia_session_handle_info/2]).
 -export([nkmedia_session_updated_answer/2]).
 -export([nkdocker_notify/2]).
 
@@ -184,6 +184,18 @@ nkmedia_session_updated_answer(_Answer, _Session) ->
 nkmedia_session_hangup(Reason, Session) ->
     {ok, State2} = nkmedia_janus_session:hangup(Reason, Session, state(Session)),
     {continue, [Reason, session(State2, Session)]}.
+
+
+%% @private
+nkmedia_session_handle_info({'DOWN', Ref, process, _Pid, _Reason}, Session) ->
+    case state(Session) of
+        #{janus_mon:=Ref} ->
+            nkmedia_session:hangup(self(), {hangup, <<"Janus Down">>}),
+            {noreply, Session};
+        _ ->
+            continue
+    end.
+
 
 
 

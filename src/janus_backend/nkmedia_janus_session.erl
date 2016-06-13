@@ -141,10 +141,6 @@ offer_op(listen_switch, #{publisher:=Publisher}=Opts, true,
             {error, {listen_switch_error, Error}, State}
     end;
 
-offer_op(listen_switch, Opts, false, Session, State) ->
-    lager:error("O: ~p, S: ~p T: ~p", [Opts, Session, State]),
-    continue;
-
 offer_op(_Op, _Opts, _HasOffer, _Session, _State) ->
     continue.
 
@@ -212,10 +208,8 @@ updated_answer(Answer, _Session, #{janus_op:=answer}=State) ->
     #{janus_pid:=Pid} = State,
     case nkmedia_janus_op:answer(Pid, Answer) of
         ok ->
-            lager:error("UPDATED OK"),
             {ok, Answer, maps:remove(janus_op, State)};
         {ok, Answer2} ->
-            lager:error("UPDATED OK2"),
             {ok, Answer2, maps:remove(janus_op, State)};
         {error, Error} ->
             {error, {janus_answer_error, Error}, State}

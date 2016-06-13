@@ -26,7 +26,7 @@
 -export([set_var/4, set_vars/3, unset_var/3, get_var/3, dump/2]).
 -export([transfer/3, transfer_inline/3, bridge/3, park/2, break/2, break_all/2]).
 -export([mute/2, silence/2, clean/2, dtmf/3, reloadxml/1]).
--export([conference_users/2, channels/1, channel_info/2]).
+-export([conf_users/2, conf_layout/3, channels/1, channel_info/2]).
 
 -type fs_id() :: nkmedia_fs_engine:id().
 
@@ -275,10 +275,10 @@ reloadxml(FsId) ->
 
 
 %% @doc
--spec conference_users(fs_id(), iolist()) ->
+-spec conf_users(fs_id(), iolist()) ->
 	{ok, map()} | {error, term()}.
 
-conference_users(FsId, ConfName) ->
+conf_users(FsId, ConfName) ->
 	case api_msg(FsId, ["conference ", ConfName, " list"]) of
 		{ok, <<"Conference", _/binary>>=Msg} ->
 			{error, Msg};
@@ -309,6 +309,18 @@ conference_users(FsId, ConfName) ->
 			{ok, Res};
 		{error, Error} ->
 			{error, Error}
+	end.
+
+
+%% @doc
+-spec conf_layout(fs_id(), binary(), binary()) ->
+	ok | {error, term()}.
+
+conf_layout(FsId, ConfName, Layout) ->
+	case api_msg(FsId, ["conference ", ConfName, " vid-layout ", Layout]) of
+		{ok, <<"Change", _/binary>>} -> ok;
+		{ok, Other} -> {error, Other};
+		{error, Error} -> {error, Error}
 	end.
 
 

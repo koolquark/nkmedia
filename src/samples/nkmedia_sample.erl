@@ -24,7 +24,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([start/0, stop/0, restart/0]).
--export([listener/2, listener2/1, play/2, play2/1]).
+-export([listener/2, listener2/1, play/2, play2/1, mcu2publish/0]).
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2,
          plugin_syntax/0, plugin_listen/2]).
 -export([nkmedia_verto_login/3, nkmedia_verto_call/3]).
@@ -110,6 +110,14 @@ listener(Sess, Dest) ->
     end.
 
 
+mcu2publish() ->
+    {ok, S, _} = nkmedia_session:start(sample, #{}),
+    {ok, _} = nkmedia_session:offer(S, park, #{}),
+    {ok, _} = nkmedia_session:answer(S, publish, #{}),
+    S.
+
+
+
 play(Id, Dest) ->
     {ok, SessId, _Pid} = nkmedia_session:start(sample, #{}),
     {ok, _} = nkmedia_session:offer(SessId, {play, Id}, #{}),
@@ -139,7 +147,7 @@ play2(Id) ->
 
 plugin_deps() ->
     [
-        nkmedia_sip, 
+        nkmedia_sip,  nksip_registrar,
         nkmedia_verto, nkmedia_fs, nkmedia_fs_verto_proxy,
         nkmedia_janus_proto, nkmedia_janus_proxy, nkmedia_janus,
         nkmedia_kms, nkmedia_kms_proxy
@@ -191,8 +199,8 @@ nkmedia_verto_login(Login, Pass, Verto) ->
     end.
 
 
-nkmedia_verto_call(SessId, Dest, Verto) ->
-    case send_call(SessId, Dest) of
+nkmedia_verto_call(SessId, Offer, Verto) ->
+    case send_call(SessId, Offer) of
         ok ->
             {ok, Verto};
         {error, Error} ->
@@ -206,8 +214,8 @@ nkmedia_verto_call(SessId, Dest, Verto) ->
 %% ===================================================================
 
 
-nkmedia_janus_call(SessId, Dest, Janus) ->
-    case send_call(SessId, Dest) of
+nkmedia_janus_call(SessId, Offer, Janus) ->
+    case send_call(SessId, Offer) of
         ok ->
             {ok, Janus};
         {error, Error} ->
@@ -221,12 +229,13 @@ nkmedia_janus_call(SessId, Dest, Janus) ->
 %% ===================================================================
 
 
-nkmedia_sip_call(SessId, Dest) ->
-    case send_call(SessId, Dest) of
+nkmedia_sip_call(SessId, #{dest:=Dest}=Offer) ->
+    [User, _Domain] = binary:split(Dest, <<"@">>),
+    case send_call(SessId, Offer#{dest:=User}) of
         ok ->
             ok;
-        {error, _} ->
-            hangup
+        {error, Error} ->
+            {rejected, Error}
     end.
 
 
@@ -299,7 +308,7 @@ send_call(SessId, #{dest:=Dest}=Offer) ->
             ok = nkmedia_session:answer_async(SessId, publish, Opts2);
         <<"d", Num/binary>> ->
             case find_user(Num) of
-                {ok, Dest2} ->
+                {webrtc, Dest2} ->
                     {ok, _} = nkmedia_session:offer(SessId, sdp, #{offer=>Offer}),
                     Opts2 = #{backend=>p2p, dest=>Dest2},
                     ok = nkmedia_session:answer_async(SessId, invite, Opts2);
@@ -308,20 +317,28 @@ send_call(SessId, #{dest:=Dest}=Offer) ->
             end;
         <<"f", Num/binary>> ->
             case find_user(Num) of
-                {ok, Dest2} ->
+                {webrtc, Dest2} ->
                     {ok, _} = nkmedia_session:offer(SessId, sdp, #{offer=>Offer}),
                     ok = nkmedia_session:answer_async(SessId, call, #{dest=>Dest2});
+                {rtp, Dest2} ->
+                    {ok, _} = nkmedia_session:offer(SessId, sdp, #{offer=>Offer}),
+                    ok = nkmedia_session:answer_async(SessId, call, 
+                                                      #{dest=>Dest2, sdp_type=>rtp,
+                                                        park_after=>false});
                 not_found ->
                     {error, <<"User Not Found">>}
             end;
         <<"j", Num/binary>> ->
             case find_user(Num) of
-                {ok, Dest2} ->
+                {webrtc, Dest2} ->
                     {ok, _} = nkmedia_session:offer(SessId, proxy, #{offer=>Offer}),
                     ok = nkmedia_session:answer_async(SessId, invite, #{dest=>Dest2});
                 not_found ->
                     {error, <<"User Not Found">>}
             end;
+        <<"t1">> ->
+            {ok, _} = nkmedia_session:offer(SessId, proxy, #{offer=>Offer}),
+            ok = nkmedia_session:answer_async(SessId, mcu, #{});
         _ ->
             {error, <<"Unknown Destination">>}
     end.
@@ -330,13 +347,19 @@ send_call(SessId, #{dest:=Dest}=Offer) ->
 find_user(User) ->
     case nkmedia_verto:find_user(User) of
         [Pid|_] ->
-            {ok, {nkmedia_verto, Pid}};
+            {webrtc, {nkmedia_verto, Pid}};
         [] ->
             case nkmedia_janus_proto:find_user(User) of
                 [Pid|_] ->
-                    {ok, {nkmedia_janus_proto, Pid}};
+                    {webrtc, {nkmedia_janus_proto, Pid}};
                 [] ->
-                    not_found
+                    case 
+                        nkmedia_sip:find_registered(sample, User, <<"nkmedia_sample">>) 
+                    of
+                        [Uri|_] -> 
+                            {rtp, {nkmedia_sip, Uri, #{}}};
+                            []  -> not_found
+                    end
             end
     end.
 

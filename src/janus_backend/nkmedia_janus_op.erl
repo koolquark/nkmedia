@@ -452,6 +452,11 @@ handle_cast({event, _Id, _Handle, stop}, State) ->
     ?LLOG(notice, "received stop from janus", [], State),
     {stop, normal, State};
 
+handle_cast({event, _Id, _Handle, #{<<"janus">>:=<<"hangup">>}=Msg}, State) ->
+    #{<<"reason">>:=Reason} = Msg,
+    ?LLOG(notice, "hangup from janus (~s)", [Reason], State),
+    {stop, normal, State};
+
 handle_cast({event, Id, Handle, Msg}, State) ->
     case parse_event(Msg) of
         error ->

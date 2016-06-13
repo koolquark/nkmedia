@@ -291,10 +291,16 @@ conn_parse({text, Data}, NkPort, State) ->
         #{<<"janus">>:=<<"media">>, <<"session_id">>:=SessionId, <<"type">>:=Type} ->
             ?LLOG(info, "MEDIA (~s) for ~p", [Type, SessionId], State),
             {ok, State};
-        #{<<"janus">>:=<<"hangup">>, <<"reason">>:=Reason, 
-          <<"session_id">>:=SessionId, <<"sender">>:=_Handle} ->
-            ?LLOG(info, "HANGUP (~p): ~s", [SessionId, Reason], State),
-            {ok, State};
+        #{<<"janus">>:=<<"hangup">>, <<"reason">>:=_Reason, 
+          <<"session_id">>:=Id, <<"sender">>:=Handle} ->
+            case get_client(Id, State) of
+                {ok, CallBack, ClientId} ->
+                    event(CallBack, ClientId, Id, Handle, Msg, State),
+                    {ok, State};
+                not_found ->
+                    ?LLOG(notice, "unexpected server event: ~p", [Msg], State),
+                    {ok, State}
+            end;
         #{<<"janus">>:=Cmd} ->
             ?LLOG(notice, "unknown msg: ~s: ~p", [Cmd, Msg], State),
             {ok, State}

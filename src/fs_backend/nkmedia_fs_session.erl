@@ -32,7 +32,14 @@
     lager:Type("NkMEDIA FS Session ~s "++Txt, 
                [maps:get(id, Session) | Args])).
 
+-define(OFFER_FILDS, [
+    dest, caller_name, caller_id, callee_name, callee_id, use_audio, use_stereo, 
+    use_video, use_screen, use_data, in_bw, out_bw]).
+
+
 -include("nkmedia.hrl").
+
+
 
 %% ===================================================================
 %% Types
@@ -58,7 +65,7 @@
     park    |
     echo    |
     mcu     |
-    join    |
+    bridge    |
     call.
 
 
@@ -76,7 +83,8 @@
     #{
         fs_id => nmedia_fs_engine:id(),
         fs_role => offer | answer,
-        answer_op => {offer_op(), map()}
+        park_after => boolean(),
+        answer_op => {offer_op(), map()}    % For 'delayed' ops
     }.
 
 
@@ -225,6 +233,24 @@ update_op(mcu, Opts, OffAns, Session, State) ->
             {error, Error, State}
     end;
 
+update_op(mcu_layout, #{layout:=Layout}, OffAns, Session, #{fs_id:=FsId}=State) ->
+    case Session of
+        #{offer_op:={mcu, #{room:=Room}=Opts}} -> ok;
+        #{answer_op:={mcu, #{room:=Room}=Opts}} -> ok;
+        _ -> Opts = #{}, Room = error
+    end,
+    case Room of
+        error ->
+            {error, incompatible_operation, State};
+        _ ->
+            case nkmedia_fs_cmd:conf_layout(FsId, Room, Layout) of
+                ok  ->
+                    {ok, OffAns, mcu, Opts#{layout=>Layout}, State};
+                {error, Error} ->
+                    {error, Error, State}
+            end
+    end;
+
 update_op(bridge, #{peer:=PeerId, set_only:=true}, OffAns, _Session, State) ->
     {ok, OffAns, bridge, #{peer_id=>PeerId}, State};
 
@@ -242,15 +268,19 @@ update_op(call, Opts, OffAns, Session, State) ->
     {ok, IdB, Pid} = nkmedia_session:start(SrvId, #{}),
     ok = nkmedia_session:link_session(Pid, Id, #{send_events=>true}),
     #{offer:=Offer} = Session,
-    Offer2 = maps:remove(sdp, Offer),
-    case nkmedia_session:offer(Pid, park, #{offer=>Offer2}) of
+    Offer2 = maps:with(?OFFER_FILDS, Offer),
+    Type = maps:get(sdp_type, Opts, webrtc),
+    Offer3 = Offer2#{sdp_type=>Type},
+    State2 = State#{park_after=>maps:get(park_after, Opts, false)},
+    case nkmedia_session:offer(Pid, park, #{offer=>Offer3}) of
         {ok, _} ->
             ok = nkmedia_session:answer_async(Pid, invite, #{dest=>Dest}),
             % we switch the calling session to 'fake' invite
             % we will send it ringing, etc.
-            {ok, OffAns, invite, Opts#{fs_peer=>IdB, fake=>true}, State};
+            Opts2 =  Opts#{fs_peer=>IdB, fake=>true},
+            {ok, OffAns, invite, Opts2, State2};
         {error, Error} ->
-            {error, Error, State}
+            {error, Error, State2}
     end.
 
 
@@ -285,7 +315,8 @@ updated_answer(_Answer, _Session, _State) ->
 -spec peer_event(id(), caller|callee, nkmedia_session:event(), session(), state()) ->
     any().
 
-peer_event(IdB, callee, {answer_op, invite, Opts}, Session, State) ->
+peer_event(IdB, callee, {answer_op, invite, Opts}, 
+           #{answer_op:={invite, #{fake:=true}}}=Session, State) ->
     case Opts of
         #{status:=ringing, answer:=Answer} ->
             nkmedia_session:invite_reply(self(), {ringing, Answer});
@@ -311,9 +342,18 @@ peer_event(_Id, callee, {answer_op, _, _Opts}, _Session, _State) ->
 peer_event(_Id, caller, {answer_op, _, _Opts}, _Session, _State) ->
     ok;
 
-peer_event(_Id, callee, {hangup, _Reason}, _Session, _State) ->
-    %% Check if we must hangup
-    ok;
+peer_event(Id, callee, {hangup, _Reason}, Session, State) ->
+    case Session of
+        #{answer_op:={bridge, #{peer_id:=Id}}} ->
+            case State of
+                #{park_after:=true} ->
+                    ok;
+                _ ->
+                    nkmedia_session:hangup(self(), <<"Callee Hangup">>)
+            end;
+        _ ->
+            ?LLOG(notice, "unexpected hangup from peer", [], Session)
+    end;
 
 peer_event(_Id, caller, {hangup, Reason}, _Session, _State) ->
     nkmedia_session:hangup(self(), Reason),
@@ -346,7 +386,8 @@ hangup(_Reason, _Session, State) ->
 is_supported(park, _) -> true;
 is_supported(echo, _) -> true;
 is_supported(mcu, _) -> true;
-is_supported(join, _) -> true;
+is_supported(mcu_layout, _) -> true;
+is_supported(bridge, _) -> true;
 is_supported(call, _) -> true;
 is_supported(_, _) -> false.
 
@@ -451,6 +492,7 @@ fs_bridge(SessIdB, #{id:=SessIdA}=Session, #{fs_id:=FsId}) ->
     end.
 
 
+
 %% @private Called from nkmedia_fs_engine and nkmedia_fs_verto
 -spec do_fs_event(fs_event(), session(), state()) ->
     state().
@@ -520,3 +562,42 @@ wait_park(Session) ->
         2000 -> 
             ?LLOG(warning, "parked not received", [], Session)
     end.
+
+
+
+
+
+% Layouts
+% 1up_top_left+5
+% 1up_top_left+7
+% 1up_top_left+9
+% 1x1
+% 1x1+2x1
+% 1x2
+% 2up_bottom+8
+% 2up_middle+8
+% 2up_top+8
+% 2x1
+% 2x1-presenter-zoom
+% 2x1-zoom
+% 2x2
+% 3up+4
+% 3up+9
+% 3x1-zoom
+% 3x2-zoom
+% 3x3
+% 4x2-zoom
+% 4x4, 
+% 5-grid-zoom
+% 5x5
+% 6x6
+% 7-grid-zoom
+% 8x8
+% overlaps
+% presenter-dual-horizontal
+% presenter-dual-vertical
+% presenter-overlap-large-bot-right
+% presenter-overlap-large-top-right
+% presenter-overlap-small-bot-right
+% presenter-overlap-small-top-right
+
