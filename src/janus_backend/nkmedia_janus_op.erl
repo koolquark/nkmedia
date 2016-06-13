@@ -27,8 +27,8 @@
 -export([list_rooms/1, create_room/3, destroy_room/2]).
 -export([publish/4, unpublish/1]).
 -export([listen/4, listen_switch/3, unlisten/1]).
--export([from_sip/2, to_sip/2]).
--export([sip_registered/2, sip_offer/2]).
+-export([from_sip/3, to_sip/3]).
+-export([nkmedia_sip_register/2, nkmedia_sip_invite/2]).
 -export([answer/2]).
 -export([get_all/0, stop_all/0, janus_event/4]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
@@ -218,20 +218,20 @@ unlisten(Id) ->
 
 %% @doc Receives a SIP offer, generates a WebRTC offer
 %% You must call answer/2 when you have the WebRTC answer
--spec from_sip(pid()|janus_id(), nkmedia:offer()) ->
+-spec from_sip(pid()|janus_id(), nkmedia:offer(), #{}) ->
     {ok, nkmedia:offer()} | {error, term()}.
 
-from_sip(Id, Offer) ->
-    do_call(Id, {from_sip, Offer}).
+from_sip(Id, Offer, Opts) ->
+    do_call(Id, {from_sip, Offer, Opts}).
 
 
 %% @doc Receives an WebRTC offer, generates a SIP offer
 %% You must call answer/2 when you have the SIP answer
--spec to_sip(pid()|janus_id(), nkmedia:offer()) ->
+-spec to_sip(pid()|janus_id(), nkmedia:offer(), #{}) ->
     {ok, nkmedia:offer()} | {error, term()}.
 
-to_sip(Id, Offer) ->
-    do_call(Id, {to_sip, Offer}).
+to_sip(Id, Offer, Opts) ->
+    do_call(Id, {to_sip, Offer, Opts}).
 
 
 %% @doc Answers a pending request
@@ -262,20 +262,48 @@ janus_event(Pid, JanusSessId, JanusHandle, Msg) ->
 
 
 %% @private
--spec sip_registered(integer(), nklib:uri()) ->
-    boolean() | {error, term()}.
+-spec nkmedia_sip_register(binary(), nksip:request()) ->
+    continue | {reply, forbidden}.
 
-sip_registered(Id, Contact) ->
-    do_call(Id, {sip_registered, Contact}).
+nkmedia_sip_register(User, Req) ->
+    Id = nklib_util:to_integer(User),
+    case nksip_request:meta(contacts, Req) of
+        {ok, [Contact]} ->
+            case do_call(Id, {sip_registered, Contact}) of
+                true ->
+                    {reply, ok};
+                false ->
+                    {reply, forbidden};
+                {error, Error} ->
+                    lager:info("JANUS OP ~p Reg error: ~p", [Id, Error]),
+                    {reply, forbidden}
+            end;
+        Other ->
+            lager:warning("JANUS OP SIP: invalid Janus Contact: ~p", [Other]),
+            {reply, forbidden}
+    end.
 
 
 %% @private
--spec sip_offer(integer(), nkmedia:offer()) ->
-    ok | {error, term()}.
+-spec nkmedia_sip_invite(binary(), nksip:request()) ->
+    noreply | {reply, forbidden}.
 
-sip_offer(Id, Offer) ->
-    do_call(Id, {sip_offer, Offer}).
+nkmedia_sip_invite(User, Req) ->
+    Id = binary_to_integer(User),
+    {ok, Handle} = nksip_request:get_handle(Req),
+    {ok, Dialog} = nksip_dialog:get_handle(Req),
+    {ok, Body} = nksip_request:body(Req),
+    SDP = nksip_sdp:unparse(Body),
+    case do_call(Id, {sip_invite, Handle, Dialog, SDP}) of
+        ok ->
+            noreply;
+            % {reply, ringing};
+        {error, Error} ->
+            lager:info("JANUS OP ~p Invite error: ~p", [Id, Error]),
+            {reply, forbidden}
+    end.
 
+    
 
 
 %% ===================================================================
@@ -390,11 +418,13 @@ handle_call({listen_switch, Listen, Opts}, _From, #state{status=listen}=State) -
 handle_call(unlisten, _From, #state{status=listen}=State) -> 
     do_unlisten(State);
 
-handle_call({from_sip, Offer}, From, #state{status=wait}=State) ->
-    sip_register(from_sip, State#state{from=From, offer=Offer});
+handle_call({from_sip, Offer, _Opts}, From, #state{status=wait}=State) ->
+    % We tell Janus to register, wait the registration and
+    % call do_from_sip/1
+    do_from_sip_register(State#state{from=From, offer=Offer});
 
-handle_call({to_sip, Offer}, From, #state{status=wait}=State) ->
-    sip_register(to_sip, State#state{from=From, offer=Offer});
+handle_call({to_sip, Offer, _Opts}, From, #state{status=wait}=State) ->
+    do_to_sip_register(State#state{from=From, offer=Offer});
 
 handle_call({sip_registered, Contact}, _From, #state{status=Status, wait=Wait}=State) ->
     case {Status, Wait} of
@@ -408,14 +438,14 @@ handle_call({sip_registered, Contact}, _From, #state{status=Status, wait=Wait}=S
             reply(false, State)
     end;
 
-handle_call({sip_offer, Handle, Dialog, Offer}, From, 
-            #state{status=wait, wait=sip_offer}=State) ->
-    #state{from=From} = State,
-    gen_server:reply(From, {ok, Offer}),
+handle_call({sip_invite, Handle, Dialog, SDP}, _From, 
+            #state{status=wait, wait=to_sip_invite}=State) ->
+    #state{from=UserFrom} = State,
+    gen_server:reply(UserFrom, {ok, #{sdp=>SDP, sdp_type=>rtp}}),
     State2 = State#state{sip_handle=Handle, sip_dialog=Dialog, from=undefined},
     reply(ok, wait(to_sip_answer, State2));
 
-handle_call({answer, #{sdp:=SDP}=Answer}, From, State) ->
+handle_call({answer, Answer}, From, State) ->
     #state{status=Status, wait=Wait} = State,
     case {Status, Wait} of
         {wait, videocall_answer} ->
@@ -427,16 +457,9 @@ handle_call({answer, #{sdp:=SDP}=Answer}, From, State) ->
         {wait, from_sip_answer_2} ->
             do_from_sip_answer(Answer, From, State);
         {wait, to_sip_answer} ->
-            #state{sip_handle=Handle} = State,
-            case nksip_request:reply(Handle, {answer, SDP}) of
-                ok ->
-                    noreply(wait(to_sip_reply, State#state{from=From}));
-                {error, Error} ->
-                    reply_error({sip_error, Error}, State)
-            end;
+            do_to_sip_answer(Answer, From, State);
         _ ->
             reply_error(invalid_state, State)
-
     end;
 
    
@@ -471,9 +494,9 @@ handle_cast({event, Id, Handle, Msg}, State) ->
 handle_cast({invite, {ok, Body}}, #state{status=wait, wait=from_sip_invite}=State) ->
     #state{from=From} =State,
     gen_server:reply(From, {ok, #{sdp=>nksip_sdp:unparse(Body)}}),
-    noreply(status(sdp, State#state{from=undefined}));
+    noreply(status(from_sip, State#state{from=undefined}));
 
-handle_cast({invite, {error, Error}}, #state{status=wait, wait=rom_sip_invite}=State) ->
+handle_cast({invite, {error, Error}}, #state{status=wait, wait=from_sip_invite}=State) ->
     #state{from=From} =State,
     ?LLOG(notice, "invite error: ~p", [Error], State),
     gen_server:reply(From, {error, Error}),
@@ -931,6 +954,29 @@ do_unlisten(#state{handle_id=Handle}=State) ->
 %% SIP 
 %% ===================================================================
 
+
+%% @private
+do_from_sip_register(#state{janus_sess_id=Id}=State) ->
+    {ok, Handle} = attach(sip, State),
+    Ip = nklib_util:to_host(nkmedia_app:get(erlang_ip)),
+    Port = nkmedia_app:get(sip_port),
+    Body = #{
+        request => register,
+        proxy => <<"sip:", Ip/binary, ":",(nklib_util:to_binary(Port))/binary>>,
+        username => <<"sip:", (nklib_util:to_binary(Id))/binary, "@nkmedia_janus_op">>,
+        secret => <<"test">>
+    },
+    case message(Handle, Body, #{}, State) of
+        {ok, #{<<"result">>:=#{<<"event">>:=<<"registering">>}}, _} ->
+            State2 = State#state{handle_id=Handle},
+            noreply(wait(from_sip, State2));
+        {ok, #{<<"error">>:=Error}, _} ->
+            reply_error(Error, State);
+        {error, Error} ->
+            reply_error({could_not_join, Error}, State)
+    end.
+
+
 %% @private
 do_from_sip(#state{sip_contact=Contact, offer=Offer}=State) ->
     Self = self(),
@@ -945,7 +991,7 @@ do_from_sip(#state{sip_contact=Contact, offer=Offer}=State) ->
             end,
             gen_server:cast(Self, {invite, Result})
         end),
-    noreply(wait(janus_from_sip_answer_1, State#state{offer=undefined})).
+    noreply(wait(from_sip_answer_1, State#state{offer=undefined})).
 
 
 %% @private
@@ -962,22 +1008,51 @@ do_from_sip_answer(#{sdp:=SDP}, From, State) ->
 
 
 %% @private
+do_to_sip_register(State) ->
+    {ok, Handle} = attach(sip, State),
+    Ip = nklib_util:to_host(nkmedia_app:get(erlang_ip)),
+    Port = nkmedia_app:get(sip_port),
+    Body = #{
+        request => register,
+        proxy => <<"sip:", Ip/binary, ":",(nklib_util:to_binary(Port))/binary>>,
+        type => guest
+    },
+    case message(Handle, Body, #{}, State) of
+        {ok, #{<<"result">>:=#{<<"event">>:=<<"registered">>}}, _} ->
+            State2 = State#state{handle_id=Handle},
+            do_to_sip(State2);
+        {ok, #{<<"error">>:=Error}, _} ->
+            reply_error(Error, State);
+        {error, Error} ->
+            reply_error({could_not_join, Error}, State)
+    end.
+
+
+%% @private
 do_to_sip(#state{janus_sess_id=Id, handle_id=Handle, offer=#{sdp:=SDP}}=State) ->
     Body = #{
         request => call,
-        uri => <<"sip:janus-", (nklib_util:to_binary(Id))/binary, "@nkmedia">>
+        uri => <<"sip:", (nklib_util:to_binary(Id))/binary, "@nkmedia_janus_op">>
     },
     Jsep = #{sdp=>SDP, type=>offer},
     case message(Handle, Body, Jsep, State) of
         {ok, #{<<"result">>:=#{<<"event">>:=<<"calling">>}}, _} ->
             State2 = State#state{offer=undefined},
-            noreply(wait(sip_offer, State2));
+            noreply(wait(to_sip_invite, State2));
         {error, Error} ->
             reply_error({accepted_error, Error}, State)
     end.
 
 
-
+%% @private
+do_to_sip_answer(#{sdp:=SDP}, From, State) ->
+    #state{sip_handle=Handle} = State,
+    case nksip_request:reply({answer, SDP}, Handle) of
+        ok ->
+            noreply(wait(to_sip_reply, State#state{from=From}));
+        {error, Error} ->
+            reply_error({sip_error, Error}, State)
+    end.
 
 
 %% ===================================================================
@@ -987,12 +1062,13 @@ do_to_sip(#state{janus_sess_id=Id, handle_id=Handle, offer=#{sdp:=SDP}}=State) -
 %% @private
 do_event(Id, Handle, {event, <<"incomingcall">>, _, #{<<"sdp">>:=SDP}}, State) ->
     case State of
-        #state{status=wait, wait=videocall_offer, janus_sess_id=Id, handle_id2=Handle} ->
+        #state{status=wait, wait=videocall_offer, 
+               janus_sess_id=Id, handle_id2=Handle} ->
             #state{from=From} = State,
             gen_server:reply(From, {ok, #{sdp=>SDP}}),
             State2 = State#state{from=undefined},
             noreply(wait(videocall_answer, State2));
-        #state{status=wait, wait=janus_from_sip_answer_1, 
+        #state{status=wait, wait=from_sip_answer_1, 
                janus_sess_id=Id, handle_id=Handle} ->
             #state{from=From} = State,
             gen_server:reply(From, {ok, #{sdp=>SDP, sdp_type=>webrtc}}),
@@ -1018,6 +1094,9 @@ do_event(Id, Handle, {event, <<"accepted">>, _, #{<<"sdp">>:=SDP}}, State) ->
                     {stop, normal, State}
             end;
         #state{status=wait, wait=to_sip_reply, janus_sess_id=Id, handle_id=Handle} ->
+            lager:warning("ACCEPTED!"),
+
+
             #state{from=From} = State,
             gen_server:reply(From, {ok, #{sdp=>SDP}}),
             State2 = State#state{from=undefined},
@@ -1039,7 +1118,6 @@ do_event(_Id, _Handle, {event, <<"registered">>, _, _}, State) ->
         #state{status=wait, wait=from_sip, sip_contact=Uri} when Uri /= undefined ->
             do_from_sip(State);
         #state{status=wait, wait=to_sip} ->
-            timer:sleep(2000),
             do_to_sip(State);
         _ ->
             ?LLOG(warning, "unexpected registered", [], State),
@@ -1093,31 +1171,6 @@ destroy(#state{janus_sess_id=SessId, conn=Pid}) ->
 %% @private
 keepalive(#state{janus_sess_id=SessId, conn=Pid}) ->
     nkmedia_janus_client:keepalive(Pid, SessId).
-
-
-
-%% @private
-sip_register(Status, #state{janus_sess_id=Id}=State) ->
-    {ok, Handle} = attach(sip, State),
-    Ip = nklib_util:to_host(nkmedia_app:get(erlang_ip)),
-    Port = nkmedia_app:get(sip_port),
-    Body = #{
-        request => register,
-        proxy => <<"sip:", Ip/binary, ":",(nklib_util:to_binary(Port))/binary>>,
-        % username => <<"sip:jb@test">>,
-        username => <<"sip:janus-", (nklib_util:to_binary(Id))/binary, "@nkmedia">>,
-        secret => <<"test">>
-    },
-    case message(Handle, Body, #{}, State) of
-        {ok, #{<<"result">>:=#{<<"event">>:=<<"registering">>}}, _} ->
-            State2 = State#state{handle_id=Handle},
-            noreply(wait(Status, State2));
-        {ok, #{<<"error">>:=Error}, _} ->
-            reply_error(Error, State);
-        {error, Error} ->
-            reply_error({could_not_join, Error}, State)
-    end.
-
 
 
 %% @private

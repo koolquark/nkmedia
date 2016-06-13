@@ -32,7 +32,7 @@
 -export([nkmedia_janus_call/3]).
 -export([nkmedia_sip_call/2]).
 % -export([nkmedia_call_event/3, nkmedia_session_event/3]).
--export([sip_register/2]).
+-export([sip_route/5, sip_register/2]).
 
 -include("nkmedia.hrl").
 
@@ -90,7 +90,7 @@ listener(Sess, Dest) ->
             case Dest of
                 {invite, User} ->
                     case find_user(User) of
-                        {ok, Inv} ->
+                        {webrtc, Inv} ->
                             {ok, _} = nkmedia_session:answer(SessId, invite, 
                                                              #{dest=>Inv}),
                             {ok, SessId};
@@ -147,7 +147,7 @@ play2(Id) ->
 
 plugin_deps() ->
     [
-        nkmedia_sip,  nksip_registrar,
+        nkmedia_sip,  nksip_registrar, nksip_trace,
         nkmedia_verto, nkmedia_fs, nkmedia_fs_verto_proxy,
         nkmedia_janus_proto, nkmedia_janus_proxy, nkmedia_janus,
         nkmedia_kms, nkmedia_kms_proxy
@@ -266,9 +266,20 @@ nkmedia_call_resolve(Dest, #{srv_id:=SrvId}=Call) ->
 %% ===================================================================
 
 
+% sip_route(_Scheme, _User, <<"192.168.0.100">>, _Req, _Call) ->
+%     proxy;
+
+sip_route(_Scheme, _User, _Domain, _Req, _Call) ->
+    lager:warning("User: ~p, Domain: ~p", [_User, _Domain]),
+    process.
+
+
 sip_register(Req, Call) ->
     Req2 = nksip_registrar_util:force_domain(Req, <<"nkmedia_sample">>),
     {continue, [Req2, Call]}.
+
+
+
 
 
 
@@ -332,6 +343,10 @@ send_call(SessId, #{dest:=Dest}=Offer) ->
             case find_user(Num) of
                 {webrtc, Dest2} ->
                     {ok, _} = nkmedia_session:offer(SessId, proxy, #{offer=>Offer}),
+                    ok = nkmedia_session:answer_async(SessId, invite, #{dest=>Dest2});
+                {rtp, Dest2} ->
+                    {ok, _} = nkmedia_session:offer(SessId, proxy, 
+                                                    #{offer=>Offer, type=>rtp}),
                     ok = nkmedia_session:answer_async(SessId, invite, #{dest=>Dest2});
                 not_found ->
                     {error, <<"User Not Found">>}

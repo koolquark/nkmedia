@@ -95,7 +95,6 @@ invite(Contact, #{sdp:=SDP}) ->
 
 sip_invite(Req, Call) ->
     {ok, AOR} = nksip_request:meta(aor, Req),
-    {ok, Handle} = nksip_request:get_handle(Req),
     {ok, Dialog} = nksip_dialog:get_handle(Req),
     case AOR of
         {sip, <<"nkmedia-", SessId/binary>>, _Domain} ->
@@ -113,16 +112,12 @@ sip_invite(Req, Call) ->
                     lager:notice("Unmanaged NkMEDIA Core SIP INVITE"),
                     {reply, internal_error}
             end;
-        {sip, <<"janus-", SessId/binary>>, _Domain} ->
-            {ok, Body} = nksip_request:body(Req),
-            SDP = nksip_sdp:unparse(Body),
-            case 
-                nkmedia_janus_op:sip_offer(SessId, Handle, Dialog, #{sdp=>SDP})
-            of
-                ok ->
-                    noreply;
-                {error, _Error} ->
-                    {reply, forbidden}
+        {sip, User, Domain} ->
+            case catch binary_to_existing_atom(Domain, latin1) of
+                {'EXIT', _} ->
+                    {reply, forbidden};
+                Module ->
+                    Module:nkmedia_sip_invite(User, Req)
             end;
         _ ->
             lager:warning("Unexpected NkMEDIA Core SIP: ~p", [AOR]),
@@ -164,29 +159,15 @@ sip_bye(Req, Call) ->
     
     
 sip_register(Req, _Call) ->
-    case nksip_request:meta(from_user, Req) of
-        {ok, <<"janus-", Id/binary>>} ->
-            case nksip_request:meta(contacts, Req) of
-                {ok, [Contact]} ->
-                    case catch 
-                        nkmedia_janus_op:sip_registered(Id, Contact) 
-                    of
-                        true -> 
-                            lager:info("Core SIP Janus reg: ~s", [Id]),
-                            continue;
-                        _Error ->
-                            % lager:info("Core SIP janus reg error: ~p (~s)", 
-                            %            [_Error, Id]),
-                            {reply, forbidden}
-                    end;
-                Other ->
-                    lager:warning("Core SIP: invalid Janus Contact: ~p", [Other]),
-                    {reply, forbidden}
-            end;
-        _ ->
-            lager:warning("UNEXPECTED SIP CORE REG"),
-            {reply, forbidden}
+    {ok, Domain} = nksip_request:meta(from_domain, Req),
+    case catch binary_to_existing_atom(Domain, latin1) of
+        {'EXIT', _} ->
+            {reply, forbidden};
+        Module ->
+            {ok, User} = nksip_request:meta(from_user, Req),
+            Module:nkmedia_sip_register(User, Req)
     end.
+
 
 
 

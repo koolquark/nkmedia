@@ -80,8 +80,9 @@ create(JanusId, Room, Config) ->
     Room2 = nklib_util:to_binary(Room),
     case nkmedia_janus_op:create_room(JanusId, Room2, Config) of
         ok ->
-            {ok, Pid} = gen_server:start(?MODULE, [JanusId, Room2, Config], []),
-            {ok, Pid};
+            gen_server:start(?MODULE, [JanusId, Room2, Config], []);
+        {error, already_exists} ->
+            gen_server:start(?MODULE, [JanusId, Room2, Config], []);
         {error, Error} ->
             {error, Error}
     end.

@@ -102,16 +102,29 @@ terminate(_Reason, _Session, State) ->
     {ok, nkmedia:offer(), offer_op(), map(), session()} |
     {error, term(), state()} | continue().
 
-offer_op(proxy, #{offer:=Offer}=Opts, false, #{id:=Id}=Session, State) ->
+offer_op(proxy, #{offer:=Offer}=Opts, false, Session, State) ->
     case get_janus(Opts, Session, State) of
         {ok, Pid, State2} ->
-            case nkmedia_janus_op:videocall(Pid, Offer, Opts) of
-                {ok, #{sdp:=SDP}} ->
-                    State3 = State2#{janus_op=>answer},
-                    lager:error("OFFER UPDATED OK"),
-                    {ok, Offer#{sdp=>SDP}, proxy, #{}, State3};
-                {error, Error} ->
-                    {error, {videocall_error, Error}, State2}
+            OfferType = maps:get(sdp_type, Offer, webrtc),
+            OutType = maps:get(type, Opts, webrtc),
+            Fun = case {OfferType, OutType} of
+                {webrtc, webrtc} -> videocall;
+                {webrtc, rtp} -> to_sip;
+                {rtp, webrtc} -> from_sip;
+                {rtp, rtp} -> error
+            end,
+            case Fun of
+                error ->
+                    {error, unsupported_proxy, State};
+                _ ->
+                    case nkmedia_janus_op:Fun(Pid, Offer, Opts) of
+                        {ok, Offer2} ->
+                            State3 = State2#{janus_op=>answer},
+                            Offer3 = maps:merge(Offer, Offer2),
+                            {ok, Offer3, proxy, #{}, State3};
+                        {error, Error} ->
+                            {error, {videocall_error, Error}, State2}
+                    end
             end;
         {error, Error} ->
             {error, Error, State}
@@ -123,7 +136,6 @@ offer_op(listen, #{room:=Room, publisher:=Publisher}=Opts, false, Session, State
             case nkmedia_janus_op:listen(Pid, Room, Publisher, Opts) of
                 {ok, #{sdp:=SDP}} ->
                     State3 = State2#{janus_op=>answer},
-                    lager:error("OFFER UPDATED OK"),
                     {ok, #{sdp=>SDP}, listen, Opts, State3};
                 {error, Error} ->
                     {error, {listen_error, Error}, State2}

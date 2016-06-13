@@ -37,7 +37,7 @@
     lager:Type("NkMEDIA Janus Client "++Txt, Args)).
 
 -define(PRINT(Txt, Args, State), 
-        % print(Txt, Args, State),    % Comment this
+        print(Txt, Args, State),    % Comment this
         ok).
 
 
@@ -267,6 +267,17 @@ conn_parse({text, Data}, NkPort, State) ->
                     process_server_resp(Cmd, OpId, Req, From, Msg, NkPort, State2);
                 not_found when Cmd==ack->
                     {ok, State};
+                not_found when Cmd==event ->
+                    % Some events have an (invalid) transaction
+                    #{<<"session_id">>:=Id, <<"sender">>:=Handle} = Msg,
+                    case get_client(Id, State) of
+                        {ok, CallBack, ClientId} ->
+                            event(CallBack, ClientId, Id, Handle, Msg, State),
+                            {ok, State};
+                        not_found ->
+                            ?LLOG(notice, "unexpected server event2: ~p", [Msg], State),
+                            {ok, State}
+                    end;
                 not_found ->
                     process_server_req(Cmd, Msg, NkPort, State)
             end;
