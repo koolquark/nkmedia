@@ -15,7 +15,7 @@ You can control NkMEDIA through the management interface, creating any number of
 
 In real-life deployments, you will typically connect a server-side application to the management interface. However, being a websocket connection, you can also use a browser to manage sessions (its own or any other's session, if it is authorized).
 
-See the [User Guide](doc/user_guide.md) for a more detailed explanation of the architecture. 
+See the [User Guide](doc/index.md#user-guide) for a more detailed explanation of the architecture. 
 
 ## Features
 * Full support for WebRTC (with several signalings available) and SIP.
@@ -40,11 +40,11 @@ In the [future](doc/roadmap.md), NkMEDIA will add support for:
 
 # Documentation
 
-[ 1. User Guide](doc/index.md)<br/>
-[ 2. API Guide](doc/index.md)<br/>
-[ 3. Cookbook](doc/index.md)<br/>
-[ 4. Advanced Concepts](doc/index.md)<br/>
-[ 5. Roadmap](doc/index.md)<br/>
+[ 1. User Guide](doc/index.md#user-guide)<br/>
+[ 2. API Guide](doc/index.md#management-interface)<br/>
+[ 3. Cookbook](doc/index.md#cookbook)<br/>
+[ 4. Advanced Concepts](doc/index.md#advanced)<br/>
+[ 5. Roadmap](doc/roadmap.md)<br/>
 
 
 ## Installation
