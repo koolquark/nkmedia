@@ -25,10 +25,10 @@ Success responses will typically have `"result": "ok"`. Error responses will typ
 
 ```json
 {
-	“result”: “error”,
-	“data”: {
-		“error”: "Error Text",
-		“code”: 1234
+	"result": "error",
+	"data": {
+		"error": "Error Description",
+		"code": 1234	// Error code
 	}
 }
 ```
