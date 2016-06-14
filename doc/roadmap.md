@@ -2,24 +2,20 @@
 
 ## v0.1
 
-* ~~Freeswitch integtration~~.
+* ~~Freeswitch integration~~.
 * ~~Janus Integration~~.
 * Kurento Integration.
-
+* Demostration Client.
 
 
 ## No date
 
+* Multi-node cluster support.
+* Multiple backend boxes support.
 * More application examples.
 * Better statistics support.
 * Admin web console.
-
-
-# Other features
-
-NkMEDIA is piece of [NetComposer.io](http://www.slideshare.net/carlosjgf/net-composer-v2).
-
-Please contact carlosj.gf@gmail.com for details.
+* [Matrix](http://matrix.org) support
 
 
 

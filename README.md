@@ -40,11 +40,11 @@ In the [future](doc/roadmap.md), NkMEDIA will add support for:
 
 # Documentation
 
-[ 1. User Guide](doc/user_guide.md)<br/>
-[ 2. API Guide](doc/api.md)<br/>
-[ 3. Cookbook](doc/cookbook.md)<br/>
-[ 4. Advanced Concepts](doc/advanced.md)<br/>
-[ 5. Roadmap](doc/roadmap.md)<br/>
+[ 1. User Guide](doc/index.md)<br/>
+[ 2. API Guide](doc/index.md)<br/>
+[ 3. Cookbook](doc/index.md)<br/>
+[ 4. Advanced Concepts](doc/index.md)<br/>
+[ 5. Roadmap](doc/index.md)<br/>
 
 
 ## Installation
