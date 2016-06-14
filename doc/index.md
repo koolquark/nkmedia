@@ -3,7 +3,7 @@
 ## User Guide
 * Introduction
 * Features
-* Concepts
+* [Concepts](concepts.md)
 * Tutorial
 * Starting NkMEDIA
 * Starting a Service
