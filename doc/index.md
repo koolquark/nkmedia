@@ -26,7 +26,7 @@
 * SFU (Selective Forwarding Unit)
 * MCU (Multipoint Control Unit)
 
-## Advanced Concepts
+## Advanced
 * Plugin architecture
 * Docker Management
 
