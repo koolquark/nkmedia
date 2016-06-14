@@ -49,9 +49,8 @@ In the [future](doc/roadmap.md), NkMEDIA will add support for:
 
 ## Installation
 
-NkMEDIA only has two dependencies:
-* Erlang (>17).
-* Docker (>1.6). The docker daemon must be confired to use TCP/TLS connections. The recommended configurations is at localhost.
+Currenly, NkMEDIA is only available in source form. To build it, you only need Erlang (> r17). 
+To run NkMEDIA, you need also Docker (>1.6). The docker daemon must be confired to use TCP/TLS connections. The recommended configurations is at localhost.
 
 ```
 git clone https://github.com/NetComposer/nkmedia
