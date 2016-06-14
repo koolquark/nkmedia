@@ -23,8 +23,8 @@
 * Call throw Janus
 * Call throw Freeswitch
 * Recording with Janus
-* SFU (Selective Forwarding Unit
-* MCU (Multipoint Control Unit
+* SFU (Selective Forwarding Unit)
+* MCU (Multipoint Control Unit)
 
 ## Advanced Concepts
 * Plugin architecture
