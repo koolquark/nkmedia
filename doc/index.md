@@ -10,7 +10,7 @@
 
 ## Management Interface
 * [Introduction](api_intro.md)
-* Core API
+* [Core API](api_core.md)
 * Plugins API
   * nkmedia_janus
   * nkmedia_fs
