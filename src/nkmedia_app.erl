@@ -52,11 +52,15 @@ start() ->
 %% @private OTP standard start callback
 start(_Type, _Args) ->
     Syntax = #{
+        admin_url => binary,
+        admin_pass => binary,
         sip_port => integer,        
         no_docker => boolean
 
     },
     Defaults = #{
+        admin_url => "wss://all:9010",
+        admin_pass => "nkmedia",
         sip_port => 0,
         no_docker => false
     },
@@ -88,7 +92,7 @@ start(_Type, _Args) ->
                     lager:warning("No docker support in config")
             end,
             {ok, Pid} = nkmedia_sup:start_link(),
-            nkmedia_core_sip:start(),
+            nkmedia_core:start(),
             {ok, Pid};
         {error, Error} ->
             lager:error("Error parsing config: ~p", [Error]),

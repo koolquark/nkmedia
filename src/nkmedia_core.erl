@@ -18,14 +18,16 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc NkMEDIA SIP utilities
+%% @doc NkMEDIA Core service
 
--module(nkmedia_core_sip).
+-module(nkmedia_core).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([start/0, stop/0, register_session/2, invite/2]).
+-export([plugin_syntax/0, plugin_listen/2, plugin_start/2, plugin_stop/2]).
 -export([sip_invite/2, sip_reinvite/2, sip_bye/2, sip_register/2]).
 
+-define(WS_TIMEOUT, 5*60*1000).
 
 %% ===================================================================
 %% Types
@@ -39,26 +41,20 @@
 
 
 %% @private
-%% Starts a nkservice called 'nkmedia_core_sip', listening for sip
+%% Starts a nkservice called 'nkmedia_core'
 start() ->
-    Port = nkmedia_app:get(sip_port),
-    Dummy = case Port of
-        0 ->
-            %% Avoid openning 5060 but open a random port
-            case gen_udp:open(5060, [{ip, {0,0,0,0}}]) of
-                {ok, Socket} -> Socket;
-                {error, _} -> false
-            end;
-        _ ->
-            false
+    %% Avoid openning 5060 but open a random port
+    Dummy = case gen_udp:open(5060, [{ip, {0,0,0,0}}]) of
+        {ok, Socket} -> Socket;
+        {error, _} -> false
     end,
     Opts = #{
-        class => nkmedia_core_sip,
+        class => nkmedia_core,
         plugins => [?MODULE, nksip, nksip_uac_auto_auth, nksip_registrar, nksip_trace],
         nksip_trace => {console, all},
-        sip_listen => <<"sip:all:", (nklib_util:to_binary(Port))/binary>>
+        sip_listen => <<"sip:all">>
     },
-    {ok, SrvId} = nkservice:start(nkmedia_core_sip, Opts),
+    {ok, SrvId} = nkservice:start(nkmedia_core, Opts),
     case Dummy of
         false -> ok;
         _ -> gen_udp:close(Dummy)
@@ -70,7 +66,7 @@ start() ->
 
 %% @private
 stop() ->
-	nkservice:stop(nkmedia_core_sip).
+	nkservice:stop(nkmedia_core).
 
 
 %% @private
@@ -82,8 +78,42 @@ register_session(SessId, Module) ->
 invite(Contact, #{sdp:=SDP}) ->
     SDP2 = nksip_sdp:parse(SDP),
     Opts = [{body, SDP2}, auto_2xx_ack, {meta, [body]}],
-    nksip_uac:invite(nkmedia_core_sip, Contact, Opts).
+    nksip_uac:invite(nkmedia_core, Contact, Opts).
 
+
+
+
+%% ===================================================================
+%% Plugin functions
+%% ===================================================================
+
+
+
+plugin_syntax() ->
+    nkpacket:register_protocol(nkmedia, nkmedia_protocol_server),
+    #{
+        admin_url => fun parse_listen/3,
+        admin_pass => binary
+    }.
+
+
+plugin_listen(Config, _Service) ->
+    Listen = maps:get(admin_url, Config, []),
+    Opts = #{
+        class => nkmedia_admin,
+        idle_timeout => ?WS_TIMEOUT
+    },                                  
+    [{Conns, maps:merge(ConnOpts, Opts)} || {Conns, ConnOpts} <- Listen].
+
+
+plugin_start(Config, _Service) ->
+    lager:info("NkMEDIA Admin Service starting"),
+    {ok, Config}.
+
+
+plugin_stop(Config, _Service) ->
+    lager:info("NkMEDIA Admin Service stopping"),
+    {ok, Config}.
 
 
 
@@ -169,6 +199,23 @@ sip_register(Req, _Call) ->
     end.
 
 
+
+
+
+%% ===================================================================
+%% Internal
+%% ===================================================================
+
+
+parse_listen(_Key, [{[{_, _, _, _}|_], Opts}|_]=Multi, _Ctx) when is_map(Opts) ->
+    {ok, Multi};
+
+parse_listen(_Key, Url, _Ctx) ->
+    Opts = #{valid_schemes=>[nkmedia], resolve_type=>listen},
+    case nkpacket:multi_resolve(Url, Opts) of
+        {ok, List} -> {ok, List};
+        _ -> error
+    end.
 
 
 

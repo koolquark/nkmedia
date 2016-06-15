@@ -35,7 +35,6 @@
 		sdp => binary(),
 		sdp_type => rtp | webrtc,
 		dest => binary(),
-		direction => in | out,		% nkmedia will set 'out' for b-leg
         caller_name => binary(),
         caller_id => binary(),
         callee_name => binary(),
