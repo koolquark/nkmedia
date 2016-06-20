@@ -32,8 +32,13 @@
 -define(SUPPORTED_JANUS, [<<"master-r01">>]).
 
 -define(DEF_WAIT_TIMEOUT, 60).
--define(DEF_RING_TIMEOUT, 30).
 -define(DEF_READY_TIMEOUT, 24*60*60).
+-define(DEF_RING_TIMEOUT, 30).
+-define(MAX_RING_TIMEOUT, 180).
+
+
+
+-define(DEF_SYNC_TIMEOUT, 30000).
 
 -define(FS_DEF_BASE, 50000).
 -define(JANUS_DEF_BASE, 50010).

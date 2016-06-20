@@ -23,12 +23,12 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([invite/4, answer/3, hangup/2, hangup/3]).
--export([find_user/1, find_call_id/1, get_all/0]).
+-export([find_user/1, find_session_id/1, get_all/0]).
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_handle_call/4, 
          conn_handle_cast/3, conn_handle_info/3, conn_stop/3]).
 -export([print/3]).
--export_type([answer/0, call_id/0, verto/0]).
+-export_type([answer/0, verto_id/0, call_id/0, verto/0]).
 
 -define(LLOG(Type, Txt, Args, State),
     lager:Type("NkMEDIA VERTO (~s) "++Txt, [State#state.user | Args])).
@@ -52,7 +52,9 @@
 % Included: sdp, sdp_type, verto_params
 -type answer() :: nkmedia:answer() | #{monitor=>pid()}.
 
--type user_id() :: binary().
+-type session_id() :: nkmedia:session_id().
+
+-type verto_id() :: binary().
 
 -type call_id() :: binary().
 
@@ -74,42 +76,41 @@
 %% If async=true, the pid() of the process and a reference() will be returned,
 %% and a message {?MODULE, Ref, {ok, answer()}} or {?MODULE, Ref, {error, Error}}
 %% will be sent to the calling process
-%% If 'pid' is used, this process will be monitorized 
 % Recognized in offer: sdp, callee_name, callee_id, caller_name, caller
--spec invite(pid(), user_id(), nkmedia:offer(), #{async=>boolean(), pid=>pid()}) ->
+-spec invite(pid(), session_id(), nkmedia:offer(), #{async=>boolean()}) ->
     {answer, answer()} | rejected | {async, pid(), reference()} |
     {error, term()}.
     
-invite(Pid, UserId, Offer, Opts ) ->
-    call(Pid, {invite, UserId, Offer, Opts}).
+invite(Pid, SessId, Offer, Opts ) ->
+    do_call(Pid, {invite, SessId, Offer, Opts}).
 
 
 %% @doc Sends an ANSWER (only sdp is used in answer())
--spec answer(pid(), user_id(), answer()) -> 
+-spec answer(pid(), session_id(), answer()) -> 
     ok | {error, term()}.
 
-answer(Pid, UserId, Answer) ->
-    call(Pid, {answer, UserId, Answer}).
+answer(Pid, SessId, Answer) ->
+    do_call(Pid, {answer, SessId, Answer}).
 
 
 %% @doc Equivalent to hangup(Pid, CallId, 16)
--spec hangup(pid(), user_id()) ->
+-spec hangup(pid(), session_id()) ->
     ok.
 
-hangup(Pid, UserId) ->
-    hangup(Pid, UserId, 16).
+hangup(Pid, SessId) ->
+    hangup(Pid, SessId, 16).
 
 
 %% @doc Sends a BYE (non-blocking)
 %% The call will be removed and demonitorized
--spec hangup(pid(), user_id(), nkmedia:hangup_reason()) ->
+-spec hangup(pid(), session_id(), nkmedia:hangup_reason()) ->
     ok | {error, term()}.
 
-hangup(Pid, UserId, Reason) ->
-    gen_server:cast(Pid, {hangup, UserId, Reason}).
+hangup(Pid, SessId, Reason) ->
+    gen_server:cast(Pid, {hangup, SessId, Reason}).
 
 
-%% @doc Gets the pids() for currently logged user
+%% @doc Gets pids() for logged user
 -spec find_user(binary()) ->
     [pid()].
 
@@ -118,18 +119,18 @@ find_user(Login) ->
     [Pid || {undefined, Pid} <- nklib_proc:values({?MODULE, user, Login2})].
 
 
-%% @doc Gets the pids() for currently logged user
--spec find_call_id(binary()) ->
+%% @doc Gets the pids() for a session
+-spec find_session_id(session_id()) ->
     [pid()].
 
-find_call_id(CallId) ->
-    CallId2 = nklib_util:to_binary(CallId),
-    [Pid || {undefined, Pid} <- nklib_proc:values({?MODULE, call, CallId2})].
+find_session_id(SessId) ->
+    SessId2 = nklib_util:to_binary(SessId),
+    [Pid || {undefined, Pid} <- nklib_proc:values({?MODULE, session, SessId2})].
 
 
 %% @private
 -spec get_all() ->
-    [pid()].
+    [{pid(), User::binary()}].
 
 get_all() ->
     nklib_proc:values(?MODULE).
@@ -151,13 +152,13 @@ get_all() ->
 
 -record(state, {
     srv_id ::  nkservice:id(),
-    sess_id = <<>> :: binary(),
+    verto_sess_id = <<>> :: binary(),
     user = <<"undefined">> :: binary(),
     current_id = 1 :: integer(),
     bw_bytes :: integer(),
     bw_time :: integer(),
     session_ops :: #{op_id() => #session_op{}},
-    calls = [] :: [{call_id(), user_id(), reference()}],
+    calls = [] :: [{call_id(), session_id(), reference()}],
     verto :: verto()
 }).
 
@@ -347,14 +348,13 @@ conn_stop(Reason, _NkPort, State) ->
 %% ===================================================================
 
 %% @private
-handle_op({invite, UserId, Offer, Opts}, From, NkPort, State) ->
+handle_op({invite, SessId, Offer, Opts}, From, NkPort, State) ->
     CallId = nklib_util:uuid_4122(),
-    Pid = maps:get(pid, Opts, undefined),
-    State2 = add_call(CallId, UserId, Pid, State),
+    State2 = add_call(CallId, SessId, State),
     send_client_req({invite, CallId, Offer, Opts}, From, NkPort, State2);
 
-handle_op({answer, UserId, Opts}, From, NkPort, State) ->
-    case get_call_id(UserId, State) of
+handle_op({answer, SessId, Opts}, From, NkPort, State) ->
+    case get_call_id(SessId, State) of
         {ok, CallId} ->
             send_client_req({answer, CallId, Opts}, From, NkPort, State);
         not_found ->
@@ -362,8 +362,8 @@ handle_op({answer, UserId, Opts}, From, NkPort, State) ->
             {ok, State}
     end;
 
-handle_op({hangup, UserId, Reason}, From, NkPort, State) ->
-    case get_call_id(UserId, State) of
+handle_op({hangup, SessId, Reason}, From, NkPort, State) ->
+    case get_call_id(SessId, State) of
         {ok, CallId} ->
             handle_op({hangup_call_id, CallId, Reason}, From, NkPort, State);
         not_found ->
@@ -385,7 +385,7 @@ process_client_req(<<"login">>, Msg, NkPort, State) ->
         #{
             <<"login">> := Login,
             <<"passwd">> := Passwd,
-            <<"sessid">> := SessId
+            <<"sessid">> := VertoSessId
         } ->
             case handle(nkmedia_verto_login, [Login, Passwd], State) of
                 {true, State2} ->
@@ -400,12 +400,13 @@ process_client_req(<<"login">>, Msg, NkPort, State) ->
                     Reply = make_error(-32001, "Authentication Failure", Msg),
                     send(Reply, NkPort, State2);
                 _ ->
+                    true = nklib_proc:reg({?MODULE, verto_session, VertoSessId}),
                     nklib_proc:put(?MODULE, Login2),
                     nklib_proc:put({?MODULE, user, Login2}),
-                    State3 = State2#state{sess_id=SessId, user=Login2},
+                    State3 = State2#state{verto_sess_id=VertoSessId, user=Login2},
                     ReplyParams = #{
                         <<"message">> => <<"logged in">>, 
-                        <<"sessid">> => SessId
+                        <<"sessid">> => VertoSessId
                     },
                     Reply = nkmedia_fs_util:verto_resp(ReplyParams, Msg),
                     send(Reply, NkPort, State3)
@@ -415,7 +416,7 @@ process_client_req(<<"login">>, Msg, NkPort, State) ->
             send(Reply, NkPort, State)
     end;
 
-process_client_req(_, Msg, NkPort, #state{sess_id = <<>>}=State) ->
+process_client_req(_, Msg, NkPort, #state{verto_sess_id = <<>>}=State) ->
     Reply = make_error(-32000, "Authentication Required", Msg),
     send(Reply, NkPort, State);
 
@@ -434,8 +435,8 @@ process_client_req(<<"verto.invite">>, Msg, NkPort, State) ->
         <<"useStereo">> := UseStereo,
         <<"useVideo">> :=  UseVideo
     } = Params,
-    #state{sess_id=SessionId} = State,
-    nklib_proc:put({?MODULE, call, CallId}),
+    #state{verto_sess_id=VertoSessId, srv_id=SrvId} = State,
+    % nklib_proc:put({?MODULE, call, CallId}),
     Offer = #{
         sdp => SDP, 
         sdp_type => webrtc, 
@@ -453,12 +454,12 @@ process_client_req(<<"verto.invite">>, Msg, NkPort, State) ->
         verto_params => Params
     },
     % io:format("SDP INVITE FROM VERTO: ~s\n", [SDP]),
-    State3 = case handle(nkmedia_verto_invite, [CallId, Offer], State) of
-        {ok, UserId, Pid, State2} -> 
-            add_call(CallId, UserId, Pid, State2);
-        {answer, Answer, UserId, Pid, State2} -> 
-            gen_server:cast(self(), {answer, UserId, Answer}),
-            add_call(CallId, UserId, Pid, State2);
+    State3 = case handle(nkmedia_verto_invite, [SrvId, Offer, VertoSessId], State) of
+        {ok, SessId, State2} -> 
+            add_call(CallId, SessId, State2);
+        {answer, Answer, SessId, State2} -> 
+            gen_server:cast(self(), {answer, SessId, Answer}),
+            add_call(CallId, SessId, State2);
         {rejected, Reason, State2} -> 
             gen_server:cast(self(), {hangup_call_id, CallId, Reason}),
             State2
@@ -466,7 +467,7 @@ process_client_req(<<"verto.invite">>, Msg, NkPort, State) ->
     Data = #{
         <<"callID">> => CallId,
         <<"message">> => <<"CALL CREATED">>,
-        <<"sessid">> => SessionId
+        <<"sessid">> => VertoSessId
     },
     Resp = nkmedia_fs_util:verto_resp(Data, Msg),
     send(Resp, NkPort, State3);
@@ -475,7 +476,7 @@ process_client_req(<<"verto.answer">>, Msg, NkPort, State) ->
     #{<<"params">> := #{
         <<"dialogParams">> := Params,  
         <<"sdp">> := SDP, 
-        <<"sessid">> := SessId}
+        <<"sessid">> := VertoSessId}
     } = Msg,
     #{<<"callID">> := CallId} = Params,
     Answer = #{sdp=>SDP, sdp_type=>webrtc, verto_params=>Params},
@@ -483,64 +484,71 @@ process_client_req(<<"verto.answer">>, Msg, NkPort, State) ->
     case extract_op({wait_answer, CallId}, State) of
         not_found ->
             ?LLOG(warning, "received unexpected answer", [], State),
-            hangup(self(), CallId, 503),
-            State2 = State;
+            gen_server:cast(self(), {hangup_call_id, CallId, 503}),
+            State3 = State;
         {Op, State2} ->
-            user_reply(Op, {answer, Answer})
+            user_reply(Op, {answer, Answer}),
+            case find_session_id(CallId, State) of
+                {ok, SessId} ->
+                    case handle(nkmedia_verto_answer, [SessId, Answer], State2) of
+                        {ok, State3} -> 
+                            ok;
+                        {hangup, Reason, State3} -> 
+                            hangup(self(), SessId, Reason)
+                    end;
+                not_found ->
+                    ?LLOG(notice, "received answer for unknown session (~s)", 
+                          [CallId], State), 
+                    State3 = State2
+            end
     end,
-    case get_user_id(CallId, State) of
-        {ok, UserId} ->
-            case handle(nkmedia_verto_answer, [CallId, UserId, Answer], State2) of
-                {ok, State3} -> 
-                    ok;
-                {hangup, Reason, State3} -> 
-                    hangup(self(), CallId, Reason)
-            end;
-        not_found ->
-            ?LLOG(notice, "received answer for unknown call (~s)", [CallId], State),
-            State3 = State2
-    end,
-    #state{sess_id=SessId} = State3,
-    Data = #{<<"sessid">> => SessId},
+    #state{verto_sess_id=VertoSessId} = State3,
+    Data = #{<<"sessid">> => VertoSessId},
     Resp = nkmedia_fs_util:verto_resp(Data, Msg),
     send(Resp, NkPort, State3);
 
 process_client_req(<<"verto.bye">>, Msg, NkPort, State) ->
-    #{<<"params">> := #{<<"dialogParams">>:=Params,  <<"sessid">>:=SessId}} = Msg,
-    #{<<"callID">> := CallId} = Params,
+    #{<<"params">> := 
+        #{
+            <<"dialogParams">> := #{<<"callID">> := CallId},  
+            <<"sessid">>:=VertoSessId
+        }
+    } = Msg,
     case extract_op({wait_answer, CallId}, State) of
         not_found ->
             % It is an in-call BYE
-            case get_user_id(CallId, State) of
-                {ok, UserId} ->
-                    {ok, State2} = handle(nkmedia_verto_bye, [CallId, UserId], State);
+            case find_session_id(CallId, State) of
+                {ok, SessId} ->
+                    {ok, State2} = handle(nkmedia_verto_bye, [SessId], State);
                 not_found ->
                     State2 = State
             end;
         {Op, State2} ->
+            % It was ringing
             user_reply(Op, rejected)
     end,
     State3 = del_call(CallId, State2),
-    Data = #{<<"callID">> => CallId, <<"sessid">> => SessId},
+    Data = #{<<"callID">> => CallId, <<"sessid">> => VertoSessId},
     Resp = nkmedia_fs_util:verto_resp(Data, Msg),
     send(Resp, NkPort, State3);
 
 process_client_req(<<"verto.info">>, Msg, NkPort, State) ->
-    #{<<"params">> := #{
-        <<"dialogParams">> := Params,  
-        <<"dtmf">> := DTMF, 
-        <<"sessid">> := SessId}
+    #{<<"params">> := 
+        #{
+            <<"dialogParams">> := #{<<"callID">> := CallId},  
+            <<"dtmf">> := DTMF, 
+            <<"sessid">> := VertoSessId
+        }
     } = Msg,
-    #{<<"callID">> := CallId} = Params,
-    case get_user_id(CallId, State) of
-        {ok, UserId} ->
-            {ok, State2} = handle(nkmedia_verto_dtmf, [CallId, UserId, DTMF], State);
+    case find_session_id(CallId, State) of
+        {ok, SessId} ->
+            {ok, State2} = handle(nkmedia_verto_dtmf, [SessId, DTMF], State);
         not_found ->
             ?LLOG(notice, "received dtmf for unknown call (~s)", [CallId], State),
             State2 = State
     end,
-    #state{sess_id=SessId} = State2,
-    Data = #{<<"message">> => <<"SENT">>, <<"sessid">> => SessId},
+    #state{verto_sess_id=VertoSessId} = State2,
+    Data = #{<<"message">> => <<"SENT">>, <<"sessid">> => VertoSessId},
     Resp = nkmedia_fs_util:verto_resp(Data, Msg),
     send(Resp, NkPort, State2);
 
@@ -582,8 +590,8 @@ process_client_resp(#session_op{from=From}, Resp, _Msg, _NkPort, State) ->
 %% ===================================================================
 
 %% @private
-call(VertoPid, Msg) ->
-    nklib_util:call(VertoPid, Msg, 1000*?CALL_TIMEOUT).
+do_call(Pid, Msg) ->
+    nklib_util:call(Pid, Msg, 1000*?CALL_TIMEOUT).
 
 
 %% @private
@@ -595,13 +603,13 @@ send_client_req(Type, From, NkPort, #state{current_id=Id}=State) ->
 
 %% @private
 make_msg(Id, {invite, CallId, Offer, _Opts}, State) ->
-    #state{sess_id=SessId} = State,
+    #state{verto_sess_id=VertoSessId} = State,
     SDP = maps:get(sdp, Offer),
     Params = #{
         <<"callID">> => CallId, 
         <<"sdp">> => SDP,
         <<"callee_id_name">> => maps:get(callee_name, Offer, <<"Outbound Call">>),
-        <<"callee_id_number">> => maps:get(callee_id, Offer, SessId),
+        <<"callee_id_number">> => maps:get(callee_id, Offer, VertoSessId),
         <<"caller_id_name">> => maps:get(caller_name, Offer, <<"My Name">>),
         <<"caller_id_number">> => maps:get(caller_id, Offer, <<"0000000000">>),
         <<"display_direction">> => <<"outbound">>
@@ -616,7 +624,7 @@ make_msg(Id, {answer, CallId, Opts}, _State) ->
     {ok, nkmedia_fs_util:verto_req(Id, <<"verto.answer">>, Params)};
 
 make_msg(Id, {hangup, CallId, Reason}, _State) ->
-    {Code, Text} = nkmedia_util:get_q850(Reason),
+    {Code, Text} = nkmedia_util:error(Reason),
     Params = #{<<"callID">>=>CallId, <<"causeCode">>=>Code, <<"cause">>=>Text},
     {ok, nkmedia_fs_util:verto_req(Id, <<"verto.bye">>, Params)}.
 
@@ -648,34 +656,31 @@ extract_op(OpId, #state{session_ops=AllOps}=State) ->
 
 
 %% @private
-add_call(CallId, UserId, Pid, #state{calls=Calls}=State) ->
-    nklib_proc:put({?MODULE, call, CallId}),
+add_call(CallId, SessId, #state{calls=Calls}=State) ->
+    {ok, Pid} = nkmedia_session:register(SessId, {?MODULE, CallId, self()}),
+    nklib_proc:put({?MODULE, session, SessId}),
     case lists:keymember(CallId, 1, Calls) of
         false ->
-            Ref = case is_pid(Pid) of
-                true -> monitor(process, Pid);
-                _ -> undefined
-            end,
-            Calls2 = [{CallId, UserId, Ref}|Calls],
+            Calls2 = [{CallId, SessId, monitor(process, Pid)}|Calls],
             State#state{calls=Calls2};
         true ->
-            ?LLOG(notice, "duplicated call!", [], State),
+            ?LLOG(warning, "adding duplicated call!", [], State),
             State
     end.
 
 
 %% @private
-get_call_id(UserId, #state{calls=Calls}) ->
-    case lists:keyfind(UserId, 2, Calls) of
-        {CallId, UserId, _Ref} -> {ok, CallId};
+get_call_id(SessId, #state{calls=Calls}) ->
+    case lists:keyfind(SessId, 2, Calls) of
+        {CallId, SessId, _Ref} -> {ok, CallId};
         false -> not_found
     end.
 
 
 %% @private
-get_user_id(CallId, #state{calls=Calls}) ->
+find_session_id(CallId, #state{calls=Calls}) ->
     case lists:keyfind(CallId, 1, Calls) of
-        {CallId, UserId, _Ref} -> {ok, UserId};
+        {CallId, SessId, _Ref} -> {ok, SessId};
         false -> not_found
     end.
 
@@ -683,8 +688,8 @@ get_user_id(CallId, #state{calls=Calls}) ->
 %% @private
 del_call(CallId, #state{calls=Calls}=State) ->
     case lists:keytake(CallId, 1, Calls) of
-        {value, {CallId, _UserId, Ref}, Calls2} ->
-            nklib_proc:del({?MODULE, call, CallId}),
+        {value, {CallId, SessionId, Ref}, Calls2} ->
+            nklib_proc:del({?MODULE, session, SessionId}),
             nklib_util:demonitor(Ref),
             State#state{calls=Calls2};
         false ->

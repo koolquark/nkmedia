@@ -26,9 +26,9 @@
          plugin_start/2, plugin_stop/2]).
 -export([nkmedia_janus_get_mediaserver/1]).
 -export([nkmedia_session_init/2, nkmedia_session_terminate/2]).
--export([nkmedia_session_offer_op/4, nkmedia_session_answer_op/4,
-         nkmedia_session_hangup/2, nkmedia_session_handle_info/2]).
--export([nkmedia_session_updated_answer/2]).
+-export([nkmedia_session_class/2, nkmedia_session_answer/3,
+         nkmedia_session_update/3, nkmedia_session_stop/2, 
+         nkmedia_session_handle_info/2]).
 -export([nkdocker_notify/2]).
 
 -include_lib("nkservice/include/nkservice.hrl").
@@ -126,15 +126,13 @@ nkmedia_session_terminate(Reason, Session) ->
 
 
 %% @private
-nkmedia_session_offer_op(Op, Opts, HasOffer, Session) ->
-    case maps:get(backend, Opts, janus) of
+nkmedia_session_class(Class, Session) ->
+    case maps:get(backend, Session, janus) of
         janus ->
             State = state(Session),
-            case 
-                nkmedia_janus_session:offer_op(Op, Opts, HasOffer, Session, State)
-            of
-                {ok, Offer, Op2, Opts2, State2} ->
-                    {ok, Offer, Op2, Opts2, session(State2, Session)};
+            case nkmedia_janus_session:start(Class, Session, State) of
+                {ok, Class2, Reply, Offer, Answer, State2} ->
+                    {ok, Class2, Reply, session(Offer, Answer, State2, Session)};
                 {error, Error, State2} ->
                     {error, Error, session(State2, Session)};
                 continue ->
@@ -146,15 +144,32 @@ nkmedia_session_offer_op(Op, Opts, HasOffer, Session) ->
 
 
 %% @private
-nkmedia_session_answer_op(Op, Opts, HasAnswer, Session) ->
-    case maps:get(backend, Opts, janus) of
+nkmedia_session_answer(Class, Answer, Session) ->
+    case maps:get(backend, Session, janus) of
         janus ->
             State = state(Session),
-            case 
-                nkmedia_janus_session:answer_op(Op, Opts, HasAnswer, Session, State)
-            of
-                {ok, Answer, Op2, Opts2, State2} ->
-                    {ok, Answer, Op2, Opts2, session(State2, Session)};
+            case nkmedia_janus_session:answer(Class, Answer, Session, State) of
+                {ok, Reply, Answer2, State2} ->
+                    {ok, Reply, session(none, Answer2, State2, Session)};
+                {error, Error, State2} ->
+                    {error, Error, session(State2, Session)};
+                continue ->
+                    continue
+            end;
+        _ ->
+            continue
+    end.
+
+
+
+%% @private
+nkmedia_session_update(Class, Update, Session) ->
+    case maps:get(backend, Session, janus) of
+        janus ->
+            State = state(Session),
+            case nkmedia_janus_session:update(Class, Update, Session, State) of
+                {ok, Class2, Reply, State2} ->
+                    {ok, Class2, Reply, session(State2, Session)};
                 {error, Error, State2} ->
                     {error, Error, session(State2, Session)};
                 continue ->
@@ -166,23 +181,8 @@ nkmedia_session_answer_op(Op, Opts, HasAnswer, Session) ->
 
 
 %% @private
-nkmedia_session_updated_answer(#{sdp:=_}=Answer, Session) ->
-    case nkmedia_janus_session:updated_answer(Answer, Session, state(Session)) of
-        {ok, Answer2, State2} ->
-            {ok, Answer2, session(State2, Session)};
-        {error, Error, State2} ->
-            {error, Error, session(State2, Session)};
-        continue ->
-            continue
-    end;
-
-nkmedia_session_updated_answer(_Answer, _Session) ->
-    continue.
-
-
-%% @private
-nkmedia_session_hangup(Reason, Session) ->
-    {ok, State2} = nkmedia_janus_session:hangup(Reason, Session, state(Session)),
+nkmedia_session_stop(Reason, Session) ->
+    {ok, State2} = nkmedia_janus_session:stop(Reason, Session, state(Session)),
     {continue, [Reason, session(State2, Session)]}.
 
 
@@ -220,6 +220,19 @@ nkdocker_notify(_MonId, _Op) ->
 %% @private
 state(#{nkmedia_janus:=State}) ->
     State.
+
+
+%% @private
+session(Offer, Answer, State, Session) ->
+    Session2 = case Offer of
+        #{} -> Session#{offer=>Offer};
+        none -> Session
+    end,
+    Session3 = case Answer of
+        #{} -> Session2#{answer=>Answer};
+        none -> Session2
+    end,
+    Session3#{nkmedia_janus:=State}.
 
 
 %% @private

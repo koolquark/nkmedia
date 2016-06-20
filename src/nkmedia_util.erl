@@ -21,13 +21,13 @@
 -module(nkmedia_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([get_q850/1, add_uuid/1]).
+-export([error/1, get_q850/1, add_uuid/1]).
 -export([kill/1]).
 
--export_type([q850/0, hangup_reason/0]).
+-export_type([stop_reason/0, q850/0]).
 
+-type stop_reason() :: atom() | q850() | binary() | string().
 -type q850() :: 0..609.
--type hangup_reason() :: q850() | string() | binary().
 
 % -type notify() :: 
 % 	{Tag::term(), pid()} | {Tag::term(), Info::term(), pid()} | term().
@@ -65,19 +65,47 @@ add_uuid(Config) ->
 % notify_refs(Other, Notifies) ->
 % 	notify_refs([Other], Notifies).
 
+-spec error(stop_reason()) ->
+	{integer(), binary()}.
+
+error(session_timeout) 			-> 	{1000, <<"Session Timeout">>};
+error(user_monitor_stop) 		-> 	{1001, <<"User Monitor Stop">>};
+error(reg_monitor_stop) 		-> 	{1001, <<"Register Monitor Stop">>};
+error(session_stop) 			-> 	{1001, <<"Session Stop">>};
+error(duplicated_offer) 		-> 	{1003, <<"Duplicated Offer">>};
+error(offer_not_set) 			-> 	{1003, <<"Offer Not Set">>};
+error(duplicated_answer) 		-> 	{1003, <<"Duplicated Answer">>};
+error(answer_not_set) 			-> 	{1003, <<"Answer Not Set">>};
+error(operation_error) 			-> 	{1003, <<"Operation Error">>};
+error(session_not_foud) 		-> 	{1003, <<"Session Not Found">>};
+error(unknown_class) 			-> 	{1003, <<"Unknown Class">>};
+error(unknown_operation) 		-> 	{1003, <<"Unknown Operation">>};
+error(missing_parameters) 		-> 	{1003, <<"Missing Parameters">>};
+error(incompatible_operation) 	->	{1003, <<"Incompatible Operation">>};
+error(not_implemented) 			->	{1003, <<"Not Implemented">>};
+	
+error(no_answer) 				->  {19, <<"NO_ANSWER">>};
+error(no_destination) 			->  {3, <<"NO_ROUTE_DESTINATION">>};
+
+error(originator_cancel)		-> 	{487, <<"Originator Cancel">>};
+error(user_not_found)			-> 	{487, <<"Originator Cancel">>};
+
+
+error(Code) when is_integer(Code) -> get_q850(Code);
+error(Other) -> {0, nklib_util:to_binary(Other)}.
+
+
 
 
 %% @private
--spec get_q850(hangup_reason()) ->
+-spec get_q850(q850()) ->
 	{q850(), binary()}.
 
 get_q850(Code) when is_integer(Code) ->
 	case maps:find(Code, q850_map()) of
 		{ok, {_Sip, Msg}} -> {Code, Msg};
 		error -> {Code, <<"UNKNOWN CODE">>}
-	end;
-get_q850(Msg) ->
-	{0, nklib_util:to_binary(Msg)}.
+	end.
 
 
 
@@ -149,6 +177,8 @@ q850_map() ->
 		607 => {none, <<"PROGRESS_TIMEOUT">>},
 		609 => {none, <<"GATEWAY_DOWN">>}
 	}.
+
+
 
 
 kill(Type) ->

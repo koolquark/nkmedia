@@ -26,15 +26,13 @@
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
 -export([nkmedia_session_init/2, nkmedia_session_terminate/2, 
 		 nkmedia_session_event/3, nkmedia_session_peer_event/4, 
-		 nkmedia_session_invite/4, 
+		 nkmedia_session_reg_event/4,
 		 nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2, 
 		 nkmedia_session_handle_info/2]).
--export([nkmedia_session_offer_op/4, nkmedia_session_answer_op/4,
-		 nkmedia_session_hangup/2,
-		 nkmedia_session_updated_offer/2, nkmedia_session_updated_answer/2]).
+-export([nkmedia_session_class/2, nkmedia_session_answer/3, 
+	     nkmedia_session_update/2, nkmedia_session_stop/2]).
 -export([nkmedia_call_init/2, nkmedia_call_terminate/2, 
-		 nkmedia_call_resolve/2, nkmedia_call_invite/3, 
-		 nkmedia_call_event/3, 
+		 nkmedia_call_invite/4, nkmedia_call_cancel/3, nkmedia_call_event/4, 
 		 nkmedia_call_handle_call/3, nkmedia_call_handle_cast/2, 
 		 nkmedia_call_handle_info/2]).
 
@@ -117,18 +115,14 @@ nkmedia_session_peer_event(_SessId, _Type, _Event, Session) ->
 	{ok, Session}.
 
 
-%% @doc Called when a new call must be sent from the session
-%% If an answer is included, it can contain a pid() tha will be monitorized
-%% New answers will be merged, but only one can contain an SDP
--spec nkmedia_session_invite(session_id(), nkmedia_session:call_dest(), 
-						  nkmedia:offer(), session()) ->
-	{ringing, nkmedia:answer(), session()} | 
-	{answer, nkmedia:answer(), session()}  | 
-	{async, nkmedia:answer(), session()}   |
-	{rejected, nkmedia:hangup_reason(), session()}.
+%% @doc Called when the status of the session changes, for each registered
+%% process to the session
+-spec nkmedia_session_reg_event(nkmedia_session:id(), term(), 
+								nkmedia_session:event(), session()) ->
+	{ok, session()} | continue().
 
-nkmedia_session_invite(_SessId, _CallDest, _Offer, Session) ->
-	{rejected, <<"Unrecognized Destination">>, Session}.
+nkmedia_session_reg_event(_SessId, _RegId, _Event, Session) ->
+	{ok, Session}.
 
 
 %% @doc
@@ -158,68 +152,41 @@ nkmedia_session_handle_info(Msg, Session) ->
 	{noreply, Session}.
 
 
-%% @private You must generte an offer() for this offer_op()
-%% ReplyOpts will only we used for user notification
--spec nkmedia_session_offer_op(nkmedia:offer_op(), nkmedia:op_opts(), 
-							   HasOffer::boolean(), session()) ->
-	{ok, nkmedia:offer(), Op::atom(), Opts::map(), session()} |
+%% @private
+-spec nkmedia_session_class(nkmedia:class(), session()) ->
+	{ok, nkmedia:class(), Reply::map(), session()} |
 	{error, term(), session()} | continue().
 
-nkmedia_session_offer_op(sdp, Opts, false, Session) ->
-	{ok, maps:get(offer, Opts, #{}), sdp, Opts, Session};
+nkmedia_session_class(p2p, Session) ->
+	{ok, p2p, #{}, Session};
 
-nkmedia_session_offer_op(sdp, _Opts, teue, Session) ->
-	{error, offer_already_set, Session};
-
-nkmedia_session_offer_op(OfferOp, _Opts, _HasOffer, Session) ->
-	{error, {unknown_op, OfferOp}, Session}.
+nkmedia_session_class(_Class, Session) ->
+	{error, unknown_class, Session}.
 
 
 %% @private
--spec nkmedia_session_answer_op(nkmedia:answer_op(), nkmedia:op_opts(), 
-							     HasAnswer::boolean(), session()) ->
-	{ok, nkmedia:answer(), Op::atom(), Opts::map(), session()} |
+-spec nkmedia_session_answer(nkmedia:class(), nkmedia:answer(), session()) ->
+	{ok, Reply::map(), nkmedia:answer(), session()} |
 	{error, term(), session()} | continue().
 
-nkmedia_session_answer_op(sdp, Opts, false, Session) ->
-	{ok, maps:get(answer, Opts, #{}), sdp, Opts, Session};
-
-nkmedia_session_answer_op(sdp, _Opts, true, Session) ->
-	{error, answer_already_set, Session};
-
-nkmedia_session_answer_op(invite, Opts, false, Session) ->
-	{ok, maps:get(answer, Opts, #{}), invite, Opts, Session};
-
-nkmedia_session_answer_op(invite, _Opts, true, Session) ->
-	{error, answer_already_set, Session};
-
-nkmedia_session_answer_op(AnswerOp, _Opts, _HasAnswer, Session) ->
-	{error, {unknown_op, AnswerOp}, Session}.
+nkmedia_session_answer(_Class, Answer, Session) ->
+	{ok, #{}, Answer, Session}.
 
 
 %% @private
--spec nkmedia_session_updated_offer(nkmedia:offer(), session()) ->
-	{ok, nkmedia:offer(), session()} |
+-spec nkmedia_session_update(nkmedia:update(), session()) ->
+	{ok, nkmedia:class(), map(), session()} |
 	{error, term(), session()} | continue().
 
-nkmedia_session_updated_offer(Offer, Session) ->
-	{ok, Offer, Session}.
+nkmedia_session_update(_Update, Session) ->
+	{error, unknown_operation, Session}.
 
 
 %% @private
--spec nkmedia_session_updated_answer(nkmedia:answer(), session()) ->
-	{ok, nkmedia:answer(), session()} |
-	{error, term(), session()} | continue().
-
-nkmedia_session_updated_answer(Answer, Session) ->
-	{ok, Answer, Session}.
-
-
-%% @private
--spec nkmedia_session_hangup(nkmedia:hangup_reason(), session()) ->
+-spec nkmedia_session_stop(nkmedia:hangup_reason(), session()) ->
 	{ok, session()} | continue().
 
-nkmedia_session_hangup(_Reason, Session) ->
+nkmedia_session_stop(_Reason, Session) ->
 	{ok, Session}.
 
 
@@ -246,33 +213,31 @@ nkmedia_call_terminate(_Reason, Call) ->
 	{ok, Call}.
 
 
-%% @doc Called when the status of the call changes
--spec nkmedia_call_event(call_id(), nkmedia_call:event(), call()) ->
-	{ok, call()} | continue().
-
-nkmedia_call_event(_CallId, _Event, Call) ->
-	{ok, Call}.
-
-
-%% @doc Called when a call specificatio must be resolved
--spec nkmedia_call_resolve(nkmedia:call_dest(), call()) ->
-	{ok, nkmedia_call:call_out_spec(), call()} | 
-	{hangup, nkmedia:hangup_reason(), call()} |
-	continue().
-
-nkmedia_call_resolve(_Dest, Call) ->
-	{hangup,  <<"Unknown Destination">>, Call}.
-
-
 %% @doc Called when an outbound call is to be sent
--spec nkmedia_call_invite(session_id(), nkmedia_session:call_dest(), call()) ->
-	{call, nkmedia_session:call_dest(), call()} | 
+-spec nkmedia_call_invite(call_id(), nkmedia:offer(), nkmedia_call:dest(), call()) ->
+	{ok, term()|pid(), call()} | 
 	{retry, Secs::pos_integer(), call()} | 
 	{remove, call()} | 
 	continue().
 
-nkmedia_call_invite(_SessId, Dest, Call) ->
-	{call, Dest, Call}.
+nkmedia_call_invite(_CallId, _Offer, _Dest, Call) ->
+	{remove, Call}.
+
+
+%% @doc Called when an outbound call is to be sent
+-spec nkmedia_call_cancel(term()|pid(), nkmedia_call:dest(), call()) ->
+	{ok, call()} | continue().
+
+nkmedia_call_cancel(_Pid, _Dest, Call) ->
+	{ok, Call}.
+
+
+%% @doc Called when the status of the call changes
+-spec nkmedia_call_event(call_id(), session_id(), nkmedia_call:event(), call()) ->
+	{ok, call()} | continue().
+
+nkmedia_call_event(_CallId, _SessId, _Event, Call) ->
+	{ok, Call}.
 
 
 %% @doc

@@ -24,12 +24,12 @@
 
 -export([plugin_deps/0, plugin_syntax/0, plugin_listen/2, 
          plugin_start/2, plugin_stop/2]).
--export([nkmedia_verto_init/2, nkmedia_verto_login/3, nkmedia_verto_call/3,
-         nkmedia_verto_invite/3, nkmedia_verto_answer/4, nkmedia_verto_bye/3,
-         nkmedia_verto_dtmf/4, nkmedia_verto_terminate/2,
+-export([nkmedia_verto_init/2, nkmedia_verto_login/3, 
+         nkmedia_verto_invite/4, nkmedia_verto_answer/3, nkmedia_verto_bye/2,
+         nkmedia_verto_dtmf/3, nkmedia_verto_terminate/2,
          nkmedia_verto_handle_call/3, nkmedia_verto_handle_cast/2,
          nkmedia_verto_handle_info/2]).
--export([nkmedia_session_invite/4, nkmedia_session_event/3]).
+-export([nkmedia_session_invite/4, nkmedia_session_reg_event/4]).
 -export([nkmedia_call_resolve/2]).
 
 -define(VERTO_WS_TIMEOUT, 60*60*1000).
@@ -43,8 +43,9 @@
 
 -type continue() :: continue | {continue, list()}.
 
--type call_id() :: nkmedia_verto:call_id().
+-type verto_id() :: nkmedia_verto:verto_id().
 -type session_id() :: nkmedia_session:id().
+
 
 
 %% ===================================================================
@@ -92,22 +93,6 @@ plugin_stop(Config, #{name:=Name}) ->
 -type verto() :: nkmedia_verto:verto().
 
 
-%% @doc Called when a login request is received
--spec nkmedia_verto_login(Login::binary(), Pass::binary(), verto()) ->
-    {boolean(), verto()} | {true, Login::binary(), verto()} | continue().
-
-nkmedia_verto_login(_Login, _Pass, Verto) ->
-    {false, Verto}.
-
-
-%% @private. Must be implemented
--spec nkmedia_verto_call(session_id(), nkmedia:offer(), verto()) ->
-    {ok, verto()} | {rejected, nkmedia:hangup_reason(), verto()} | continue().
-
-nkmedia_verto_call(_SessId, _Offer, _Verto) ->
-    {rejected, <<"Not Implemented">>}.
-
-
 %% @doc Called when a new verto connection arrives
 -spec nkmedia_verto_init(nkpacket:nkport(), verto()) ->
     {ok, verto()}.
@@ -116,54 +101,67 @@ nkmedia_verto_init(_NkPort, Verto) ->
     {ok, Verto}.
 
 
+%% @doc Called when a login request is received
+-spec nkmedia_verto_login(Login::binary(), Pass::binary(), verto()) ->
+    {boolean(), verto()} | {true, Login::binary(), verto()} | continue().
+
+nkmedia_verto_login(_Login, _Pass, Verto) ->
+    {false, Verto}.
+
+
 %% @doc Called when the client sends an INVITE
 %% If {ok, ...} is returned, we must call nkmedia_verto:answer/3.
--spec nkmedia_verto_invite(call_id(), nkmedia_verto:offer(), verto()) ->
-    {ok, nkmedia_session:id(), pid()|undefined, verto()} | 
-    {answer, nkmedia_verto:answer(), nkmedia_session:id(), pid()|undefined, verto()} | 
+-spec nkmedia_verto_invite(nkservice:id(), nkmedia:offer(), verto_id(), verto()) ->
+    {ok, nkmedia_session:id(), verto()} | 
+    {answer, nkmedia_verto:answer(), nkmedia_session:id(), verto()} | 
     {rejected, nkmedia:hangup_reason(), verto()} | continue().
 
-nkmedia_verto_invite(_CallId, Offer, #{srv_id:=SrvId}=Verto) ->
-    #{sdp_type:=webrtc} = Offer,
-    Offer2 = Offer#{pid=>self(), nkmedia_verto=>in},
-    case nkmedia_session:start(SrvId, #{}) of
-        {ok, SessId, SessPid} ->
-            case SrvId:nkmedia_verto_call(SessId, Offer2, Verto) of
-                {ok, Verto2} ->
-                    {ok, SessId, SessPid, Verto2};
-                {rejected, Reason, Verto2} ->
-                    nkmedia_session:hangup(SessId, Reason),
-                    {rejected, Reason, Verto2}
-            end;
-        {error, Error} ->
-            lager:warning("Verto start_inbound error: ~p", [Error]),
-            {hangup, <<"MediaServer Error">>, Verto}
-    end.
+nkmedia_verto_invite(_SrvId, _Offer, _VertoSessId, _Verto) ->
+    {rejected, not_implemented}.
+
+
+    % #{sdp_type:=webrtc} = Offer,
+    % Offer2 = Offer#{pid=>self(), nkmedia_verto=>in},
+    % case nkmedia_session:start(SrvId, #{}) of
+    %     {ok, SessId, SessPid} ->
+    %         case SrvId:nkmedia_verto_call(SessId, Offer2, Verto) of
+    %             {ok, Verto2} ->
+    %                 {ok, SessId, SessPid, Verto2};
+    %             {rejected, Reason, Verto2} ->
+    %                 nkmedia_session:hangup(SessId, Reason),
+    %                 {rejected, Reason, Verto2}
+    %         end;
+    %     {error, Error} ->
+    %         lager:warning("Verto start_inbound error: ~p", [Error]),
+    %         {hangup, <<"MediaServer Error">>, Verto}
+    % end.
 
 
 %% @doc Called when the client sends an ANSWER
--spec nkmedia_verto_answer(call_id(), session_id(), nkmedia_verto:answer(), verto()) ->
+-spec nkmedia_verto_answer(session_id(), nkmedia:answer(), verto()) ->
     {ok, verto()} |{hangup, nkmedia:hangup_reason(), verto()} | continue().
 
-nkmedia_verto_answer(_CallId, _SessId, _Answer, Verto) ->
+nkmedia_verto_answer(_SessId, _Answer, Verto) ->
     {ok, Verto}.
 
 
 %% @doc Sends when the client sends a BYE
--spec nkmedia_verto_bye(call_id(), session_id(), verto()) ->
+%% This default implementation will hangup the session
+
+-spec nkmedia_verto_bye(session_id(), verto()) ->
     {ok, verto()} | continue().
 
-nkmedia_verto_bye(CallId, SessId, Verto) ->
-    lager:info("Verto BYE from ~s (~s)", [CallId, SessId]),
+nkmedia_verto_bye(SessId, Verto) ->
+    lager:info("Verto BYE for ~s", [SessId]),
     nkmedia_session:hangup(SessId, <<"User Hangup">>),
     {ok, Verto}.
 
 
 %% @doc
--spec nkmedia_verto_dtmf(call_id(), session_id(), DTMF::binary(), verto()) ->
+-spec nkmedia_verto_dtmf(session_id(), DTMF::binary(), verto()) ->
     {ok, verto()} | continue().
 
-nkmedia_verto_dtmf(_CallId, _SessId, _DTMF, Verto) ->
+nkmedia_verto_dtmf(_SessId, _DTMF, Verto) ->
     {ok, Verto}.
 
 
@@ -210,31 +208,20 @@ nkmedia_verto_handle_info(Msg, Verto) ->
 
 
 %% @private
-nkmedia_session_event(SessId, {answer, Answer}, 
-                      #{offer:=#{nkmedia_verto:=in, pid:=Pid}}) ->
+nkmedia_session_reg_event(SessId, {nkmedia_verto, _CallId, Pid}, 
+                          {answer, Answer}, _Session) ->
     #{sdp:=_} = Answer,
     lager:info("Verto (~s) calling media available", [SessId]),
     ok = nkmedia_verto:answer(Pid, SessId, Answer),
     continue;
 
-nkmedia_session_event(SessId, {hangup, _}, Session) ->
-    case Session of
-        #{offer:=#{nkmedia_verto:=in, pid:=Pid1}} ->
-            lager:info("Verto (~s) In captured hangup", [SessId]),
-            nkmedia_verto:hangup(Pid1, SessId);
-        _ -> 
-            ok
-    end,
-    case Session of
-        #{answer:=#{nkmedia_verto:=out, pid:=Pid2}} ->
-            lager:info("Verto (~s) Out captured hangup", [SessId]),
-            nkmedia_verto:hangup(Pid2, SessId);
-        _ ->
-            ok
-    end,
+nkmedia_session_reg_event(SessId, {nkmedia_verto, _CallId, Pid}, 
+                          {hangup, _}, _Session) ->
+    lager:info("Verto (~s) captured hangup", [SessId]),
+    nkmedia_verto:hangup(Pid, SessId),
     continue;
 
-nkmedia_session_event(_SessId, _Event, _Session) ->
+nkmedia_session_reg_event(_SessId, _Id, _Event, _Session) ->
     continue.
 
 
