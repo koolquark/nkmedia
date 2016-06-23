@@ -28,7 +28,7 @@
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2,
          plugin_syntax/0, plugin_listen/2]).
 -export([nkmedia_verto_login/3, nkmedia_verto_invite/4, nkmedia_verto_bye/2]).
--export([nkmedia_call_resolve/2]).
+% -export([nkmedia_call_resolve/2]).
 -export([nkmedia_janus_call/3]).
 -export([nkmedia_sip_call/2]).
 % -export([nkmedia_call_event/3, nkmedia_session_event/3]).
@@ -257,22 +257,22 @@ nkmedia_sip_call(SessId, #{dest:=Dest}=Offer) ->
 
 
 
-%% @private
-nkmedia_call_invite(_CallId, Offer, {verto, Pid}, #{srv_id:=SrvId}=Call) ->
-    case nkmedia_verto:invite()
+% %% @private
+% nkmedia_call_invite(_CallId, Offer, {verto, Pid}, #{srv_id:=SrvId}=Call) ->
+%     case nkmedia_verto:invite()
 
 
 
 
-    case nksip_registrar:find(SrvId, sip, Dest, <<"nkmedia_sample">>) of
-        [] ->
-            lager:info("sip not found: ~s", [Dest]),
-            continue;
-        [Uri|_] ->
-            lager:info("sip found: ~s", [Dest]),
-            Spec = [#{dest=>{nkmedia_sip, Uri, #{}}, sdp_type=>rtp}],
-            {ok, Spec, Call}
-    end.
+%     case nksip_registrar:find(SrvId, sip, Dest, <<"nkmedia_sample">>) of
+%         [] ->
+%             lager:info("sip not found: ~s", [Dest]),
+%             continue;
+%         [Uri|_] ->
+%             lager:info("sip found: ~s", [Dest]),
+%             Spec = [#{dest=>{nkmedia_sip, Uri, #{}}, sdp_type=>rtp}],
+%             {ok, Spec, Call}
+%     end.
             
 
 

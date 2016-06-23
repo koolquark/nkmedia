@@ -58,7 +58,7 @@
         backend => nkemdia:backend(),
         hangup_after_error => boolean(),        % Default true
         {link, term()} => pid(),
-        term() => term()                      % Plugin data
+        term() => term()                        % Plugin data
     }.
 
 
@@ -88,17 +88,17 @@
 
 %% @private
 -spec start(nkservice:id(), nkmedia:class(), config()) ->
-    {ok, id(), Reply::map()} | {error, term()}.
+    {ok, id(), pid(), Reply::map()} | {error, term()}.
 
-start(Service, Class, Config) ->
-    case nkservice_srv:get_srv_id(Service) of
+start(Srv, Class, Config) ->
+    case nkservice_srv:get_srv_id(Srv) of
         {ok, SrvId} ->
             Config2 = Config#{class=>Class, srv_id=>SrvId},
             {SessId, Config3} = nkmedia_util:add_uuid(Config2),
             {ok, SessPid} = gen_server:start(?MODULE, [Config3], []),
             case gen_server:call(SessPid, do_start) of
                 {ok, Reply} ->
-                    {ok, SessId, Reply};
+                    {ok, SessId, SessPid, Reply};
                 {error, Error} ->
                     {error, Error}
             end;

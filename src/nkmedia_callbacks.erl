@@ -35,7 +35,9 @@
 		 nkmedia_call_invite/4, nkmedia_call_cancel/3, nkmedia_call_event/4, 
 		 nkmedia_call_handle_call/3, nkmedia_call_handle_cast/2, 
 		 nkmedia_call_handle_info/2]).
-
+-export([error_code/1]).
+-export([api_server_init/2, api_server_cmd/5, api_server_handle_info/2,
+	     api_server_terminate/2]).
 -export([nkdocker_notify/2]).
 
 -include("nkmedia.hrl").
@@ -102,7 +104,13 @@ nkmedia_session_terminate(_Reason, Session) ->
 -spec nkmedia_session_event(nkmedia_session:id(), nkmedia_session:event(), session()) ->
 	{ok, session()} | continue().
 
-nkmedia_session_event(_SessId, _Event, Session) ->
+nkmedia_session_event(SessId, Event, Session) ->
+	case Session of
+		#{{link, nkmedia_cmd}:=Pid} ->
+			nkmedia_cmd:session_event(SessId, Event, Pid);
+		_ ->
+			ok
+	end,
 	{ok, Session}.
 
 				  
@@ -265,6 +273,60 @@ nkmedia_call_handle_cast(Msg, Call) ->
 nkmedia_call_handle_info(Msg, Call) ->
 	lager:warning("Module nkmedia_call received unexpected info: ~p", [Msg]),
 	{noreply, Call}.
+
+
+%% ===================================================================
+%% Error Codes
+%% ===================================================================
+
+%% @doc
+-spec error_code(term()) ->
+	{integer(), binary()} | continue.
+
+error_code(_) -> continue.
+
+
+
+% ===================================================================
+%% API Server Callbacks
+%% ===================================================================
+
+
+%% @private
+api_server_init(_NkPort, State) ->
+	{ok, State}.
+
+
+%% @private
+api_server_cmd(media, Cmd, Data, _Tid, #{srv_id:=SrvId}=State) ->
+	case nkmedia_api:cmd(SrvId, Cmd, Data, State) of
+		{ok, Reply, State2} ->
+			{ok, Reply, State2};
+		{error, Error, State2} ->
+			{error, Error, State2}
+	end;
+
+api_server_cmd(_Class, _Cmd, _Data, _Tid, _State) ->
+	continue.
+
+api_server_handle_info({'DOWN', Ref, process, _Pid, Reason}, State) ->
+	case nkmedia_api:handle_down(Ref, Reason, State) of
+		continue ->
+			continue;
+		{stop, State2} ->
+			nkmedia_api_server:cmd_async(self(), media, event, #{class=>session_down}),
+			nkmedia_api_server:stop(self()),
+			{ok, State2}
+	end;
+
+api_server_handle_info(_Msg, _State) ->
+	continue.
+
+
+%% @private
+api_server_terminate(_Reason, State) ->
+	{ok, State}.
+
 
 
 %% ===================================================================

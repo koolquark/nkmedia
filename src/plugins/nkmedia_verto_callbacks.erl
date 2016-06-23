@@ -25,7 +25,8 @@
 -export([plugin_deps/0, plugin_syntax/0, plugin_listen/2, 
          plugin_start/2, plugin_stop/2]).
 -export([nkmedia_verto_init/2, nkmedia_verto_login/3, 
-         nkmedia_verto_invite/4, nkmedia_verto_answer/3, nkmedia_verto_bye/2,
+         nkmedia_verto_invite/4, nkmedia_verto_bye/2,
+         nkmedia_verto_answer/3, nkmedia_verto_rejected/2,
          nkmedia_verto_dtmf/3, nkmedia_verto_terminate/2,
          nkmedia_verto_handle_call/3, nkmedia_verto_handle_cast/2,
          nkmedia_verto_handle_info/2]).
@@ -43,8 +44,9 @@
 
 -type continue() :: continue | {continue, list()}.
 
--type verto_id() :: nkmedia_verto:verto_id().
+% -type verto_id() :: nkmedia_verto:verto_id().
 -type session_id() :: nkmedia_session:id().
+-type call_id() :: nkmedia_call:id().
 
 
 
@@ -98,7 +100,7 @@ plugin_stop(Config, #{name:=Name}) ->
     {ok, verto()}.
 
 nkmedia_verto_init(_NkPort, Verto) ->
-    {ok, Verto}.
+    {ok, Verto#{?MODULE=>#{}}}.
 
 
 %% @doc Called when a login request is received
@@ -111,33 +113,21 @@ nkmedia_verto_login(_Login, _Pass, Verto) ->
 
 %% @doc Called when the client sends an INVITE
 %% If {ok, ...} is returned, we must call nkmedia_verto:answer/3.
--spec nkmedia_verto_invite(nkservice:id(), nkmedia:offer(), verto_id(), verto()) ->
-    {ok, nkmedia_session:id(), verto()} | 
-    {answer, nkmedia_verto:answer(), nkmedia_session:id(), verto()} | 
+-spec nkmedia_verto_invite(nkservice:id(), call_id(), nkmedia:offer(), verto()) ->
+    {ok, verto()} | 
+    {answer, nkmedia_verto:answer(), verto()} | 
     {rejected, nkmedia:hangup_reason(), verto()} | continue().
 
-nkmedia_verto_invite(_SrvId, _Offer, _VertoSessId, _Verto) ->
-    {rejected, not_implemented}.
+nkmedia_verto_invite(SrvId, CallId, Offer, Verto) ->
+    #{dest:=Dest} = Offer, 
+    Config = #{offer=>Offer, caller_id=>{nkmedia_verto, CallId}, caller_pid=>self()},
+    {ok, NkCallId, Pid} = nkmedia_call:start(SrvId, Dest, Config),
+    #{?MODULE:=Calls} = Verto,
+    Calls2 = maps:put(CallId, {NkCallId, monitor(process, Pid)}, Calls),
+    {ok, Verto#{?MODULE:=Calls2}}.
 
 
-    % #{sdp_type:=webrtc} = Offer,
-    % Offer2 = Offer#{pid=>self(), nkmedia_verto=>in},
-    % case nkmedia_session:start(SrvId, #{}) of
-    %     {ok, SessId, SessPid} ->
-    %         case SrvId:nkmedia_verto_call(SessId, Offer2, Verto) of
-    %             {ok, Verto2} ->
-    %                 {ok, SessId, SessPid, Verto2};
-    %             {rejected, Reason, Verto2} ->
-    %                 nkmedia_session:hangup(SessId, Reason),
-    %                 {rejected, Reason, Verto2}
-    %         end;
-    %     {error, Error} ->
-    %         lager:warning("Verto start_inbound error: ~p", [Error]),
-    %         {hangup, <<"MediaServer Error">>, Verto}
-    % end.
-
-
-%% @doc Called when the client sends an ANSWER
+%% @doc Called when the client sends an ANSWER after nkmedia_verto:invite/4
 -spec nkmedia_verto_answer(session_id(), nkmedia:answer(), verto()) ->
     {ok, verto()} |{hangup, nkmedia:hangup_reason(), verto()} | continue().
 
@@ -145,15 +135,32 @@ nkmedia_verto_answer(_SessId, _Answer, Verto) ->
     {ok, Verto}.
 
 
-%% @doc Sends when the client sends a BYE
+%% @doc Called when the client sends an BYE after nkmedia_verto:invite/4
 %% This default implementation will hangup the session
 
+-spec nkmedia_verto_rejected(session_id(), verto()) ->
+    {ok, verto()} | continue().
+
+nkmedia_verto_rejected(SessId, Verto) ->
+    lager:info("Verto BYE for ~s", [SessId]),
+    nkmedia_session:hangup(SessId, <<"User Hangup">>),
+    {ok, Verto}.
+
+
+%% @doc Sends when the client sends a BYE during a call
 -spec nkmedia_verto_bye(session_id(), verto()) ->
     {ok, verto()} | continue().
 
-nkmedia_verto_bye(SessId, Verto) ->
-    lager:info("Verto BYE for ~s", [SessId]),
-    nkmedia_session:hangup(SessId, <<"User Hangup">>),
+nkmedia_verto_bye(CallId, Verto) ->
+    #{?MODULE:=Calls} = Verto,
+    case maps:find(CallId, Calls) of
+        {ok, {NkCallId, Mon}} ->
+            lager:info("Verto BYE for ~s", [CallId]),
+            demonitor(Mon),
+            nkmedia_call:hangup(NkCallId, 16);
+        _ ->
+            ok
+    end,
     {ok, Verto}.
 
 
