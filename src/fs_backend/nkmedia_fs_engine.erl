@@ -131,7 +131,7 @@ stats(Id, Stats) ->
 get_config(Id) ->
 	case find(Id) of
 		{ok, _Status, FsPid, _ConnPid} ->
-			nklib_util:call(FsPid, get_config, ?CALL_TIME);
+			nkservice_util:call(FsPid, get_config, ?CALL_TIME);
 		not_found ->
 			{error, no_connection}
 	end.

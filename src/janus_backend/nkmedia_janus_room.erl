@@ -343,7 +343,7 @@ do_call(Room, Msg) ->
 do_call(Room, Msg, Timeout) ->
     case find(Room) of
         {ok, Pid} -> 
-            nklib_util:call(Pid, Msg, Timeout);
+            nkservice_util:call(Pid, Msg, Timeout);
         not_found -> 
             {error, not_found}
     end.

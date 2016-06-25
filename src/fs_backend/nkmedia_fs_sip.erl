@@ -51,7 +51,7 @@
 
 start_out(SessId, FsId, #{}) ->
     {ok, Pid} = gen_server:start(?MODULE, [FsId, SessId, #{}], []),
-    nklib_util:call(Pid, get_sdp).
+    nkservice_util:call(Pid, get_sdp).
 
 
 %% @doc
@@ -61,7 +61,7 @@ start_out(SessId, FsId, #{}) ->
 answer_out(SessId, Answer) ->
     case nklib_proc:values({?MODULE, SessId}) of
         [{undefined, Pid}|_] ->
-            nklib_util:call(Pid, {answer, Answer});
+            nkservice_util:call(Pid, {answer, Answer});
         [] ->
             {error, unknown_sess_id}
     end.
@@ -74,7 +74,7 @@ sip_invite(Pid, Req, _Call) ->
     {ok, Dialog} = nksip_dialog:get_handle(Req),
     {ok, SDP} = nksip_request:body(Req),
     SDP2 = nksip_sdp:unparse(SDP),
-    nklib_util:call(Pid, {sip_invite, Handle, Dialog, SDP2}).
+    nkservice_util:call(Pid, {sip_invite, Handle, Dialog, SDP2}).
 
 
 %% @private

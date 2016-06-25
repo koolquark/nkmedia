@@ -37,7 +37,7 @@
     lager:Type("NkMEDIA Janus Client "++Txt, Args)).
 
 -define(PRINT(Txt, Args, State), 
-        print(Txt, Args, State),    % Comment this
+        % print(Txt, Args, State),    % Comment this
         ok).
 
 
@@ -168,7 +168,7 @@ get_all() ->
 
 %% @private
 call(Pid, Msg) ->
-    nklib_util:call(Pid, Msg, ?CALL_TIMEOUT).
+    nkservice_util:call(Pid, Msg, ?CALL_TIMEOUT).
 
 
 %% @private

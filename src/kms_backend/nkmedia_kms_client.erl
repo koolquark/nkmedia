@@ -127,7 +127,7 @@ get_all() ->
 
 %% @private
 call(Pid, Msg) ->
-    nklib_util:call(Pid, Msg, ?CALL_TIMEOUT).
+    nkservice_util:call(Pid, Msg, ?CALL_TIMEOUT).
 
 
 %% @private

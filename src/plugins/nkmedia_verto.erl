@@ -562,7 +562,7 @@ process_client_resp(#session_op{from=From}, Resp, _Msg, _NkPort, State) ->
 
 %% @private
 do_call(Pid, Msg) ->
-    nklib_util:call(Pid, Msg, 1000*?CALL_TIMEOUT).
+    nkservice_util:call(Pid, Msg, 1000*?CALL_TIMEOUT).
 
 
 %% @private

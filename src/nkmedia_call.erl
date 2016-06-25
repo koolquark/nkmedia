@@ -119,7 +119,7 @@ rejected(CallId, Id) ->
 
 
 %% @doc
--spec hangup(id(), nkmedia:hangup_reason()) ->
+-spec hangup(id(), nkservice:error()) ->
     ok | {error, term()}.
 
 hangup(CallId, Reason) ->
@@ -500,7 +500,7 @@ do_call(CallId, Msg) ->
 %% @private
 do_call(CallId, Msg, Timeout) ->
     case find(CallId) of
-        {ok, Pid} -> nklib_util:call(Pid, Msg, Timeout);
+        {ok, Pid} -> nkservice_util:call(Pid, Msg, Timeout);
         not_found -> {error, call_not_found}
     end.
 

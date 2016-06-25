@@ -294,7 +294,7 @@ conn_handle_info(Msg, _NkPort, State) ->
 
 %% @private
 do_call(Pid, Msg) ->
-	nklib_util:call(Pid, Msg, 5*60*1000).
+	nkservice_util:call(Pid, Msg, 5*60*1000).
 
 
 %% @private

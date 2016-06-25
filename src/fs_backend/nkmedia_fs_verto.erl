@@ -121,7 +121,7 @@ start(SessId, FsId) ->
     Conn = {?MODULE, ws, Ip, Base+1},
     case nkpacket:connect(Conn, ConnOpts) of
         {ok, Pid} -> 
-            case nklib_util:call(Pid, login) of
+            case nkservice_util:call(Pid, login) of
                 ok ->
                     {ok, Pid};
                 {error, Error} ->
@@ -200,7 +200,7 @@ get_all() ->
 %% @private
 call(SessId, Msg) ->
     case find(SessId) of
-        {ok, Pid} -> nklib_util:call(Pid, Msg, ?CALL_TIMEOUT);
+        {ok, Pid} -> nkservice_util:call(Pid, Msg, ?CALL_TIMEOUT);
         not_found -> {error, verto_client_not_found}
     end.
 

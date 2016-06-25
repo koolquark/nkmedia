@@ -1262,11 +1262,11 @@ do_call(SessId, Msg) ->
 do_call(SessId, Msg, Timeout) ->
     case find(SessId) of
         {ok, Pid} -> 
-            nklib_util:call(Pid, Msg, Timeout);
+            nkservice_util:call(Pid, Msg, Timeout);
         not_found -> 
             case start(SessId, <<>>) of
                 {ok, Pid} ->
-                    nklib_util:call(Pid, Msg, Timeout);
+                    nkservice_util:call(Pid, Msg, Timeout);
                 _ ->
                     {error, session_not_found}
             end

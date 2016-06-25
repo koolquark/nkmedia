@@ -106,7 +106,7 @@ stats(Id, Stats) ->
 get_config(Id) ->
 	case find(Id) of
 		{ok, _Status, JanusPid, _ConnPid} ->
-			nklib_util:call(JanusPid, get_config, ?CALL_TIME);
+			nkservice_util:call(JanusPid, get_config, ?CALL_TIME);
 		not_found ->
 			{error, no_connection}
 	end.

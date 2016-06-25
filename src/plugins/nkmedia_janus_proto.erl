@@ -652,7 +652,7 @@ make_resp(Data, Msg) ->
 
 %% @private
 call(JanusPid, Msg) ->
-    nklib_util:call(JanusPid, Msg, 1000*?CALL_TIMEOUT).
+    nkservice_util:call(JanusPid, Msg, 1000*?CALL_TIMEOUT).
 
 
 
