@@ -66,33 +66,20 @@ add_uuid(Config) ->
 % 	notify_refs([Other], Notifies).
 
 -spec error(stop_reason()) ->
-	{integer(), binary()}.
+	{integer(), binary()} | not_foubd. 
 
-error(session_timeout) 			-> 	{1000, <<"Session Timeout">>};
-error(user_monitor_stop) 		-> 	{1001, <<"User Monitor Stop">>};
-error(reg_monitor_stop) 		-> 	{1001, <<"Register Monitor Stop">>};
-error(session_stop) 			-> 	{1001, <<"Session Stop">>};
-error(duplicated_offer) 		-> 	{1003, <<"Duplicated Offer">>};
-error(offer_not_set) 			-> 	{1003, <<"Offer Not Set">>};
-error(duplicated_answer) 		-> 	{1003, <<"Duplicated Answer">>};
-error(answer_not_set) 			-> 	{1003, <<"Answer Not Set">>};
-error(operation_error) 			-> 	{1003, <<"Operation Error">>};
-error(session_not_foud) 		-> 	{1003, <<"Session Not Found">>};
-error(unknown_class) 			-> 	{1003, <<"Unknown Class">>};
-error(unknown_operation) 		-> 	{1003, <<"Unknown Operation">>};
-error(missing_parameters) 		-> 	{1003, <<"Missing Parameters">>};
-error(incompatible_operation) 	->	{1003, <<"Incompatible Operation">>};
-error(not_implemented) 			->	{1003, <<"Not Implemented">>};
-	
-error(no_answer) 				->  {19, <<"NO_ANSWER">>};
-error(no_destination) 			->  {3, <<"NO_ROUTE_DESTINATION">>};
-
-error(originator_cancel)		-> 	{487, <<"Originator Cancel">>};
-error(user_not_found)			-> 	{487, <<"Originator Cancel">>};
-
-
+error(missing_offer) 			-> 	{0, <<"Missing Offer">>};
+error(duplicated_offer) 		-> 	{0, <<"Duplicated Offer">>};
+error(offer_not_set) 			-> 	{0, <<"Offer Not Set">>};
+error(duplicated_answer) 		-> 	{0, <<"Duplicated Answer">>};
+error(answer_not_set) 			-> 	{0, <<"Answer Not Set">>};
+error(no_answer) 				->  {0, <<"No Answer">>};
+error(no_destination) 			->  {0, <<"No Destination">>};
+error(originator_cancel)		-> 	{0, <<"Originator Cancel">>};
+error(user_monitor_stop) 		-> 	{0, <<"User Monitor Stop">>};
+error(reg_monitor_stop) 		-> 	{0, <<"Register Monitor Stop">>};
 error(Code) when is_integer(Code) -> get_q850(Code);
-error(Other) -> {0, nklib_util:to_binary(Other)}.
+error(_) -> not_found.
 
 
 
@@ -103,8 +90,10 @@ error(Other) -> {0, nklib_util:to_binary(Other)}.
 
 get_q850(Code) when is_integer(Code) ->
 	case maps:find(Code, q850_map()) of
-		{ok, {_Sip, Msg}} -> {Code, Msg};
-		error -> {Code, <<"UNKNOWN CODE">>}
+		{ok, {_Sip, Msg}} -> 
+			{999, <<"(", (nklib_util:to_binary(Code))/binary, ") ", Msg/binary>>};
+		error -> 
+			not_found
 	end.
 
 
@@ -163,15 +152,15 @@ q850_map() ->
 		111 => {none, <<"PROTOCOL_ERROR">>},
 		127 => {none, <<"INTERWORKING">>},
 		487 => {487, <<"ORIGINATOR_CANCEL">>},	 	 
-		500 => {none, <<"CRASH,">>},	 	
-		501 => {none, <<"SYSTEM_SHUTDOWN,">>},	 	
-		502 => {none, <<"LOSE_RACE,">>},	 	
+		500 => {none, <<"CRASH">>},
+		501 => {none, <<"SYSTEM_SHUTDOWN">>},
+		502 => {none, <<"LOSE_RACE">>},
 		503 => {none, <<"MANAGER_REQUEST">>},
-		600 => {none, <<"BLIND_TRANSFER,">>},	 	
-		601 => {none, <<"ATTENDED_TRANSFER,">>},	 	
+		600 => {none, <<"BLIND_TRANSFER">>},
+		601 => {none, <<"ATTENDED_TRANSFER">>},
 		602 => {none, <<"ALLOTTED_TIMEOUT">>},
-		603 => {none, <<"USER_CHALLENGE,">>},	 	
-		604 => {none, <<"MEDIA_TIMEOUT,">>},	 	
+		603 => {none, <<"USER_CHALLENGE">>},
+		604 => {none, <<"MEDIA_TIMEOUT">>},
 		605 => {none, <<"PICKED_OFF">>},
 		606 => {none, <<"USER_NOT_REGISTERED">>},
 		607 => {none, <<"PROGRESS_TIMEOUT">>},

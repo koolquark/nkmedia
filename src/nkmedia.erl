@@ -22,7 +22,7 @@
 
 -module(nkmedia).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export_type([offer/0, answer/0, hangup_reason/0]).
+-export_type([offer/0, answer/0]).
 -export_type([engine_id/0, engine_config/0]).
 
 %% ===================================================================
@@ -63,8 +63,6 @@
         module() => term()
 	}.
 
-
--type hangup_reason() :: nkmedia_util:hangup_reason().
 
 
 -type engine_id() :: binary().

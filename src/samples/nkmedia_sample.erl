@@ -24,9 +24,14 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([start/0, stop/0, restart/0]).
+
+-export([api_start/0, api_client_fun/1, api_1/1]).
+
 -export([listener/2, listener2/1, play/2, play2/1, mcu2publish/0]).
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2,
          plugin_syntax/0, plugin_listen/2]).
+
+-export([api_server_login/3, api_allow/6]).
 -export([nkmedia_verto_login/3, nkmedia_verto_invite/4, nkmedia_verto_bye/2]).
 % -export([nkmedia_call_resolve/2]).
 -export([nkmedia_janus_call/3]).
@@ -49,8 +54,11 @@
 start() ->
     _CertDir = code:priv_dir(nkpacket),
     Spec = #{
-        plugins => [?MODULE],
-        webserver => "https:all:8081",
+        callback => ?MODULE,
+        web_server => "https:all:8081",
+        web_server_path => "./priv/www",
+        api_server => "wss:all:9010",
+        api_server_timeout => 180,
         verto_listen => "verto:all:8082",
         verto_proxy => "verto_proxy:all:8083",
         janus_listen => "janus:all:8989", 
@@ -71,6 +79,34 @@ restart() ->
     stop(),
     timer:sleep(100),
     start().
+
+
+api_start() ->
+    Fun = fun nkmedia_sample:api_client_fun/1,
+    {ok, _SessId, C} = 
+        nkservice_api_client:start(sample, "nkapic://localhost:9010", "u1", "p1", Fun),
+    timer:sleep(50),
+    [{_, _, S}] = nkservice_api_server:get_all(),
+    {C, S}.
+
+
+api_client_fun({req, Class, <<"event">>, Data, _TId}) ->
+    #{<<"type">>:=Type, <<"sub">>:=Sub, <<"obj_id">>:=ObjId} = Data,
+    Body = maps:get(<<"body">>, Data, #{}),
+    lager:notice("WsClient event ~s:~s:~s:~p: ~p", [Class, Type, Sub, ObjId, Body]),
+    {ok, #{}};
+
+api_client_fun(Msg) ->
+    lager:notice("T1: ~p", [Msg]),
+    {error, not_implemented}.
+
+
+api_1(C) ->
+    nkservice_api_client:cmd(C, media, start_session, #{}).
+
+
+
+
 
 
 
@@ -181,6 +217,26 @@ plugin_stop(Config, #{name:=Name}) ->
     {ok, Config}.
 
 
+%% ===================================================================
+%% api server callbacks
+%% ===================================================================
+
+
+%% @doc Called on login
+api_server_login(#{<<"user">>:=User, <<"pass">>:=_Pass}, _SessId, State) ->
+    nkservice_api_server:start_ping(self(), 60),
+    {true, User, State};
+
+api_server_login(_Data, _SessId, _State) ->
+    continue.
+
+
+%% @doc
+api_allow(_SessId, _User, media, _Cmd, _Data, State) ->
+    {true, State};
+
+api_allow(_SessId, _User, _Class, _Cmd, _Data, _State) ->
+    continue.
 
 
 %% ===================================================================

@@ -24,7 +24,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([start/0, stop/0, register_session/2, invite/2]).
--export([plugin_syntax/0, plugin_listen/2, plugin_start/2, plugin_stop/2]).
+-export([plugin_listen/2, plugin_start/2, plugin_stop/2]).
 -export([sip_invite/2, sip_reinvite/2, sip_bye/2, sip_register/2]).
 
 -define(WS_TIMEOUT, 5*60*1000).
@@ -89,12 +89,12 @@ invite(Contact, #{sdp:=SDP}) ->
 
 
 
-plugin_syntax() ->
-    nkpacket:register_protocol(nkmedia, nkmedia_protocol_server),
-    #{
-        admin_url => fun parse_listen/3,
-        admin_pass => binary
-    }.
+% plugin_syntax() ->
+%     nkpacket:register_protocol(nkmedia, nkmedia_protocol_server),
+%     #{
+%         admin_url => fun parse_listen/3,
+%         admin_pass => binary
+%     }.
 
 
 plugin_listen(Config, _Service) ->
@@ -107,12 +107,12 @@ plugin_listen(Config, _Service) ->
 
 
 plugin_start(Config, _Service) ->
-    lager:info("NkMEDIA Admin Service starting"),
+    lager:info("NkMEDIA Core Service starting"),
     {ok, Config}.
 
 
 plugin_stop(Config, _Service) ->
-    lager:info("NkMEDIA Admin Service stopping"),
+    lager:info("NkMEDIA Core Service stopping"),
     {ok, Config}.
 
 
@@ -207,15 +207,15 @@ sip_register(Req, _Call) ->
 %% ===================================================================
 
 
-parse_listen(_Key, [{[{_, _, _, _}|_], Opts}|_]=Multi, _Ctx) when is_map(Opts) ->
-    {ok, Multi};
+% parse_listen(_Key, [{[{_, _, _, _}|_], Opts}|_]=Multi, _Ctx) when is_map(Opts) ->
+%     {ok, Multi};
 
-parse_listen(_Key, Url, _Ctx) ->
-    Opts = #{valid_schemes=>[nkmedia], resolve_type=>listen},
-    case nkpacket:multi_resolve(Url, Opts) of
-        {ok, List} -> {ok, List};
-        _ -> error
-    end.
+% parse_listen(_Key, Url, _Ctx) ->
+%     Opts = #{valid_schemes=>[nkmedia], resolve_type=>listen},
+%     case nkpacket:multi_resolve(Url, Opts) of
+%         {ok, List} -> {ok, List};
+%         _ -> error
+%     end.
 
 
 

@@ -22,16 +22,13 @@
 
 -module(nkmedia_api).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([cmd/4]).
+-export([cmd/4, handle_down/3]).
+-export([syntax/1, defaults/1, mandatory/1]).
+
 
 %% ===================================================================
 %% Types
 %% ===================================================================
-
--type state() ::
-	#{
-		nkmedia_api_sessions => [{nkmedia_seesion:id(), reference()}]
-	}
 
 
 %% ===================================================================
@@ -40,53 +37,42 @@
 
 %% @doc
 -spec cmd(nkservice:id(), atom(), Data::map(), map()) ->
-	{ok, map(), State::map()} | {error, nkservice:error_code(), State::map()}.
+	{ok, map(), State::map()} | {error, nkservice:error(), State::map()}.
 
 
-cmd(SrvId, start_session, Map, State) ->
-	case check(start_session, Map) of
-		{ok, #{class:=Class}=Data} ->
-			Config = Data#{{link, nkmedia_api}=>self()},
-			case nkmedia_session:start(SrvId, Class, Config) of
-				{ok, SessId, Pid, Reply} ->
-					Ref = monitor(process, Pid),
-					Sessions = maps:get(nkmedia_api_sessions, State, []),
-					Sessions2 = [{SessId, Ref}|Sessions],
-					State2 = State#{nkmedia_api_sessions=>Sessions2},
-					{ok, Reply#{session_id=>SessId}, State2};
-				{error, Error} ->
-					lager:warning("Error calling session_start: ~p", [Error]),
-					{error, internal_error, State}
-			end;
-		{syntax, Syntax} ->
-			{error, {syntax_error, Syntax}, State}
+cmd(SrvId, start_session, Data, State) ->
+	#{class:=Class, events:=Events} = Data,
+	Config = Data#{
+		{link, nkmedia_api} => self(),
+		events := {Events, self()}
+	},
+	case nkmedia_session:start(SrvId, Class, Config) of
+		{ok, SessId, Pid, Reply} ->
+			Mon = monitor(process, Pid),
+			Sessions = get_sessions(State),
+			Sessions2 = [{SessId, Mon}|Sessions],
+			{ok, Reply#{session_id=>SessId}, set_sessions(Sessions2, State)};
+		{error, Error} ->
+			lager:warning("Error calling session_start: ~p", [Error]),
+			{error, Error, State}
 	end;
 
 cmd(_SrvId, _Other, _Data, State) ->
-	{error, unknown_cmd, State}.
-
-
+	{error, unknown_command, State}.
 
 
 %% @doc
-handle_down(Ref, Reason, State) ->
-	case maps:find(nkmedia_api_sessions, State) of
-		{ok, List} ->
-			case lists:keytake(Ref, 2, List) of
-				{value, {SessId, Ref}, List2} ->
-					lager:notice("Session ~s is down, closing connection", [SessId]),
-					{stop, State#{nkmedia_api_sessions:=List2}};
-				false ->
-					continue
-			end;
-		error ->
+handle_down(Mon, Reason, State) ->
+	Sessions = get_sessions(State),
+	case lists:keytake(Mon, 2, Sessions) of
+		{value, {SessId, Mon}, Sessions2} ->
+			lager:warning("Session ~s is down: ~p", [SessId, Reason]),
+			nkservice_api_server:event(self(), media, session, down, SessId, #{}),
+			{ok, set_sessions(Sessions2, State)};
+		false ->
 			continue
-	end;
+	end.
 
-
-
-session_event(SessId, Event, ApiPid) ->
-	
 
 
 %% ===================================================================
@@ -96,7 +82,8 @@ session_event(SessId, Event, ApiPid) ->
 %% @private
 syntax(start_session) ->
 	#{
-		class => {enum, [p2p, park, mcu, proxy, publish, listen]},
+		class => {enum, [p2p, echo, park, mcu, proxy, publish, listen]},
+		events => {enum, ['*', hangup]},
 		wait_timeout => {integer, 1, none},
 		ready_timeout => {integer, 1, none},
 		backend => {enum, [p2p, janus, freeswitch, kurento]}
@@ -105,7 +92,7 @@ syntax(start_session) ->
 
 %% @private
 defaults(start_session) ->
-	#{class=>p2p};
+	#{class=>p2p, events=>'*'};
 
 defaults(_) ->
 	#{}.
@@ -121,23 +108,21 @@ mandatory(_) ->
 %% Internal
 %% ===================================================================
 
+%% ===================================================================
+%% Internal
+%% ===================================================================
+
 
 %% @private
-check(Type, Map) ->
-	Opts = #{
-		return => map, 
-		defaults => defaults(Type),
-		mandatory => mandatory(Type)
-	},
-	case nklib_config:parse_config(Map, syntax(Type), Opts) of
-		{ok, Parsed, _} ->
-			{ok, Parsed};
-		{error, {syntax_error, Error}} ->
-			{syntax, Error};
-		{error, Error} ->
-			error(Error)
-	end.
+get_sessions(State) ->
+    Data = maps:get(?MODULE, State, #{}),
+    maps:get(sessions, Data, []).
 
 
+%% @private
+set_sessions(Regs, State) ->
+    Data1 = maps:get(?MODULE, State, #{}),
+    Data2 = Data1#{sessions=>Regs},
+    State#{?MODULE=>Data2}.
 
 

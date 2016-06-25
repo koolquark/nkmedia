@@ -36,12 +36,13 @@
 		 nkmedia_call_handle_call/3, nkmedia_call_handle_cast/2, 
 		 nkmedia_call_handle_info/2]).
 -export([error_code/1]).
--export([api_server_init/2, api_server_cmd/5, api_server_handle_info/2,
-	     api_server_terminate/2]).
+-export([api_cmd/8, api_cmd_syntax/3, api_cmd_defaults/3, api_cmd_mandatory/3]).
+-export([api_server_cmd/5, api_server_handle_info/2]).
 -export([nkdocker_notify/2]).
 
 -include("nkmedia.hrl").
 
+-define(BASE_ERROR, 2000).
 
 %% ===================================================================
 %% Types
@@ -283,7 +284,50 @@ nkmedia_call_handle_info(Msg, Call) ->
 -spec error_code(term()) ->
 	{integer(), binary()} | continue.
 
-error_code(_) -> continue.
+error_code(Error) ->
+	case nkmedia_util:error(Error) of
+		not_found -> continue;
+		{Code, Txt} -> {?BASE_ERROR+Code, Txt}
+	end.
+
+
+
+%% ===================================================================
+%% API CMD
+%% ===================================================================
+
+%% @private
+api_cmd(SrvId, _User, _SessId, media, Cmd, Parsed, _TId, State) ->
+	nkmedia_api:cmd(SrvId, Cmd, Parsed, State);
+
+api_cmd(_SrvId, _User, _SessId, _Class, _Cmd, _Parsed, _TId, _State) ->
+	continue.
+
+
+%% @private
+api_cmd_syntax(media, Cmd, _Data) ->
+	{ok, nkmedia_api:syntax(Cmd)};
+	
+api_cmd_syntax(_Class, _Cmd, _Data) ->
+	continue.
+
+
+%% @private
+api_cmd_defaults(media, Cmd, _Data) ->
+	{ok, nkmedia_api:defaults(Cmd)};
+	
+api_cmd_defaults(_Class, _Cmd, _Data) ->
+	continue.
+
+
+%% @private
+api_cmd_mandatory(core, Cmd, _Data) ->
+	{ok, nkmedia_api:mandatory(Cmd)};
+	
+api_cmd_mandatory(_Class, _Cmd, _Data) ->
+	continue.
+
+
 
 
 
@@ -291,41 +335,21 @@ error_code(_) -> continue.
 %% API Server Callbacks
 %% ===================================================================
 
+%% @private
+api_server_cmd(media, Cmd, Data, TId, State) ->
+	#{srv_id:=SrvId, user:=User, session_id:=SessId} = State,
+	nkservice_api:launch(SrvId, User, SessId, media, Cmd, Data, TId, State);
+	
+api_server_cmd(_Class, _Cmd, _Data, _TId, _State) ->
+    continue.
+
 
 %% @private
-api_server_init(_NkPort, State) ->
-	{ok, State}.
-
-
-%% @private
-api_server_cmd(media, Cmd, Data, _Tid, #{srv_id:=SrvId}=State) ->
-	case nkmedia_api:cmd(SrvId, Cmd, Data, State) of
-		{ok, Reply, State2} ->
-			{ok, Reply, State2};
-		{error, Error, State2} ->
-			{error, Error, State2}
-	end;
-
-api_server_cmd(_Class, _Cmd, _Data, _Tid, _State) ->
-	continue.
-
 api_server_handle_info({'DOWN', Ref, process, _Pid, Reason}, State) ->
-	case nkmedia_api:handle_down(Ref, Reason, State) of
-		continue ->
-			continue;
-		{stop, State2} ->
-			nkmedia_api_server:cmd_async(self(), media, event, #{class=>session_down}),
-			nkmedia_api_server:stop(self()),
-			{ok, State2}
-	end;
+	nkmedia_api:handle_down(Ref, Reason, State);
 
 api_server_handle_info(_Msg, _State) ->
 	continue.
-
-
-%% @private
-api_server_terminate(_Reason, State) ->
-	{ok, State}.
 
 
 

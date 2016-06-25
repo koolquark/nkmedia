@@ -53,11 +53,10 @@
         id => id(),                             % Generated if not included
         wait_timeout => integer(),              % Secs
         ready_timeout => integer(),
-        record => boolean(),
-        record_file => binary(),
         backend => nkemdia:backend(),
         hangup_after_error => boolean(),        % Default true
         {link, term()} => pid(),
+        events => {hangup, pid()},              % Start an event registration
         term() => term()                        % Plugin data
     }.
 
@@ -74,9 +73,9 @@
 
 
 -type event() ::
-    {offer, nkmedia:offer()}            |   % Offer SDP is available
     {answer, nkmedia:answer()}          |   % Answer SDP is available
     {info, term()}                      |   % User info
+    {update_class, term()}              |
     {hangup, nkmedia:hangup_reason()}   |   % Session is about to hangup
     {peer_down, term(), term()}.            % Linked session is down
 
@@ -88,7 +87,7 @@
 
 %% @private
 -spec start(nkservice:id(), nkmedia:class(), config()) ->
-    {ok, id(), pid(), Reply::map()} | {error, term()}.
+    {ok, id(), pid(), Reply::map()} | {error, nkservice:error()}.
 
 start(Srv, Class, Config) ->
     case nkservice_srv:get_srv_id(Srv) of
@@ -109,7 +108,7 @@ start(Srv, Class, Config) ->
 
 %% @doc Get current session data
 -spec get_session(id()) ->
-    {ok, session()} | {error, term()}.
+    {ok, session()} | {error, nkservice:error()}.
 
 get_session(SessId) ->
     do_call(SessId, get_session).
@@ -117,7 +116,7 @@ get_session(SessId) ->
 
 %% @doc Get current session offer
 -spec get_offer(id()) ->
-    {ok, nkmedia:offer()} | {error, term()}.
+    {ok, nkmedia:offer()} | {error, nkservice:error()}.
 
 get_offer(SessId) ->
     do_call(SessId, get_offer).
@@ -125,7 +124,7 @@ get_offer(SessId) ->
 
 %% @doc Get current session answer
 -spec get_answer(id()) ->
-    {ok, nkmedia:answer()} | {error, term()}.
+    {ok, nkmedia:answer()} | {error, nkservice:error()}.
 
 get_answer(SessId) ->
     do_call(SessId, get_answer).
@@ -141,7 +140,7 @@ get_status(SessId) ->
 
 %% @doc Hangups the session
 -spec stop(id()) ->
-    ok | {error, term()}.
+    ok | {error, nkservice:error()}.
 
 stop(SessId) ->
     stop(SessId, 16).
@@ -149,7 +148,7 @@ stop(SessId) ->
 
 %% @doc Hangups the session
 -spec stop(id(), nkmedia:stop_reason()) ->
-    ok | {error, term()}.
+    ok | {error, nkservice:error()}.
 
 stop(SessId, Reason) ->
     do_cast(SessId, {stop, Reason}).
@@ -164,7 +163,7 @@ stop_all() ->
 %% See each operation's doc for returned info
 %% Some backends my support updating answer (like Freeswitch)
 -spec answer(id(), nkmedia:answer()) ->
-    ok | {error, term()}.
+    ok | {error, nkservice:error()}.
 
 answer(SessId, Answer) ->
     do_call(SessId, {answer, Answer}).
@@ -172,7 +171,7 @@ answer(SessId, Answer) ->
 
 %% @doc Equivalent to answer/3, but does not wait for operation's result
 -spec answer_async(id(), nkmedia:answer()) ->
-    ok | {error, term()}.
+    ok | {error, nkservice:error()}.
 
 answer_async(SessId, Answer) ->
     do_call(SessId, {answer, Answer}).
@@ -182,7 +181,7 @@ answer_async(SessId, Answer) ->
 %% See each operation's doc for returned info
 %% Some backends my support updating answer (like Freeswitch)
 -spec update(id(), nkmedia:update()) ->
-    ok | {error, term()}.
+    ok | {error, nkservice:error()}.
 
 update(SessId, Update) ->
     do_call(SessId, {update, Update}).
@@ -190,7 +189,7 @@ update(SessId, Update) ->
 
 %% @doc Equivalent to update/3, but does not wait for operation's result
 -spec update_async(id(), nkmedia:update()) ->
-    ok | {error, term()}.
+    ok | {error, nkservice:error()}.
 
 update_async(SessId, Update) ->
     do_call(SessId, {update, Update}).
@@ -199,7 +198,7 @@ update_async(SessId, Update) ->
 %% @doc Links this session to another
 %% If the other session fails, an event will be generated
 -spec link_session(id(), id(), #{send_events=>boolean()}) ->
-    ok | {error, term()}.
+    ok | {error, nkservice:error()}.
 
 link_session(SessId, SessIdB, Opts) ->
     do_call(SessId, {link_session, SessIdB, Opts}).
@@ -207,7 +206,7 @@ link_session(SessId, SessIdB, Opts) ->
 
 %% @doc Registers a process with the session
 -spec register(id(), term()) ->
-    {ok, pid()} | {error, term()}.
+    {ok, pid()} | {error, nkservice:error()}.
 
 register(SessId, Term) ->
     do_call(SessId, {register, Term, self()}).
@@ -215,7 +214,7 @@ register(SessId, Term) ->
 
 %% @doc Registers a process with the session
 -spec unregister(id(), term()) ->
-    {ok, pid()} | {error, term()}.
+    {ok, pid()} | {error, nkservice:error()}.
 
 unregister(SessId, Term) ->
     do_call(SessId, {unregister, Term}).
@@ -236,7 +235,7 @@ get_all() ->
 
 %% @private
 -spec peer_event(id(), id(), event()) ->
-    ok | {error, term()}.
+    ok | {error, nkservice:error()}.
 
 peer_event(Id, IdB, Event) ->
     do_cast(Id, {peer_event, IdB, Event}).
@@ -276,6 +275,12 @@ init([#{id:=Id, class:=Class, srv_id:=SrvId}=Session]) ->
         links = nkmedia_links:new(),
         session = Session
     },
+    case Session of
+        #{events := {Sub, EventPid}} ->
+            {ok, _} = nkservice_events:reg(media, session, Sub, Id, #{}, EventPid);
+        _ -> 
+            ok
+    end,
     State2 = lists:foldl(
         fun
             ({{link, LId}, Pid}, Acc) -> add_link({user, LId}, none, Pid, Acc);
@@ -438,7 +443,13 @@ code_change(OldVsn, State, Extra) ->
 -spec terminate(term(), #state{}) ->
     ok.
 
-terminate(Reason, State) ->
+terminate(Reason, #state{id=Id, session=Session}=State) ->
+    case Session of
+        #{events := {Sub, EventPid}} ->
+            nkservice_events:unreg(media, session, Sub, Id, EventPid);
+        _ -> 
+            ok
+    end,
     ?LLOG(info, "terminate: ~p", [Reason], State),
     _ = do_stop(<<"Process Terminate">>, State),
     _ = handle(nkmedia_session_terminate, [Reason], State).
@@ -614,7 +625,7 @@ do_call(SessId, Msg) ->
 %% @private
 do_call(SessId, Msg, Timeout) ->
     case find(SessId) of
-        {ok, Pid} -> nklib_util:call(Pid, Msg, Timeout);
+        {ok, Pid} -> nkservice_util:call(Pid, Msg, Timeout);
         not_found -> {error, session_not_found}
     end.
 
