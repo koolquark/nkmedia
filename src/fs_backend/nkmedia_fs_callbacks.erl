@@ -24,6 +24,7 @@
 
 -export([plugin_deps/0, plugin_syntax/0, plugin_config/2,
          plugin_start/2, plugin_stop/2]).
+-export([error_code/1]).
 -export([nkmedia_fs_get_mediaserver/1]).
 -export([nkmedia_session_init/2, nkmedia_session_terminate/2]).
 -export([nkmedia_session_offer_op/4, nkmedia_session_answer_op/4,
@@ -77,7 +78,7 @@ plugin_start(Config, #{name:=Name}) ->
                 [nklib_util:bjoin(find_images(DockerMonId))]);
         {error, Error} ->
             lager:error("Could not start Docker Monitor: ~p", [Error]),
-            error(docker_monitor)
+            erlang:error(docker_monitor)
     end,
     {ok, Config}.
 
@@ -110,8 +111,19 @@ nkmedia_fs_get_mediaserver(#{srv_id:=SrvId}) ->
 
 
 %% ===================================================================
+%% Implemented Callbacks - error
+%% ===================================================================
+
+error_code(fs_bridge_error)      ->  {100, <<"FS Bridge Error">>};
+error_code(fs_channel_stop)      ->  {100, <<"FS Channel Stop">>};
+error_code(_)                    ->  continue.
+
+
+%% ===================================================================
 %% Implemented Callbacks - nkmedia_session
 %% ===================================================================
+
+
 
 %% @private
 nkmedia_session_init(Id, Session) ->

@@ -100,7 +100,7 @@ hangup(Pid, CallId) ->
 
 %% @doc Sends a BYE (non-blocking)
 %% The call will be removed and demonitorized
--spec hangup(pid(), binary(), nkmedia:hangup_reason()) ->
+-spec hangup(pid(), binary(), nkservice:error()) ->
     ok | {error, term()}.
 
 hangup(Pid, CallId, Reason) ->

@@ -33,6 +33,7 @@
 -define(LLOG(Type, Txt, Args, State),
     lager:Type("NkMEDIA Janus Room ~s "++Txt, [State#state.room | Args])).
 
+-include_lib("nklib/include/nklib.hrl").
 
 %% ===================================================================
 %% Types
@@ -141,7 +142,7 @@ event(Room, Event) ->
     janus_id :: nkmedia_janus:id(),
     room :: room(),
     config :: config(),
-    links :: nkmedia_links:links(),
+    links :: nklib_links:links(),
     timer :: reference()
 }).
 
@@ -158,7 +159,7 @@ init([JanusId, Room, Config]) ->
         janus_id = JanusId,
         room = Room,
         config =Config#{publish=>#{}, listen=>#{}},
-        links = nkmedia_links:new()
+        links = nklib_links:new()
     },
     ?LLOG(info, "started", [], State),
     {ok, restart_timer(State)}.
@@ -207,11 +208,8 @@ handle_info(room_timeout, State) ->
     ?LLOG(notice, "room timeout", [], State),
     {stop, normal, State};
 
-handle_info({'DOWN', Ref, process, _Pid, Reason}=Info, State) ->
-    case extract_link_mon(Ref, State) of
-        not_found ->
-            lager:warning("Module ~p received unexpected info: ~p", [?MODULE, Info]),
-            {noreply, State};
+handle_info({'DOWN', _Ref, process, Pid, Reason}=Info, State) ->
+    case links_down(Pid, State) of
         {ok, Session, Type, State2} ->
             case Reason of
                 normal ->
@@ -222,7 +220,10 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}=Info, State) ->
                           [Type, Session, Reason], State)
             end,
             {ok, State3} = del(Type, Session, State2),
-            {noreply, restart_timer(State3)}
+            {noreply, restart_timer(State3)};
+        not_found ->
+            lager:warning("Module ~p received unexpected info: ~p", [?MODULE, Info]),
+            {noreply, State}
     end;
 
 handle_info(Info, State) -> 
@@ -296,7 +297,7 @@ add(Type, Session, Data, Pid, #state{config=Config}=State) ->
         false ->
             Config2 = maps:put(Type, maps:put(Session, Data, Map), Config),
             State2 = State#state{config=Config2},
-            {ok, add_link(Session, Type, Pid, State2)};
+            {ok, links_add(Session, Type, Pid, State2)};
         true ->
             {error, duplicated_session}
     end.
@@ -309,7 +310,7 @@ del(Type, Session, #state{config=Config}=State) ->
         true -> 
             Config2 = maps:put(Type, maps:remove(Session, Map), Config),
             State2 = State#state{config=Config2},
-            {ok, remove_link(Session, State2)};
+            {ok, links_remove(Session, State2)};
         false ->
             {error, not_found}
     end.
@@ -349,40 +350,29 @@ do_call(Room, Msg, Timeout) ->
     end.
 
 
-% %% @private
-% do_cast(Room, Msg) ->
-%     case find(Room) of
-%         {ok, Pid} -> gen_server:cast(Pid, Msg);
-%         not_found -> {error, not_found}
-%     end.
+%% @private
+links_add(Id, Data, Pid, #state{links=Links}=State) ->
+    State#state{links=nklib_links:add(Id, Data, Pid, Links)}.
 
+
+% %% @private
+% links_get(Id, #state{links=Links}) ->
+%     nklib_links:get(Id, Links).
 
 
 %% @private
-add_link(Id, Data, Pid, State) ->
-    nkmedia_links:add(Id, Data, Pid, #state.links, State).
-
-
-% %% @private
-% get_link(Id, State) ->
-%     nkmedia_links:get(Id, #state.links, State).
-
-
-% %% @private
-% update_link(Id, Data, State) ->
-%     nkmedia_links:update(Id, Data, #state.links, State).
+links_remove(Id, #state{links=Links}=State) ->
+    State#state{links=nklib_links:remove(Id, Links)}.
 
 
 %% @private
-remove_link(Id, State) ->
-    nkmedia_links:remove(Id, #state.links, State).
-
-
-%% @private
-extract_link_mon(Mon, State) ->
-    nkmedia_links:extract_mon(Mon, #state.links, State).
+links_down(Pid, #state{links=Links}=State) ->
+    case nklib_links:down(Pid, Links) of
+        {ok, Id, Data, Links2} -> {ok, Id, Data, State#state{links=Links2}};
+        not_found -> not_found
+    end.
 
 
 % %% @private
-% iter_links(Fun, State) ->
-%     nkmedia_links:iter(Fun, #state.links, State).
+% links_fold(Fun, Acc, #state{links=Links}) ->
+%     nklib_links:fold(Fun, Acc, Links).

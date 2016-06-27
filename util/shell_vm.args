@@ -1,4 +1,3 @@
--pa ../nkmedia/ebin
 -pa deps/eper/ebin
 -pa deps/goldrush/ebin 
 -pa deps/lager/ebin 
@@ -16,6 +15,7 @@
 -pa deps/meck/ebin
 -pa deps/mustache/ebin
 -pa deps/enm/ebin
+-pa ../nkmedia/ebin
 
 
 ## Name of the node

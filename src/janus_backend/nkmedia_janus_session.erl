@@ -256,7 +256,7 @@ update(_Update, _Session, _State) ->
 
 
 %% @private
--spec stop(nkmedia:stop_reason(), session(), state()) ->
+-spec stop(nkservice:error(), session(), state()) ->
     {ok, state()}.
 
 stop(_Reason, _Session, State) ->
@@ -305,9 +305,4 @@ get_mediaserver(#{srv_id:=SrvId}=Session, State) ->
             {error, Error}
     end.
 
-
-% %% @private
-% get_op(#{offer_op:={Op, Data}}, #{janus_role:=offer}) -> {offer_op, Op, Data};
-% get_op(#{answer_op:={Op, Data}}, #{janus_role:=answer}) -> {answer_op, Op, Data};
-% get_op(_, _) -> unknown_op.
 

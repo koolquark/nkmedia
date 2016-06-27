@@ -46,7 +46,6 @@
         use_data => boolean(),
         in_bw => integer(),
         out_bw => integer(),
-        pid => pid(),				% if included, will be monitorized
         module() => term()
 	}.
 
@@ -55,11 +54,10 @@
 	#{
 		sdp => binary(),
 		sdp_type => rtp | webrtc,
-		verto_params => map(),
         use_audio => boolean(),
         use_video => boolean(),
+        use_screen => boolean(),
         use_data => boolean(),
-        pid => pid(),				% if included, will be monitorized
         module() => term()
 	}.
 

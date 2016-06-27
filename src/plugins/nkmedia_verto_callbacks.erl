@@ -24,10 +24,11 @@
 
 -export([plugin_deps/0, plugin_syntax/0, plugin_listen/2, 
          plugin_start/2, plugin_stop/2]).
+-export([error_code/1]).
 -export([nkmedia_verto_init/2, nkmedia_verto_login/3, 
-         nkmedia_verto_invite/4, nkmedia_verto_bye/2,
-         nkmedia_verto_answer/3, nkmedia_verto_rejected/2,
-         nkmedia_verto_dtmf/3, nkmedia_verto_terminate/2,
+         nkmedia_verto_invite/4, nkmedia_verto_bye/3,
+         nkmedia_verto_answer/4, nkmedia_verto_rejected/3,
+         nkmedia_verto_dtmf/4, nkmedia_verto_terminate/2,
          nkmedia_verto_handle_call/3, nkmedia_verto_handle_cast/2,
          nkmedia_verto_handle_info/2]).
 -export([nkmedia_session_invite/4, nkmedia_session_reg_event/4]).
@@ -44,9 +45,7 @@
 
 -type continue() :: continue | {continue, list()}.
 
-% -type verto_id() :: nkmedia_verto:verto_id().
--type session_id() :: nkmedia_session:id().
--type call_id() :: nkmedia_call:id().
+
 
 
 
@@ -92,6 +91,7 @@ plugin_stop(Config, #{name:=Name}) ->
 %% Offering Callbacks
 %% ===================================================================
 
+-type call_id() :: nkmedia_verto:call_id().
 -type verto() :: nkmedia_verto:verto().
 
 
@@ -114,9 +114,9 @@ nkmedia_verto_login(_Login, _Pass, Verto) ->
 %% @doc Called when the client sends an INVITE
 %% If {ok, ...} is returned, we must call nkmedia_verto:answer/3.
 -spec nkmedia_verto_invite(nkservice:id(), call_id(), nkmedia:offer(), verto()) ->
-    {ok, verto()} | 
-    {answer, nkmedia_verto:answer(), verto()} | 
-    {rejected, nkmedia:hangup_reason(), verto()} | continue().
+    {ok, nklib:proc_id(), verto()} | 
+    {answer, nkmedia:answer(), nklib_:proc_id(), verto()} | 
+    {rejected, nkservice:error(), verto()} | continue().
 
 nkmedia_verto_invite(SrvId, CallId, Offer, Verto) ->
     #{dest:=Dest} = Offer, 
@@ -124,34 +124,30 @@ nkmedia_verto_invite(SrvId, CallId, Offer, Verto) ->
     {ok, NkCallId, Pid} = nkmedia_call:start(SrvId, Dest, Config),
     #{?MODULE:=Calls} = Verto,
     Calls2 = maps:put(CallId, {NkCallId, monitor(process, Pid)}, Calls),
-    {ok, Verto#{?MODULE:=Calls2}}.
+    {ok, Pid, Verto#{?MODULE:=Calls2}}.
 
 
 %% @doc Called when the client sends an ANSWER after nkmedia_verto:invite/4
--spec nkmedia_verto_answer(session_id(), nkmedia:answer(), verto()) ->
-    {ok, verto()} |{hangup, nkmedia:hangup_reason(), verto()} | continue().
+-spec nkmedia_verto_answer(call_id(), nklib:proc_id(), nkmedia:answer(), verto()) ->
+    {ok, verto()} |{hangup, nkservice:error(), verto()} | continue().
 
-nkmedia_verto_answer(_SessId, _Answer, Verto) ->
+nkmedia_verto_answer(_CallId, _ProcId, _Answer, Verto) ->
     {ok, Verto}.
 
 
 %% @doc Called when the client sends an BYE after nkmedia_verto:invite/4
-%% This default implementation will hangup the session
-
--spec nkmedia_verto_rejected(session_id(), verto()) ->
+-spec nkmedia_verto_rejected(call_id(), nklib:proc_id(), verto()) ->
     {ok, verto()} | continue().
 
-nkmedia_verto_rejected(SessId, Verto) ->
-    lager:info("Verto BYE for ~s", [SessId]),
-    nkmedia_session:hangup(SessId, <<"User Hangup">>),
+nkmedia_verto_rejected(_CallId, _ProcId, Verto) ->
     {ok, Verto}.
 
 
 %% @doc Sends when the client sends a BYE during a call
--spec nkmedia_verto_bye(session_id(), verto()) ->
+-spec nkmedia_verto_bye(call_id(), nklib:proc_id(), verto()) ->
     {ok, verto()} | continue().
 
-nkmedia_verto_bye(CallId, Verto) ->
+nkmedia_verto_bye(CallId, _ProcId, Verto) ->
     #{?MODULE:=Calls} = Verto,
     case maps:find(CallId, Calls) of
         {ok, {NkCallId, Mon}} ->
@@ -165,10 +161,10 @@ nkmedia_verto_bye(CallId, Verto) ->
 
 
 %% @doc
--spec nkmedia_verto_dtmf(session_id(), DTMF::binary(), verto()) ->
+-spec nkmedia_verto_dtmf(call_id(), nklib:proc_id(), DTMF::binary(), verto()) ->
     {ok, verto()} | continue().
 
-nkmedia_verto_dtmf(_SessId, _DTMF, Verto) ->
+nkmedia_verto_dtmf(_CallId, _ProcId, _DTMF, Verto) ->
     {ok, Verto}.
 
 
@@ -207,6 +203,14 @@ nkmedia_verto_handle_info(Msg, Verto) ->
     {ok, Verto}.
 
 
+
+
+%% ===================================================================
+%% Implemented Callbacks - error
+%% ===================================================================
+
+error_code(verto_bye) -> {0, <<"Verto BYE">>};
+error_code(_) -> continue.
 
 
 %% ===================================================================

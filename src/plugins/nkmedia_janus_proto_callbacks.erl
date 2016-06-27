@@ -108,7 +108,7 @@ nkmedia_janus_login(_JanusId, _Login, _Pass, Janus) ->
 -spec nkmedia_janus_invite(call_id(), nkmedia_janus:offer(), janus()) ->
     {ok, pid()|undefined, janus()} | 
     {answer, nkmedia_janus:answer(), pid()|undefined, janus()} | 
-    {hangup, nkmedia:hangup_reason(), janus()} | continue().
+    {hangup, nkservice:error(), janus()} | continue().
 
 nkmedia_janus_invite(SessId, Offer, #{srv_id:=SrvId}=Janus) ->
     #{sdp_type:=webrtc} = Offer,
@@ -119,7 +119,7 @@ nkmedia_janus_invite(SessId, Offer, #{srv_id:=SrvId}=Janus) ->
                 {ok, Janus2} ->
                     {ok, SessPid, Janus2};
                 {rejected, Reason, Janus2} ->
-                    nkmedia_session:hangup(SessId, Reason),
+                    nkmedia_session:stop(SessId, Reason),
                     {hangup, Reason, Janus2}
             end;
         {error, Error} ->
@@ -130,7 +130,7 @@ nkmedia_janus_invite(SessId, Offer, #{srv_id:=SrvId}=Janus) ->
 
 %% @doc Sends after an INVITE, if the previous function has not been modified
 -spec nkmedia_janus_call(call_id(), binary(), janus()) ->
-    {ok, janus()} | {hangup, nkmedia:hangup_reason(), janus()} | continue().
+    {ok, janus()} | {hangup, nkservice:error(), janus()} | continue().
 
 nkmedia_janus_call(CallId, Dest, Janus) ->
     ok = nkmedia_session:answer_async(CallId, {invite, Dest}, #{}),
@@ -139,7 +139,7 @@ nkmedia_janus_call(CallId, Dest, Janus) ->
 
 %% @doc Called when the client sends an ANSWER
 -spec nkmedia_janus_answer(call_id(), nkmedia_janus:answer(), janus()) ->
-    {ok, janus()} |{hangup, nkmedia:hangup_reason(), janus()} | continue().
+    {ok, janus()} |{hangup, nkservice:error(), janus()} | continue().
 
 nkmedia_janus_answer(CallId, Answer, Janus) ->
     case nkmedia_session:invite_reply(CallId, {answered, Answer}) of
@@ -156,13 +156,13 @@ nkmedia_janus_answer(CallId, Answer, Janus) ->
     {ok, janus()} | continue().
 
 nkmedia_janus_bye(CallId, Janus) ->
-    nkmedia_session:hangup(CallId, <<"User Hangup">>),
+    nkmedia_session:stop(CallId, janus_bye),
     {ok, Janus}.
 
 
 %% @doc Called when the client sends an START for a PLAY
 -spec nkmedia_janus_start(call_id(), nkmedia_janus:offer(), janus()) ->
-    ok | {hangup, nkmedia:hangup_reason(), janus()} | continue().
+    ok | {hangup, nkservice:error(), janus()} | continue().
 
 nkmedia_janus_start(SessId, Answer, Janus) ->
     case nkmedia_session:answer_async(SessId, Answer, #{}) of

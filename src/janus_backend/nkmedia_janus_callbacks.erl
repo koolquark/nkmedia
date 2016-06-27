@@ -24,6 +24,7 @@
 
 -export([plugin_deps/0, plugin_syntax/0, plugin_config/2,
          plugin_start/2, plugin_stop/2]).
+-export([error_code/1]).
 -export([nkmedia_janus_get_mediaserver/1]).
 -export([nkmedia_session_init/2, nkmedia_session_terminate/2]).
 -export([nkmedia_session_class/2, nkmedia_session_answer/3,
@@ -109,6 +110,15 @@ nkmedia_janus_get_mediaserver(#{srv_id:=SrvId}) ->
 
 
 %% ===================================================================
+%% Implemented Callbacks - error
+%% ===================================================================
+
+error_code(janus_down)          ->  {200, <<"Janus Down">>};
+error_code(janus_bye)           ->  {200, <<"Janus Bye">>};
+error_code(_)                   ->  continue.
+
+
+%% ===================================================================
 %% Implemented Callbacks - nkmedia_session
 %% ===================================================================
 
@@ -190,7 +200,7 @@ nkmedia_session_stop(Reason, Session) ->
 nkmedia_session_handle_info({'DOWN', Ref, process, _Pid, _Reason}, Session) ->
     case state(Session) of
         #{janus_mon:=Ref} ->
-            nkmedia_session:hangup(self(), {hangup, <<"Janus Down">>}),
+            nkmedia_session:stop(self(), janus_down),
             {noreply, Session};
         _ ->
             continue

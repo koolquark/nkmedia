@@ -68,16 +68,25 @@ add_uuid(Config) ->
 -spec error(stop_reason()) ->
 	{integer(), binary()} | not_foubd. 
 
-error(missing_offer) 			-> 	{0, <<"Missing Offer">>};
-error(duplicated_offer) 		-> 	{0, <<"Duplicated Offer">>};
-error(offer_not_set) 			-> 	{0, <<"Offer Not Set">>};
-error(duplicated_answer) 		-> 	{0, <<"Duplicated Answer">>};
-error(answer_not_set) 			-> 	{0, <<"Answer Not Set">>};
-error(no_answer) 				->  {0, <<"No Answer">>};
-error(no_destination) 			->  {0, <<"No Destination">>};
-error(originator_cancel)		-> 	{0, <<"Originator Cancel">>};
-error(user_monitor_stop) 		-> 	{0, <<"User Monitor Stop">>};
-error(reg_monitor_stop) 		-> 	{0, <<"Register Monitor Stop">>};
+error(unknown_session_class) 	-> 	{0, <<"Unknown session class">>};
+error(missing_offer) 			-> 	{0, <<"Missing offer">>};
+error(duplicated_offer) 		-> 	{0, <<"Duplicated offer">>};
+error(offer_not_set) 			-> 	{0, <<"Offer not set">>};
+error(duplicated_answer) 		-> 	{0, <<"Duplicated answer">>};
+error(answer_not_set) 			-> 	{0, <<"Answer not set">>};
+error(answer_already_set) 		-> 	{0, <<"Answer already set">>};
+error(call_rejected)			->  {0, <<"Call rejected">>};
+error(no_answer) 				->  {0, <<"No answer">>};
+error(no_destination) 			->  {0, <<"No destination">>};
+error(originator_cancel)		-> 	{0, <<"Originator cancel">>};
+error(caller_hangup)			-> 	{0, <<"Caller hangup">>};
+error(callee_hangup)			-> 	{0, <<"Callee hangup">>};
+error(unknown_linked_session) 	-> 	{0, <<"Unknown linked session">>};
+error(user_monitor_stop) 		-> 	{0, <<"User monitor stop">>};
+error(reg_monitor_stop) 		-> 	{0, <<"Register monitor stop">>};
+error(verto_unknown_call)		->  {0, <<"Verto unknown call">>};
+error({verto, error, Code, Txt})-> 	
+	{0, nklib_util:msg("Verto Error (~p): ~s", [Code, Txt])};
 error(Code) when is_integer(Code) -> get_q850(Code);
 error(_) -> not_found.
 

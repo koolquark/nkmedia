@@ -327,8 +327,8 @@ peer_event(IdB, callee, {answer_op, invite, Opts},
                     ok;
                {error, Error} ->
                     ?LLOG(warning, "bridge error: ~p", [Error], Session),
-                    nkmedia_session:hangup(IdB(), <<"Bridge Error">>),
-                    nkmedia_session:hangup(self(), <<"Bridge Error">>)
+                    nkmedia_session:stop(IdB, fs_bridge_error),
+                    nkmedia_session:stop(self(), fs_bridge_error)
             end;
         #{status:=rejected, reason:=Reason} ->
             nkmedia_session:invite_reply(self(), {rejected, Reason});
@@ -349,14 +349,14 @@ peer_event(Id, callee, {hangup, _Reason}, Session, State) ->
                 #{park_after:=true} ->
                     ok;
                 _ ->
-                    nkmedia_session:hangup(self(), <<"Callee Hangup">>)
+                    nkmedia_session:stop(self(), callee_hangup)
             end;
         _ ->
             ?LLOG(notice, "unexpected hangup from peer", [], Session)
     end;
 
 peer_event(_Id, caller, {hangup, Reason}, _Session, _State) ->
-    nkmedia_session:hangup(self(), Reason),
+    nkmedia_session:stop(self(), Reason),
     ok;
 
 peer_event(Id, Type, Event, Session, _State) ->
@@ -365,7 +365,7 @@ peer_event(Id, Type, Event, Session, _State) ->
 
 
 %% @private
--spec hangup(nkmedia:hangup_reason(), session(), state()) ->
+-spec hangup(nkservice:error(), session(), state()) ->
     {ok, state()}.
 
 hangup(_Reason, #{id:=SessId}, #{fs_id:=FsId}=State) ->
@@ -528,12 +528,12 @@ do_fs_event({mcu, McuInfo}, Session, State) ->
 
 do_fs_event({hangup, Reason}, Session, State) ->
     ?LLOG(warning, "received hangup from FS: ~p", [Reason], Session),
-    nkmedia_session:hangup(self(), Reason),
+    nkmedia_session:stop(self(), Reason),
     {ok, State};
 
 do_fs_event(stop, Session, State) ->
     ?LLOG(info, "received stop from FS", [], Session),
-    nkmedia_session:hangup(self(), <<"FS Channel Stop">>),
+    nkmedia_session:stop(self(), fs_channel_stop),
     {ok, State};
 
 do_fs_event(Event, Session, State) ->

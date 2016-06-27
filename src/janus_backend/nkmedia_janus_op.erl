@@ -1303,3 +1303,7 @@ to_room(Room) -> nklib_util:to_binary(Room).
 %% @private
 to_room_id(Room) when is_integer(Room) -> Room;
 to_room_id(Room) when is_binary(Room) -> erlang:phash2(Room).
+
+
+
+

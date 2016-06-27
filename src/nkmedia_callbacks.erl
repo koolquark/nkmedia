@@ -101,7 +101,36 @@ nkmedia_session_terminate(_Reason, Session) ->
 	{ok, Session}.
 
 
-%% @doc Called when the status of the session changes
+-spec nkmedia_session_class(nkmedia:class(), session()) ->
+	{ok, nkmedia:class(), Reply::map(), session()} |
+	{error, nkservice:error(), session()} | continue().
+
+nkmedia_session_class(p2p, Session) ->
+	{ok, p2p, #{}, Session};
+
+nkmedia_session_class(_Class, Session) ->
+	{error, unknown_session_class, Session}.
+
+
+%% @private
+-spec nkmedia_session_answer(nkmedia:class(), nkmedia:answer(), session()) ->
+	{ok, Reply::map(), nkmedia:answer(), session()} |
+	{error, term(), session()} | continue().
+
+nkmedia_session_answer(_Class, Answer, Session) ->
+	{ok, #{}, Answer, Session}.
+
+
+%% @private
+-spec nkmedia_session_update(nkmedia:update(), session()) ->
+	{ok, nkmedia:class(), map(), session()} |
+	{error, term(), session()} | continue().
+
+nkmedia_session_update(_Update, Session) ->
+	{error, unknown_operation, Session}.
+
+
+%% @private%% @doc Called when the status of the session changes
 -spec nkmedia_session_event(nkmedia_session:id(), nkmedia_session:event(), session()) ->
 	{ok, session()} | continue().
 
@@ -129,6 +158,11 @@ nkmedia_session_peer_event(_SessId, _Type, _Event, Session) ->
 -spec nkmedia_session_reg_event(nkmedia_session:id(), term(), 
 								nkmedia_session:event(), session()) ->
 	{ok, session()} | continue().
+
+% nkmedia_session_reg_event(SessId, {nkmedia_api, Events, Pid}, Event, Session) ->
+% 	#{srv_id:=SrvId} = Session,
+% 	nkmedia_api:session_event(SrvId, SessId, Event, Pid, Events),
+% 	{ok, Session};
 
 nkmedia_session_reg_event(_SessId, _RegId, _Event, Session) ->
 	{ok, Session}.
@@ -162,37 +196,7 @@ nkmedia_session_handle_info(Msg, Session) ->
 
 
 %% @private
--spec nkmedia_session_class(nkmedia:class(), session()) ->
-	{ok, nkmedia:class(), Reply::map(), session()} |
-	{error, term(), session()} | continue().
-
-nkmedia_session_class(p2p, Session) ->
-	{ok, p2p, #{}, Session};
-
-nkmedia_session_class(_Class, Session) ->
-	{error, unknown_class, Session}.
-
-
-%% @private
--spec nkmedia_session_answer(nkmedia:class(), nkmedia:answer(), session()) ->
-	{ok, Reply::map(), nkmedia:answer(), session()} |
-	{error, term(), session()} | continue().
-
-nkmedia_session_answer(_Class, Answer, Session) ->
-	{ok, #{}, Answer, Session}.
-
-
-%% @private
--spec nkmedia_session_update(nkmedia:update(), session()) ->
-	{ok, nkmedia:class(), map(), session()} |
-	{error, term(), session()} | continue().
-
-nkmedia_session_update(_Update, Session) ->
-	{error, unknown_operation, Session}.
-
-
-%% @private
--spec nkmedia_session_stop(nkmedia:hangup_reason(), session()) ->
+-spec nkmedia_session_stop(nkservice:error(), session()) ->
 	{ok, session()} | continue().
 
 nkmedia_session_stop(_Reason, Session) ->
@@ -321,7 +325,7 @@ api_cmd_defaults(_Class, _Cmd, _Data) ->
 
 
 %% @private
-api_cmd_mandatory(core, Cmd, _Data) ->
+api_cmd_mandatory(media, Cmd, _Data) ->
 	{ok, nkmedia_api:mandatory(Cmd)};
 	
 api_cmd_mandatory(_Class, _Cmd, _Data) ->
@@ -346,7 +350,8 @@ api_server_cmd(_Class, _Cmd, _Data, _TId, _State) ->
 
 %% @private
 api_server_handle_info({'DOWN', Ref, process, _Pid, Reason}, State) ->
-	nkmedia_api:handle_down(Ref, Reason, State);
+	#{srv_id:=SrvId} = State,
+	nkmedia_api:handle_down(SrvId, Ref, Reason, State);
 
 api_server_handle_info(_Msg, _State) ->
 	continue.

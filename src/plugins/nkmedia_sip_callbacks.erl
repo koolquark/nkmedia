@@ -23,6 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
+-export([error_code/1]).
 -export([nkmedia_sip_call/2]).
 -export([sip_get_user_pass/4, sip_authorize/3]).
 -export([sip_invite/2, sip_reinvite/2, sip_cancel/3, sip_bye/2]).
@@ -64,11 +65,23 @@ plugin_stop(Config, #{name:=Name}) ->
 %% ===================================================================
 
 -spec nkmedia_sip_call(nkmnedia_session:id(), nkmedia:offer()) ->
-    ok | {rejected, nkmedia:hangup_reason()} | continue().
+    ok | {rejected, nkservice:error()} | continue().
 
 nkmedia_sip_call(_SessId, _Offer) ->
     {rejected, <<"Not Implemented">>}.
 
+
+
+%% ===================================================================
+%% Implemented Callbacks - error
+%% ===================================================================
+
+error_code({sip_code, Code}) ->
+    {1500, nklib_util:msg("Sip Code ~p", [Code])};
+
+error_code(sip_bye) -> {1501, <<"SIP Bye">>};
+error_code(sip_cancel) -> {1501, <<"SIP Cancel">>};
+error_code(_) -> continue.
 
 
 %% ===================================================================
@@ -113,7 +126,7 @@ sip_invite(Req, Call) ->
                 ok ->
                     noreply;
                 {rejected, Reason} ->
-                    nkmedia_session:hangup(SessId, {hangup, Reason}),
+                    nkmedia_session:stop(SessId, Reason),
                     {reply, decline}
             end;
         _ ->
@@ -131,7 +144,7 @@ sip_cancel(InviteReq, _Request, _Call) ->
     {ok, Handle} = nksip_request:get_handle(InviteReq),
     case nklib_proc:values({nkmedia_sip, cancel, Handle}) of
         [{SessId, _}|_] ->
-            nkmedia_session:hangup(SessId, <<"Sip Cancel">>),
+            nkmedia_session:stop(SessId, sip_cancel),
             ok;
         [] ->
             ok
@@ -143,7 +156,7 @@ sip_bye(Req, _Call) ->
 	{ok, Dialog} = nksip_dialog:get_handle(Req),
     case nklib_proc:values({nkmedia_sip, dialog, Dialog}) of
         [{SessId, _SessPid}] ->
-            nkmedia_session:hangup(SessId);
+            nkmedia_session:stop(SessId, sip_bye);
         [] ->
             lager:notice("Received SIP BYE for unknown session")
     end,

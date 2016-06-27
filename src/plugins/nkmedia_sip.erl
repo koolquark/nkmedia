@@ -77,7 +77,7 @@ send_invite(SrvId, SessId, Uri, Opts) ->
             Code < 200 -> 
                 ok;
             Code >= 300 -> 
-                nkmedia_session:hangup(SessId, Code);
+                nkmedia_session:stop(SessId, {sip_code, Code});
             true ->
                 {ok, Dialog} = nksip_dialog:get_handle(Resp),
                 %% We are storing this in the session's process (Self)

@@ -60,7 +60,7 @@
     }.
 
 
--type event() :: ringing | answered | {stop, nkmedia:hangup_reason()}.
+-type event() :: ringing | answered | {stop, nkservice:error()}.
 
 -type dest() :: term().
 

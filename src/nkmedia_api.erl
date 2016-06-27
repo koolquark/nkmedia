@@ -22,7 +22,7 @@
 
 -module(nkmedia_api).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([cmd/4, handle_down/3]).
+-export([cmd/4, forward_event/3, handle_down/4]).
 -export([syntax/1, defaults/1, mandatory/1]).
 
 
@@ -41,13 +41,12 @@
 
 
 cmd(SrvId, start_session, Data, State) ->
-	#{class:=Class, events:=Events} = Data,
-	Config = Data#{
-		{link, nkmedia_api} => self(),
-		events := {Events, self()}
-	},
+	#{class:=Class} = Data,
+	Config = Data#{register => {nkmedia_api, self()}},
 	case nkmedia_session:start(SrvId, Class, Config) of
 		{ok, SessId, Pid, Reply} ->
+			RegId = {media, '*', session, SessId},
+			nkservice_api_server:register(self(), RegId, #{}),
 			Mon = monitor(process, Pid),
 			Sessions = get_sessions(State),
 			Sessions2 = [{SessId, Mon}|Sessions],
@@ -57,21 +56,53 @@ cmd(SrvId, start_session, Data, State) ->
 			{error, Error, State}
 	end;
 
+cmd(_SrvId, set_answer, Data, State) ->
+	#{answer:=Answer, session_id:=SessId} = Data,
+	case nkmedia_session:answer(SessId, Answer) of
+		{ok, Reply} ->
+			{ok, Reply, State};
+		{error, Error} ->
+			{error, Error, State}
+	end;
+
 cmd(_SrvId, _Other, _Data, State) ->
 	{error, unknown_command, State}.
 
 
-%% @doc
-handle_down(Mon, Reason, State) ->
+
+
+% @doc Called when api server must forward an event to the client
+forward_event(RegId, _Body, State) ->
+	case RegId of
+		{media, stop, session, SessId} ->
+			Sessions = get_sessions(State),
+			case lists:keytake(SessId, 1, Sessions) of
+				{value, {SessId, Mon}, Sessions2} -> demonitor(Mon, [flush]);
+				false -> Sessions2 = Sessions
+			end,
+			{ok, set_sessions(Sessions2, State)};
+		_ ->
+			{ok, State}
+	end.
+
+
+%% @doc Called when api servers receives a DOWN
+handle_down(SrvId, Mon, Reason, State) ->
 	Sessions = get_sessions(State),
 	case lists:keytake(Mon, 2, Sessions) of
 		{value, {SessId, Mon}, Sessions2} ->
 			lager:warning("Session ~s is down: ~p", [SessId, Reason]),
-			nkservice_api_server:event(self(), media, session, down, SessId, #{}),
+			RegId = {media, stop, session, SessId},
+			{Code, Txt} = SrvId:error_code(process_down),
+			Body = #{code=>Code, reason=>Txt},
+			nkservice_api_server:send_event(self(), RegId, Body),
 			{ok, set_sessions(Sessions2, State)};
 		false ->
 			continue
 	end.
+
+
+
 
 
 
@@ -86,8 +117,19 @@ syntax(start_session) ->
 		events => {enum, ['*', hangup]},
 		wait_timeout => {integer, 1, none},
 		ready_timeout => {integer, 1, none},
-		backend => {enum, [p2p, janus, freeswitch, kurento]}
-	}.
+		backend => {enum, [p2p, janus, freeswitch, kurento]},
+		offer => offer(),
+		answer => answer()
+	};
+
+syntax(set_answer) ->
+	#{
+		session_id => binary,
+		answer => answer()
+	};
+
+syntax(_) ->
+	#{}.
 
 
 %% @private
@@ -99,18 +141,49 @@ defaults(_) ->
 
 
 %% @private
+mandatory(set_answer) ->
+	[session_id, answer];
+
 mandatory(_) ->
 	[].
 
 
-
 %% ===================================================================
 %% Internal
 %% ===================================================================
 
-%% ===================================================================
-%% Internal
-%% ===================================================================
+offer() ->
+	#{
+		sdp => binary,
+		sdp_type => {enum, [rtp, webrtc]},
+		dest => binary,
+        caller_name => binary,
+        caller_id => binary,
+        callee_name => binary,
+        callee_id => binary,
+        use_audio => boolean,
+        use_stereo => boolean,
+        use_video => boolean,
+        use_screen => boolean,
+        use_data => boolean,
+        in_bw => {integer, 0, none},
+        out_bw => {integer, 0, none}
+     }.
+
+
+answer() ->
+	#{
+		sdp => binary,
+		sdp_type => {enum, [rtp, webrtc]},
+        use_audio => boolean,
+        use_stereo => boolean,
+        use_video => boolean,
+        use_screen => boolean,
+        use_data => boolean
+     }.
+
+
+
 
 
 %% @private
