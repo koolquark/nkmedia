@@ -22,9 +22,9 @@
 -module(nkmedia_janus_session).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([init/3, terminate/3, start/3, update/3, answer/4, stop/3]).
+-export([init/3, terminate/3, start/3, answer/4, update/4, stop/3]).
 
--export_type([config/0, class/0, opts/0, update/0]).
+-export_type([config/0, type/0, opts/0, update/0]).
 
 -define(LLOG(Type, Txt, Args, Session),
     lager:Type("NkMEDIA JANUS Session ~s "++Txt, 
@@ -47,13 +47,14 @@
     }.
 
 
--type class() ::
-    nkmedia:class() |
+-type type() ::
+    nkmedia_session:type() |
     echo     |
     proxy    |
     publish  |
     listen   |
     play.
+
 
 -type opts() ::
     nkmedia_session:session() |
@@ -67,7 +68,7 @@
 
 
 -type update() ::
-    nkmedia:update() |
+    nkmedia_session:update() |
     {listener_switch, binary()}.
 
 
@@ -103,8 +104,8 @@ terminate(_Reason, _Session, State) ->
 
 
 %% @private
--spec start(class(), nkmedia:session(), state()) ->
-    {ok, class(), map(), none|nkmedia:offer(), none|nkmedia:answer(), state()} |
+-spec start(type(), nkmedia:session(), state()) ->
+    {ok, type(), map(), none|nkmedia:offer(), none|nkmedia:answer(), state()} |
     {error, term(), state()} | continue().
 
 start(echo, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
@@ -116,10 +117,11 @@ start(echo, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
                     Reply = Opts#{answer=>Answer},
                     {ok, echo, Reply, none, Answer, State2};
                 {error, Error} ->
-                    {error, {echo_error, Error}, State2}
+                    ?LLOG(warning, "janus echo error: ~p", [Error], Session),
+                    {error, janus_error, State2}
             end;
-        {error, Error} ->
-            {error, Error, State}
+        {error, Error, State2} ->
+            {error, Error, State2}
     end;
 
 start(echo, _Session, State) ->
@@ -137,8 +139,12 @@ start(publish, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
                     {error, not_found} ->
                         #{janus_id:=JanusId} = State2,
                         case nkmedia_janus_room:create(JanusId, Room, #{}) of
-                            {ok, _} -> ok;
-                            {error, Error} -> throw({room_creation_error, Error})
+                            {ok, _} -> 
+                                ok;
+                            {error, Error} ->
+                                ?LLOG(warning, "room creation error: ~p", 
+                                      [Error], Session),
+                                throw(janus_room_creation)
                         end;
                     {ok, _} ->
                         ok
@@ -149,10 +155,11 @@ start(publish, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
                         Reply = Opts#{answer=>Answer},
                         {ok, publish, Reply, none, Answer, State2};
                     {error, Error2} ->
-                        {error, {echo_error, Error2}, State2}
+                        ?LLOG(warning, "janus publish error: ~p", [Error2], Session),
+                        {error, janus_error, State2}
                 end;
-            {error, Error3} ->
-                {error, Error3, State}
+            {error, Error3, State3} ->
+                {error, Error3, State3}
         end
     catch
         throw:Throw -> {error, Throw, State}
@@ -174,7 +181,7 @@ start(proxy, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
             end,
             case Fun of
                 error ->
-                    {error, unsupported_proxy, State};
+                    {error, invalid_parameters, State};
                 _ ->
                     case nkmedia_janus_op:Fun(Pid, Offer, #{}) of
                         {ok, Offer2} ->
@@ -183,11 +190,12 @@ start(proxy, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
                             Reply = #{offer=>Offer3},
                             {ok, proxy, Reply, Offer3, none, State3};
                         {error, Error} ->
+                            ?LLOG(warning, "janus proxy error: ~p", [Error], Session),
                             {error, {proxy_error, Error}, State2}
                     end
             end;
-        {error, Error} ->
-            {error, Error, State}
+        {error, Error, State2} ->
+            {error, Error, State2}
     end;
 
 start(proxy, _Session, State) ->
@@ -202,25 +210,27 @@ start(listen, #{room:=Room, publisher:=Publisher}=Session, State) ->
                     Reply = #{room=>Room, publisher=>Publisher, offer=>Offer},
                     {ok, listen, Reply, Offer, none, State3};
                 {error, Error} ->
-                    {error, {listen_error, Error}, State2}
+                    ?LLOG(warning, "janus listen error: ~p", [Error], Session),
+                    {error, janus_error, State2}
             end;
-        {error, Error} ->
-            {error, Error, State}
+        {error, Error, State2} ->
+            {error, Error, State2}
     end;
 
 start(listen, _Session, State) ->
     {error, missing_parameters, State};
 
-start(_Class, _Session, _State) ->
+start(_Type, _Session, _State) ->
     continue.
 
 
 %% @private
--spec answer(nkmedia:class(), nkmedia:answer(), session(), state()) ->
+-spec answer(type(), nkmedia:answer(), session(), state()) ->
     {ok, map(), nkmedia:answer(), state()} |
     {error, term(), state()} | continue().
 
-answer(listen, Answer, _Session, #{janus_op:=answer}=State) ->
+answer(Op, Answer, Session, #{janus_op:=answer}=State)
+        when Op==proxy; Op==listen ->
     #{janus_pid:=Pid} = State,
     case nkmedia_janus_op:answer(Pid, Answer) of
         ok ->
@@ -228,30 +238,29 @@ answer(listen, Answer, _Session, #{janus_op:=answer}=State) ->
         {ok, Answer2} ->
             {ok, #{answer=>Answer2}, Answer, maps:remove(janus_op, State)};
         {error, Error} ->
-            {error, {janus_answer_error, Error}, State}
+            ?LLOG(warning, "janus answer error: ~p", [Error], Session),
+            {error, janus_error, State}
     end;
 
-answer(listen, _Answer, _Session, State) ->
-    {error, incompatible_operation, State};
-
-answer(_Class, _Answer, _Session, _State) ->
+answer(_Type, _Answer, _Session, _State) ->
     continue.
 
 
 %% @private
--spec update(update(), nkmedia:session(), state()) ->
-    {ok, class(), map(), state()} |
+-spec update(type(), update(), nkmedia:session(), state()) ->
+    {ok, type(), map(), state()} |
     {error, term(), state()} | continue().
 
-update(listen, {listen_switch, Publisher}, #{janus_pid:=Pid}=State) ->
+update(listen, {listen_switch, Publisher}, Session, #{janus_pid:=Pid}=State) ->
     case nkmedia_janus_op:listen_switch(Pid, Publisher, #{}) of
         ok ->
             {ok, listen, #{publisher=>Publisher}, State};
         {error, Error} ->
-            {error, {listen_switch_error, Error}, State}
+            ?LLOG(warning, "janus listen switch error: ~p", [Error], Session),
+            {error, janus_error, State}
     end;
 
-update(_Update, _Session, _State) ->
+update(_Type, _Update, _Session, _State) ->
     continue.
 
 
@@ -271,13 +280,14 @@ stop(_Reason, _Session, State) ->
 
 
 %% @private
-get_janus(#{id:=SessId}, #{janus_id:=JanusId}=State) ->
+get_janus(#{id:=SessId}=Session, #{janus_id:=JanusId}=State) ->
     case nkmedia_janus_op:start(JanusId, SessId) of
         {ok, Pid} ->
             State2 = State#{janus_pid=>Pid, janus_mon=>monitor(process, Pid)},
             {ok, Pid, State2};
         {error, Error} ->
-            {error, Error, State}
+            ?LLOG(warning, "janus_op start error: ~p", [Error], Session),
+            {error, janus_error, State}
     end;
 
 get_janus(Session, State) ->
@@ -285,7 +295,8 @@ get_janus(Session, State) ->
         {ok, State2} ->
             get_janus(Session, State2);
         {error, Error} ->
-            {error, {get_janus_error, Error}, State}
+            ?LLOG(warning, "get_mediaserver (janus) error: ~p", [Error], Session),
+            {error, Error, State}
     end.
 
 

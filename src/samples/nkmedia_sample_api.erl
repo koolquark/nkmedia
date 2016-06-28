@@ -38,6 +38,7 @@
 -define(LOG_SAMPLE(Type, Txt, Args, State),
     lager:Type("API Sample (~s) "++Txt, [maps:get(user, State) | Args])).
 
+-include_lib("nkservice/include/nkservice.hrl").
 
 
 %% ===================================================================
@@ -75,7 +76,7 @@ restart() ->
 
 
 api_start() ->
-    Fun = fun nkmedia_sample:api_client_fun/1,
+    Fun = fun nkmedia_sample_api:api_client_fun/2,
     {ok, _SessId, C} = 
         nkservice_api_client:start(sample, "nkapic://localhost:9010", "u1", "p1", 
                                    Fun, #{}),
@@ -95,11 +96,21 @@ api_client_fun(Msg, User) ->
     {error, not_implemented, User}.
 
 
+-compile([export_all]).
+
 api_1(C) ->
     nkservice_api_client:cmd(C, media, start_session, #{class=>park}).
 
+api_2(C) ->
+    Data = #{
+        class => test,
+        body => #{a => 1}
+    },
+    nkservice_api_client:cmd(C, core, subscribe, Data).
 
-    
+api_3(C, S) ->
+    nkservice_api_client:cmd(C, media, stop_session, #{session_id=>S}).
+
 
 
 
@@ -118,6 +129,21 @@ plugin_deps() ->
         nkmedia_kms, nkmedia_kms_proxy
     ].
 
+
+
+
+%% ===================================================================
+%% events
+%% ===================================================================
+
+subscribe_allow(agwfa12, #reg_id{class=test, srv_id=agwfa12}, _State) ->
+    true;
+
+subscribe_allow(agwfa12, _RegId, _State) ->
+    false;
+
+subscribe_allow(_SrvId, _RegId, _State) ->
+    continue.
 
 
 
@@ -165,7 +191,7 @@ nkmedia_verto_invite(SrvId, CallId, #{dest:=<<"0">>}=Offer, Verto) ->
                                               fun ?MODULE:verto_client_fun/2,
                                               #{verto_pid=>self(), call_id=>CallId}),
     case 
-        nkservice_api_client:cmd(Pid, media, start_session, #{class=>echo, offer=>Offer})
+        nkservice_api_client:cmd(Pid, media, start_session, #{type=>echo, offer=>Offer})
     of
         {ok, #{<<"answer">>:=#{<<"sdp">>:=SDP}}} ->
             {answer, #{sdp=>SDP}, {api_sample, Pid}, Verto};
@@ -173,7 +199,6 @@ nkmedia_verto_invite(SrvId, CallId, #{dest:=<<"0">>}=Offer, Verto) ->
             lager:warning("API Sample: Error creating session: ~s", [Txt]),
             {rejected, normal, Verto}
     end.
-
 
 
 nkmedia_verto_bye(CallId, {api_sample, Pid}, Verto) ->

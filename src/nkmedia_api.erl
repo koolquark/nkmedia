@@ -23,8 +23,9 @@
 -module(nkmedia_api).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([cmd/4, forward_event/3, handle_down/4]).
--export([syntax/1, defaults/1, mandatory/1]).
+-export([syntax/4]).
 
+-include_lib("nkservice/include/nkservice.hrl").
 
 %% ===================================================================
 %% Types
@@ -41,11 +42,11 @@
 
 
 cmd(SrvId, start_session, Data, State) ->
-	#{class:=Class} = Data,
+	#{type:=Type} = Data,
 	Config = Data#{register => {nkmedia_api, self()}},
-	case nkmedia_session:start(SrvId, Class, Config) of
+	case nkmedia_session:start(SrvId, Type, Config) of
 		{ok, SessId, Pid, Reply} ->
-			RegId = {media, '*', session, SessId},
+			RegId = #reg_id{class=media, obj=session, srv_id=SrvId, obj_id=SessId},
 			nkservice_api_server:register(self(), RegId, #{}),
 			Mon = monitor(process, Pid),
 			Sessions = get_sessions(State),
@@ -55,6 +56,11 @@ cmd(SrvId, start_session, Data, State) ->
 			lager:warning("Error calling session_start: ~p", [Error]),
 			{error, Error, State}
 	end;
+
+cmd(_SrvId, stop_session, Data, State) ->
+	#{session_id:=SessId} = Data,
+	nkmedia_session:stop(SessId),
+	{ok, #{}, State};
 
 cmd(_SrvId, set_answer, Data, State) ->
 	#{answer:=Answer, session_id:=SessId} = Data,
@@ -74,7 +80,7 @@ cmd(_SrvId, _Other, _Data, State) ->
 % @doc Called when api server must forward an event to the client
 forward_event(RegId, _Body, State) ->
 	case RegId of
-		{media, stop, session, SessId} ->
+		#reg_id{class=media, type=stop, obj=session, obj_id=SessId} ->
 			Sessions = get_sessions(State),
 			case lists:keytake(SessId, 1, Sessions) of
 				{value, {SessId, Mon}, Sessions2} -> demonitor(Mon, [flush]);
@@ -92,7 +98,8 @@ handle_down(SrvId, Mon, Reason, State) ->
 	case lists:keytake(Mon, 2, Sessions) of
 		{value, {SessId, Mon}, Sessions2} ->
 			lager:warning("Session ~s is down: ~p", [SessId, Reason]),
-			RegId = {media, stop, session, SessId},
+			RegId = #reg_id{class=media, type=stop, 
+							 obj=session, srv_id=SrvId, obj_id=SessId},
 			{Code, Txt} = SrvId:error_code(process_down),
 			Body = #{code=>Code, reason=>Txt},
 			nkservice_api_server:send_event(self(), RegId, Body),
@@ -111,47 +118,48 @@ handle_down(SrvId, Mon, Reason, State) ->
 %% ===================================================================
 
 %% @private
-syntax(start_session) ->
-	#{
-		class => {enum, [p2p, echo, park, mcu, proxy, publish, listen]},
-		events => {enum, ['*', hangup]},
-		wait_timeout => {integer, 1, none},
-		ready_timeout => {integer, 1, none},
-		backend => {enum, [p2p, janus, freeswitch, kurento]},
-		offer => offer(),
-		answer => answer()
+syntax(start_session, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{
+			type => {enum, [p2p, echo, park, mcu, proxy, publish, listen]},
+			events => {enum, ['*', hangup]},
+			wait_timeout => {integer, 1, none},
+			ready_timeout => {integer, 1, none},
+			backend => {enum, [p2p, janus, freeswitch, kurento]},
+			offer => offer(),
+			answer => answer()
+		},
+		Defaults,
+		[type|Mandatory]
 	};
 
-syntax(set_answer) ->
-	#{
-		session_id => binary,
-		answer => answer()
+syntax(stop_session, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{
+			session_id => binary,
+			code => integer,
+			reason => binary
+		},
+		Defaults,
+		[session_id|Mandatory]
 	};
 
-syntax(_) ->
-	#{}.
+syntax(set_answer, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{
+			session_id => binary,
+			answer => answer()
+		},
+		Defaults,
+		[session_id, answer|Mandatory]
+	};
+
+syntax(_, Syntax, Defaults, Mandatory) ->
+	{Syntax, Defaults, Mandatory}.
+
 
 
 %% @private
-defaults(start_session) ->
-	#{class=>p2p, events=>'*'};
-
-defaults(_) ->
-	#{}.
-
-
-%% @private
-mandatory(set_answer) ->
-	[session_id, answer];
-
-mandatory(_) ->
-	[].
-
-
-%% ===================================================================
-%% Internal
-%% ===================================================================
-
 offer() ->
 	#{
 		sdp => binary,
@@ -171,6 +179,7 @@ offer() ->
      }.
 
 
+%% @private
 answer() ->
 	#{
 		sdp => binary,
@@ -183,6 +192,11 @@ answer() ->
      }.
 
 
+
+
+%% ===================================================================
+%% Internal
+%% ===================================================================
 
 
 

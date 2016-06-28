@@ -106,7 +106,7 @@ nkmedia_kms_get_mediaserver(#{srv_id:=SrvId}) ->
         [{FsId, _}|_] ->
             {ok, FsId};
         [] ->
-            {error, no_mediaserver_available}
+            {error, no_mediaserver}
     end.
 
 

@@ -27,9 +27,10 @@
 -export([error_code/1]).
 -export([nkmedia_janus_get_mediaserver/1]).
 -export([nkmedia_session_init/2, nkmedia_session_terminate/2]).
--export([nkmedia_session_class/2, nkmedia_session_answer/3,
+-export([nkmedia_session_type/2, nkmedia_session_answer/3,
          nkmedia_session_update/3, nkmedia_session_stop/2, 
          nkmedia_session_handle_info/2]).
+-export([api_cmd_syntax/6]).
 -export([nkdocker_notify/2]).
 
 -include_lib("nkservice/include/nkservice.hrl").
@@ -103,7 +104,7 @@ nkmedia_janus_get_mediaserver(#{srv_id:=SrvId}) ->
         [{FsId, _}|_] ->
             {ok, FsId};
         [] ->
-            {error, no_mediaserver_available}
+            {error, no_mediaserver}
     end.
 
 
@@ -113,8 +114,11 @@ nkmedia_janus_get_mediaserver(#{srv_id:=SrvId}) ->
 %% Implemented Callbacks - error
 %% ===================================================================
 
-error_code(janus_down)          ->  {200, <<"Janus Down">>};
-error_code(janus_bye)           ->  {200, <<"Janus Bye">>};
+error_code(janus_error)         ->  {200, <<"Janus error">>};
+error_code(janus_down)          ->  {200, <<"Janus down">>};
+error_code(janus_bye)           ->  {200, <<"Janus bye">>};
+error_code(janus_room_creation)  -> {200, <<"Janus room creation">>};
+
 error_code(_)                   ->  continue.
 
 
@@ -136,13 +140,13 @@ nkmedia_session_terminate(Reason, Session) ->
 
 
 %% @private
-nkmedia_session_class(Class, Session) ->
+nkmedia_session_type(Type, Session) ->
     case maps:get(backend, Session, janus) of
         janus ->
             State = state(Session),
-            case nkmedia_janus_session:start(Class, Session, State) of
-                {ok, Class2, Reply, Offer, Answer, State2} ->
-                    {ok, Class2, Reply, session(Offer, Answer, State2, Session)};
+            case nkmedia_janus_session:start(Type, Session, State) of
+                {ok, Type2, Reply, Offer, Answer, State2} ->
+                    {ok, Type2, Reply, session(Offer, Answer, State2, Session)};
                 {error, Error, State2} ->
                     {error, Error, session(State2, Session)};
                 continue ->
@@ -154,11 +158,11 @@ nkmedia_session_class(Class, Session) ->
 
 
 %% @private
-nkmedia_session_answer(Class, Answer, Session) ->
+nkmedia_session_answer(Type, Answer, Session) ->
     case maps:get(backend, Session, janus) of
         janus ->
             State = state(Session),
-            case nkmedia_janus_session:answer(Class, Answer, Session, State) of
+            case nkmedia_janus_session:answer(Type, Answer, Session, State) of
                 {ok, Reply, Answer2, State2} ->
                     {ok, Reply, session(none, Answer2, State2, Session)};
                 {error, Error, State2} ->
@@ -173,13 +177,13 @@ nkmedia_session_answer(Class, Answer, Session) ->
 
 
 %% @private
-nkmedia_session_update(Class, Update, Session) ->
+nkmedia_session_update(Type, Update, Session) ->
     case maps:get(backend, Session, janus) of
         janus ->
             State = state(Session),
-            case nkmedia_janus_session:update(Class, Update, Session, State) of
-                {ok, Class2, Reply, State2} ->
-                    {ok, Class2, Reply, session(State2, Session)};
+            case nkmedia_janus_session:update(Type, Update, Session, State) of
+                {ok, Type2, Reply, State2} ->
+                    {ok, Type2, Reply, session(State2, Session)};
                 {error, Error, State2} ->
                     {error, Error, session(State2, Session)};
                 continue ->
@@ -208,6 +212,18 @@ nkmedia_session_handle_info({'DOWN', Ref, process, _Pid, _Reason}, Session) ->
 
 
 
+%% ===================================================================
+%% API
+%% ===================================================================
+
+%% @private
+api_cmd_syntax(media, Cmd, Data, Syntax, Defaults, Mandatory) ->
+    {Syntax2, Defaults2, Mandatory2} = syntax(Cmd, Syntax, Defaults, Mandatory),
+    {continue, [media, Cmd, Data, Syntax2, Defaults2, Mandatory2]};
+
+api_cmd_syntax(_Class, _Cmd, _Data, _Syntax, _Defaults, _Mandatory) ->
+    continue.
+
 
 
 %% ===================================================================
@@ -225,6 +241,53 @@ nkdocker_notify(_MonId, _Op) ->
 %% ===================================================================
 %% Internal
 %% ===================================================================
+
+%% @private
+syntax(echo, Syntax, Defaults, Mandatory) ->
+    {
+        Syntax#{
+            record => boolean,
+            record_file => binary
+        },
+        Defaults,
+        Mandatory
+    };
+
+syntax(publish, Syntax, Defaults, Mandatory) ->
+    {
+        Syntax#{
+            record => boolean,
+            record_file => binary,
+            room => binary
+        },
+        Defaults,
+        Mandatory
+    };
+
+syntax(proxy, Syntax, Defaults, Mandatory) ->
+    {
+        Syntax#{
+            proxy_type => {enum, [webrtc, rtp]},
+            record => boolean,
+            record_file => binary,
+            room => binary
+        },
+        Defaults,
+        Mandatory
+    };
+
+syntax(listen, Syntax, Defaults, Mandatory) ->
+    {
+        Syntax#{
+            room => binary,
+            publisher => binary
+        },
+        Defaults,
+        Mandatory
+    };
+
+syntax(_, Syntax, Defaults, Mandatory) ->
+    {Syntax, Defaults, Mandatory}.
 
 
 %% @private

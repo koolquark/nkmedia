@@ -29,14 +29,14 @@
 		 nkmedia_session_reg_event/4,
 		 nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2, 
 		 nkmedia_session_handle_info/2]).
--export([nkmedia_session_class/2, nkmedia_session_answer/3, 
-	     nkmedia_session_update/2, nkmedia_session_stop/2]).
+-export([nkmedia_session_type/2, nkmedia_session_answer/3, 
+	     nkmedia_session_update/3, nkmedia_session_stop/2]).
 -export([nkmedia_call_init/2, nkmedia_call_terminate/2, 
 		 nkmedia_call_invite/4, nkmedia_call_cancel/3, nkmedia_call_event/4, 
 		 nkmedia_call_handle_call/3, nkmedia_call_handle_cast/2, 
 		 nkmedia_call_handle_info/2]).
 -export([error_code/1]).
--export([api_cmd/8, api_cmd_syntax/3, api_cmd_defaults/3, api_cmd_mandatory/3]).
+-export([api_cmd/8, api_cmd_syntax/6]).
 -export([api_server_cmd/5, api_server_handle_info/2]).
 -export([nkdocker_notify/2]).
 
@@ -101,32 +101,33 @@ nkmedia_session_terminate(_Reason, Session) ->
 	{ok, Session}.
 
 
--spec nkmedia_session_class(nkmedia:class(), session()) ->
-	{ok, nkmedia:class(), Reply::map(), session()} |
+-spec nkmedia_session_type(nkmedia_session:type(), session()) ->
+	{ok, nkmedia_session:type(), Reply::map(), session()} |
 	{error, nkservice:error(), session()} | continue().
 
-nkmedia_session_class(p2p, Session) ->
+nkmedia_session_type(p2p, Session) ->
 	{ok, p2p, #{}, Session};
 
-nkmedia_session_class(_Class, Session) ->
+nkmedia_session_type(_Type, Session) ->
 	{error, unknown_session_class, Session}.
 
 
 %% @private
--spec nkmedia_session_answer(nkmedia:class(), nkmedia:answer(), session()) ->
+-spec nkmedia_session_answer(nkmedia_session:type(), nkmedia:answer(), session()) ->
 	{ok, Reply::map(), nkmedia:answer(), session()} |
 	{error, term(), session()} | continue().
 
-nkmedia_session_answer(_Class, Answer, Session) ->
+nkmedia_session_answer(_Type, Answer, Session) ->
 	{ok, #{}, Answer, Session}.
 
 
 %% @private
--spec nkmedia_session_update(nkmedia:update(), session()) ->
-	{ok, nkmedia:class(), map(), session()} |
+-spec nkmedia_session_update(nkmedia_session:update(), 
+					         nkmedia_session:type(), session()) ->
+	{ok, nkmedia_session:type(), Reply::map(), session()} |
 	{error, term(), session()} | continue().
 
-nkmedia_session_update(_Update, Session) ->
+nkmedia_session_update(_Update, _Type, Session) ->
 	{error, unknown_operation, Session}.
 
 
@@ -309,29 +310,11 @@ api_cmd(_SrvId, _User, _SessId, _Class, _Cmd, _Parsed, _TId, _State) ->
 
 
 %% @private
-api_cmd_syntax(media, Cmd, _Data) ->
-	{ok, nkmedia_api:syntax(Cmd)};
+api_cmd_syntax(media, Cmd, _Data, Syntax, Defaults, Mandatory) ->
+	nkmedia_api:syntax(Cmd, Syntax, Defaults, Mandatory);
 	
-api_cmd_syntax(_Class, _Cmd, _Data) ->
+api_cmd_syntax(_Class, _Cmd, _Data, _Syntax, _Defaults, _Mandatory) ->
 	continue.
-
-
-%% @private
-api_cmd_defaults(media, Cmd, _Data) ->
-	{ok, nkmedia_api:defaults(Cmd)};
-	
-api_cmd_defaults(_Class, _Cmd, _Data) ->
-	continue.
-
-
-%% @private
-api_cmd_mandatory(media, Cmd, _Data) ->
-	{ok, nkmedia_api:mandatory(Cmd)};
-	
-api_cmd_mandatory(_Class, _Cmd, _Data) ->
-	continue.
-
-
 
 
 

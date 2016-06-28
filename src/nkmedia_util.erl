@@ -68,6 +68,7 @@ add_uuid(Config) ->
 -spec error(stop_reason()) ->
 	{integer(), binary()} | not_foubd. 
 
+error(no_mediaserver) 			-> 	{0, <<"No mediaserver available">>};
 error(unknown_session_class) 	-> 	{0, <<"Unknown session class">>};
 error(missing_offer) 			-> 	{0, <<"Missing offer">>};
 error(duplicated_offer) 		-> 	{0, <<"Duplicated offer">>};
