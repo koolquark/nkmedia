@@ -77,18 +77,19 @@ restart() ->
 
 api_start() ->
     Fun = fun nkmedia_sample_api:api_client_fun/2,
-    {ok, _SessId, C} = 
-        nkservice_api_client:start(sample, "nkapic://localhost:9010", "u1", "p1", 
-                                   Fun, #{}),
+    {ok, _, C} = nkservice_api_client:start(sample, "nkapic://localhost:9010", "u1", "p1", 
+                                            Fun, #{}),
     timer:sleep(50),
     [{_, _, S}] = nkservice_api_server:get_all(),
     {C, S}.
-
+ 
 
 api_client_fun({req, Class, <<"event">>, Data, _TId}, User) ->
-    #{<<"type">>:=Type, <<"obj">>:=Obj, <<"obj_id">>:=ObjId} = Data,
+    Sub = maps:get(<<"subclass">>, Data, <<"*">>),
+    Type = maps:get(<<"type">>, Data, <<"*">>),
+    ObjId = maps:get(<<"obj_id">>, Data, <<"*">>),
     Body = maps:get(<<"body">>, Data, #{}),
-    lager:notice("WsClient event ~s:~s:~s:~s: ~p", [Class, Type, Obj, ObjId, Body]),
+    lager:notice("WsClient event ~s:~s:~s:~s: ~p", [Class, Sub, Type, ObjId, Body]),
     {ok, #{}, User};
 
 api_client_fun(Msg, User) ->
@@ -104,6 +105,7 @@ api_1(C) ->
 api_2(C) ->
     Data = #{
         class => test,
+        % subclass => <<"a22">>,
         body => #{a => 1}
     },
     nkservice_api_client:cmd(C, core, subscribe, Data).
@@ -112,6 +114,13 @@ api_3(C, S) ->
     nkservice_api_client:cmd(C, media, stop_session, #{session_id=>S}).
 
 
+api_4(C) ->
+    Data = #{
+        class => test,
+        subclass => <<"a23">>,
+        body => #{b => 2}
+    },
+    nkservice_api_client:cmd(C, core, send_event, Data).
 
 
 
@@ -136,14 +145,6 @@ plugin_deps() ->
 %% events
 %% ===================================================================
 
-subscribe_allow(agwfa12, #reg_id{class=test, srv_id=agwfa12}, _State) ->
-    true;
-
-subscribe_allow(agwfa12, _RegId, _State) ->
-    false;
-
-subscribe_allow(_SrvId, _RegId, _State) ->
-    continue.
 
 
 
@@ -162,11 +163,19 @@ api_server_login(_Data, _SessId, _State) ->
 
 
 %% @doc
-api_allow(_SessId, _User, media, _Cmd, _Data, State) ->
+api_allow(_SessId, _User, _Class, _Cmd, _Data, State) ->
+    lager:warning("Api allow ~s:~s", [_Class, _Cmd]),
+    {true, State}.
+
+
+%% @oc
+api_subscribe_allow(_Class, _SubClass, _Type, SrvId, #{srv_id:=SrvId}=State) ->
+    lager:warning("Subscribe allow ~s:~s:~s", [_Class, _SubClass, _Type]),
     {true, State};
 
-api_allow(_SessId, _User, _Class, _Cmd, _Data, _State) ->
+api_subscribe_allow(_Class, _SubClass, _Type, _SrvId, _State) ->
     continue.
+
 
 
 %% ===================================================================

@@ -302,7 +302,7 @@ error_code(Error) ->
 %% ===================================================================
 
 %% @private
-api_cmd(SrvId, _User, _SessId, media, Cmd, Parsed, _TId, State) ->
+api_cmd(SrvId, _User, _SessId, <<"media">>, Cmd, Parsed, _TId, State) ->
 	nkmedia_api:cmd(SrvId, Cmd, Parsed, State);
 
 api_cmd(_SrvId, _User, _SessId, _Class, _Cmd, _Parsed, _TId, _State) ->
@@ -310,7 +310,7 @@ api_cmd(_SrvId, _User, _SessId, _Class, _Cmd, _Parsed, _TId, _State) ->
 
 
 %% @private
-api_cmd_syntax(media, Cmd, _Data, Syntax, Defaults, Mandatory) ->
+api_cmd_syntax(<<"media">>, Cmd, _Data, Syntax, Defaults, Mandatory) ->
 	nkmedia_api:syntax(Cmd, Syntax, Defaults, Mandatory);
 	
 api_cmd_syntax(_Class, _Cmd, _Data, _Syntax, _Defaults, _Mandatory) ->
@@ -323,9 +323,9 @@ api_cmd_syntax(_Class, _Cmd, _Data, _Syntax, _Defaults, _Mandatory) ->
 %% ===================================================================
 
 %% @private
-api_server_cmd(media, Cmd, Data, TId, State) ->
+api_server_cmd(<<"media">>, Cmd, Data, TId, State) ->
 	#{srv_id:=SrvId, user:=User, session_id:=SessId} = State,
-	nkservice_api:launch(SrvId, User, SessId, media, Cmd, Data, TId, State);
+	nkservice_api:launch(SrvId, User, SessId, <<"media">>, Cmd, Data, TId, State);
 	
 api_server_cmd(_Class, _Cmd, _Data, _TId, _State) ->
     continue.

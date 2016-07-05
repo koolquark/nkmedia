@@ -41,12 +41,17 @@
 	{ok, map(), State::map()} | {error, nkservice:error(), State::map()}.
 
 
-cmd(SrvId, start_session, Data, State) ->
+cmd(SrvId, <<"start_session">>, Data, State) ->
 	#{type:=Type} = Data,
 	Config = Data#{register => {nkmedia_api, self()}},
 	case nkmedia_session:start(SrvId, Type, Config) of
 		{ok, SessId, Pid, Reply} ->
-			RegId = #reg_id{class=media, obj=session, srv_id=SrvId, obj_id=SessId},
+			RegId = #reg_id{
+				srv_id = SrvId, 
+				class = <<"media">>, 
+				subclass = <<"session">>, 
+				obj_id = SessId
+			},
 			nkservice_api_server:register(self(), RegId, #{}),
 			Mon = monitor(process, Pid),
 			Sessions = get_sessions(State),
@@ -57,12 +62,12 @@ cmd(SrvId, start_session, Data, State) ->
 			{error, Error, State}
 	end;
 
-cmd(_SrvId, stop_session, Data, State) ->
+cmd(_SrvId, <<"stop_session">>, Data, State) ->
 	#{session_id:=SessId} = Data,
 	nkmedia_session:stop(SessId),
 	{ok, #{}, State};
 
-cmd(_SrvId, set_answer, Data, State) ->
+cmd(_SrvId, <<"set_answer">>, Data, State) ->
 	#{answer:=Answer, session_id:=SessId} = Data,
 	case nkmedia_session:answer(SessId, Answer) of
 		{ok, Reply} ->
@@ -80,7 +85,12 @@ cmd(_SrvId, _Other, _Data, State) ->
 % @doc Called when api server must forward an event to the client
 forward_event(RegId, _Body, State) ->
 	case RegId of
-		#reg_id{class=media, type=stop, obj=session, obj_id=SessId} ->
+		#reg_id{
+			class = <<"media">>, 
+			subclass = <<"session">>, 
+		    type = <<"stop">>, 
+		    obj_id = SessId
+		} ->
 			Sessions = get_sessions(State),
 			case lists:keytake(SessId, 1, Sessions) of
 				{value, {SessId, Mon}, Sessions2} -> demonitor(Mon, [flush]);
@@ -98,8 +108,13 @@ handle_down(SrvId, Mon, Reason, State) ->
 	case lists:keytake(Mon, 2, Sessions) of
 		{value, {SessId, Mon}, Sessions2} ->
 			lager:warning("Session ~s is down: ~p", [SessId, Reason]),
-			RegId = #reg_id{class=media, type=stop, 
-							 obj=session, srv_id=SrvId, obj_id=SessId},
+			RegId = #reg_id{
+				srv_id = SrvId, 
+				class = <<"media">>, 
+				subclass = <<"session">>,
+				type = <<"stop">>, 
+				obj_id = SessId
+			},
 			{Code, Txt} = SrvId:error_code(process_down),
 			Body = #{code=>Code, reason=>Txt},
 			nkservice_api_server:send_event(self(), RegId, Body),
@@ -118,7 +133,7 @@ handle_down(SrvId, Mon, Reason, State) ->
 %% ===================================================================
 
 %% @private
-syntax(start_session, Syntax, Defaults, Mandatory) ->
+syntax(<<"start_session">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			type => {enum, [p2p, echo, park, mcu, proxy, publish, listen]},
@@ -133,7 +148,7 @@ syntax(start_session, Syntax, Defaults, Mandatory) ->
 		[type|Mandatory]
 	};
 
-syntax(stop_session, Syntax, Defaults, Mandatory) ->
+syntax(<<"stop_session">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
@@ -144,7 +159,7 @@ syntax(stop_session, Syntax, Defaults, Mandatory) ->
 		[session_id|Mandatory]
 	};
 
-syntax(set_answer, Syntax, Defaults, Mandatory) ->
+syntax(<<"set_answer">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,

@@ -218,11 +218,12 @@ nkmedia_verto_bye(SessId, Verto) ->
 
 
 
-verto_client_fun({req, Class, <<"event">>, Data, _TId}, UserData) ->
-    #{<<"type">>:=Type, <<"sub">>:=Sub, <<"obj_id">>:=ObjId} = Data,
-    Body = maps:get(<<"body">>, Data, #{}),
-    lager:notice("Api Verto event ~s:~s:~s:~p: ~p", [Class, Type, Sub, ObjId, Body]),
-    {ok, #{}, UserData};
+
+% verto_client_fun({req, <<"core">>, <<"event">>, Data, _TId}, UserData) ->
+%     #{<<"subclass">>:=Sub, <<"type">>:=Type, <<"obj_id">>:=ObjId} = Data,
+%     Body = maps:get(<<"body">>, Data, #{}),
+%     lager:notice("Api Verto event ~s:~s:~s:~p: ~p", [Class, Sub, Tyoe, ObjId, Body]),
+%     {ok, #{}, UserData};
 
 verto_client_fun(Msg, UserData) ->
     lager:notice("T1: ~p", [Msg]),

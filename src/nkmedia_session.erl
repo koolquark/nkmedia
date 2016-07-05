@@ -637,10 +637,10 @@ ext_event(Event, #state{srv_id=SrvId, id=Id}) ->
     case Send of
         {EvType, Body} ->
             RegId = #reg_id{
-                class = media, 
-                type = EvType, 
-                obj = session, 
                 srv_id = SrvId, 
+                class = media, 
+                subclass = session, 
+                type = EvType, 
                 obj_id = Id
             },
             nkservice_events:send_all(RegId, Body);
