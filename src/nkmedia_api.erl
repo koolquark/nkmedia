@@ -80,8 +80,6 @@ cmd(_SrvId, _Other, _Data, State) ->
 	{error, unknown_command, State}.
 
 
-
-
 % @doc Called when api server must forward an event to the client
 forward_event(RegId, _Body, State) ->
 	case RegId of

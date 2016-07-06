@@ -164,13 +164,13 @@ api_server_login(_Data, _SessId, _State) ->
 
 %% @doc
 api_allow(_SessId, _User, _Class, _Cmd, _Data, State) ->
-    lager:warning("Api allow ~s:~s", [_Class, _Cmd]),
+    lager:notice("Api allow ~s:~s", [_Class, _Cmd]),
     {true, State}.
 
 
 %% @oc
 api_subscribe_allow(_Class, _SubClass, _Type, SrvId, #{srv_id:=SrvId}=State) ->
-    lager:warning("Subscribe allow ~s:~s:~s", [_Class, _SubClass, _Type]),
+    lager:notice("Subscribe allow ~s:~s:~s", [_Class, _SubClass, _Type]),
     {true, State};
 
 api_subscribe_allow(_Class, _SubClass, _Type, _SrvId, _State) ->
