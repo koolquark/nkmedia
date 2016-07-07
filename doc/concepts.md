@@ -34,7 +34,7 @@ Once the offer is set, you must set the answer. Again, there are several options
 
 ## Offers and Answers
 
-In NkMEDIA, _offer_ and _answer_ objects are related not only to _sdp_, but can include may other pieces of information. As a matter of fact, and offer or answer could exists without sdp, if it is not yet available. 
+In NkMEDIA, _offer_ and _answer_ objects are related not only to _sdp_, but can include may other pieces of information. Offer and answers could exists without sdp, if it is not yet available. 
 
 Offers as described as a json object, with the following fields. All of them are optional:
 

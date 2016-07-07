@@ -1,7 +1,7 @@
 # Welcome to NkMEDIA documentation
 
 ## User Guide
-* [Introduction](intro.md)
+* Introduction
 * Features
 * [Concepts](concepts.md)
 * Tutorial
@@ -10,7 +10,7 @@
 
 ## Management Interface
 * [Introduction](api_intro.md)
-* [Core API](api_core.md)
+* [Core API](api_commands.md)
 * Plugins API
   * nkmedia_janus
   * nkmedia_fs

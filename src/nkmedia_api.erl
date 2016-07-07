@@ -135,12 +135,12 @@ syntax(<<"start_session">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			type => {enum, [p2p, echo, park, mcu, proxy, publish, listen]},
+			offer => offer(),
+			answer => answer()
 			events => {enum, ['*', hangup]},
 			wait_timeout => {integer, 1, none},
 			ready_timeout => {integer, 1, none},
 			backend => {enum, [p2p, janus, freeswitch, kurento]},
-			offer => offer(),
-			answer => answer()
 		},
 		Defaults,
 		[type|Mandatory]
