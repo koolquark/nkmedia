@@ -20,16 +20,18 @@ Cmd|Description
 Performs the creation of a new media session. The mandatory `type` field defines the type of session. Currently, the following types are supported, along with the necessary plugin or plugins that support it.
 
 Type|Plugins
----|---
+---|---|---
 p2p|(none)
-echo|nkmedia_janus, nkmedia_fs
+echo|[nkmedia_janus](janus.md#echo)
 proxy|nkmedia_janus
 publish|nkmedia_janus
 listen|nkmedia_janus
 park|nkmedia_fs
 mcu|nkmedia_fs
 
-Each specific type is described bellow. The common fields for the request are:
+See each specific plugin documentation to learn about how to use it and supported options.
+
+Common fields for the request are:
 
 Field|Default|Description
 ---|---|---|---
@@ -38,12 +40,10 @@ offer|{}|Offer for the session, if available
 answer|{}|Answer for the session, if available
 wait_timeout||Timeout for sessions in _wait_ state
 ready_timeout||Timeout for sessions in _reay_ state
+subscribe|true|Subscribe to session events
 backend|(automatic)|Forces a specific plugin for the request
 
 Depending on the type, you need to supply an _offer_, or an _offer_ and an _answer_. The response from the server may include the _answer_, or the _offer_ to the other party.
-
-When you start a session, you are automatically subscribed to session events.
-
 
 
 
@@ -100,4 +100,7 @@ You will get your own answer in the response.
 ### Update a Session
 
 Some session types allow to modify the session characteristics in real time. For example, the `listener` type allows to switch to listen to a different publisher, and the the types provided the the _nkmedia_fs_ plugin allow even to change the session type.
+
+See each specific plugin documentation to learn about how to use it and supported options.
+
 

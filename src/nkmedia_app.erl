@@ -55,18 +55,21 @@ start(_Type, _Args) ->
         admin_url => binary,
         admin_pass => binary,
         sip_port => integer,        
-        no_docker => boolean
-
+        no_docker => boolean,
+        log_dir => fullpath,
+        record_dir => fullpath
     },
     Defaults = #{
         admin_url => "wss://all:9010",
         admin_pass => "nkmedia",
         sip_port => 0,
-        no_docker => false
+        no_docker => false,
+        log_dir => "./log",
+        record_dir => "./record"
     },
     case nklib_config:load_env(?APP, Syntax, Defaults) of
         {ok, _} ->
-            save_log_dir(),
+            ensure_dirs(),
             {ok, Vsn} = application:get_key(?APP, vsn),
             lager:info("NkMEDIA v~s is starting", [Vsn]),
             MainIp = nkpacket_config_cache:main_ip(),
@@ -139,10 +142,21 @@ set_env(Key, Value) ->
 
 
 %% @private
-save_log_dir() ->
-    Dir = filename:absname(filename:join(code:priv_dir(?APP), "../log")),
-    Path = nklib_parse:fullpath(Dir),
-    nkmedia_app:put(log_dir, Path).
+ensure_dirs() ->
+    Log = nkmedia_app:get(log_dir),
+    filelib:ensure_dir(filename:join(Log, <<"foo">>)),
+    Record = nkmedia_app:get(record_dir),
+    filelib:ensure_dir(filename:join([Record, <<"tmp">>, <<"foo">>])).
+
+% %% @private
+% save_log_dir() ->
+%     DirPath1 = nklib_parse:fullpath(filename:absname(DirPath)),
+
+
+
+%     Dir = filename:absname(filename:join(code:priv_dir(?APP), "../log")),
+%     Path = nklib_parse:fullpath(Dir),
+%     nkmedia_app:put(log_dir, Path).
 
 
 

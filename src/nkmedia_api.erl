@@ -41,24 +41,27 @@
 	{ok, map(), State::map()} | {error, nkservice:error(), State::map()}.
 
 
+%% Starts a new session
+%% Registers self() with the session (to be monitorized)
+%% Subscribes the caller to session events
+%% Monitorizes the session and stores info on State
 cmd(SrvId, <<"start_session">>, Data, State) ->
 	#{type:=Type} = Data,
 	Config = Data#{register => {nkmedia_api, self()}},
 	case nkmedia_session:start(SrvId, Type, Config) of
 		{ok, SessId, Pid, Reply} ->
-			RegId = #reg_id{
-				srv_id = SrvId, 
-				class = <<"media">>, 
-				subclass = <<"session">>, 
-				obj_id = SessId
-			},
-			nkservice_api_server:register(self(), RegId, #{}),
+			case maps:get(subscribe, Data, true) of
+				true ->
+					RegId = nkmedia_util:session_reg_id(SrvId, <<"*">>, SessId),
+					nkservice_api_server:register(self(), RegId, #{});
+				false ->
+					ok
+			end,
 			Mon = monitor(process, Pid),
 			Sessions = get_sessions(State),
 			Sessions2 = [{SessId, Mon}|Sessions],
 			{ok, Reply#{session_id=>SessId}, set_sessions(Sessions2, State)};
 		{error, Error} ->
-			lager:warning("Error calling session_start: ~p", [Error]),
 			{error, Error, State}
 	end;
 
@@ -76,11 +79,21 @@ cmd(_SrvId, <<"set_answer">>, Data, State) ->
 			{error, Error, State}
 	end;
 
+cmd(_SrvId, <<"update_session">>, Data, State) ->
+	#{session_id:=SessId, update:=Update} = Data,
+	case nkmedia_session:update(SessId, Update, Data) of
+		{ok, _} ->
+			{ok, #{}, State};
+		{error, Error} ->
+			{error, Error, State}
+	end;
+
 cmd(_SrvId, _Other, _Data, State) ->
 	{error, unknown_command, State}.
 
 
-% @doc Called when api server must forward an event to the client
+%% @doc Called when api server must forward an event to the client
+%% Captures session stop event
 forward_event(RegId, _Body, State) ->
 	case RegId of
 		#reg_id{
@@ -106,13 +119,7 @@ handle_down(SrvId, Mon, Reason, State) ->
 	case lists:keytake(Mon, 2, Sessions) of
 		{value, {SessId, Mon}, Sessions2} ->
 			lager:warning("Session ~s is down: ~p", [SessId, Reason]),
-			RegId = #reg_id{
-				srv_id = SrvId, 
-				class = <<"media">>, 
-				subclass = <<"session">>,
-				type = <<"stop">>, 
-				obj_id = SessId
-			},
+			RegId = nkmedia_util:session_reg_id(SrvId, stop, SessId),
 			{Code, Txt} = SrvId:error_code(process_down),
 			Body = #{code=>Code, reason=>Txt},
 			nkservice_api_server:send_event(self(), RegId, Body),
@@ -134,13 +141,13 @@ handle_down(SrvId, Mon, Reason, State) ->
 syntax(<<"start_session">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
-			type => {enum, [p2p, echo, park, mcu, proxy, publish, listen]},
+			type => atom,							%% p2p, proxy...
 			offer => offer(),
-			answer => answer()
-			events => {enum, ['*', hangup]},
+			answer => answer(),
+			subscribe => boolean,
 			wait_timeout => {integer, 1, none},
 			ready_timeout => {integer, 1, none},
-			backend => {enum, [p2p, janus, freeswitch, kurento]},
+			backend => atom							%% nkmedia_janus, etc.
 		},
 		Defaults,
 		[type|Mandatory]
@@ -167,6 +174,16 @@ syntax(<<"set_answer">>, Syntax, Defaults, Mandatory) ->
 		[session_id, answer|Mandatory]
 	};
 
+syntax(<<"update_session">>, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{
+			session_id => binary,
+			update => atom
+		},
+		Defaults,
+		[session_id, update|Mandatory]
+	};
+
 syntax(_, Syntax, Defaults, Mandatory) ->
 	{Syntax, Defaults, Mandatory}.
 
@@ -187,7 +204,7 @@ offer() ->
         use_video => boolean,
         use_screen => boolean,
         use_data => boolean,
-        in_bw => {integer, 0, none},
+        in_bw => {integer, 0, none}, 
         out_bw => {integer, 0, none}
      }.
 

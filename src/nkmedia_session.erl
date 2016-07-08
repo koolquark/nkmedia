@@ -27,7 +27,7 @@
 
 -export([start/3, get_type/1, get_session/1, get_offer/1, get_answer/1]).
 -export([stop/1, stop/2, stop_all/0]).
--export([answer/2, answer_async/2, update/2, update_async/2, info/2]).
+-export([answer/2, answer_async/2, update/3, update_async/3, info/2]).
 -export([register/2, unregister/2, link_session/3, get_all/0,  peer_event/3]).
 -export([find/1, do_cast/2, do_call/2, do_call/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
@@ -40,7 +40,6 @@
 
 -include("nkmedia.hrl").
 -include_lib("nklib/include/nklib.hrl").
--include_lib("nkservice/include/nkservice.hrl").
 
 
 %% ===================================================================
@@ -190,19 +189,19 @@ answer_async(SessId, Answer) ->
 %% @doc Sets the session's current answer operation.
 %% See each operation's doc for returned info
 %% Some backends my support updating answer (like Freeswitch)
--spec update(id(), update()) ->
+-spec update(id(), update(), Opts::map()) ->
     ok | {error, nkservice:error()}.
 
-update(SessId, Update) ->
-    do_call(SessId, {update, Update}).
+update(SessId, Update, Opts) ->
+    do_call(SessId, {update, Update, Opts}).
 
 
 %% @doc Equivalent to update/3, but does not wait for operation's result
--spec update_async(id(), update()) ->
+-spec update_async(id(), update(), Opts::map()) ->
     ok | {error, nkservice:error()}.
 
-update_async(SessId, Update) ->
-    do_call(SessId, {update, Update}).
+update_async(SessId, Update, Opts) ->
+    do_call(SessId, {update, Update, Opts}).
 
 
 %% @doc Hangups the session
@@ -321,8 +320,8 @@ handle_call(get_type, _From, #state{type=Type, timer=Timer}=State) ->
 handle_call({answer, Answer}, From, State) ->
     do_set_answer(Answer, From, State);
 
-handle_call({update, Update}, From, State) ->
-    do_update(Update, From, State);
+handle_call({update, Update, Opts}, From, State) ->
+    do_update(Update, Opts, From, State);
 
 handle_call(get_state, _From, State) -> 
     reply(State, State);
@@ -372,8 +371,8 @@ handle_call(Msg, From, State) ->
 handle_cast({answer, Answer}, State) ->
     do_set_answer(Answer, undefined, State);
 
-handle_cast({update, Update}, State) ->
-    do_update(Update, undefined, State);
+handle_cast({update, Update, Opts}, State) ->
+    do_update(Update, Opts, undefined, State);
 
 handle_cast({info, Info}, State) ->
     noreply(event({info, Info}, State));
@@ -516,15 +515,15 @@ do_set_answer(Answer, From, #state{type=Type}=State) ->
 
 
 %% @private
-do_update(Update, From, #state{type=Type, has_answer=true}=State) ->
-    case handle(nkmedia_session_update, [Update, Type], State) of
+do_update(Update, Opts, From, #state{type=Type, has_answer=true}=State) ->
+    case handle(nkmedia_session_update, [Update, Opts, Type], State) of
         {ok, Type2, Reply, State2} ->
            reply({ok, Reply}, From, update_type(Type2, State2));
         {error, Error, State2} ->
             reply({error, Error}, From, State2)
     end;
 
-do_update(_Update, From, State) ->
+do_update(_Update, _Opts, From, State) ->
     reply({error, answer_not_set}, From, State).
 
 
@@ -586,7 +585,10 @@ do_stop(_Reason, #state{stop_sent=true}=State) ->
 
 do_stop(Reason, State) ->
     {ok, State2} = handle(nkmedia_session_stop, [Reason], State),
-    {stop, normal, event({stop, Reason}, State2#state{stop_sent=true})}.
+    State3 = event({stop, Reason}, State2#state{stop_sent=true}),
+    % Allow events to be processed
+    timer:sleep(100),
+    {stop, normal, State3}.
 
 
 %% @private
@@ -617,12 +619,11 @@ event(Event, #state{id=Id}=State) ->
         State,
         State),
     {ok, State3} = handle(nkmedia_session_event, [Id, Event], State2),
-    ext_event(Event, State),
-    State3.
+    ext_event(Event, State3).
 
 
 %% @private
-ext_event(Event, #state{srv_id=SrvId, id=Id}) ->
+ext_event(Event, #state{srv_id=SrvId, id=Id}=State) ->
     Send = case Event of
         {stop, Reason} ->
             {Code, Txt} = SrvId:error_code(Reason),
@@ -636,17 +637,13 @@ ext_event(Event, #state{srv_id=SrvId, id=Id}) ->
     end,
     case Send of
         {EvType, Body} ->
-            RegId = #reg_id{
-                srv_id = SrvId, 
-                class = media, 
-                subclass = session, 
-                type = EvType, 
-                obj_id = Id
-            },
+            RegId = nkmedia_util:session_reg_id(SrvId, EvType, Id),
+            ?LLOG(info, "ext event: ~p", [RegId], State),
             nkservice_events:send_all(RegId, Body);
         ignore ->
             ok
-    end.
+    end,
+    State.
 
 
 %% @private

@@ -30,7 +30,7 @@
 		 nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2, 
 		 nkmedia_session_handle_info/2]).
 -export([nkmedia_session_type/2, nkmedia_session_answer/3, 
-	     nkmedia_session_update/3, nkmedia_session_stop/2]).
+	     nkmedia_session_update/4, nkmedia_session_stop/2]).
 -export([nkmedia_call_init/2, nkmedia_call_terminate/2, 
 		 nkmedia_call_invite/4, nkmedia_call_cancel/3, nkmedia_call_event/4, 
 		 nkmedia_call_handle_call/3, nkmedia_call_handle_cast/2, 
@@ -122,12 +122,12 @@ nkmedia_session_answer(_Type, Answer, Session) ->
 
 
 %% @private
--spec nkmedia_session_update(nkmedia_session:update(), 
+-spec nkmedia_session_update(nkmedia_session:update(), map(),
 					         nkmedia_session:type(), session()) ->
 	{ok, nkmedia_session:type(), Reply::map(), session()} |
 	{error, term(), session()} | continue().
 
-nkmedia_session_update(_Update, _Type, Session) ->
+nkmedia_session_update(_Update, _Opts, _Type, Session) ->
 	{error, unknown_operation, Session}.
 
 

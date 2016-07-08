@@ -60,6 +60,7 @@ start(Service) ->
             nklib_util:to_binary(BasePort)
         ]),
         LogDir = <<(nkmedia_app:get(log_dir))/binary, $/, Name/binary>>,
+        RecDir = filename:join(nkmedia_app:get(record_dir), <<"tmp">>),
         ExtIp = nklib_util:to_host(nkpacket_app:get(ext_ip)),
         Env = [
             {"NK_JANUS_IP", JanusIp},             
@@ -78,7 +79,7 @@ start(Service) ->
             net => host,
             interactive => true,
             labels => Labels,
-            volumes => [{LogDir, "/var/log/janus"}]
+            volumes => [{LogDir, "/var/log/janus"}, {RecDir, "/tmp/record"}]
         },
         DockerPid = case get_docker_pid() of
             {ok, DockerPid0} -> DockerPid0;

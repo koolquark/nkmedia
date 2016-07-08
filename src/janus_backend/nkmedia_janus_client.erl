@@ -37,7 +37,7 @@
     lager:Type("NkMEDIA Janus Client "++Txt, Args)).
 
 -define(PRINT(Txt, Args, State), 
-        % print(Txt, Args, State),    % Comment this
+        print(Txt, Args, State),    % Comment this
         ok).
 
 
@@ -60,7 +60,20 @@
 %% Public
 %% ===================================================================
 
-%% @doc Starts a new verto session to FS
+%% @doc Starts a new Janus session
+-spec start(nkmedia_janus_engine:id()) ->
+    {ok, pid()} | {error, term()}.
+
+start(JanusId) ->
+    case nkmedia_janus_engine:get_config(JanusId) of
+        {ok, #{}=Config} -> 
+            start(JanusId, Config);
+        {error, Error} -> 
+            {error, Error}
+    end.
+
+
+%% @doc Starts a new Janus session
 -spec start(nkmedia_janus_engine:id(), nkmedia_janus:config()) ->
     {ok, pid()} | {error, term()}.
 
@@ -75,19 +88,6 @@ start(JanusId, #{host:=Host, base:=Base, pass:=Pass}) ->
     {ok, Ip} = nklib_util:to_ip(Host),
     Conn = {?MODULE, ws, Ip, Base},
     nkpacket:connect(Conn, ConnOpts).
-
-
-%% @doc Starts a new verto session to FS
--spec start(nkmedia_janus_engine:id()) ->
-    {ok, pid()} | {error, term()}.
-
-start(JanusId) ->
-    case nkmedia_janus_engine:get_config(JanusId) of
-        {ok, #{}=Config} -> 
-            start(JanusId, Config);
-        {error, Error} -> 
-            {error, Error}
-    end.
 
 
 %% @doc 
@@ -511,7 +511,8 @@ process_server_resp(event, _OpId, Req, From, Msg, _NkPort, State) ->
 
 process_server_resp(error, _OpId, _Req, From, Msg, _NkPort, State) ->
     #{<<"error">> := #{<<"code">>:=Code, <<"reason">>:=Reason}} = Msg,
-    nklib_util:reply(From, {error, {Code, Reason}}),
+    Error = list_to_binary(["(", nklib_util:to_binary(Code), "): ", Reason]),
+    nklib_util:reply(From, {error, Error}),
     {ok, State};
 
 process_server_resp(Other, _OpId, _Req, From, Msg, _NkPort, State) ->

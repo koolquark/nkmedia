@@ -28,7 +28,7 @@
 -export([nkmedia_janus_get_mediaserver/1]).
 -export([nkmedia_session_init/2, nkmedia_session_terminate/2]).
 -export([nkmedia_session_type/2, nkmedia_session_answer/3,
-         nkmedia_session_update/3, nkmedia_session_stop/2, 
+         nkmedia_session_update/4, nkmedia_session_stop/2, 
          nkmedia_session_handle_info/2]).
 -export([api_cmd_syntax/6]).
 -export([nkdocker_notify/2]).
@@ -114,12 +114,13 @@ nkmedia_janus_get_mediaserver(#{srv_id:=SrvId}) ->
 %% Implemented Callbacks - error
 %% ===================================================================
 
-error_code(janus_error)         ->  {200, <<"Janus error">>};
-error_code(janus_down)          ->  {200, <<"Janus down">>};
-error_code(janus_bye)           ->  {200, <<"Janus bye">>};
-error_code(janus_room_creation)  -> {200, <<"Janus room creation">>};
-
-error_code(_)                   ->  continue.
+error_code(janus_error)             ->  {200, <<"Janus error">>};
+error_code({janus_error, Error})    ->  {200, ["Janus error ", Error]};
+error_code(janus_connection_error)  ->  {200, <<"Janus connection error">>};
+error_code(janus_down)              ->  {200, <<"Janus engine down">>};
+error_code(janus_bye)               ->  {200, <<"Janus bye">>};
+error_code(janus_room_creation)     ->  {200, <<"Janus room creation">>};
+error_code(_)                       ->  continue.
 
 
 %% ===================================================================
@@ -177,11 +178,11 @@ nkmedia_session_answer(Type, Answer, Session) ->
 
 
 %% @private
-nkmedia_session_update(Type, Update, Session) ->
+nkmedia_session_update(Update, Opts, Type, Session) ->
     case maps:get(backend, Session, janus) of
         janus ->
             State = state(Session),
-            case nkmedia_janus_session:update(Type, Update, Session, State) of
+            case nkmedia_janus_session:update(Update, Opts, Type, Session, State) of
                 {ok, Type2, Reply, State2} ->
                     {ok, Type2, Reply, session(State2, Session)};
                 {error, Error, State2} ->
@@ -217,9 +218,9 @@ nkmedia_session_handle_info({'DOWN', Ref, process, _Pid, _Reason}, Session) ->
 %% ===================================================================
 
 %% @private
-api_cmd_syntax(media, Cmd, Data, Syntax, Defaults, Mandatory) ->
+api_cmd_syntax(<<"media">>, Cmd, Data, Syntax, Defaults, Mandatory) ->
     {Syntax2, Defaults2, Mandatory2} = syntax(Cmd, Syntax, Defaults, Mandatory),
-    {continue, [media, Cmd, Data, Syntax2, Defaults2, Mandatory2]};
+    {continue, [<<"media">>, Cmd, Data, Syntax2, Defaults2, Mandatory2]};
 
 api_cmd_syntax(_Class, _Cmd, _Data, _Syntax, _Defaults, _Mandatory) ->
     continue.
@@ -243,44 +244,30 @@ nkdocker_notify(_MonId, _Op) ->
 %% ===================================================================
 
 %% @private
-syntax(echo, Syntax, Defaults, Mandatory) ->
+syntax(<<"start_session">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             record => boolean,
-            record_file => binary
-        },
-        Defaults,
-        Mandatory
-    };
-
-syntax(publish, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{
-            record => boolean,
-            record_file => binary,
-            room => binary
-        },
-        Defaults,
-        Mandatory
-    };
-
-syntax(proxy, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{
+            bitrate => integer,
             proxy_type => {enum, [webrtc, rtp]},
-            record => boolean,
-            record_file => binary,
-            room => binary
+            room => binary,
+            publisher => binary,
+            use_audio => boolean,
+            use_video => boolean,
+            use_data => boolean
         },
         Defaults,
         Mandatory
     };
 
-syntax(listen, Syntax, Defaults, Mandatory) ->
+syntax(<<"update_session">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
-            room => binary,
-            publisher => binary
+            bitrate => integer,
+            use_audio => boolean,
+            use_video => boolean,
+            use_data => boolean,
+            record => boolean
         },
         Defaults,
         Mandatory

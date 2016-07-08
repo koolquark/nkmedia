@@ -29,14 +29,14 @@
 -export([listen/4, listen_switch/3, unlisten/1]).
 -export([from_sip/3, to_sip/3]).
 -export([nkmedia_sip_register/2, nkmedia_sip_invite/2]).
--export([answer/2]).
+-export([answer/2, update/2]).
 -export([get_all/0, stop_all/0, janus_event/4]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkMEDIA Janus Session ~p (~p) "++Txt, 
-               [State#state.janus_sess_id, State#state.status | Args])).
+    lager:Type("NkMEDIA Janus Session ~s (~p ~p) "++Txt, 
+               [State#state.nkmedia_id, State#state.janus_sess_id, State#state.status | Args])).
 
 -include("nkmedia.hrl").
 
@@ -63,19 +63,19 @@
         videocodec => vp8 | vp9 | h264,
         description => binary(),
         bitrate => integer(),
-        publishers => integer(),
-        record => boolean(),
-        rec_dir => binary()
+        publishers => integer()
+        % record => boolean(),
+        % rec_dir => binary()
     }.
 
 -type media_opts() ::
     #{
-        audio => boolean(),
-        video => boolean(),
-        data => boolean(),
+        use_audio => boolean(),
+        use_video => boolean(),
+        use_data => boolean(),
         bitrate => integer(),
-        record => boolean(),
-        filename => binary(),       % Without dir for publish, with dir for others
+        record => boolean(),        % Cannot be updated
+        filename => binary(),       % Cannot be updated
         info => term()
     }.
 
@@ -97,6 +97,8 @@
 %% ===================================================================
 
 %% @doc Starts a new session
+%% Starts a new Janus client
+%% Monitors calling process
 -spec start(janus_id(), nkmedia_session:id()) ->
     {ok, pid()}.
 
@@ -120,6 +122,15 @@ stop_all() ->
     lists:foreach(fun({_Id, Pid}) -> stop(Pid) end, get_all()).
 
 
+%% @doc Starts an echo session.
+%% The SDP is returned.
+-spec echo(pid()|janus_id(), nkmedia:offer(), media_opts()) ->
+    {ok, nkmedia:answer()} | {error, term()}.
+
+echo(Id, Offer, Opts) ->
+    OfferOpts = maps:with([use_audio, use_video, use_data], Offer),
+    do_call(Id, {echo, Offer, maps:merge(OfferOpts, Opts)}).
+
 
 %% @doc Starts a videocall inside the session.
 %% The SDP offer for the remote party is returned.
@@ -129,15 +140,6 @@ stop_all() ->
 
 videocall(Id, Offer, Opts) ->
     do_call(Id, {videocall, Offer, Opts}).
-
-
-%% @doc Starts a echo inside the session.
-%% The SDP is returned.
--spec echo(pid()|janus_id(), nkmedia:offer(), media_opts()) ->
-    {ok, nkmedia:answer()} | {error, term()}.
-
-echo(Id, Offer, Opts) ->
-    do_call(Id, {echo, Offer, Opts}).
 
 
 %% @doc Starts playing a file
@@ -241,6 +243,14 @@ to_sip(Id, Offer, Opts) ->
 
 answer(Id, Answer) ->
     do_call(Id, {answer, Answer}).
+
+
+%% @doc Updates a session
+-spec update(pid()|janus_id(), media_opts()) ->
+    ok | {error, term()}.
+
+update(Id, Update) ->
+    do_call(Id, {update, Update}).
 
 
 %% @private
@@ -365,14 +375,7 @@ init({JanusId, MediaSessId, CallerPid}) ->
     {stop, Reason::term(), #state{}} | {stop, Reason::term(), Reply::term(), #state{}}.
 
 handle_call({echo, Offer, Opts}, _From, #state{status=wait}=State) -> 
-    Opts2 = case Opts of
-        #{filename:=File} -> 
-            Opts#{filename:=nklib_util:to_binary(File)};
-        _ ->
-            #state{nkmedia_id=SessId} = State,
-            Opts#{filename=><<"/tmp/echo_", SessId/binary>>}
-    end,
-    do_echo(Offer, State#state{opts=Opts2});
+    do_echo(Offer, State#state{opts=Opts});
 
 handle_call({play, File, Opts}, _From, #state{status=wait}=State) -> 
     do_play(File, State#state{opts=Opts});
@@ -459,9 +462,16 @@ handle_call({answer, Answer}, From, State) ->
         {wait, to_sip_answer} ->
             do_to_sip_answer(Answer, From, State);
         _ ->
-            reply_error(invalid_state, State)
+            reply_stop({error, invalid_state}, State)
     end;
 
+handle_call({update, Opts}, _From, #state{status=Status}=State) ->
+    case Status of
+        echo -> 
+            do_echo_update(Opts, State);
+        _ ->
+            reply_stop({error, invalid_state}, State)
+    end;
    
 handle_call(_Msg, _From, State) -> 
     reply({error, invalid_state}, State).
@@ -522,6 +532,10 @@ handle_info(send_keepalive, State) ->
 
 handle_info({timeout, _, status_timeout}, State) ->
     ?LLOG(info, "status timeout", [], State),
+    {stop, normal, State};
+
+handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{conn_mon=Ref}=State) ->
+    ?LLOG(notice, "client monitor stop: ~p", [Reason], State),
     {stop, normal, State};
 
 handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{user_mon=Ref}=State) ->
@@ -590,9 +604,19 @@ do_echo(#{sdp:=SDP}, State) ->
             State2 = State#state{handle_id=Handle},
             reply({ok, #{sdp=>SDP2}}, status(echo, State2));
         {error, Error} ->
-            reply_error({echo_error, Error}, State)
+            reply_stop({error, {janus_error, Error}}, State)
     end.
 
+
+%% @private
+do_echo_update(Opts, #state{handle_id=Handle}=State) ->
+    Body = update_body(Opts),
+    case message(Handle, Body, #{}, State) of
+        {ok, #{<<"result">>:=<<"ok">>}, _} ->
+            reply(ok, State);
+        {error, Error} ->
+            reply({error, {janus_error, Error}}, State)
+    end.
 
 
 %% ===================================================================
@@ -617,13 +641,13 @@ do_play(File, State) ->
                             State3 = wait(play_answer, State2),
                             reply({ok, #{sdp=>SDP}}, State3);
                         {ok, #{<<"error">>:=Error}, _} ->
-                            reply_error({could_not_join, Error}, State2)
+                            reply_stop({error, {could_not_join, Error}}, State2)
                     end;
                 {error, Error} ->
-                    reply_error({list_error, Error}, State2)
+                    reply_stop({error, {janus_error, Error}}, State2)
             end;
         {error, Error} ->
-            reply_error({update_error, Error}, State2)
+            reply_stop({error, {janus_error, Error}}, State2)
     end.
     
 
@@ -635,7 +659,7 @@ do_play_answer(#{sdp:=SDP}, #state{handle_id=Handle} = State) ->
         {ok, #{<<"result">>:=#{<<"status">>:=<<"playing">>}}, _} ->
             reply(ok, status(play, State));
         {error, Error} ->
-            reply_error({start_error, Error}, State)
+            reply_stop({error, {janus_error, Error}}, State)
     end.
 
 
@@ -653,7 +677,7 @@ do_videocall(#{sdp:=SDP}, From, State) ->
             State2 = State#state{handle_id = Handle, from = From},
             do_videocall_2(SDP, State2);
         {error, Error} ->
-            reply_error({could_not_register, Error}, State)
+            reply_stop({error, {janus_error, Error}}, State)
     end.
 
 
@@ -667,7 +691,7 @@ do_videocall_2(SDP, State) ->
             State2 = State#state{handle_id2 = Handle2},
             do_videocall_3(SDP, State2);
         {error, Error} ->
-            reply({could_not_register, Error}, State)
+            reply({error, {janus_error, Error}}, State)
     end.
 
 
@@ -680,7 +704,7 @@ do_videocall_3(SDP, State) ->
         {ok, #{<<"result">>:=#{<<"event">>:=<<"calling">>}}, _} ->
             noreply(wait(videocall_offer, State));
         {error, Error} ->
-            reply_error({could_not_call, Error}, State)
+            reply_stop({error, {janus_error, Error}}, State)
     end.
 
 
@@ -705,13 +729,13 @@ do_videocall_answer(#{sdp:=SDP}, From, State) ->
                             State2 = State#state{from=From},
                             noreply(wait(videocall_reply, State2));
                         {error, Error} ->
-                            reply_error({set_error, Error}, State)
+                            reply_stop({error, {janus_error, Error}}, State)
                     end;
                 {error, Error} ->
-                    reply_error({set_error, Error}, State)
+                    reply_stop({error, {janus_error, Error}}, State)
             end;
         {error, Error} ->
-            reply_error({accepted_error, Error}, State)
+            reply_stop({error, {janus_error, Error}}, State)
     end.
 
 
@@ -730,7 +754,7 @@ do_list_rooms(State) ->
             detach(Handle, State),
             reply({ok, maps:from_list(List2)}, status(wait, State));
         {error, Error} ->
-            reply_error({create_error, Error}, State)
+            reply_stop({error, {janus_error, Error}}, State)
     end.
 
 
@@ -765,7 +789,7 @@ do_create_room(#state{room=Room, opts=Opts}=State) ->
             detach(Handle, State),
             reply(Reply, status(wait, State));
         {error, Error} ->
-            reply_error({create_error, Error}, State)
+            reply_stop({error, {janus_error, Error}}, State)
     end.
 
 
@@ -787,7 +811,7 @@ do_destroy_room(#state{room=Room}=State) ->
             detach(Handle, State),
             reply(Reply, status(wait, State));
         {error, Error} ->
-            reply_error({destroy_error, Error}, State)
+            reply_stop({error, {janus_error, Error}}, State)
     end.
 
 
@@ -813,11 +837,11 @@ do_publish(#{sdp:=SDP}, #state{room=Room, nkmedia_id=SessId} = State) ->
             State2 = State#state{handle_id=Handle},
             do_publish_2(SDP, State2);
         {ok, #{<<"error_code">>:=426}, _} ->
-            reply_error(unknown_room, State);
+            reply_stop({error, unknown_room}, State);
         {ok, #{<<"error">>:=Error}, _} ->
-            reply_error(Error, State);
+            reply_stop({error, Error}, State);
         {error, Error} ->
-            reply_error({joined_error, Error}, State)
+            reply_stop({error, {janus_error, Error}}, State)
     end.
 
 
@@ -848,10 +872,10 @@ do_publish_2(SDP_A, State) ->
                     State2 = State#state{room_mon=Mon},
                     reply({ok, #{sdp=>SDP_B}}, status(publish, State2));
                 {error, Error} ->
-                    reply_error({nkmedia_room_error, Error}, State)
+                    reply_stop({error, {nkmedia_room_error, Error}}, State)
             end;
         {error, Error} ->
-            reply_error({configure_error, Error}, State)
+            reply_stop({error, {janus_error, Error}}, State)
     end.
 
 
@@ -862,7 +886,7 @@ do_unpublish(#state{handle_id=Handle} = State) ->
         {ok, #{<<"videoroom">>:=<<"unpublished">>}, _} ->
             reply_stop(ok, State);
         {error, Error} ->
-            reply_error({joined_error, Error}, State)
+            reply_stop({error, {janus_error, Error}}, State)
     end.
 
 
@@ -896,12 +920,12 @@ do_listen(Listen, #state{room=Room, nkmedia_id=SessId, opts=Opts}=State) ->
                     State3 = State2#state{room_mon=Mon},
                     reply({ok, #{sdp=>SDP}}, wait(listen_answer, State3));
                 {error, Error} ->
-                    reply_error({nkmedia_room_error, Error}, State2)
+                    reply_stop({error, {nkmedia_room_error, Error}}, State2)
             end;
         {ok, #{<<"error">>:=Error}, _} ->
-            reply_error(Error, State);
+            reply_stop({error, Error}, State);
         {error, Error} ->
-            {error, {could_not_join, Error}}
+            {error, {janus_error, Error}}
     end.
 
 
@@ -914,7 +938,7 @@ do_listen_answer(#{sdp:=SDP}, State) ->
         {ok, #{<<"started">>:=<<"ok">>}, _} ->
             reply(ok, status(listen, State));
         {error, Error} ->
-            reply_error({start_error, Error}, State)
+            reply_stop({error, {janus_error, Error}}, State)
     end.
 
 
@@ -935,7 +959,7 @@ do_listen_switch(Listen, #state{handle_id=Handle, opts=Opts}=State) ->
         {ok, #{<<"error">>:=Error}, _} ->
             reply({error, Error}, State);
         {error, Error} ->
-            {error, {could_not_join, Error}}
+            {error, {janus_error, Error}}
     end.
 
 
@@ -946,7 +970,7 @@ do_unlisten(#state{handle_id=Handle}=State) ->
         {ok, #{<<"videoroom">>:=<<"unpublished">>}, _} ->
             reply_stop(ok, State);
         {error, Error} ->
-            reply_error({leave_error, Error}, State)
+            reply_stop({error, {janus_error, Error}}, State)
     end.
 
 
@@ -971,9 +995,9 @@ do_from_sip_register(#state{janus_sess_id=Id}=State) ->
             State2 = State#state{handle_id=Handle},
             noreply(wait(from_sip, State2));
         {ok, #{<<"error">>:=Error}, _} ->
-            reply_error(Error, State);
+            reply_stop({error, Error}, State);
         {error, Error} ->
-            reply_error({could_not_join, Error}, State)
+            reply_stop({error, {janus_error, Error}}, State)
     end.
 
 
@@ -1003,7 +1027,7 @@ do_from_sip_answer(#{sdp:=SDP}, From, State) ->
         {ok, #{<<"result">>:=#{<<"event">>:=<<"accepted">>}}, _} ->
             noreply(wait(from_sip_invite, State#state{from=From}));
         {error, Error} ->
-            reply_error({accepted_error, Error}, State)
+            reply_stop({error, {janus_error, Error}}, State)
     end.
 
 
@@ -1022,9 +1046,9 @@ do_to_sip_register(State) ->
             State2 = State#state{handle_id=Handle},
             do_to_sip(State2);
         {ok, #{<<"error">>:=Error}, _} ->
-            reply_error(Error, State);
+            reply_stop({error, Error}, State);
         {error, Error} ->
-            reply_error({could_not_join, Error}, State)
+            reply_stop({error, {janus_error, Error}}, State)
     end.
 
 
@@ -1040,7 +1064,7 @@ do_to_sip(#state{janus_sess_id=Id, handle_id=Handle, offer=#{sdp:=SDP}}=State) -
             State2 = State#state{offer=undefined},
             noreply(wait(to_sip_invite, State2));
         {error, Error} ->
-            reply_error({accepted_error, Error}, State)
+            reply_stop({error, {janus_error, Error}}, State)
     end.
 
 
@@ -1051,7 +1075,7 @@ do_to_sip_answer(#{sdp:=SDP}, From, State) ->
         ok ->
             noreply(wait(to_sip_reply, State#state{from=From}));
         {error, Error} ->
-            reply_error({sip_error, Error}, State)
+            reply_stop({error, {sip_error, Error}}, State)
     end.
 
 
@@ -1157,7 +1181,12 @@ detach(Handle, #state{janus_sess_id=SessId, conn=Pid}) ->
 message(Handle, Body, Jsep, #state{janus_sess_id=SessId, conn=Pid}) ->
     case nkmedia_janus_client:message(Pid, SessId, Handle, Body, Jsep) of
         {ok, #{<<"data">>:=Data}, Jsep2} ->
-            {ok, Data, Jsep2};
+            case Data of
+                #{<<"error">>:=Error, <<"error_code">>:=Code} ->
+                    {error, list_to_binary(["(", integer_to_list(Code), "): ", Error])};
+                _ ->
+                    {ok, Data, Jsep2}
+            end;
         {error, Error} ->
             {error, Error}
     end.
@@ -1224,11 +1253,6 @@ reply_stop(Reply, State) ->
 
 
 %% @private
-reply_error(Error, State) ->
-    {stop, normal, {error, Error}, State}.
-
-
-%% @private
 noreply(State) ->
     {noreply, State, get_hibernate(State)}.
 
@@ -1285,13 +1309,44 @@ do_cast(SessId, Msg) ->
 %% @private
 get_body(Body, #state{opts=Opts}) ->
     Body#{
-        audio => maps:get(audio, Opts, true),
-        video => maps:get(video, Opts, true),
-        data => maps:get(data, Opts, true),
+        audio => maps:get(use_audio, Opts, true),
+        video => maps:get(use_video, Opts, true),
+        data => maps:get(use_data, Opts, true),
         bitrate => maps:get(bitrate, Opts, 0),
         record => maps:get(record, Opts, false),
-        filename => maps:get(filename, Opts)
+        filename => maps:get(filename, Opts, <<>>)
     }.
+
+
+%% @private
+update_body(Opts) ->
+    Body = [
+        case maps:find(use_audio, Opts) of
+            {ok, Audio} -> {audio, Audio};
+            error -> []
+        end,
+        case maps:find(use_video, Opts) of
+            {ok, Video} -> {video, Video};
+            error -> []
+        end,
+        case maps:find(use_data, Opts) of
+            {ok, Data} -> {data, Data};
+            error -> []
+        end,
+        case maps:find(bitrate, Opts) of
+            {ok, Bitrate} -> {bitrate, Bitrate};
+            error -> []
+        end,
+        case maps:find(record, Opts) of
+            {ok, Record} -> {record, Record};
+            error -> []
+        end,
+        case maps:find(filename, Opts) of
+            {ok, Filename} -> {filename, Filename};
+            error -> []
+        end
+    ],
+    maps:from_list(lists:flatten(Body)).
 
 
 

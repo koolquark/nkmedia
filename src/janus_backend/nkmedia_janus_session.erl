@@ -22,7 +22,7 @@
 -module(nkmedia_janus_session).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([init/3, terminate/3, start/3, answer/4, update/4, stop/3]).
+-export([init/3, terminate/3, start/3, answer/4, update/5, stop/3]).
 
 -export_type([config/0, type/0, opts/0, update/0]).
 
@@ -77,7 +77,8 @@
         janus_id => nkmedia_janus_engine:id(),
         janus_pid => pid(),
         janus_mon => reference(),
-        janus_op => answer
+        janus_op => answer,
+        janus_record_pos => integer()
     }.
 
 
@@ -111,14 +112,19 @@ terminate(_Reason, _Session, State) ->
 start(echo, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
     case get_janus(Session, State) of
         {ok, Pid, State2} ->
-            Opts = maps:with([record, record_file], Session),
-            case nkmedia_janus_op:echo(Pid, Offer, Opts) of
+            Opts1 = maps:with(
+                [record, use_audio, use_video, use_data, bitrate], Session),
+            {Opts2, State3} = add_record_opts(Session, Opts1, State2),
+            case nkmedia_janus_op:echo(Pid, Offer, Opts2) of
                 {ok, #{sdp:=_}=Answer} ->
-                    Reply = Opts#{answer=>Answer},
-                    {ok, echo, Reply, none, Answer, State2};
+                    Reply = #{answer=>Answer},
+                    {ok, echo, Reply, none, Answer, State3};
+                {error, {janus_error, Error}} ->
+                    ?LLOG(warning, "janus echo error: ~p", [Error], Session),
+                    {error, {janus_error, Error}, State3};
                 {error, Error} ->
                     ?LLOG(warning, "janus echo error: ~p", [Error], Session),
-                    {error, janus_error, State2}
+                    {error, janus_error, State3}
             end;
         {error, Error, State2} ->
             {error, Error, State2}
@@ -247,11 +253,26 @@ answer(_Type, _Answer, _Session, _State) ->
 
 
 %% @private
--spec update(type(), update(), nkmedia:session(), state()) ->
+-spec update(update(), map(), type(), nkmedia:session(), state()) ->
     {ok, type(), map(), state()} |
     {error, term(), state()} | continue().
 
-update(listen, {listen_switch, Publisher}, Session, #{janus_pid:=Pid}=State) ->
+update(media, Opts, echo, Session, #{janus_pid:=Pid}=State) ->
+    Opts2 = maps:with([use_audio, use_video, bitrate, record], Opts),
+    {Opts3, State3} = add_record_opts(Session, Opts2, State),
+    case nkmedia_janus_op:update(Pid, Opts3) of
+        ok ->
+            {ok, echo, #{}, State3};
+        {error, {janus_error, Error}} ->
+            {error, {janus_error, Error}, State3};
+        {error, Error} ->
+            ?LLOG(warning, "janus update error: ~p", [Error], Session),
+            {error, janus_error, State3}
+    end;
+
+
+
+update(listen_switch, #{publisher:=Publisher}, listen, Session, #{janus_pid:=Pid}=State) ->
     case nkmedia_janus_op:listen_switch(Pid, Publisher, #{}) of
         ok ->
             {ok, listen, #{publisher=>Publisher}, State};
@@ -260,7 +281,7 @@ update(listen, {listen_switch, Publisher}, Session, #{janus_pid:=Pid}=State) ->
             {error, janus_error, State}
     end;
 
-update(_Type, _Update, _Session, _State) ->
+update(_Update, _Opts, _Type, _Session, _State) ->
     continue.
 
 
@@ -286,8 +307,8 @@ get_janus(#{id:=SessId}=Session, #{janus_id:=JanusId}=State) ->
             State2 = State#{janus_pid=>Pid, janus_mon=>monitor(process, Pid)},
             {ok, Pid, State2};
         {error, Error} ->
-            ?LLOG(warning, "janus_op start error: ~p", [Error], Session),
-            {error, janus_error, State}
+            ?LLOG(warning, "janus connection start error: ~p", [Error], Session),
+            {error, janus_connection_error, State}
     end;
 
 get_janus(Session, State) ->
@@ -295,8 +316,8 @@ get_janus(Session, State) ->
         {ok, State2} ->
             get_janus(Session, State2);
         {error, Error} ->
-            ?LLOG(warning, "get_mediaserver (janus) error: ~p", [Error], Session),
-            {error, Error, State}
+            ?LLOG(warning, "get_mediaserver error: ~p", [Error], Session),
+            {error, no_mediaserver, State}
     end.
 
 
@@ -315,5 +336,18 @@ get_mediaserver(#{srv_id:=SrvId}=Session, State) ->
         {error, Error} ->
             {error, Error}
     end.
+
+
+%% @private
+add_record_opts(#{id:=SessId}, #{record:=true}=Opts, State) ->
+    Pos = maps:get(janus_record_pos, State, 0),
+    Name = io_lib:format("~s_p~4..0w", [SessId, Pos]),
+    File = filename:join(<<"/tmp/record">>, list_to_binary(Name)),
+    {Opts#{filename => File}, State#{janus_record_pos=>Pos+1}};
+
+add_record_opts(_Session, Opts, State) ->
+    {Opts, State}.
+
+
 
 

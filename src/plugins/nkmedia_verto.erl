@@ -419,7 +419,7 @@ process_client_req(<<"verto.invite">>, Msg, NkPort, State) ->
         use_audio => true,
         use_stereo => UseStereo,
         use_video => UseVideo,
-        use_sceen => UseScreen,
+        use_srceen => UseScreen,
         in_bw => InBW,
         out_bw => OutBW,
         caller_name => CallerName,

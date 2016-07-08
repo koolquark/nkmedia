@@ -22,6 +22,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([error/1, get_q850/1, add_uuid/1]).
+-export([session_reg_id/3]).
 -export([kill/1]).
 
 -export_type([stop_reason/0, q850/0]).
@@ -34,7 +35,7 @@
 
 % -type notify_refs() :: [{notify(), reference()|undefined}].
 
--include("nkmedia.hrl").
+-include_lib("nkservice/include/nkservice.hrl").
 
 
 %% @private
@@ -47,23 +48,18 @@ add_uuid(Config) ->
 
 
 
-% %% @private
-% -spec notify_refs(notify()|[notify()], notify_refs()) ->
-% 	notify_refs().
+%% @private
+session_reg_id(SrvId, Type, SessId) ->
+	#reg_id{
+		srv_id = SrvId, 	
+		class = <<"media">>, 
+		subclass = <<"session">>,
+		type = nklib_util:to_binary(Type),
+		obj_id = SessId
+	}.
 
-% notify_refs([], Notifies) ->
-% 	Notifies;
 
-% notify_refs([Notify|Rest], Notifies) ->
-% 	Term = case Notify of
-% 		{_, Pid} when is_pid(Pid) -> {Notify, monitor(process, Pid)};
-% 		{_, _, Pid} when is_pid(Pid) -> {Notify, monitor(process, Pid)};
-% 		_ -> {Notify, undefined}
-% 	end,
-% 	notify_refs(Rest, [Term|Notifies]);
 
-% notify_refs(Other, Notifies) ->
-% 	notify_refs([Other], Notifies).
 
 -spec error(stop_reason()) ->
 	{integer(), binary()} | not_foubd. 
@@ -187,7 +183,6 @@ kill(Type) ->
 		calls -> [Pid || {_, _, Pid} <- nkmedia_call:get_all()]
 	end,
 	lists:foreach(fun(Pid) -> exit(Pid, kill) end, Pids).
-
 
 
 

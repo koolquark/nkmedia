@@ -33,7 +33,7 @@
 -export([nkmedia_verto_login/3, nkmedia_verto_invite/4, nkmedia_verto_bye/3,
          verto_client_fun/2]).
 
--include("nkmedia.hrl").
+% -include("nkmedia.hrl").
 
 -define(LOG_SAMPLE(Type, Txt, Args, State),
     lager:Type("API Sample (~s) "++Txt, [maps:get(user, State) | Args])).
@@ -205,7 +205,7 @@ nkmedia_verto_invite(SrvId, CallId, #{dest:=<<"0">>}=Offer, Verto) ->
         {ok, #{<<"answer">>:=#{<<"sdp">>:=SDP}}} ->
             {answer, #{sdp=>SDP}, {api_sample, Pid}, Verto};
         {error, {_Code, Txt}} ->
-            lager:warning("API Sample: Error creating session: ~s", [Txt]),
+            lager:notice("API Sample: Error creating session: ~s", [Txt]),
             {rejected, normal, Verto}
     end.
 
