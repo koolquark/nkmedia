@@ -12,7 +12,7 @@
 * [Introduction](api_intro.md)
 * [Core API](api_commands.md)
 * Plugins API
-  * nkmedia_janus
+  * [nkmedia_janus](janus.md)
   * nkmedia_fs
   * nkmedia_kms
   * nkmedia_sip
