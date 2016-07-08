@@ -32,7 +32,7 @@
 -export([nkmedia_session_type/2, nkmedia_session_answer/3, 
 	     nkmedia_session_update/4, nkmedia_session_stop/2]).
 -export([nkmedia_call_init/2, nkmedia_call_terminate/2, 
-		 nkmedia_call_invite/4, nkmedia_call_cancel/3, nkmedia_call_event/4, 
+		 nkmedia_call_invite/4, nkmedia_call_cancel/3, nkmedia_call_event/3, 
 		 nkmedia_call_handle_call/3, nkmedia_call_handle_cast/2, 
 		 nkmedia_call_handle_info/2]).
 -export([error_code/1]).
@@ -228,8 +228,8 @@ nkmedia_call_terminate(_Reason, Call) ->
 
 
 %% @doc Called when an outbound call is to be sent
--spec nkmedia_call_invite(call_id(), nkmedia:offer(), nkmedia_call:dest(), call()) ->
-	{ok, term()|pid(), call()} | 
+-spec nkmedia_call_invite(call_id(), nkmedia_call:dest(), nkmedia:offer(), call()) ->
+	{ok, nklib:proc_id(), call()} | 
 	{retry, Secs::pos_integer(), call()} | 
 	{remove, call()} | 
 	continue().
@@ -239,18 +239,18 @@ nkmedia_call_invite(_CallId, _Offer, _Dest, Call) ->
 
 
 %% @doc Called when an outbound call is to be sent
--spec nkmedia_call_cancel(term()|pid(), nkmedia_call:dest(), call()) ->
+-spec nkmedia_call_cancel(call_id(), nklib:proc_id(), call()) ->
 	{ok, call()} | continue().
 
-nkmedia_call_cancel(_Pid, _Dest, Call) ->
+nkmedia_call_cancel(_CallId, _ProcId, Call) ->
 	{ok, Call}.
 
 
 %% @doc Called when the status of the call changes
--spec nkmedia_call_event(call_id(), session_id(), nkmedia_call:event(), call()) ->
+-spec nkmedia_call_event(call_id(), nkmedia_call:event(), call()) ->
 	{ok, call()} | continue().
 
-nkmedia_call_event(_CallId, _SessId, _Event, Call) ->
+nkmedia_call_event(_CallId, _Event, Call) ->
 	{ok, Call}.
 
 

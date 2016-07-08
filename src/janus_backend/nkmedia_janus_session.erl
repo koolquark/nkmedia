@@ -120,7 +120,6 @@ start(echo, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
                     Reply = #{answer=>Answer},
                     {ok, echo, Reply, none, Answer, State3};
                 {error, {janus_error, Error}} ->
-                    ?LLOG(warning, "janus echo error: ~p", [Error], Session),
                     {error, {janus_error, Error}, State3};
                 {error, Error} ->
                     ?LLOG(warning, "janus echo error: ~p", [Error], Session),
@@ -131,6 +130,41 @@ start(echo, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
     end;
 
 start(echo, _Session, State) ->
+    {error, missing_offer, State};
+
+start(proxy, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
+    case get_janus(Session, State) of
+        {ok, Pid, State2} ->
+            OfferType = maps:get(sdp_type, Offer, webrtc),
+            OutType = maps:get(proxy_type, Session, webrtc),
+            Fun = case {OfferType, OutType} of
+                {webrtc, webrtc} -> videocall;
+                {webrtc, rtp} -> to_sip;
+                {rtp, webrtc} -> from_sip;
+                {rtp, rtp} -> error
+            end,
+            case Fun of
+                error ->
+                    {error, invalid_parameters, State};
+                _ ->
+                    case nkmedia_janus_op:Fun(Pid, Offer, #{}) of
+                        {ok, Offer2} ->
+                            State3 = State2#{janus_op=>answer},
+                            Offer3 = maps:merge(Offer, Offer2),
+                            Reply = #{offer=>Offer3},
+                            {ok, proxy, Reply, Offer3, none, State3};
+                        {error, {janus_error, Error}} ->
+                            {error, {janus_error, Error}, State2};
+                        {error, Error} ->
+                            ?LLOG(warning, "janus proxy error: ~p", [Error], Session),
+                            {error, {proxy_error, Error}, State2}
+                    end
+            end;
+        {error, Error, State2} ->
+            {error, Error, State2}
+    end;
+
+start(proxy, _Session, State) ->
     {error, missing_offer, State};
 
 start(publish, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
@@ -172,39 +206,6 @@ start(publish, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
     end;
 
 start(publish, _Session, State) ->
-    {error, missing_offer, State};
-
-start(proxy, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
-    case get_janus(Session, State) of
-        {ok, Pid, State2} ->
-            OfferType = maps:get(sdp_type, Offer, webrtc),
-            OutType = maps:get(proxy_type, Session, webrtc),
-            Fun = case {OfferType, OutType} of
-                {webrtc, webrtc} -> videocall;
-                {webrtc, rtp} -> to_sip;
-                {rtp, webrtc} -> from_sip;
-                {rtp, rtp} -> error
-            end,
-            case Fun of
-                error ->
-                    {error, invalid_parameters, State};
-                _ ->
-                    case nkmedia_janus_op:Fun(Pid, Offer, #{}) of
-                        {ok, Offer2} ->
-                            State3 = State2#{janus_op=>answer},
-                            Offer3 = maps:merge(Offer, Offer2),
-                            Reply = #{offer=>Offer3},
-                            {ok, proxy, Reply, Offer3, none, State3};
-                        {error, Error} ->
-                            ?LLOG(warning, "janus proxy error: ~p", [Error], Session),
-                            {error, {proxy_error, Error}, State2}
-                    end
-            end;
-        {error, Error, State2} ->
-            {error, Error, State2}
-    end;
-
-start(proxy, _Session, State) ->
     {error, missing_offer, State};
 
 start(listen, #{room:=Room, publisher:=Publisher}=Session, State) ->

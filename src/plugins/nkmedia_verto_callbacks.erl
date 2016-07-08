@@ -31,7 +31,6 @@
          nkmedia_verto_dtmf/4, nkmedia_verto_terminate/2,
          nkmedia_verto_handle_call/3, nkmedia_verto_handle_cast/2,
          nkmedia_verto_handle_info/2]).
--export([nkmedia_session_invite/4, nkmedia_session_reg_event/4]).
 -export([nkmedia_call_resolve/2]).
 
 -define(VERTO_WS_TIMEOUT, 60*60*1000).
@@ -217,23 +216,6 @@ error_code(_) -> continue.
 %% Implemented Callbacks - nkmedia_session
 %% ===================================================================
 
-
-%% @private
-nkmedia_session_reg_event(SessId, {nkmedia_verto, _CallId, Pid}, 
-                          {answer, Answer}, _Session) ->
-    #{sdp:=_} = Answer,
-    lager:info("Verto (~s) calling media available", [SessId]),
-    ok = nkmedia_verto:answer(Pid, SessId, Answer),
-    continue;
-
-nkmedia_session_reg_event(SessId, {nkmedia_verto, _CallId, Pid}, 
-                          {hangup, _}, _Session) ->
-    lager:info("Verto (~s) captured hangup", [SessId]),
-    nkmedia_verto:hangup(Pid, SessId),
-    continue;
-
-nkmedia_session_reg_event(_SessId, _Id, _Event, _Session) ->
-    continue.
 
 
 %% @private

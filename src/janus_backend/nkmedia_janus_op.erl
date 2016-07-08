@@ -487,8 +487,17 @@ handle_cast({event, _Id, _Handle, stop}, State) ->
 
 handle_cast({event, _Id, _Handle, #{<<"janus">>:=<<"hangup">>}=Msg}, State) ->
     #{<<"reason">>:=Reason} = Msg,
-    ?LLOG(notice, "hangup from janus (~s)", [Reason], State),
+    ?LLOG(info, "hangup from janus (~s)", [Reason], State),
     {stop, normal, State};
+
+handle_cast({event, _Id, _Handle, #{<<"janus">>:=<<"webrtcup">>}}, State) ->
+    ?LLOG(info, "WEBRTC UP", [], State),
+    {noreply, State};
+
+handle_cast({event, _Id, _Handle, #{<<"janus">>:=<<"media">>}=Msg}, State) ->
+    #{<<"type">>:=Type, <<"receiving">>:=Bool} = Msg,
+    ?LLOG(info, "WEBRTC Media ~s: ~s", [Type, Bool], State),
+    {noreply, State};
 
 handle_cast({event, Id, Handle, Msg}, State) ->
     case parse_event(Msg) of

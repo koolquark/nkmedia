@@ -23,8 +23,8 @@
 
 -export([plugin_deps/0, plugin_syntax/0, plugin_listen/2, 
          plugin_start/2, plugin_stop/2]).
--export([nkmedia_janus_init/2, nkmedia_janus_login/4, nkmedia_janus_call/3,
-         nkmedia_janus_invite/3, nkmedia_janus_answer/3, nkmedia_janus_bye/2,
+-export([nkmedia_janus_init/2, 
+         nkmedia_janus_invite/4, nkmedia_janus_answer/4, nkmedia_janus_bye/3,
          nkmedia_janus_start/3, nkmedia_janus_terminate/2,
          nkmedia_janus_handle_call/3, nkmedia_janus_handle_cast/2,
          nkmedia_janus_handle_info/2]).
@@ -93,70 +93,54 @@ nkmedia_janus_init(_NkPort, Janus) ->
     {ok, Janus}.
 
 
-%% @doc Called when a login request is received
--spec nkmedia_janus_login(JanusSessId::binary(), Login::binary(), Pass::binary(),
-                          janus()) ->
-    {boolean(), janus()} | {true, Login::binary(), janus()} | continue().
+% %% @doc Called when a login request is received
+% -spec nkmedia_janus_login(JanusSessId::binary(), Login::binary(), Pass::binary(),
+%                           janus()) ->
+%     {boolean(), janus()} | {true, Login::binary(), janus()} | continue().
 
-nkmedia_janus_login(_JanusId, _Login, _Pass, Janus) ->
-    {false, Janus}.
+% nkmedia_janus_login(_JanusId, _Login, _Pass, Janus) ->
+%     {false, Janus}.
 
 
 %% @doc Called when the client sends an INVITE
-%% If {ok, janus(), pid()} is returned, we must call nkmedia_janus:answer/3 ourselves
-%% A call will be added. If pid() is included, it will be associated to it
--spec nkmedia_janus_invite(call_id(), nkmedia_janus:offer(), janus()) ->
-    {ok, pid()|undefined, janus()} | 
-    {answer, nkmedia_janus:answer(), pid()|undefined, janus()} | 
+-spec nkmedia_janus_invite(nkservice:id(), call_id(), nkmedia:offer(), janus()) ->
+    {ok, nklib:proc_id(), janus()} | 
+    {answer, nkmedia_janus:answer(), nklib:proc_id(), janus()} | 
     {hangup, nkservice:error(), janus()} | continue().
 
-nkmedia_janus_invite(SessId, Offer, #{srv_id:=SrvId}=Janus) ->
-    #{sdp_type:=webrtc} = Offer,
-    Offer2 = Offer#{pid=>self(), nkmedia_janus_proto=>in},
-    case nkmedia_session:start(SrvId, #{id=>SessId}) of
-        {ok, SessId, SessPid} ->
-            case SrvId:nkmedia_janus_call(SessId, Offer2, Janus) of
-                {ok, Janus2} ->
-                    {ok, SessPid, Janus2};
-                {rejected, Reason, Janus2} ->
-                    nkmedia_session:stop(SessId, Reason),
-                    {hangup, Reason, Janus2}
-            end;
-        {error, Error} ->
-            lager:warning("Janus start_inbound error: ~p", [Error]),
-            {hangup, <<"MediaServer Error">>, Janus}
-    end.
+nkmedia_janus_invite(_SrvId, _CallId, _Offer, Janus) ->
+    {hangup, not_implemented, Janus}.
 
-
-%% @doc Sends after an INVITE, if the previous function has not been modified
--spec nkmedia_janus_call(call_id(), binary(), janus()) ->
-    {ok, janus()} | {hangup, nkservice:error(), janus()} | continue().
-
-nkmedia_janus_call(CallId, Dest, Janus) ->
-    ok = nkmedia_session:answer_async(CallId, {invite, Dest}, #{}),
-    {ok, Janus}.
+    % #{sdp_type:=webrtc} = Offer,
+    % Offer2 = Offer#{pid=>self(), nkmedia_janus_proto=>in},
+    % case nkmedia_session:start(SrvId, #{id=>SessId}) of
+    %     {ok, SessId, SessPid} ->
+    %         case SrvId:nkmedia_janus_call(SessId, Offer2, Janus) of
+    %             {ok, Janus2} ->
+    %                 {ok, SessPid, Janus2};
+    %             {rejected, Reason, Janus2} ->
+    %                 nkmedia_session:stop(SessId, Reason),
+    %                 {hangup, Reason, Janus2}
+    %         end;
+    %     {error, Error} ->
+    %         lager:warning("Janus start_inbound error: ~p", [Error]),
+    %         {hangup, <<"MediaServer Error">>, Janus}
+    % end.
 
 
 %% @doc Called when the client sends an ANSWER
--spec nkmedia_janus_answer(call_id(), nkmedia_janus:answer(), janus()) ->
+-spec nkmedia_janus_answer(call_id(), nklib:proc_id(), nkmedia:answer(), janus()) ->
     {ok, janus()} |{hangup, nkservice:error(), janus()} | continue().
 
-nkmedia_janus_answer(CallId, Answer, Janus) ->
-    case nkmedia_session:invite_reply(CallId, {answered, Answer}) of
-        ok ->
-            {ok, Janus};
-        {error, Error} ->
-            lager:error("No Session: ~p: ~p", [CallId, Error]),
-            {hangup, <<"No Session">>, Janus}
-    end.
+nkmedia_janus_answer(_CallId, _ProcId, _Answer, Janus) ->
+    {ok, Janus}.
 
 
 %% @doc Sends when the client sends a BYE
--spec nkmedia_janus_bye(call_id(), janus()) ->
+-spec nkmedia_janus_bye(call_id(), nklib:proc_id(), janus()) ->
     {ok, janus()} | continue().
 
-nkmedia_janus_bye(CallId, Janus) ->
-    nkmedia_session:stop(CallId, janus_bye),
+nkmedia_janus_bye(_CallId, _ProcId, Janus) ->
     {ok, Janus}.
 
 

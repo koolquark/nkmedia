@@ -29,6 +29,7 @@
 -export([stop/1, stop/2, stop_all/0]).
 -export([answer/2, answer_async/2, update/3, update_async/3, info/2]).
 -export([register/2, unregister/2, link_session/3, get_all/0,  peer_event/3]).
+-export([get_call_data/1]).
 -export([find/1, do_cast/2, do_call/2, do_call/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
@@ -245,6 +246,16 @@ get_all() ->
     nklib_proc:values(?MODULE).
 
 
+%% @private
+-spec get_call_data(id()) ->
+    {ok, nkservice:id(), nkmedia:offer(), pid()} | {error, term()}.
+
+get_call_data(SessId) ->
+    do_call(SessId, get_call_data).
+
+
+
+
 
 %% ===================================================================
 %% Internal
@@ -326,15 +337,19 @@ handle_call({update, Update, Opts}, From, State) ->
 handle_call(get_state, _From, State) -> 
     reply(State, State);
 
-handle_call(get_offer, _From, #{session:=#{offer:=Offer}}=State) -> 
+handle_call(get_offer, _From, #state{session=#{offer:=Offer}}=State) -> 
     reply({ok, Offer}, State);
 
-handle_call(get_answer, _From, #{session:=Session}=State) -> 
+handle_call(get_answer, _From, #state{session=Session}=State) -> 
     Reply = case maps:find(answer, Session) of
         {ok, Answer} -> {ok, Answer};
         error -> {error, answer_not_set}
     end,
     reply(Reply, State);
+
+handle_call(get_call_data, _From, #state{srv_id=SrvId, session=Session}=State) -> 
+    #{offer:=Offer} = Session,
+    reply({ok, SrvId, Offer, self()}, State);
 
 handle_call({link_session, IdA, Opts}, _From, #state{id=IdB}=State) ->
     case find(IdA) of

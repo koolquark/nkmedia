@@ -37,7 +37,7 @@
     lager:Type("NkMEDIA Janus Client "++Txt, Args)).
 
 -define(PRINT(Txt, Args, State), 
-        print(Txt, Args, State),    % Comment this
+        % print(Txt, Args, State),    % Comment this
         ok).
 
 
@@ -296,22 +296,14 @@ conn_parse({text, Data}, NkPort, State) ->
             {ok, State2};
         #{<<"janus">>:=<<"detached">>} ->
             {ok, State};
-        #{<<"janus">>:=<<"webrtcup">>, <<"session_id">>:=SessionId} ->
-            ?LLOG(info, "WEBRTCUP for ~p", [SessionId], State),
-            {ok, State};
-        #{<<"janus">>:=<<"media">>, <<"session_id">>:=SessionId, <<"type">>:=Type} ->
-            ?LLOG(info, "MEDIA (~s) for ~p", [Type, SessionId], State),
-            {ok, State};
-        #{<<"janus">>:=<<"hangup">>, <<"reason">>:=_Reason, 
-          <<"session_id">>:=Id, <<"sender">>:=Handle} ->
+        #{<<"janus">>:=Cmd, <<"session_id">>:=Id, <<"sender">>:=Handle} ->
             case get_client(Id, State) of
                 {ok, CallBack, ClientId} ->
-                    event(CallBack, ClientId, Id, Handle, Msg, State),
-                    {ok, State};
+                    event(CallBack, ClientId, Id, Handle, Msg, State);
                 not_found ->
-                    ?LLOG(notice, "unexpected server event: ~p", [Msg], State),
-                    {ok, State}
-            end;
+                    ?LLOG(notice, "unexpected ~s for ~p", [Cmd, Id], State)
+            end,
+            {ok, State};
         #{<<"janus">>:=Cmd} ->
             ?LLOG(notice, "unknown msg: ~s: ~p", [Cmd, Msg], State),
             {ok, State}

@@ -124,7 +124,7 @@ get_all() ->
 
 
 
--record(session_op, {
+-record(trans, {
     type :: term(),
     timer :: reference(),
     from :: {pid(), term()} | {async, pid(), term()}
@@ -132,12 +132,12 @@ get_all() ->
 
 -record(state, {
     srv_id ::  nkservice:id(),
+    trans :: #{op_id() => #trans{}},
     verto_sess_id = <<>> :: binary(),
-    user = <<"undefined">> :: binary(),
     current_id = 1 :: integer(),
+    user = <<"undefined">> :: binary(),
     bw_bytes :: integer(),
     bw_time :: integer(),
-    session_ops :: #{op_id() => #session_op{}},
     links :: nklib_links:links(),
     verto :: verto()
 }).
@@ -165,7 +165,7 @@ conn_init(NkPort) ->
     Verto = #{remote=>Remote, srv_id=>SrvId},
     State1 = #state{
         srv_id = SrvId, 
-        session_ops = #{}, 
+        trans = #{}, 
         links = nklib_links:new(),
         verto = Verto
     },
@@ -536,7 +536,7 @@ process_client_req(Method, Msg, _NkPort, State) ->
 
 
 %% @private
-process_client_resp(#session_op{type={invite, CallId, _Offer}, from=From}, 
+process_client_resp(#trans{type={invite, CallId, _Offer}, from=From}, 
                     Resp, _Msg, _NkPort, State) ->
     case Resp of
         {ok, _} ->
@@ -547,7 +547,7 @@ process_client_resp(#session_op{type={invite, CallId, _Offer}, from=From},
             {ok, State}
     end;
 
-process_client_resp(#session_op{from=From}, Resp, _Msg, _NkPort, State) ->
+process_client_resp(#trans{from=From}, Resp, _Msg, _NkPort, State) ->
     case Resp of
         {ok, _} -> 
             nklib_util:reply(From, ok);
@@ -603,25 +603,25 @@ make_msg(Id, {hangup, CallId, Reason}, #state{srv_id=SrvId}) ->
 
 
 %% @private
-insert_op(OpId, Type, From, #state{session_ops=AllOps}=State) ->
+insert_op(OpId, Type, From, #state{trans=AllOps}=State) ->
     Time = case OpId of
         {wait_answer, _} -> ?CALL_TIMEOUT;
         _ -> ?OP_TIMEOUT
     end,
-    NewOp = #session_op{
+    NewOp = #trans{
         type = Type,
         from = From,
         timer = erlang:start_timer(1000*Time, self(), {op_timeout, OpId})
     },
-    State#state{session_ops=maps:put(OpId, NewOp, AllOps)}.
+    State#state{trans=maps:put(OpId, NewOp, AllOps)}.
 
 
 %% @private
-extract_op(OpId, #state{session_ops=AllOps}=State) ->
+extract_op(OpId, #state{trans=AllOps}=State) ->
     case maps:find(OpId, AllOps) of
-        {ok, #session_op{timer=Timer}=OldOp} ->
+        {ok, #trans{timer=Timer}=OldOp} ->
             nklib_util:cancel_timer(Timer),
-            State2 = State#state{session_ops=maps:remove(OpId, AllOps)},
+            State2 = State#state{trans=maps:remove(OpId, AllOps)},
             {OldOp, State2};
         error ->
             not_found
@@ -692,9 +692,9 @@ send_bw_test(Iter, Acc, NkPort) ->
 
 
 %% @private
-user_reply(#session_op{from={async, Pid, Ref}}, Msg) ->
+user_reply(#trans{from={async, Pid, Ref}}, Msg) ->
     Pid ! {?MODULE, Ref, Msg};
-user_reply(#session_op{from=From}, Msg) ->
+user_reply(#trans{from=From}, Msg) ->
     gen_server:reply(From, Msg).
 
 
