@@ -4,9 +4,9 @@
 
 When the nkmedia_janus backend is selected (either manually, using the `backend` option when creating the session or automatically, depending on the type), de following types are supported:
 
-Type|Description
+Type|Updates|Description
 ---|---
-[echo](#echo)|Echoes audio and/or video, managing bandwitch and recording
+[echo](#echo)|[yes](#echo-update)|Echoes audio and/or video, managing bandwitch and recording
 
 Most types allow modification of the media sytream, see documentation for each one.
 
@@ -24,7 +24,7 @@ Field|Default|Description
 ---|---|---
 use_audio|true|Include the audio or not
 use_video|true|Include the video or not
-bitrate|0|Maximum bitrate (kbps)
+bitrate|0|Maximum bitrate (kbps, 0:unlimited)
 record|false|Perform recording of audio and video
 
 
@@ -59,7 +59,7 @@ record|false|Perform recording of audio and video
 }
 ```
 
-### Updates
+### Echo Update
 
 It is possible to update the media session once started, using the `update_session` command. For the _echo_ type, the parameters `use_audio`, `use_video`, `bitrate` and `record` can be modified. If the recording is stopped and then started again, a new file will be generated.
 
