@@ -5,7 +5,7 @@
 When the nkmedia_janus backend is selected (either manually, using the `backend` option when creating the session or automatically, depending on the type), de following types are supported:
 
 Type|Updates|Description
----|---
+---|---|---
 [echo](#echo)|[yes](#echo-update)|Echoes audio and/or video, managing bandwitch and recording
 
 Most types allow modification of the media sytream, see documentation for each one.
