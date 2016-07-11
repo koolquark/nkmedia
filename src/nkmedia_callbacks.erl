@@ -29,10 +29,11 @@
 		 nkmedia_session_reg_event/4,
 		 nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2, 
 		 nkmedia_session_handle_info/2]).
--export([nkmedia_session_type/2, nkmedia_session_answer/3, 
+-export([nkmedia_session_start/2, nkmedia_session_answer/3, 
 	     nkmedia_session_update/4, nkmedia_session_stop/2]).
 -export([nkmedia_call_init/2, nkmedia_call_terminate/2, 
-		 nkmedia_call_invite/4, nkmedia_call_cancel/3, nkmedia_call_event/3, 
+		 nkmedia_call_resolve/2, nkmedia_call_invite/4, nkmedia_call_cancel/3, 
+		 nkmedia_call_event/3, nkmedia_call_reg_event/4,
 		 nkmedia_call_handle_call/3, nkmedia_call_handle_cast/2, 
 		 nkmedia_call_handle_info/2]).
 -export([error_code/1]).
@@ -101,14 +102,14 @@ nkmedia_session_terminate(_Reason, Session) ->
 	{ok, Session}.
 
 
--spec nkmedia_session_type(nkmedia_session:type(), session()) ->
+-spec nkmedia_session_start(nkmedia_session:type(), session()) ->
 	{ok, nkmedia_session:type(), Reply::map(), session()} |
 	{error, nkservice:error(), session()} | continue().
 
-nkmedia_session_type(p2p, Session) ->
+nkmedia_session_start(p2p, Session) ->
 	{ok, p2p, #{}, Session};
 
-nkmedia_session_type(_Type, Session) ->
+nkmedia_session_start(_Type, Session) ->
 	{error, unknown_session_class, Session}.
 
 
@@ -132,21 +133,15 @@ nkmedia_session_update(_Update, _Opts, _Type, Session) ->
 
 
 %% @private%% @doc Called when the status of the session changes
--spec nkmedia_session_event(nkmedia_session:id(), nkmedia_session:event(), session()) ->
+-spec nkmedia_session_event(session_id(), nkmedia_session:event(), session()) ->
 	{ok, session()} | continue().
 
-nkmedia_session_event(SessId, Event, Session) ->
-	case Session of
-		#{{link, nkmedia_cmd}:=Pid} ->
-			nkmedia_cmd:session_event(SessId, Event, Pid);
-		_ ->
-			ok
-	end,
+nkmedia_session_event(_SessId, _Event, Session) ->
 	{ok, Session}.
 
 				  
 %% @doc Called when the status of the session changes
--spec nkmedia_session_peer_event(nkmedia_session:id(), nkmedia_session:event(), 
+-spec nkmedia_session_peer_event(session_id(), nkmedia_session:event(), 
 								 caller|callee, session()) ->
 	{ok, session()} | continue().
 
@@ -156,14 +151,18 @@ nkmedia_session_peer_event(_SessId, _Type, _Event, Session) ->
 
 %% @doc Called when the status of the session changes, for each registered
 %% process to the session
--spec nkmedia_session_reg_event(nkmedia_session:id(), term(), 
-								nkmedia_session:event(), session()) ->
+-spec nkmedia_session_reg_event(session_id(), term(), 
+								media_session:event(), session()) ->
 	{ok, session()} | continue().
 
-% nkmedia_session_reg_event(SessId, {nkmedia_api, Events, Pid}, Event, Session) ->
-% 	#{srv_id:=SrvId} = Session,
-% 	nkmedia_api:session_event(SrvId, SessId, Event, Pid, Events),
-% 	{ok, Session};
+nkmedia_session_reg_event(_SessId, {nkmedia_call, CallId, _CallPid}, Event, Session) ->
+	case Event of
+		{stop, Reason} ->
+			nkmedia_call:hangup(CallId, Reason);
+		_ ->
+			ok
+	end,
+	{ok, Session};
 
 nkmedia_session_reg_event(_SessId, _RegId, _Event, Session) ->
 	{ok, Session}.
@@ -228,6 +227,15 @@ nkmedia_call_terminate(_Reason, Call) ->
 
 
 %% @doc Called when an outbound call is to be sent
+-spec nkmedia_call_resolve(nkmedia_call:dest(), call()) ->
+	{ok, nkmedia_call:dest(), [nkmedia_call:dest_ext()]} |
+	continue().
+
+nkmedia_call_resolve(Dest, Call) ->
+	{ok, Dest, Call}.
+
+
+%% @doc Called when an outbound call is to be sent
 -spec nkmedia_call_invite(call_id(), nkmedia_call:dest(), nkmedia:offer(), call()) ->
 	{ok, nklib:proc_id(), call()} | 
 	{retry, Secs::pos_integer(), call()} | 
@@ -252,6 +260,26 @@ nkmedia_call_cancel(_CallId, _ProcId, Call) ->
 
 nkmedia_call_event(_CallId, _Event, Call) ->
 	{ok, Call}.
+
+
+%% @doc Called when the status of the call changes, for each registered
+%% process to the session
+-spec nkmedia_call_reg_event(call_id(),	term(), nkmedia_call:event(), call()) ->
+	{ok, session()} | continue().
+
+nkmedia_call_reg_event(_CallId, {session, SessId}, Event, Call) ->
+	case Event of
+		{answered, _Callee, Answer} ->
+			nkmedia_session:answer(SessId, Answer);
+		{hangup, Reason} ->
+			nkmedia_session:stop(SessId, Reason);
+		_ ->
+			ok
+	end,
+	{ok, Call};
+
+nkmedia_call_reg_event(_CallId, _RegId, _Event, Session) ->
+	{ok, Session}.
 
 
 %% @doc

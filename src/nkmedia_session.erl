@@ -368,7 +368,7 @@ handle_call({register, ProcId}, _From, State) ->
     ?LLOG(info, "proc registered (~p)", [ProcId], State),
     Pid = nklib_links:get_pid(ProcId),
     State2 = links_add({reg, ProcId}, none, Pid, State),
-    reply(ok, State2);
+    reply({ok, self()}, State2);
 
 handle_call({unregister, ProcId}, _From, State) ->
     ?LLOG(info, "proc unregistered (~p)", [ProcId], State),
@@ -461,15 +461,15 @@ code_change(OldVsn, State, Extra) ->
     ok.
 
 terminate(Reason, State) ->
+    {ok, State2} = handle(nkmedia_session_terminate, [Reason], State),
     case Reason of
         normal ->
-            ?LLOG(info, "terminate: ~p", [Reason], State),
-            _ = do_stop(normal, State);
+            ?LLOG(info, "terminate: ~p", [Reason], State2),
+            _ = do_stop(normal, State2);
         _ ->
-            ?LLOG(notice, "terminate: ~p", [Reason], State),
-            _ = do_stop(anormal, State)
-    end,
-    _ = handle(nkmedia_session_terminate, [Reason], State).
+            ?LLOG(notice, "terminate: ~p", [Reason], State2),
+            _ = do_stop(anormal, State2)
+    end.
 
 
 
@@ -481,7 +481,7 @@ terminate(Reason, State) ->
 
 %% @private
 do_start(From, #state{type=Type}=State) ->
-    case handle(nkmedia_session_type, [Type], State) of
+    case handle(nkmedia_session_start, [Type], State) of
         {ok, Type2, Reply, #state{session=Session2}=State2} ->
             case Session2 of
                 #{offer:=#{sdp:=_}} ->

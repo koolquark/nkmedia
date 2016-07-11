@@ -34,7 +34,7 @@
     lager:Type("NkMEDIA VERTO (~s) "++Txt, [State#state.user | Args])).
 
 -define(PRINT(Txt, Args, State), 
-        % print(Txt, Args, State),    % Uncomment this for detailed logs
+        print(Txt, Args, State),    % Uncomment this for detailed logs
         ok).
 
 
@@ -540,7 +540,7 @@ process_client_resp(#trans{type={invite, CallId, _Offer}, from=From},
                     Resp, _Msg, _NkPort, State) ->
     case Resp of
         {ok, _} ->
-            gen_server:reply(From, {ok, CallId, self()}),
+            gen_server:reply(From, {ok, self()}),
             {ok, insert_op({wait_answer, CallId}, none, undefined, State)};
         {error, Code, Error} -> 
             nklib_util:reply(From, {verto_error, Code, Error}),

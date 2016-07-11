@@ -422,7 +422,7 @@ process_client_msg(call, Body, Msg, NkPort, #state{srv_id=SrvId}=State) ->
             ok;
         {answer, Answer, ProcId, State2} ->
             gen_server:cast(self(), {answer, CallId, Answer});
-        {hangup, Reason, State2} ->
+        {rejected, Reason, State2} ->
             ProcId = undefined,
             hangup(self(), CallId, Reason)
     end,

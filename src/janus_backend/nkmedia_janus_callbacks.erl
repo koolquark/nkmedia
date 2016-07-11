@@ -27,7 +27,7 @@
 -export([error_code/1]).
 -export([nkmedia_janus_get_mediaserver/1]).
 -export([nkmedia_session_init/2, nkmedia_session_terminate/2]).
--export([nkmedia_session_type/2, nkmedia_session_answer/3,
+-export([nkmedia_session_start/2, nkmedia_session_answer/3,
          nkmedia_session_update/4, nkmedia_session_stop/2, 
          nkmedia_session_handle_info/2]).
 -export([api_cmd_syntax/6]).
@@ -141,7 +141,7 @@ nkmedia_session_terminate(Reason, Session) ->
 
 
 %% @private
-nkmedia_session_type(Type, Session) ->
+nkmedia_session_start(Type, Session) ->
     case maps:get(backend, Session, janus) of
         janus ->
             State = state(Session),

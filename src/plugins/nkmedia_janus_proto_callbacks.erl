@@ -28,8 +28,9 @@
          nkmedia_janus_start/3, nkmedia_janus_terminate/2,
          nkmedia_janus_handle_call/3, nkmedia_janus_handle_cast/2,
          nkmedia_janus_handle_info/2]).
--export([nkmedia_session_invite/4, nkmedia_session_event/3]).
--export([nkmedia_call_resolve/2]).
+-export([error_code/1]).
+% -export([nkmedia_session_invite/4, nkmedia_session_event/3]).
+% -export([nkmedia_call_resolve/2]).
 
 
 -define(JANUS_WS_TIMEOUT, 60*60*1000).
@@ -75,6 +76,15 @@ plugin_stop(Config, #{name:=Name}) ->
 
 
 %% ===================================================================
+%% Implemented Callbacks - error
+%% ===================================================================
+
+error_code(janus_bye) -> {0, <<"Janus BYE">>};
+error_code(_) -> continue.
+
+
+
+%% ===================================================================
 %% Offering Callbacks
 %% ===================================================================
 
@@ -93,39 +103,15 @@ nkmedia_janus_init(_NkPort, Janus) ->
     {ok, Janus}.
 
 
-% %% @doc Called when a login request is received
-% -spec nkmedia_janus_login(JanusSessId::binary(), Login::binary(), Pass::binary(),
-%                           janus()) ->
-%     {boolean(), janus()} | {true, Login::binary(), janus()} | continue().
-
-% nkmedia_janus_login(_JanusId, _Login, _Pass, Janus) ->
-%     {false, Janus}.
-
-
 %% @doc Called when the client sends an INVITE
 -spec nkmedia_janus_invite(nkservice:id(), call_id(), nkmedia:offer(), janus()) ->
     {ok, nklib:proc_id(), janus()} | 
     {answer, nkmedia_janus:answer(), nklib:proc_id(), janus()} | 
-    {hangup, nkservice:error(), janus()} | continue().
+    {rejected, nkservice:error(), janus()} | continue().
 
 nkmedia_janus_invite(_SrvId, _CallId, _Offer, Janus) ->
-    {hangup, not_implemented, Janus}.
+    {rejected, not_implemented, Janus}.
 
-    % #{sdp_type:=webrtc} = Offer,
-    % Offer2 = Offer#{pid=>self(), nkmedia_janus_proto=>in},
-    % case nkmedia_session:start(SrvId, #{id=>SessId}) of
-    %     {ok, SessId, SessPid} ->
-    %         case SrvId:nkmedia_janus_call(SessId, Offer2, Janus) of
-    %             {ok, Janus2} ->
-    %                 {ok, SessPid, Janus2};
-    %             {rejected, Reason, Janus2} ->
-    %                 nkmedia_session:stop(SessId, Reason),
-    %                 {hangup, Reason, Janus2}
-    %         end;
-    %     {error, Error} ->
-    %         lager:warning("Janus start_inbound error: ~p", [Error]),
-    %         {hangup, <<"MediaServer Error">>, Janus}
-    % end.
 
 
 %% @doc Called when the client sends an ANSWER
@@ -198,59 +184,59 @@ nkmedia_janus_handle_info(Msg, Janus) ->
 %% ===================================================================
 
 
-%% @private
-nkmedia_session_event(SessId, {answer, Answer}, 
-                      #{offer:=#{nkmedia_janus_proto:=in, pid:=Pid}}) ->
-    #{sdp:=_} = Answer,
-    lager:info("Janus (~s) calling media available", [SessId]),
-    ok = nkmedia_janus_proto:answer(Pid, SessId, Answer),
-    continue;
+% %% @private
+% nkmedia_session_event(SessId, {answer, Answer}, 
+%                       #{offer:=#{nkmedia_janus_proto:=in, pid:=Pid}}) ->
+%     #{sdp:=_} = Answer,
+%     lager:info("Janus (~s) calling media available", [SessId]),
+%     ok = nkmedia_janus_proto:answer(Pid, SessId, Answer),
+%     continue;
 
 
-nkmedia_session_event(SessId, {hangup, _}, Session) ->
-    case Session of
-        #{offer:=#{nkmedia_janus_proto:=in, pid:=Pid1}} ->
-            lager:info("Janus (~s) In captured hangup", [SessId]),
-            nkmedia_janus_proto:hangup(Pid1, SessId);
-        _ -> 
-            ok
-    end,
-    case Session of
-        #{answer:=#{nkmedia_janus_proto:=out, pid:=Pid2}} ->
-            lager:info("Janus (~s) Out captured hangup", [SessId]),
-            nkmedia_janus_proto:hangup(Pid2, SessId);
-        _ ->
-            ok
-    end,
-    continue;
+% nkmedia_session_event(SessId, {hangup, _}, Session) ->
+%     case Session of
+%         #{offer:=#{nkmedia_janus_proto:=in, pid:=Pid1}} ->
+%             lager:info("Janus (~s) In captured hangup", [SessId]),
+%             nkmedia_janus_proto:hangup(Pid1, SessId);
+%         _ -> 
+%             ok
+%     end,
+%     case Session of
+%         #{answer:=#{nkmedia_janus_proto:=out, pid:=Pid2}} ->
+%             lager:info("Janus (~s) Out captured hangup", [SessId]),
+%             nkmedia_janus_proto:hangup(Pid2, SessId);
+%         _ ->
+%             ok
+%     end,
+%     continue;
 
-nkmedia_session_event(_SessId, _Event, _Session) ->
-    continue.
-
-
-%% @private
-nkmedia_session_invite(SessId, {nkmedia_janus_proto, Pid}, Offer, Session) ->
-    case nkmedia_janus_proto:invite(Pid, SessId, Offer#{monitor=>self()}) of
-        ok ->
-            {ringing, #{nkmedia_janus_proto=>out, pid=>Pid}, Session};
-        {error, Error} ->
-            lager:warning("Error calling invite: ~p", [Error]),
-            {rejected, <<"Janus Invite Error">>, Session}
-    end;
-
-nkmedia_session_invite(_SessId, _Dest, _Offer, _Session) ->
-    continue.
+% nkmedia_session_event(_SessId, _Event, _Session) ->
+%     continue.
 
 
 % %% @private
-nkmedia_call_resolve(Dest, Call) ->
-    case nkmedia_janus_proto:find_user(Dest) of
-        [Pid|_] ->
-            {ok, {nkmedia_janus_proto, Pid}, Call};
-        [] ->
-            lager:info("Janus: user ~s not found", [Dest]),
-            continue
-    end.
+% nkmedia_session_invite(SessId, {nkmedia_janus_proto, Pid}, Offer, Session) ->
+%     case nkmedia_janus_proto:invite(Pid, SessId, Offer#{monitor=>self()}) of
+%         ok ->
+%             {ringing, #{nkmedia_janus_proto=>out, pid=>Pid}, Session};
+%         {error, Error} ->
+%             lager:warning("Error calling invite: ~p", [Error]),
+%             {rejected, <<"Janus Invite Error">>, Session}
+%     end;
+
+% nkmedia_session_invite(_SessId, _Dest, _Offer, _Session) ->
+%     continue.
+
+
+% % %% @private
+% nkmedia_call_resolve(Dest, Call) ->
+%     case nkmedia_janus_proto:find_user(Dest) of
+%         [Pid|_] ->
+%             {ok, {nkmedia_janus_proto, Pid}, Call};
+%         [] ->
+%             lager:info("Janus: user ~p not found", [Dest]),
+%             continue
+%     end.
 
 
 

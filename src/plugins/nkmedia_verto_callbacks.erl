@@ -31,7 +31,7 @@
          nkmedia_verto_dtmf/4, nkmedia_verto_terminate/2,
          nkmedia_verto_handle_call/3, nkmedia_verto_handle_cast/2,
          nkmedia_verto_handle_info/2]).
--export([nkmedia_call_resolve/2]).
+% -export([nkmedia_call_resolve/2]).
 
 -define(VERTO_WS_TIMEOUT, 60*60*1000).
 -include_lib("nkservice/include/nkservice.hrl").
@@ -118,12 +118,7 @@ nkmedia_verto_login(_Login, _Pass, Verto) ->
     {rejected, nkservice:error(), verto()} | continue().
 
 nkmedia_verto_invite(SrvId, CallId, Offer, Verto) ->
-    #{dest:=Dest} = Offer, 
-    Config = #{offer=>Offer, caller_id=>{nkmedia_verto, CallId}, caller_pid=>self()},
-    {ok, NkCallId, Pid} = nkmedia_call:start(SrvId, Dest, Config),
-    #{?MODULE:=Calls} = Verto,
-    Calls2 = maps:put(CallId, {NkCallId, monitor(process, Pid)}, Calls),
-    {ok, Pid, Verto#{?MODULE:=Calls2}}.
+    {rejected, not_implemented}.
 
 
 %% @doc Called when the client sends an ANSWER after nkmedia_verto:invite/4
@@ -147,15 +142,6 @@ nkmedia_verto_rejected(_CallId, _ProcId, Verto) ->
     {ok, verto()} | continue().
 
 nkmedia_verto_bye(CallId, _ProcId, Verto) ->
-    #{?MODULE:=Calls} = Verto,
-    case maps:find(CallId, Calls) of
-        {ok, {NkCallId, Mon}} ->
-            lager:info("Verto BYE for ~s", [CallId]),
-            demonitor(Mon),
-            nkmedia_call:hangup(NkCallId, 16);
-        _ ->
-            ok
-    end,
     {ok, Verto}.
 
 
@@ -210,58 +196,6 @@ nkmedia_verto_handle_info(Msg, Verto) ->
 
 error_code(verto_bye) -> {0, <<"Verto BYE">>};
 error_code(_) -> continue.
-
-
-%% ===================================================================
-%% Implemented Callbacks - nkmedia_session
-%% ===================================================================
-
-
-
-%% @private
-nkmedia_session_invite(SessId, {nkmedia_verto, Pid}, Offer, Session) ->
-    Self = self(),
-    spawn_link(
-        fun() ->
-            Reply = case nkmedia_verto:invite(Pid, SessId, Offer, #{pid=>Self}) of
-                {answer, #{sdp:=_}=Answer} ->
-                    {answered, Answer};
-                rejected ->
-                    {rejected, <<"Verto User Rejected">>};
-                {error, Error} ->
-                    lager:warning("Error calling invite: ~p", [Error]),
-                    {rejected, <<"Verto Invite Error">>}
-            end,
-            % Could be already hangup
-            nkmedia_session:invite_reply(SessId, Reply)
-        end),
-    % If we copied the offer from a caller session to this session,
-    % and includes a verto '¡n' must be removed so that is not detected in the
-    % answer here, since we already sent it in the invite_reply
-    Session2 = case Session of
-        #{offer:=#{nkmedia_verto:=in}=Offer} ->
-            Session#{offer:=maps:remove(nkmedia_verto, Offer)};
-        _ ->
-            Session
-    end,
-    {ringing, #{nkmedia_verto=>out, pid=>Pid}, Session2};
-
-nkmedia_session_invite(_SessId, _Dest, _Offer, _Session) ->
-    continue.
-
-
-%% @private
-nkmedia_call_resolve(Dest, Call) ->
-    case nkmedia_verto:find_user(Dest) of
-        [Pid|_] ->
-            {ok, {nkmedia_verto, Pid}, Call};
-        [] ->
-            lager:info("Verto: user ~s not found", [Dest]),
-            continue
-    end.
-
-
-
 
 
 

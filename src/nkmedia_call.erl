@@ -19,12 +19,22 @@
 %% -------------------------------------------------------------------
 
 %% @doc Call management
+%%
+%% Typical call process:
+%% - A session is started
+%% - A call is started, linking it with the session (using session_id)
+%% - The call registers itself with the session
+%% - When the call has an answer, it is captured in nkmedia_call_reg_event
+%%   (nkmedia_callbacks) and sent to the session. Same with hangups
+%% - If the session stops, it is captured in nkmedia_session_reg_event
+%% - When the call stops, the called process must detect it in nkmedia_call_reg_event
+
 -module(nkmedia_call).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
 -export([start/3, ringing/2, answered/3, rejected/2, hangup/2, hangup_all/0]).
--export([find/1, get_all/0]).
+-export([find/1, get_all/0, get_call/1]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
 -export_type([id/0, event/0]).
@@ -45,7 +55,8 @@
 
 -type config() ::
     #{
-        offer => nkmedia:offer(),
+        offer => nkmedia:offer(),           % If included, will be sent to the callee
+        session => nkmedia_session:id(),    % If included, will link with session
         register => nklib:proc_id()
     }.
 
@@ -62,10 +73,10 @@
 -type event() :: 
     {ringing, nklib:proc_id()} | 
     {answered, nklib:proc_id(), nkmedia:answer()} | 
-    {stop, nkservice:error()}.
+    {hangup, nkservice:error()}.
 
 
--type invite_id() :: integer().
+-type invite_id() :: nklib:proc_id().
 
 
 -type dest() :: term().
@@ -140,12 +151,18 @@ hangup_all() ->
 
 %% @private
 -spec get_all() ->
-    [{id(), nkmedia_session:id(), pid()}].
+    [{id(), pid()}].
 
 get_all() ->
-    [{Id, SessId, Pid} || {{Id, SessId}, Pid} <- nklib_proc:values(?MODULE)].
+    nklib_proc:values(?MODULE).
 
 
+%% @doc
+-spec get_call(id()) ->
+    {ok, call()} | {error, term()}.
+
+get_call(CallId) ->
+    do_call(CallId, get_call).
 
 % ===================================================================
 %% gen_server behaviour
@@ -161,7 +178,7 @@ get_all() ->
 }).
 
 -type link_id() ::
-    {reg, nklib:proc_id()} | {callee, nklib:proc_id()}.
+    session | {reg, nklib:proc_id()} | {callee, nklib:proc_id()}.
 
 -record(state, {
     id :: id(),
@@ -180,6 +197,7 @@ get_all() ->
 
 init([#{srv_id:=SrvId, id:=CallId, dest:=Dest}=Call]) ->
     nklib_proc:put(?MODULE, CallId),
+    nklib_proc:put({?MODULE, CallId}),
     State1 = #state{
         id = CallId, 
         srv_id = SrvId, 
@@ -187,14 +205,23 @@ init([#{srv_id:=SrvId, id:=CallId, dest:=Dest}=Call]) ->
         call = Call
     },
     State2 = case Call of
-        #{register:=ProcId} -> 
-            links_add(reg, ProcId, State1);
+        #{session_id:=SessId} -> 
+            {ok, SessPid} = 
+                nkmedia_session:register(SessId, {nkmedia_call, CallId, self()}),
+            links_add(session, SessId, SessPid, State1);
         _ ->
             State1
     end,
+    State3 = case Call of
+        #{register:=ProcId} -> 
+            Pid = nklib_links:get_pid(ProcId),
+            links_add({reg, ProcId}, none, Pid, State2);
+        _ ->
+            State2
+    end,
     gen_server:cast(self(), do_start),
     lager:info("NkMEDIA Call ~s starting to ~p (~p)", [CallId, Dest, self()]),
-    handle(nkmedia_call_init, [CallId], State2).
+    handle(nkmedia_call_init, [CallId], State3).
 
 
 %% @private
@@ -202,37 +229,41 @@ init([#{srv_id:=SrvId, id:=CallId, dest:=Dest}=Call]) ->
     {noreply, #state{}} | {reply, term(), #state{}} |
     {stop, Reason::term(), #state{}} | {stop, Reason::term(), Reply::term(), #state{}}.
 
-handle_call({ringing, Pos}, _From, State) ->
-    case find_invite(Pos, State) of
-        #invite{callee=Callee} ->
+handle_call({ringing, Callee}, _From, State) ->
+    case find_invite_callee(Callee, State) of
+        {ok, _} ->
             % Launch event
             {reply, ok, event({ringing, Callee}, State)};
         not_found ->
             {reply, {error, invite_not_found}, State} 
     end;
 
-handle_call({answered, Pos, Answer}, From, #state{call=Call}=State) ->
-    case find_invite(Pos, State) of
-        #invite{callee=Callee} ->
+handle_call({answered, Callee, Answer}, From, #state{call=Call}=State) ->
+    case find_invite_callee(Callee, State) of
+        {ok, #invite{pos=Pos}} ->
             ?LLOG(info, "received ANSWER", [], State),
             gen_server:reply(From, ok),
             State2 = cancel_all(Pos, State),
             Call2 = maps:remove(offer, Call#{callee=>Callee}),
             State3 = State2#state{call=Call2},
-            State4 = links_add(callee, Callee, State3),
+            Pid = nklib_links:get_pid(Callee),
+            State4 = links_add(callee, Callee, Pid, State3),
             {noreply, event({answered, Callee, Answer}, State4)};
         not_found ->
             {reply, {error, invite_not_found}, State}
     end;
 
-handle_call({rejected, Pos}, From, State) ->
-    case find_invite(Pos, State) of
-        #invite{} ->
+handle_call({rejected, Callee}, From, State) ->
+    case find_invite_callee(Callee, State) of
+        {ok, #invite{pos=Pos}} ->
             gen_server:reply(From, ok),
             remove_invite(Pos, State);
         not_found ->
             {reply, {error, invite_not_found}, State}
     end;
+
+handle_call(get_call, _From, #state{call=Call}=State) -> 
+    {reply, {ok, Call}, State};
 
 handle_call(Msg, From, State) -> 
     handle(nkmedia_call_handle_call, [Msg, From], State).
@@ -243,8 +274,10 @@ handle_call(Msg, From, State) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
 handle_cast(do_start, #state{call=#{dest:=Dest}}=State) ->
-    {ok, CallDest, State2} = handle(nkmedia_call_resolve, Dest, State),
-    {noreply, launch_invites(CallDest, State2)};
+    {ok, DestExt, State2} = handle(nkmedia_call_resolve, [Dest], State),
+    State3 = launch_invites(DestExt, State2),
+    ?LLOG(info, "Resolved ~p", [State3#state.invites], State),
+    {noreply, State3};
 
 handle_cast({hangup, Reason}, State) ->
     ?LLOG(info, "external hangup: ~p", [Reason], State),
@@ -259,7 +292,7 @@ handle_cast(Msg, State) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
 handle_info({launch_out, Pos}, State) ->
-    case find_invite(Pos, State) of
+    case find_invite_pos(Pos, State) of
         {ok, #invite{launched=false, ring=Ring}=Out} ->
             erlang:send_after(1000*Ring, self(), {ring_timeout, Pos}),
             launch_out(Pos, Out, State);
@@ -271,7 +304,7 @@ handle_info({launch_out, Pos}, State) ->
     end;
 
 handle_info({ring_timeout, Pos}, #state{id=CallId}=State) ->
-    case find_invite(Pos, State) of
+    case find_invite_pos(Pos, State) of
         {ok, #invite{dest=Dest, callee=Callee, launched=Launched}} ->
             ?LLOG(info, "call ring timeout for ~p (~p)", [Dest, Pos], State),
             {ok, State2} = case Launched of
@@ -287,18 +320,20 @@ handle_info({ring_timeout, Pos}, #state{id=CallId}=State) ->
 
 handle_info({'DOWN', _Ref, process, Pid, Reason}=Msg, State) ->
     case links_down(Pid, State) of
-        {ok, Class, _ProcId, State2} ->
+        {ok, Id, _Data, State2} ->
             case Reason of
                 normal ->
-                    ?LLOG(info, "linked ~p down (normal)", [Class], State);
+                    ?LLOG(info, "linked ~p down (normal)", [Id], State);
                 _ ->
-                    ?LLOG(notice, "linked ~p down (~p)", [Class, Reason], State)
+                    ?LLOG(notice, "linked ~p down (~p)", [Id, Reason], State)
             end,
-            case Class of
-                reg ->
+            case Id of
+                {reg, _} ->
                     do_hangup(reg_monitor_stop, State2);
                 callee ->
-                    do_hangup(callee_stop, State2)
+                    do_hangup(callee_stop, State2);
+                session ->
+                    do_hangup(session_stop, State2)
             end;
         not_found ->
             handle(nkmedia_session_handle_info, [Msg], State)
@@ -320,10 +355,10 @@ code_change(_OldVsn, State, _Extra) ->
     ok.
 
 terminate(Reason, State) ->
-    ?LLOG(info, "stopped: ~p", [Reason], State),
     State2 = cancel_all(State),
     {stop, normal, State3} = do_hangup(process_stop, State2),
-    catch handle(nkmedia_call_terminate, [Reason], State3).
+    catch handle(nkmedia_call_terminate, [Reason], State3),
+    ?LLOG(info, "stopped: ~p", [Reason], State2).
 
 
 % ===================================================================
@@ -374,26 +409,35 @@ launch_out(Pos, Inv, #state{id=CallId, invites=Invs, call=Call}=State) ->
     Offer = maps:get(offer, Call, #{}),
     case handle(nkmedia_call_invite, [CallId, Dest, Offer], State) of
         {ok, Callee, State2} ->
-            ?LLOG(info, "launching out ~p (~p)", [Dest, Pos], State),
+            ?LLOG(notice, "launching out ~p (~p)", [Dest, Pos], State),
             Inv2 = Inv#invite{launched=true, callee=Callee},
             Invs2 = lists:keystore(Pos, #invite.pos, Invs, Inv2),
             {noreply, State2#state{invites=Invs2}};
         {retry, Secs, State2} ->
-            ?LLOG(info, "retrying out ~p (~p, ~p secs)", [Dest, Pos, Secs], State),
+            ?LLOG(notice, "retrying out ~p (~p, ~p secs)", [Dest, Pos, Secs], State),
             erlang:send_after(1000*Secs, self(), {launch_out, Pos}),
             {noreply, State2};
         {remove, State2} ->
-            ?LLOG(info, "removing out ~p (~p)", [Dest, Pos], State),
+            ?LLOG(notice, "removing out ~p (~p)", [Dest, Pos], State),
             remove_invite(Pos, State2)
     end.
 
 
 %% @private
-find_invite(Pos, #state{invites=Invs}) ->
+find_invite_pos(Pos, #state{invites=Invs}) ->
    case lists:keyfind(Pos, #invite.pos, Invs) of
         #invite{} = Inv -> {ok, Inv};
         false -> not_found
     end.
+
+
+%% @private
+find_invite_callee(Callee, #state{invites=Invs}) ->
+   case lists:keyfind(Callee, #invite.callee, Invs) of
+        #invite{} = Inv -> {ok, Inv};
+        false -> not_found
+    end.
+
 
 
 %% @private
@@ -436,13 +480,55 @@ do_hangup(Reason, #state{stop_sent=Sent}=State) ->
         false -> event({hangup, Reason}, State);
         true -> State
     end,
-    {stop, normal, State2}.
+    timer:sleep(100),   % Allow events
+    {stop, normal, State2#state{stop_sent=true}}.
 
 
 %% @private
-event(Event, #state{id=CallId}=State) ->
-    {ok, State2} = handle(nkmedia_call_event, [CallId, Event], State),
-    State2.
+event(Event, #state{id=Id}=State) ->
+    case Event of
+        {answered, ProcId, _Ans} ->
+            ?LLOG(info, "sending 'event': ~p", [{answered, <<"sdp">>, ProcId}], State);
+        _ ->
+            ?LLOG(info, "sending 'event': ~p", [Event], State)
+    end,
+    State2 = links_fold(
+        fun
+            ({reg, Reg}, none, AccState) ->
+                {ok, AccState2} = 
+                    handle(nkmedia_call_reg_event, [Id, Reg, Event], AccState),
+                    AccState2;
+            (session, SessId, AccState) ->
+                Reg = {session, SessId},
+                {ok, AccState2} = 
+                    handle(nkmedia_call_reg_event, [Id, Reg, Event], AccState),
+                    AccState2;
+            (callee, ProcId, AccState) ->
+                {ok, AccState2} = 
+                    handle(nkmedia_call_reg_event, [Id, ProcId, Event], AccState),
+                    AccState2
+        end,
+        State,
+        State),
+    {ok, State3} = handle(nkmedia_call_event, [Id, Event], State2),
+    ext_event(Event, State3).
+
+
+%% @private
+ext_event(Event, #state{srv_id=SrvId, id=Id}=State) ->
+    Send = case Event of
+        _ ->
+            ignore
+    end,
+    case Send of
+        {EvType, Body} ->
+            RegId = nkmedia_util:call_reg_id(SrvId, EvType, Id),
+            ?LLOG(info, "ext event: ~p", [RegId], State),
+            nkservice_events:send_all(RegId, Body);
+        ignore ->
+            ok
+    end,
+    State.
 
 
 %% @private
@@ -483,9 +569,8 @@ find(CallId) ->
 
 
 %% @private
-links_add(Class, ProcId, #state{links=Links}=State) ->
-    Pid = nklib_links:get_pid(ProcId),
-    State#state{links=nklib_links:add({Class, ProcId}, none, Pid, Links)}.
+links_add(Id, Data, Pid, #state{links=Links}=State) ->
+    State#state{links=nklib_links:add(Id, Data, Pid, Links)}.
 
 
 % %% @private
@@ -501,8 +586,8 @@ links_add(Class, ProcId, #state{links=Links}=State) ->
 %% @private
 links_down(Pid, #state{links=Links}=State) ->
     case nklib_links:down(Pid, Links) of
-        {ok, {Class, ProcId}, none, Links2} -> 
-            {ok, Class, ProcId, State#state{links=Links2}};
+        {ok, Id, Data, Links2} -> 
+            {ok, Id, Data, State#state{links=Links2}};
         not_found -> 
             not_found
     end.
@@ -513,9 +598,9 @@ links_down(Pid, #state{links=Links}=State) ->
 %     nklib_links:iter(Fun, Links).
 
 
-% %% @private
-% links_fold(Fun, Acc, #state{links=Links}) ->
-%     nklib_links:fold(Fun, Acc, Links).
+%% @private
+links_fold(Fun, Acc, #state{links=Links}) ->
+    nklib_links:fold(Fun, Acc, Links).
 
 
 
