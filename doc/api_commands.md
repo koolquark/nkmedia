@@ -131,7 +131,9 @@ offer|{}|Offer for the call. If not included, it will not be used in the invite
 
 The offer can include metadata related for caller_id, etc. (See [concepts](concepts.md)]). It does not need to include an sdp (you can send it in a event or by any other mean).
 
-Depending on the _type_, other fields must be included. NkMEDIA supports currenyly the following types:
+When the call is answered, the answer is automatically connected to the session. If the call is destroyed, the session is automatically stopped. The opposite is also true.
+
+Depending on the _type_, other fields must be included. NkMEDIA supports currently the following types:
 
 Type|Field|Desc
 ---|---|---
@@ -262,7 +264,7 @@ or
 }
 ```
 
-Also, you must be prepared to receive a hangup event (even before accepting the call):
+Also, you must be prepared to receive a hangup event at any moment (even before accepting the call):
 
 ```js
 {
@@ -294,7 +296,7 @@ You can hangup a call using the `call_id`:
 	data: {
 		call_id: "8b35b132-375f-b3e5-a978-28f07603cda8",
 		code: 0,							// Optional
-		error: "User hangup"						// Optional
+		error: "User hangup"				// Optional
 	}
 	tid: 1
 }
