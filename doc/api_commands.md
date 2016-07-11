@@ -7,12 +7,22 @@ See the [API Introduction](api_intro.md) for an introduction to the interface.
 
 The currently supported External API commands as described here. 
 
+**Session Commands**
+
 Cmd|Description
 ---|---
 [`start_session`](#start-a-session)|Creates a new media session
 [`stop_session`](#stop-a-session)|Destroys a new media session
 [`set-answer`](#set-an-answer)|Sets the answer for a sessions
 [`update_session`](#update-a-session)|Updates a current session
+
+
+**Call Commands**
+
+Cmd|Description
+---|---
+[`start_call`](#start-a-call)|Starts a new call
+[`hangup_call`](#hangup-a-call)|Hangups a call
 
 
 ### Start a Session
@@ -105,7 +115,7 @@ See each specific plugin documentation to learn about how to use it and supporte
 
 
 
-### Starts a call
+### Start a call
 
 NkMEDIA includes, along with its media processing capabilities, a flexible signaling server that you can use for your own applications. You can however use your own signaling protocol.
 
@@ -119,23 +129,175 @@ session_id|(mandatory)|Session Id
 type|(mandatory)|Call type (see bellow)
 offer|{}|Offer for the call. If not included, it will not be used in the invite
 
+The offer can include metadata related for caller_id, etc. (See [concepts](concepts.md)]). It does not need to include an sdp (you can send it in a event or by any other mean).
+
 Depending on the _type_, other fields must be included. NkMEDIA supports currenyly the following types:
 
-Type|Fields|
+Type|Field|Desc
 ---|---|---
-user||
-|user|Registered user to call to. All sessions will be ringed
-session||
-|session|Registered sessionn to call to
-sip|(only with SIP plugin)
-verto|(only with Verto plugin)
-|user_id|Registered verto user to call to
+**user**||
+user|user|Registered user to call to. All sessions will be ringed
+**session**||
+session|session|Registered session to call to
+**sip**|(only with SIP plugin)
+sip|url|SIP URL
+**verto**|(only with Verto plugin)
+verto|user_id|Registered verto user to call to
+
+**Sample**
+
+```js
+{
+	class: "media",
+	cmd: "start_call",
+	data: {
+		type: "user",
+		session_id: "54c1b637-36fb-70c2-8080-28f07603cda8"
+		offer: {
+			sdp: "v=0..",
+			caller_name: "My Name",
+			caller_id: "myuser@domain.com"
+		},
+		user: "user@domain.com"
+	}
+	tid: 1
+}
+```
+-->
+```js
+{
+	result: "ok",
+	data: {
+		call_id: "8b35b132-375f-b3e5-a978-28f07603cda8",
+		
+	},
+	tid: 1
+}
+```
+
+If the remote party accepts the call, you will get a `call_id` and will be subscribed automatically to related events.
 
 
+For `user` and `session` types, one or several (for `user`, if he has several sessions) requests will be sent over the connection, for example:
 
+```js
+{
+	class: "media",
+	cmd: "call_invite",
+	data: {
+		call_id: "8b35b132-375f-b3e5-a978-28f07603cda8",
+		type: "user",
+		user: "user@domain.com",
+		offer: {
+			sdp: "v=0..",
+			caller_name: "My Name",
+			caller_id: "myuser@domain.com"
+		}
+	},
+	tid: 1000
+}
+```
 
+you must answer immediately with success or error:
 
+```js
+{
+	result: "ok",
+	tid: 1000
+}
+```
 
+then you can send the followin events: _ringing_, _accepted_ or _rejected_:
 
+```js
+{
+	class: "core",
+	cmd: "event",
+	data: {
+		class: "media",
+		subclass: "call",
+		type: "ringing",
+		obj_id: "8b35b132-375f-b3e5-a978-28f07603cda8"
+	},
+	tid: 2000
+}
+```
+
+or
+
+```js
+{
+	class: "core",
+	cmd: "event",
+	data: {
+		class: "media",
+		subclass: "call",
+		type: "accepted",
+		obj_id: "8b35b132-375f-b3e5-a978-28f07603cda8",
+		body: {
+			answer: {
+				sdp: "..."
+			}
+		}
+	tid: 2000
+}
+```
+
+or
+
+```js
+{
+	class: "core",
+	cmd: "event",
+	data: {
+		class: "media",
+		subclass: "call",
+		type: "rejected",
+		obj_id: "8b35b132-375f-b3e5-a978-28f07603cda8",
+		body: {							// Optional
+			code: 0
+			error: "User Rejected"
+		}
+	tid: 2000
+}
+```
+
+Also, you must be prepared to receive a hangup event (even before accepting the call):
+
+```js
+{
+	class: "core",
+	cmd: "event",
+	data: {
+		class: "media",
+		subclass: "call",
+		type: "hangup",
+		obj_id: "8b35b132-375f-b3e5-a978-28f07603cda8",
+		body: {							
+			code: 0
+			error: "User Rejected"
+		}
+	tid: 1001
+}
+```
+
+### Hangup a call
+
+You can hangup a call using the `call_id`:
+
+**Sample**
+
+```js
+{
+	class: "media",
+	cmd: "hangup_call",
+	data: {
+		call_id: "8b35b132-375f-b3e5-a978-28f07603cda8",
+		code: 0,							// Optional
+		error: "User hangup"						// Optional
+	}
+	tid: 1
+}
+```
 
 
