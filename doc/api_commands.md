@@ -104,3 +104,38 @@ Some session types allow to modify the session characteristics in real time. For
 See each specific plugin documentation to learn about how to use it and supported options.
 
 
+
+### Starts a call
+
+NkMEDIA includes, along with its media processing capabilities, a flexible signaling server that you can use for your own applications. You can however use your own signaling protocol.
+
+To use the signaling server, you must first create a session (typically of types _p2p_ or _proxy_). 
+
+You can then use the _start_call_ command, with the following fields:
+
+Field|Default|Description
+---|---|---|---
+session_id|(mandatory)|Session Id
+type|(mandatory)|Call type (see bellow)
+offer|{}|Offer for the call. If not included, it will not be used in the invite
+
+Depending on the _type_, other fields must be included. NkMEDIA supports currenyly the following types:
+
+Type|Fields|
+---|---|---
+user||
+|user|Registered user to call to. All sessions will be ringed
+session||
+|session|Registered sessionn to call to
+sip|(only with SIP plugin)
+verto|(only with Verto plugin)
+|user_id|Registered verto user to call to
+
+
+
+
+
+
+
+
+

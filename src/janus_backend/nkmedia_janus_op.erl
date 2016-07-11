@@ -74,10 +74,10 @@
         use_video => boolean(),
         use_data => boolean(),
         bitrate => integer(),
-        record => boolean(),        % Cannot be updated
-        filename => binary(),       % Cannot be updated
+        record => boolean(),   
         info => term()
     }.
+
 
 -type listen_opts() ::
     #{
@@ -381,14 +381,7 @@ handle_call({play, File, Opts}, _From, #state{status=wait}=State) ->
     do_play(File, State#state{opts=Opts});
 
 handle_call({videocall, Offer, Opts}, From, #state{status=wait}=State) -> 
-    Opts2 = case Opts of
-        #{filename:=File} -> 
-            Opts#{filename:=<<(nklib_util:to_binary(File))/binary, "_a">>};
-        _ ->
-            #state{nkmedia_id=SessId} = State,
-            Opts#{filename=><<"/tmp/call_", SessId/binary, "_a">>}
-    end,
-    do_videocall(Offer, From, State#state{opts=Opts2});
+    do_videocall(Offer, From, State#state{opts=Opts});
 
 handle_call(list_rooms, _From, #state{status=wait}=State) -> 
     do_list_rooms(State);
@@ -469,6 +462,8 @@ handle_call({update, Opts}, _From, #state{status=Status}=State) ->
     case Status of
         echo -> 
             do_echo_update(Opts, State);
+        videocall ->
+            do_videocall_update(Opts, State);
         _ ->
             reply_stop({error, invalid_state}, State)
     end;
@@ -604,9 +599,9 @@ terminate(_Reason, State) ->
 %% ===================================================================
 
 %% @private Echo plugin
-do_echo(#{sdp:=SDP}, State) ->
+do_echo(#{sdp:=SDP}, #state{opts=Opts}=State) ->
     {ok, Handle} = attach(echotest, State),
-    Body = get_body(#{}, State),
+    Body = get_body(Opts),
     Jsep = #{sdp=>SDP, type=>offer, trickle=>false},
     case message(Handle, Body, Jsep, State) of
         {ok, #{<<"result">>:=<<"ok">>}, #{<<"sdp">>:=SDP2}} ->
@@ -719,32 +714,39 @@ do_videocall_3(SDP, State) ->
 
 %% @private. We receive answer from called party and wait Janus
 do_videocall_answer(#{sdp:=SDP}, From, State) ->
-    #state{handle_id=Handle, opts=Opts, handle_id2=Handle2} = State,
-    #state{} = State,
-    Body1 = #{request=>accept},
+    #state{opts=Opts, handle_id2=Handle2} = State,
+    Body = #{request=>accept},
     Jsep = #{sdp=>SDP, type=>answer, trickle=>false},
-    case message(Handle2, Body1, Jsep, State) of
+    case message(Handle2, Body, Jsep, State) of
         {ok, #{<<"result">>:=#{<<"event">>:=<<"accepted">>}}, _} ->
-            Body2 = get_body(#{request=>set}, State),
-            case message(Handle, Body2, #{}, State) of
+            Set1 = get_body(append_file(Opts, <<"b">>)),
+            Set2 = Set1#{request=>set},
+            case message(Handle2, Set2, #{}, State) of
                 {ok, #{<<"result">>:=#{<<"event">>:=<<"set">>}}, _} ->
-                    #{filename:=File} = Opts,
-                    Length = byte_size(File)-2,
-                    <<Base:Length/binary, _/binary>> = File,
-                    Opts2 = Opts#{filename:=<<Base/binary, "_b">>},
-                    Body3 = get_body(#{request=>set}, State#state{opts=Opts2}),
-                    case message(Handle2, Body3, #{}, State) of
-                        {ok, #{<<"result">>:=#{<<"event">>:=<<"set">>}}, _} ->
-                            State2 = State#state{from=From},
-                            noreply(wait(videocall_reply, State2));
-                        {error, Error} ->
-                            reply_stop({error, {janus_error, Error}}, State)
-                    end;
+                    State2 = State#state{from=From},
+                    noreply(wait(videocall_reply, State2));
                 {error, Error} ->
                     reply_stop({error, {janus_error, Error}}, State)
             end;
         {error, Error} ->
             reply_stop({error, {janus_error, Error}}, State)
+    end.
+
+
+%% @private
+do_videocall_update(Opts, #state{handle_id=Handle1, handle_id2=Handle2}=State) ->
+    BodyA = update_body(append_file(Opts, <<"a">>)),
+    case message(Handle1, BodyA#{request=>set}, #{}, State) of
+        {ok, #{<<"result">> := #{<<"event">>:=<<"set">>}}, _} ->
+            BodyB = update_body(append_file(Opts, <<"b">>)),
+            case message(Handle2, BodyB#{request=>set}, #{}, State) of
+                {ok, #{<<"result">>:=#{<<"event">>:=<<"set">>}}, _} ->
+                    reply(ok, State);
+                {error, Error} ->
+                    reply({error, {janus_error, Error}}, State)
+            end;
+        {error, Error} ->
+            reply({error, {janus_error, Error}}, State)
     end.
 
 
@@ -1115,10 +1117,11 @@ do_event(Id, Handle, {event, <<"incomingcall">>, _, #{<<"sdp">>:=SDP}}, State) -
 do_event(Id, Handle, {event, <<"accepted">>, _, #{<<"sdp">>:=SDP}}, State) ->
     case State of
         #state{status=wait, wait=videocall_reply, janus_sess_id=Id, handle_id=Handle} ->
-            #state{from=From} = State,
+            #state{from=From, opts=Opts} = State,
             gen_server:reply(From, {ok, #{sdp=>SDP}}),
-            Body = get_body(#{request=>set}, State),
-            case message(Handle, Body, #{}, State) of
+            Set1 = get_body(append_file(Opts, <<"a">>)),
+            Set2 = Set1#{request=>set},
+            case message(Handle, Set2, #{}, State) of
                 {ok, #{<<"result">>:=#{<<"event">>:=<<"set">>}}, _} ->
                     State2 = State#state{from=undefined},
                     noreply(status(videocall, State2));
@@ -1316,8 +1319,8 @@ do_cast(SessId, Msg) ->
 
 
 %% @private
-get_body(Body, #state{opts=Opts}) ->
-    Body#{
+get_body(Opts) ->
+    #{
         audio => maps:get(use_audio, Opts, true),
         video => maps:get(use_video, Opts, true),
         data => maps:get(use_data, Opts, true),
@@ -1356,6 +1359,15 @@ update_body(Opts) ->
         end
     ],
     maps:from_list(lists:flatten(Body)).
+
+
+append_file(Opts, Txt) ->
+    case Opts of
+        #{filename:=File} ->
+            Opts#{filename:=<<File/binary, $_, Txt/binary>>};
+        _ ->
+            Opts
+    end.
 
 
 

@@ -451,6 +451,7 @@ process_client_req(<<"verto.invite">>, Msg, NkPort, State) ->
     send(Resp, NkPort, State3);
 
 process_client_req(<<"verto.answer">>, Msg, NkPort, State) ->
+    lager:error("VERTO ANSWER"),
     #{<<"params">> := #{
         <<"dialogParams">> := Params,  
         <<"sdp">> := SDP, 

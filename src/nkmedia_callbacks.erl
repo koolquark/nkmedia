@@ -110,7 +110,7 @@ nkmedia_session_start(p2p, Session) ->
 	{ok, p2p, #{}, Session};
 
 nkmedia_session_start(_Type, Session) ->
-	{error, unknown_session_class, Session}.
+	{error, unknown_session_type, Session}.
 
 
 %% @private

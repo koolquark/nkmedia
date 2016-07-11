@@ -147,17 +147,20 @@ start(proxy, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
                 error ->
                     {error, invalid_parameters, State};
                 _ ->
-                    case nkmedia_janus_op:Fun(Pid, Offer, #{}) of
+                    Opts1 = maps:with(
+                        [record, use_audio, use_video, use_data, bitrate], Session),
+                    {Opts2, State3} = add_record_opts(Session, Opts1, State2),
+                    case nkmedia_janus_op:Fun(Pid, Offer, Opts2) of
                         {ok, Offer2} ->
-                            State3 = State2#{janus_op=>answer},
+                            State4 = State3#{janus_op=>answer},
                             Offer3 = maps:merge(Offer, Offer2),
                             Reply = #{offer=>Offer3},
-                            {ok, proxy, Reply, Offer3, none, State3};
+                            {ok, proxy, Reply, Offer3, none, State4};
                         {error, {janus_error, Error}} ->
                             {error, {janus_error, Error}, State2};
                         {error, Error} ->
                             ?LLOG(warning, "janus proxy error: ~p", [Error], Session),
-                            {error, {proxy_error, Error}, State2}
+                            {error, janus_error, State2}
                     end
             end;
         {error, Error, State2} ->
@@ -243,7 +246,9 @@ answer(Op, Answer, Session, #{janus_op:=answer}=State)
         ok ->
             {ok, #{}, Answer, maps:remove(janus_op, State)};
         {ok, Answer2} ->
-            {ok, #{answer=>Answer2}, Answer, maps:remove(janus_op, State)};
+            {ok, #{answer=>Answer2}, Answer2, maps:remove(janus_op, State)};
+        {error, {janus_error, Error}} ->
+            {error, {janus_error, Error}, State};
         {error, Error} ->
             ?LLOG(warning, "janus answer error: ~p", [Error], Session),
             {error, janus_error, State}
@@ -258,20 +263,19 @@ answer(_Type, _Answer, _Session, _State) ->
     {ok, type(), map(), state()} |
     {error, term(), state()} | continue().
 
-update(media, Opts, echo, Session, #{janus_pid:=Pid}=State) ->
+update(media, Opts, Type, Session, #{janus_pid:=Pid}=State)
+        when Type==echo; Type==proxy ->
     Opts2 = maps:with([use_audio, use_video, bitrate, record], Opts),
     {Opts3, State3} = add_record_opts(Session, Opts2, State),
     case nkmedia_janus_op:update(Pid, Opts3) of
         ok ->
-            {ok, echo, #{}, State3};
+            {ok, Type, #{}, State3};
         {error, {janus_error, Error}} ->
             {error, {janus_error, Error}, State3};
         {error, Error} ->
             ?LLOG(warning, "janus update error: ~p", [Error], Session),
             {error, janus_error, State3}
     end;
-
-
 
 update(listen_switch, #{publisher:=Publisher}, listen, Session, #{janus_pid:=Pid}=State) ->
     case nkmedia_janus_op:listen_switch(Pid, Publisher, #{}) of

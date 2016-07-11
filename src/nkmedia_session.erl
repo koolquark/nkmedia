@@ -461,15 +461,15 @@ code_change(OldVsn, State, Extra) ->
     ok.
 
 terminate(Reason, State) ->
-    {ok, State2} = handle(nkmedia_session_terminate, [Reason], State),
     case Reason of
         normal ->
-            ?LLOG(info, "terminate: ~p", [Reason], State2),
-            _ = do_stop(normal, State2);
+            ?LLOG(info, "terminate: ~p", [Reason], State),
+            _ = do_stop(normal, State);
         _ ->
-            ?LLOG(notice, "terminate: ~p", [Reason], State2),
-            _ = do_stop(anormal, State2)
-    end.
+            ?LLOG(notice, "terminate: ~p", [Reason], State),
+            _ = do_stop(anormal, State)
+    end,
+    {ok, _State2} = handle(nkmedia_session_terminate, [Reason], State).
 
 
 

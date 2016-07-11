@@ -142,8 +142,8 @@ nkmedia_session_terminate(Reason, Session) ->
 
 %% @private
 nkmedia_session_start(Type, Session) ->
-    case maps:get(backend, Session, janus) of
-        janus ->
+    case maps:get(backend, Session, nkmedia_janus) of
+        nkmedia_janus ->
             State = state(Session),
             case nkmedia_janus_session:start(Type, Session, State) of
                 {ok, Type2, Reply, Offer, Answer, State2} ->
@@ -160,12 +160,12 @@ nkmedia_session_start(Type, Session) ->
 
 %% @private
 nkmedia_session_answer(Type, Answer, Session) ->
-    case maps:get(backend, Session, janus) of
-        janus ->
+    case maps:get(backend, Session, nkmedia_janus) of
+        nkmedia_janus ->
             State = state(Session),
             case nkmedia_janus_session:answer(Type, Answer, Session, State) of
                 {ok, Reply, Answer2, State2} ->
-                    {ok, Reply, session(none, Answer2, State2, Session)};
+                    {ok, Reply, Answer2, session(none, Answer2, State2, Session)};
                 {error, Error, State2} ->
                     {error, Error, session(State2, Session)};
                 continue ->
@@ -179,8 +179,8 @@ nkmedia_session_answer(Type, Answer, Session) ->
 
 %% @private
 nkmedia_session_update(Update, Opts, Type, Session) ->
-    case maps:get(backend, Session, janus) of
-        janus ->
+    case maps:get(backend, Session, nkmedia_janus) of
+        nkmedia_janus ->
             State = state(Session),
             case nkmedia_janus_session:update(Update, Opts, Type, Session, State) of
                 {ok, Type2, Reply, State2} ->

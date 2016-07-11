@@ -76,7 +76,7 @@ call_reg_id(SrvId, Type, SessId) ->
 	{integer(), binary()} | not_foubd. 
 
 error(no_mediaserver) 			-> 	{0, <<"No mediaserver available">>};
-error(unknown_session_class) 	-> 	{0, <<"Unknown session class">>};
+error(unknown_session_type) 	-> 	{0, <<"Unknown session type">>};
 error(missing_offer) 			-> 	{0, <<"Missing offer">>};
 error(duplicated_offer) 		-> 	{0, <<"Duplicated offer">>};
 error(offer_not_set) 			-> 	{0, <<"Offer not set">>};

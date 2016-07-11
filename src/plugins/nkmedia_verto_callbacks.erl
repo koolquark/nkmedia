@@ -117,8 +117,8 @@ nkmedia_verto_login(_Login, _Pass, Verto) ->
     {answer, nkmedia:answer(), nklib_:proc_id(), verto()} | 
     {rejected, nkservice:error(), verto()} | continue().
 
-nkmedia_verto_invite(SrvId, CallId, Offer, Verto) ->
-    {rejected, not_implemented}.
+nkmedia_verto_invite(_SrvId, _CallId, _Offer, Verto) ->
+    {rejected, not_implemented, Verto}.
 
 
 %% @doc Called when the client sends an ANSWER after nkmedia_verto:invite/4
@@ -141,7 +141,7 @@ nkmedia_verto_rejected(_CallId, _ProcId, Verto) ->
 -spec nkmedia_verto_bye(call_id(), nklib:proc_id(), verto()) ->
     {ok, verto()} | continue().
 
-nkmedia_verto_bye(CallId, _ProcId, Verto) ->
+nkmedia_verto_bye(_CallId, _ProcId, Verto) ->
     {ok, Verto}.
 
 
