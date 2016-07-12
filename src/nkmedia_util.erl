@@ -92,6 +92,8 @@ error(callee_hangup)			-> 	{0, <<"Callee hangup">>};
 error(unknown_linked_session) 	-> 	{0, <<"Unknown linked session">>};
 error(user_monitor_stop) 		-> 	{0, <<"User monitor stop">>};
 error(reg_monitor_stop) 		-> 	{0, <<"Register monitor stop">>};
+error(room_not_found)			->  {0, <<"Room not found">>};
+error(room_already_exists)	    ->  {0, <<"Room already exists">>};
 error(verto_unknown_call)		->  {0, <<"Verto unknown call">>};
 error({verto, error, Code, Txt})-> 	
 	{0, nklib_util:msg("Verto Error (~p): ~s", [Code, Txt])};

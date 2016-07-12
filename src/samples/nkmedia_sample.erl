@@ -25,7 +25,6 @@
 
 -export([start/0, stop/0, restart/0]).
 
--export([listener/2, listener2/1, play/2, play2/1, mcu2publish/0]).
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2,
          plugin_syntax/0, plugin_listen/2]).
 
@@ -77,67 +76,67 @@ restart() ->
 
 
 
-listener2(Id) ->
-    {ok, SessId, Pid} = nkmedia_session:start(sample, #{}),
-    {ok, Meta} = nkmedia_session:offer(SessId, {listen, "room2", Id}, #{}),
-    #{offer:=Offer} = Meta,
-    nkmedia_janus_proto:register_play(SessId, Pid, Offer).
+% listener2(Id) ->
+%     {ok, SessId, Pid} = nkmedia_session:start(sample, #{}),
+%     {ok, Meta} = nkmedia_session:offer(SessId, {listen, "room2", Id}, #{}),
+%     #{offer:=Offer} = Meta,
+%     nkmedia_janus_proto:register_play(SessId, Pid, Offer).
 
 
-listener(Sess, Dest) ->
-    case nkmedia_session:get_status_opts(Sess) of
-        {ok, _, {publish, #{room:=Room}}, _} ->
-            {ok, SessId, _Pid} = nkmedia_session:start(sample, #{}),
-            {ok, _} = nkmedia_session:offer(SessId, listen, 
-                                            #{room=>Room, publisher=>Sess}),
-            case Dest of
-                {invite, User} ->
-                    case find_user(User) of
-                        {webrtc, Inv} ->
-                            {ok, _} = nkmedia_session:answer(SessId, invite, 
-                                                             #{dest=>Inv}),
-                            {ok, SessId};
-                        not_found ->
-                            nkmedia_session:stop(SessId),
-                            {error, user_not_found}
-                    end;
-                {room, Room2} ->
-                    nkmedia_session:answer(SessId, publish, #{room=>Room2}),
-                    {ok, SessId};
-                {mcu, Room2} ->
-                    nkmedia_session:answer(SessId, mcu, #{room=>Room2}),
-                    {ok, SessId}
-            end;
-        _ ->
-            {error, invalid_session}
-    end.
+% listener(SessId, Dest) ->
+%     case nkmedia_session:do_call(SessId, nkmedia_janus_get_room) of
+%         {ok, Room} ->
+%             {ok, SessId, _Pid} = nkmedia_session:start(sample, #{}),
+%             {ok, _} = nkmedia_session:offer(SessId, listen, 
+%                                             #{room=>Room, publisher=>Sess}),
+%             case Dest of
+%                 {invite, User} ->
+%                     case find_user(User) of
+%                         {webrtc, Inv} ->
+%                             {ok, _} = nkmedia_session:answer(SessId, invite, 
+%                                                              #{dest=>Inv}),
+%                             {ok, SessId};
+%                         not_found ->
+%                             nkmedia_session:stop(SessId),
+%                             {error, user_not_found}
+%                     end;
+%                 {room, Room2} ->
+%                     nkmedia_session:answer(SessId, publish, #{room=>Room2}),
+%                     {ok, SessId};
+%                 {mcu, Room2} ->
+%                     nkmedia_session:answer(SessId, mcu, #{room=>Room2}),
+%                     {ok, SessId}
+%             end;
+%         _ ->
+%             {error, invalid_session}
+%     end.
 
 
-mcu2publish() ->
-    {ok, S, _} = nkmedia_session:start(sample, #{}),
-    {ok, _} = nkmedia_session:offer(S, park, #{}),
-    {ok, _} = nkmedia_session:answer(S, publish, #{}),
-    S.
+% mcu2publish() ->
+%     {ok, S, _} = nkmedia_session:start(sample, #{}),
+%     {ok, _} = nkmedia_session:offer(S, park, #{}),
+%     {ok, _} = nkmedia_session:answer(S, publish, #{}),
+%     S.
 
 
 
-play(Id, Dest) ->
-    {ok, SessId, _Pid} = nkmedia_session:start(sample, #{}),
-    {ok, _} = nkmedia_session:offer(SessId, {play, Id}, #{}),
-    case Dest of
-        {call, Call} ->
-            {ok, _} = nkmedia_session:answer(SessId, {call, Call}, #{});
-        {room, Room2} ->
-            nkmedia_session:answer(SessId, {publish, Room2}, #{})
-    end,
-    listener(SessId, {call, "c"}).
+% play(Id, Dest) ->
+%     {ok, SessId, _Pid} = nkmedia_session:start(sample, #{}),
+%     {ok, _} = nkmedia_session:offer(SessId, {play, Id}, #{}),
+%     case Dest of
+%         {call, Call} ->
+%             {ok, _} = nkmedia_session:answer(SessId, {call, Call}, #{});
+%         {room, Room2} ->
+%             nkmedia_session:answer(SessId, {publish, Room2}, #{})
+%     end,
+%     listener(SessId, {call, "c"}).
 
 
-play2(Id) ->
-    {ok, SessId, Pid} = nkmedia_session:start(sample, #{}),
-    {ok, Meta} = nkmedia_session:offer(SessId, {play, Id}, #{}),
-    #{offer:=Offer} = Meta,
-    nkmedia_janus_proto:register_play(SessId, Pid, Offer).
+% play2(Id) ->
+%     {ok, SessId, Pid} = nkmedia_session:start(sample, #{}),
+%     {ok, Meta} = nkmedia_session:offer(SessId, {play, Id}, #{}),
+%     #{offer:=Offer} = Meta,
+%     nkmedia_janus_proto:register_play(SessId, Pid, Offer).
 
 
 

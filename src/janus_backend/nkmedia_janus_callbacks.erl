@@ -29,7 +29,7 @@
 -export([nkmedia_session_init/2, nkmedia_session_terminate/2]).
 -export([nkmedia_session_start/2, nkmedia_session_answer/3,
          nkmedia_session_update/4, nkmedia_session_stop/2, 
-         nkmedia_session_handle_info/2]).
+         nkmedia_session_handle_call/3, nkmedia_session_handle_info/2]).
 -export([api_cmd_syntax/6]).
 -export([nkdocker_notify/2]).
 
@@ -113,11 +113,11 @@ nkmedia_janus_get_mediaserver(SrvId) ->
 %% ===================================================================
 
 error_code(janus_error)             ->  {200, <<"Janus error">>};
-error_code({janus_error, Error})    ->  {200, ["Janus error ", Error]};
 error_code(janus_connection_error)  ->  {200, <<"Janus connection error">>};
 error_code(janus_down)              ->  {200, <<"Janus engine down">>};
 error_code(janus_bye)               ->  {200, <<"Janus bye">>};
-error_code(janus_room_creation)     ->  {200, <<"Janus room creation">>};
+error_code(invalid_publisher)       ->  {200, <<"Invalid publisher">>};
+
 error_code(_)                       ->  continue.
 
 
@@ -197,6 +197,22 @@ nkmedia_session_update(Update, Opts, Type, Session) ->
 nkmedia_session_stop(Reason, Session) ->
     {ok, State2} = nkmedia_janus_session:stop(Reason, Session, state(Session)),
     {continue, [Reason, session(State2, Session)]}.
+
+
+%% @private
+nkmedia_session_handle_call(nkmedia_janus_get_room, _From, Session) ->
+    Reply = case Session of
+        #{srv_id:=SrvId, type:=publish} ->
+            case state(Session) of
+                #{room:=Room} ->
+                    {ok, SrvId, Room};
+                _ ->
+                    {error, invalid_state}
+            end;
+        _ ->
+            {error, invalid_state}
+    end,
+    {reply, Reply, Session}.
 
 
 %% @private

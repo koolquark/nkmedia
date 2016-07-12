@@ -372,13 +372,16 @@ connect_janus(Host, Base, Tries) ->
 
 
 %% @private
-get_rooms(#state{id=Id, srv_id=SrvId, conn=Conn, session=Session, handle=Handle}=State) ->
+get_rooms(#state{id=Id, conn=Conn, session=Session, handle=Handle}=State) ->
 	{ok, Data, _} = 
 		nkmedia_janus_client:message(Conn, Session, Handle, #{request=>list}, #{}),
 	#{<<"data">>:=#{<<"list">>:=List}} = Data, 
 	lists:foreach(
-		fun(#{<<"description">>:=Desc}=RoomData) ->
-			nkmedia_janus_room:check(SrvId, Id, Desc, RoomData)
+		fun
+			(#{<<"room">>:=1234}) ->
+				ok;
+			(#{<<"description">>:=Desc}=RoomData) ->
+				nkmedia_janus_room:check(Id, Desc, RoomData)
 		end,
 		List),
 	Rooms = maps:from_list([{Room, Map} || #{<<"description">>:=Room}=Map<-List]),

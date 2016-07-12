@@ -77,7 +77,8 @@
         janus_pid => pid(),
         janus_mon => reference(),
         janus_op => answer,
-        janus_record_pos => integer()
+        record_pos => integer(),
+        room => binary()
     }.
 
 
@@ -116,11 +117,8 @@ start(echo, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
                 {ok, #{sdp:=_}=Answer} ->
                     Reply = #{answer=>Answer},
                     {ok, echo, Reply, none, Answer, State3};
-                {error, {janus_error, Error}} ->
-                    {error, {janus_error, Error}, State3};
                 {error, Error} ->
-                    ?LLOG(warning, "janus echo error: ~p", [Error], Session),
-                    {error, janus_error, State3}
+                    {error, Error, State3}
             end;
         {error, Error, State2} ->
             {error, Error, State2}
@@ -151,11 +149,8 @@ start(proxy, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
                             Offer3 = maps:merge(Offer, Offer2),
                             Reply = #{offer=>Offer3},
                             {ok, proxy, Reply, Offer3, none, State4};
-                        {error, {janus_error, Error}} ->
-                            {error, {janus_error, Error}, State2};
                         {error, Error} ->
-                            ?LLOG(warning, "janus proxy error: ~p", [Error], Session),
-                            {error, janus_error, State2}
+                            {error, Error, State3}
                     end
             end;
         {error, Error, State2} ->
@@ -179,22 +174,19 @@ start(publish, #{srv_id:=SrvId, offer:=#{sdp:=_}=Offer}=Session, State) ->
         end,
         State2 = case nkmedia_janus_room:get_info(Room) of
             {ok, #{janus_id:=JanusId}} ->
-                State#{janus_id=>JanusId};
+                State#{janus_id=>JanusId, room=>Room};
             _ ->
                 throw(room_not_found)
         end,
         case get_janus_op(Session, State2) of
             {ok, Pid, State3} ->
-                Opts = #{room=>Room},
+                {Opts, State4} = get_opts(Session, State3),
                 case nkmedia_janus_op:publish(Pid, Room, Offer, Opts) of
                     {ok, #{sdp:=_}=Answer} ->
                         Reply = #{answer=>Answer, room=>Room},
-                        {ok, publish, Reply, none, Answer, State3};
-                    {error, {janus_error, Error2}} ->
-                        {error, {janus_error, Error2}, State};
+                        {ok, publish, Reply, none, Answer, State4};
                     {error, Error2} ->
-                        ?LLOG(warning, "janus publish error: ~p", [Error2], Session),
-                        {error, janus_error, State3}
+                        {error, Error2, State4}
                 end;
             {error, Error3, State3} ->
                 {error, Error3, State3}
@@ -209,14 +201,14 @@ start(publish, _Session, State) ->
 start(listen, #{room:=Room, publisher:=Publisher}=Session, State) ->
     case get_janus_op(Session, State) of
         {ok, Pid, State2} ->
-            case nkmedia_janus_op:listen(Pid, Room, Publisher, #{}) of
+            {Opts, State3} = get_opts(Session, State2),
+            case nkmedia_janus_op:listen(Pid, Room, Publisher, Opts) of
                 {ok, Offer} ->
-                    State3 = State2#{janus_op=>answer},
+                    State4 = State3#{janus_op=>answer},
                     Reply = #{room=>Room, offer=>Offer},
-                    {ok, listen, Reply, Offer, none, State3};
+                    {ok, listen, Reply, Offer, none, State4};
                 {error, Error} ->
-                    ?LLOG(warning, "janus listen error: ~p", [Error], Session),
-                    {error, janus_error, State2}
+                    {error, Error, State3}
             end;
         {error, Error, State2} ->
             {error, Error, State2}
@@ -234,7 +226,7 @@ start(_Type, _Session, _State) ->
     {ok, map(), nkmedia:answer(), state()} |
     {error, term(), state()} | continue().
 
-answer(Op, Answer, Session, #{janus_op:=answer}=State)
+answer(Op, Answer, _Session, #{janus_op:=answer}=State)
         when Op==proxy; Op==listen ->
     #{janus_pid:=Pid} = State,
     case nkmedia_janus_op:answer(Pid, Answer) of
@@ -242,11 +234,8 @@ answer(Op, Answer, Session, #{janus_op:=answer}=State)
             {ok, #{}, Answer, maps:remove(janus_op, State)};
         {ok, Answer2} ->
             {ok, #{answer=>Answer2}, Answer2, maps:remove(janus_op, State)};
-        {error, {janus_error, Error}} ->
-            {error, {janus_error, Error}, State};
         {error, Error} ->
-            ?LLOG(warning, "janus answer error: ~p", [Error], Session),
-            {error, janus_error, State}
+            {error, Error, State}
     end;
 
 answer(_Type, _Answer, _Session, _State) ->
@@ -258,32 +247,27 @@ answer(_Type, _Answer, _Session, _State) ->
     {ok, type(), map(), state()} |
     {error, term(), state()} | continue().
 
-update(media, Opts, Type, Session, #{janus_pid:=Pid}=State)
-        when Type==echo; Type==proxy ->
-    {Opts2, State2} = get_opts(Opts, State),
+update(media, Opts, Type, #{id:=SessId}, #{janus_pid:=Pid}=State)
+        when Type==echo; Type==proxy; Type==publish ->
+    {Opts2, State2} = get_opts(Opts#{id=>SessId}, State),
     case nkmedia_janus_op:update(Pid, Opts2) of
         ok ->
             {ok, Type, #{}, State2};
-        {error, {janus_error, Error}} ->
-            {error, {janus_error, Error}, State2};
         {error, Error} ->
-            ?LLOG(warning, "janus update error: ~p", [Error], Session),
-            {error, janus_error, State2}
+            {error, Error, State2}
     end;
 
-update(listen_switch, #{publisher:=Publisher}, listen, Session, 
+update(listen_switch, #{publisher:=Publisher}, listen, _Session, 
        #{janus_pid:=Pid}=State) ->
     case nkmedia_janus_op:listen_switch(Pid, Publisher, #{}) of
         ok ->
             {ok, listen, #{}, State};
-        {error, {janus_error, Error}} ->
-            {error, {janus_error, Error}, State};
         {error, Error} ->
-            ?LLOG(warning, "janus listen switch error: ~p", [Error], Session),
-            {error, janus_error, State}
+            {error, Error, State}
     end;
 
 update(_Update, _Opts, _Type, _Session, _State) ->
+    % lager:error("UPDATE: ~p, ~p, ~p", [_Update, _Opts, _Type]),
     continue.
 
 
@@ -345,10 +329,10 @@ get_opts(#{id:=SessId}=Session, State) ->
     Opts = maps:with([record, use_audio, use_video, use_data, bitrate], Session),
     case Session of
         #{record:=true} ->
-            Pos = maps:get(janus_record_pos, State, 0),
+            Pos = maps:get(record_pos, State, 0),
             Name = io_lib:format("~s_p~4..0w", [SessId, Pos]),
             File = filename:join(<<"/tmp/record">>, list_to_binary(Name)),
-            {Opts#{filename => File}, State#{janus_record_pos=>Pos+1}};
+            {Opts#{filename => File}, State#{record_pos=>Pos+1}};
         _ ->
             {Opts, State}
     end.

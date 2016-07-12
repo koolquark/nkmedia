@@ -34,7 +34,7 @@
 -include("nkmedia.hrl").
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkMEDIA Janus Client "++Txt, Args)).
+    lager:Type("NkMEDIA Janus Client (~p) "++Txt, [self()|Args])).
 
 -define(PRINT(Txt, Args, State), 
         % print(Txt, Args, State),    % Comment this
@@ -115,7 +115,7 @@ info(Pid) ->
 
 create(Pid, CallBack, Id) ->
     call(Pid, {create, CallBack, Id, self()}).
-
+    
 
 %% @doc Creates a new session
 -spec attach(pid(), id(), binary()) ->
