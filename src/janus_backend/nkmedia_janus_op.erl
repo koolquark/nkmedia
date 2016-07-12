@@ -64,8 +64,6 @@
         description => binary(),
         bitrate => integer(),
         publishers => integer()
-        % record => boolean(),
-        % rec_dir => binary()
     }.
 
 -type media_opts() ::
@@ -777,11 +775,10 @@ do_create_room(#state{room=Room, opts=Opts}=State) ->
         request => create, 
         description => nklib_util:to_binary(Room),
         bitrate => maps:get(bitrate, Opts, 128000),
-        publishers => maps:get(publishers, Opts, 6),
+        publishers => 1000,
         audiocodec => maps:get(audiocodec, Opts, opus),
         videocodec => maps:get(videocodec, Opts, vp8),
-        record => maps:get(record, Opts, false),
-        rec_dir => nklib_util:to_binary(maps:get(rec_dir, Opts, <<"/tmp">>)),
+        % record => maps:get(record, Opts, false),
         is_private => false,
         permanent => false,
         room => RoomId
@@ -864,18 +861,9 @@ do_publish_2(SDP_A, State) ->
         nkmedia_id = SessId,
         opts = Opts
     } = State,
-    DefFile = <<"publish_", SessId/binary>>,
-    Body = #{
-        request => configure,
-        audio => maps:get(audio, Opts, true),
-        video => maps:get(video, Opts, true),
-        data => maps:get(data, Opts, true),
-        bitrate => maps:get(bitrate, Opts, 0),
-        record => maps:get(record, Opts, false),
-        filename => nklib_util:to_binary(maps:get(filename, Opts, DefFile))
-    },
+    Body = get_body(Opts),
     Jsep = #{sdp=>SDP_A, type=>offer, trickle=>false},
-    case message(Handle, Body, Jsep, State) of
+    case message(Handle, Body#{request=>configure}, Jsep, State) of
         {ok, #{<<"configured">>:=<<"ok">>}, #{<<"sdp">>:=SDP_B}} ->
             case nkmedia_janus_room:event(Room, {publish, SessId, Opts}) of
                 {ok, Pid} ->

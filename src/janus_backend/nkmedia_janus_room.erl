@@ -22,13 +22,13 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([create/3, destroy/1, get_info/1, get_all/0]).
--export([event/2]).
+-export([create/2, destroy/1, get_info/1, get_all/0]).
+-export([check/4, event/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
 -export([do_call/2]).
 
--define(TIMEOUT, 3600).       % secs
+-define(TIMEOUT, 30).       % secs
 
 -define(LLOG(Type, Txt, Args, State),
     lager:Type("NkMEDIA Janus Room ~s "++Txt, [State#state.room | Args])).
@@ -50,15 +50,15 @@
         videocodec => vp8 | vp9 | h264,
         bitrate => integer(),
         publishers => integer(),
-        record => boolean(),
-        rec_dir => binary(),
-        timeout => integer()        % secs
+        timeout => integer(),                   % Secs
+        janus_id => nkmedia_janus_engine:id(),  % Forces engine
+        id => room()                          % Forces name
     }.
 
 -type info() ::
     config() |
     #{
-        room => room(),
+        srv_id => nkservice:id(),
         publish => #{session() => map()},
         listen => #{session() => map()}
     }.
@@ -74,18 +74,33 @@
 %% ===================================================================
 
 %% @doc Creates a new room
--spec create(nkmedia_janus:id(), room(), config()) ->
-    {ok, pid()} | {error, term()}.
+-spec create(nkservice:id(), config()) ->
+    {ok, room(), pid()} | {error, term()}.
 
-create(JanusId, Room, Config) ->
-    Room2 = nklib_util:to_binary(Room),
-    case nkmedia_janus_op:create_room(JanusId, Room2, Config) of
-        ok ->
-            gen_server:start(?MODULE, [JanusId, Room2, Config], []);
-        {error, already_exists} ->
-            gen_server:start(?MODULE, [JanusId, Room2, Config], []);
-        {error, Error} ->
-            {error, Error}
+create(Srv, Config) ->
+    case nkservice_srv:get_srv_id(Srv) of
+        {ok, SrvId} ->
+            case get_janus(SrvId, Config) of
+                {ok, JanusId} ->
+                    Config2 = Config#{srv_id=>SrvId, janus_id=>JanusId},
+                    {Room, Config3} = nkmedia_util:add_uuid(Config2),
+                    #{id:=Room} = Config3,
+                    BaseRoom =  <<"NkMEDIA:", Room/binary>>,
+                    case nkmedia_janus_op:create_room(JanusId, BaseRoom, Config) of
+                        ok ->
+                            {ok, Pid} = gen_server:start(?MODULE, [Config3], []),
+                            {ok, Room, Pid};
+                        {error, already_exists} ->
+                            {ok, Pid} = gen_server:start(?MODULE, [Config3], []),
+                            {ok, Room, Pid};
+                        {error, Error} ->
+                            {error, Error}
+                    end;
+                error ->
+                    {error, mediaserver_not_available}
+            end;
+        not_found ->
+            {error, service_not_found}
     end.
 
 
@@ -110,17 +125,46 @@ get_info(Room) ->
 
 %% @doc Gets all started rooms
 -spec get_all() ->
-    [{nkmedia_janus:id(), room(), pid()}].
+    [{room(), nkmedia_janus:id(), pid()}].
 
 get_all() ->
-    [{JanusId, Room, Pid} || 
-        {{JanusId, Room}, Pid}<- nklib_proc:values(?MODULE)].
+    [{Room, JanusId, Pid} || 
+        {{Room, JanusId}, Pid}<- nklib_proc:values(?MODULE)].
+
+
+% [#{<<"audiocodec">> => <<"opus">>,<<"bitrate">> => 128000,<<"description">> => <<"Demo Room">>,<<"fir_freq">> => 10,<<"max_publishers">> => 6,<<"num_participants">> => 0,<<"record">> => <<"false">>,<<"room">> => 1234,<<"videocodec">> => <<"vp8">>}]
+
+syntax() ->
+    #{
+        audiocodec => {enum, [opus, isac32, isac16, pcmu, pcma]},
+        videocodec => {enum , [vp8, vp9, h264]},
+        bitrate => {integer, 0, none},
+        publishers => {integer, 0, none}
+    }.
+
 
 %% ===================================================================
 %% Internal
 %% ===================================================================
 
+%% @private Called periodically from nkmedia_janus_engine
+check(SrvId, JanusId, <<"NkMEDIA:", Room/binary>>, RoomData) ->
+    case find(Room) of
+        {ok, Pid} ->
+            #{<<"num_participants">>:=Num} = RoomData,
+            gen_server:cast(Pid, {participants, Num});
+        not_found ->
+            {ok, Config, _} = nklib_config:parse(RoomData, syntax(), #{return=>map}),
+            lager:warning("Created room ~s from Janus", [Room]),            
+            create(SrvId, Config#{janus_id=>JanusId, id=>Room})
+    end;
 
+check(_SrvId, _JanusId, _Room, _RoomData) ->
+    ok.
+
+
+%% @private Called from nkmedia_janus_op when new subscribers or listeners 
+%% are added or removed
 -spec event(room(), event()) ->
     {ok, pid()} | {error, term()}.
 
@@ -152,12 +196,12 @@ event(Room, Event) ->
     {ok, tuple()} | {ok, tuple(), timeout()|hibernate} |
     {stop, term()} | ignore.
 
-init([JanusId, Room, Config]) ->
+init([#{id:=Room, janus_id:=JanusId}=Config]) ->
     true = nklib_proc:reg({?MODULE, Room}, JanusId),
-    nklib_proc:put(?MODULE, {JanusId, Room}),
+    nklib_proc:put(?MODULE, {Room, JanusId}),
     State = #state{
-        janus_id = JanusId,
         room = Room,
+        janus_id = JanusId,
         config =Config#{publish=>#{}, listen=>#{}},
         links = nklib_links:new()
     },
@@ -191,6 +235,12 @@ handle_call(Msg, _From, State) ->
 -spec handle_cast(term(), #state{}) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
+handle_cast({participants, Num}, #state{config=Config}=State) ->
+    #{publish:=Publish, listen:=Listen} = Config,
+    ?LLOG(info, "participants: ~p (~p+~p)", 
+          [Num, map_size(Publish), map_size(Listen)], State),
+    {noreply, State};
+
 handle_cast(stop, State) ->
     lager:info("Conference destroyed"),
     {stop, normal, State};
@@ -204,9 +254,21 @@ handle_cast(Msg, State) ->
 -spec handle_info(term(), #state{}) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
-handle_info(room_timeout, State) ->
-    ?LLOG(notice, "room timeout", [], State),
-    {stop, normal, State};
+handle_info(room_timeout, #state{janus_id=JanusId, room=Room, config=Config}=State) ->
+    #{publish:=Publish, listen:=Listen} = Config,
+    case map_size(Publish) + map_size(Listen) of
+        0 ->
+            % ?LLOG(notice, "info timeout", [], State),
+            {stop, normal, State};
+        _ ->
+            case nkmedia_janus_engine:check_room(JanusId, <<"NkMEDIA:", Room/binary>>) of
+                {ok, _} ->      
+                    restart_timer(State);
+                _ ->
+                    ?LLOG(warning, "room is not on engine", [], State),
+                    {stop, normal, State}
+            end
+    end;
 
 handle_info({'DOWN', _Ref, process, Pid, Reason}=Info, State) ->
     case links_down(Pid, State) of
@@ -244,9 +306,9 @@ code_change(_OldVsn, State, _Extra) ->
     ok.
 
 terminate(_Reason, #state{janus_id=JanusId, room=Room}=State) ->    
-    case nkmedia_janus_op:destroy_room(JanusId, Room) of
+    case nkmedia_janus_op:destroy_room(JanusId, <<"NkMEDIA:", Room/binary>>) of
         ok ->
-            ?LLOG(notice, "stopping, destroying room", [], State);
+            ?LLOG(info, "stopping, destroying room", [], State);
         {error, Error} ->
             ?LLOG(warning, "could not destroy room: ~p: ~p", [Room, Error], State)
     end.
@@ -255,6 +317,20 @@ terminate(_Reason, #state{janus_id=JanusId, room=Room}=State) ->
 % ===================================================================
 %% Internal
 %% ===================================================================
+
+%% @private
+get_janus(_SrvId, #{janus_id:=JanusId}) ->
+    {ok, JanusId};
+
+get_janus(SrvId, _Config) ->
+    case SrvId:nkmedia_janus_get_mediaserver(SrvId) of
+        {ok, JanusId} ->
+            {ok, JanusId};
+        {error, _Error} ->
+            error
+    end.
+
+
 
 %% @private
 event({publish, Session, Info}, Pid, _From, State) ->

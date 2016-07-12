@@ -41,8 +41,6 @@
 %% Types
 %% ===================================================================
 
--type session() :: nkmedia_session:session().
-% -type continue() :: continue | {continue, list()}.
 
 
 
@@ -96,10 +94,10 @@ plugin_stop(Config, #{name:=Name}) ->
 
 
 %% @private
--spec nkmedia_janus_get_mediaserver(session()) ->
+-spec nkmedia_janus_get_mediaserver(nkservice:id()) ->
     {ok, nkmedia_janus_engine:id()} | {error, term()}.
 
-nkmedia_janus_get_mediaserver(#{srv_id:=SrvId}) ->
+nkmedia_janus_get_mediaserver(SrvId) ->
     case nkmedia_janus_engine:get_all(SrvId) of
         [{FsId, _}|_] ->
             {ok, FsId};
@@ -267,7 +265,8 @@ syntax(<<"update_session">>, Syntax, Defaults, Mandatory) ->
             use_audio => boolean,
             use_video => boolean,
             use_data => boolean,
-            record => boolean
+            record => boolean,
+            publisher => boolean
         },
         Defaults,
         Mandatory

@@ -24,7 +24,7 @@
 -behaviour(gen_server).
 
 -export([connect/1, stop/1, find/1]).
--export([stats/2, get_config/1, get_conn/1]).
+-export([stats/2, get_config/1, get_conn/1, check_room/2]).
 -export([get_all/0, get_all/1, stop_all/0]).
 -export([start_link/1, init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
@@ -125,6 +125,19 @@ get_conn(Id) ->
 	end.
 
 
+%% @private
+-spec check_room(id(), integer()) ->
+	ok.
+
+check_room(Id, Room) ->
+	case find(Id) of
+		{ok, _Status, JanusPid, _ConnPid} ->
+			nkservice_util:call(JanusPid, {check_room, Room}, ?CALL_TIME);
+		_ ->
+			{error, no_connection}
+	end.
+
+
 %% @doc
 -spec get_all() ->
 	[{nkservice:id(), id(), pid()}].
@@ -176,11 +189,14 @@ start_link(Config) ->
 
 -record(state, {
 	id :: id(),
+	srv_id :: nkservice:id(),
 	config :: config(),
 	status :: status(),
 	conn :: pid(),
 	session :: integer(),
-	info = #{} :: map()
+	handle :: integer(),
+	info = #{} :: map(),
+	rooms = #{} :: #{Room::binary() => map()}
 }).
 
 
@@ -190,11 +206,11 @@ start_link(Config) ->
     {stop, term()} | ignore.
 
 init([#{srv_id:=SrvId, name:=Id}=Config]) ->
-	State = #state{config=Config, id=Id},
+	State = #state{id=Id, srv_id=SrvId, config=Config},
 	nklib_proc:put(?MODULE, {SrvId, Id}),
 	true = nklib_proc:reg({?MODULE, Id}, {connecting, undefined}),
 	self() ! connect,
-	self() ! keepalive,
+	self() ! get_rooms,
 	?LLOG(info, "started (~p)", [self()], State),
 	{ok, State}.
 
@@ -209,6 +225,13 @@ handle_call(get_state, _From, State) ->
 
 handle_call(get_config, _From, #state{config=Config}=State) ->
     {reply, {ok, Config}, State};
+
+handle_call({check_room, Room}, _From, #state{rooms=Rooms}=State) ->
+	Reply = case maps:find(Room, Rooms) of
+		{ok, Data} -> {ok, Data};
+		error -> {error, room_not_found}
+	end,
+    {reply, Reply, State};
 
 handle_call(Msg, _From, State) ->
     lager:error("Module ~p received unexpected call ~p", [?MODULE, Msg]),
@@ -247,10 +270,13 @@ handle_info(connect, #state{id=Id, config=Config}=State) ->
 					monitor(process, Pid),
 					print_info(Info, State),
 					{ok, Session} = nkmedia_janus_client:create(Pid, undefined, Id),
+					{ok, Handle} = 
+						nkmedia_janus_client:attach(Pid, Session, <<"videoroom">>),
 					State3 = State2#state{
 						conn = Pid, 
 						info = Info,
-						session = Session
+						session = Session,
+						handle = Handle
 					},
 					{noreply, update_status(ready, State3)};
 				{error, Error} ->
@@ -262,15 +288,13 @@ handle_info(connect, #state{id=Id, config=Config}=State) ->
 			{stop, normal, State2}
 	end;
 
-handle_info(keepalive, #state{conn=Conn, session=Session}=State) ->
-	case is_pid(Conn) of
-		true -> 
-			nkmedia_janus_client:keepalive(Conn, Session);
-		false ->
-			ok
+handle_info(get_rooms, #state{conn=Conn}=State) ->
+	State2 = case is_pid(Conn) of
+		true -> get_rooms(State);
+		false -> State
 	end,
-	erlang:send_after(?KEEPALIVE, self(), keepalive),
-	{noreply, State};
+	erlang:send_after(?KEEPALIVE, self(), get_rooms),
+	{noreply, State2};
 
 handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{conn=Pid}=State) ->
 	?LLOG(warning, "connection event down", [], State),
@@ -345,6 +369,23 @@ connect_janus(Host, Base, Tries) ->
 			timer:sleep(1000),
 			connect_janus(Host2, Base, Tries-1)
 	end.
+
+
+%% @private
+get_rooms(#state{id=Id, srv_id=SrvId, conn=Conn, session=Session, handle=Handle}=State) ->
+	{ok, Data, _} = 
+		nkmedia_janus_client:message(Conn, Session, Handle, #{request=>list}, #{}),
+	#{<<"data">>:=#{<<"list">>:=List}} = Data, 
+	lists:foreach(
+		fun(#{<<"description">>:=Desc}=RoomData) ->
+			nkmedia_janus_room:check(SrvId, Id, Desc, RoomData)
+		end,
+		List),
+	Rooms = maps:from_list([{Room, Map} || #{<<"description">>:=Room}=Map<-List]),
+	State#state{rooms=Rooms}.
+
+
+
 
 
 

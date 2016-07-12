@@ -60,7 +60,6 @@
     nkmedia_session:session() |
     #{
         record => boolean(),            %
-        record_file => binary(),        % echo
         room => binary(),               % publish, listen
         publisher => binary(),          % listen
         proxy_type => webrtc | rtp      % proxy
@@ -110,12 +109,10 @@ terminate(_Reason, _Session, State) ->
     {error, term(), state()} | continue().
 
 start(echo, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
-    case get_janus(Session, State) of
+    case get_janus_op(Session, State) of
         {ok, Pid, State2} ->
-            Opts1 = maps:with(
-                [record, use_audio, use_video, use_data, bitrate], Session),
-            {Opts2, State3} = add_record_opts(Session, Opts1, State2),
-            case nkmedia_janus_op:echo(Pid, Offer, Opts2) of
+            {Opts, State3} = get_opts(Session, State2),
+            case nkmedia_janus_op:echo(Pid, Offer, Opts) of
                 {ok, #{sdp:=_}=Answer} ->
                     Reply = #{answer=>Answer},
                     {ok, echo, Reply, none, Answer, State3};
@@ -133,7 +130,7 @@ start(echo, _Session, State) ->
     {error, missing_offer, State};
 
 start(proxy, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
-    case get_janus(Session, State) of
+    case get_janus_op(Session, State) of
         {ok, Pid, State2} ->
             OfferType = maps:get(sdp_type, Offer, webrtc),
             OutType = maps:get(proxy_type, Session, webrtc),
@@ -147,10 +144,8 @@ start(proxy, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
                 error ->
                     {error, invalid_parameters, State};
                 _ ->
-                    Opts1 = maps:with(
-                        [record, use_audio, use_video, use_data, bitrate], Session),
-                    {Opts2, State3} = add_record_opts(Session, Opts1, State2),
-                    case nkmedia_janus_op:Fun(Pid, Offer, Opts2) of
+                    {Opts, State3} = get_opts(Session, State2),
+                    case nkmedia_janus_op:Fun(Pid, Offer, Opts) of
                         {ok, Offer2} ->
                             State4 = State3#{janus_op=>answer},
                             Offer3 = maps:merge(Offer, Offer2),
@@ -170,36 +165,36 @@ start(proxy, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
 start(proxy, _Session, State) ->
     {error, missing_offer, State};
 
-start(publish, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
+start(publish, #{srv_id:=SrvId, offer:=#{sdp:=_}=Offer}=Session, State) ->
     try
         Room = case maps:find(room, Session) of
-            {ok, Room0} -> nklib_util:to_binary(Room0);
-            error -> nklib_util:uuid_4122()
+            {ok, Room0} -> 
+                nklib_util:to_binary(Room0);
+            error -> 
+                RoomOpts = maps:with([audiocodec, videocodec, bitrate], Session),
+                case nkmedia_janus_room:create(SrvId, RoomOpts) of
+                    {ok, Room0, _} -> Room0;
+                    {error, Error} -> throw(Error)
+                end
         end,
-        case get_janus(Session, State) of
-            {ok, Pid, State2} ->
-                case nkmedia_janus_room:get_info(Room) of
-                    {error, not_found} ->
-                        #{janus_id:=JanusId} = State2,
-                        case nkmedia_janus_room:create(JanusId, Room, #{}) of
-                            {ok, _} -> 
-                                ok;
-                            {error, Error} ->
-                                ?LLOG(warning, "room creation error: ~p", 
-                                      [Error], Session),
-                                throw(janus_room_creation)
-                        end;
-                    {ok, _} ->
-                        ok
-                end,
+        State2 = case nkmedia_janus_room:get_info(Room) of
+            {ok, #{janus_id:=JanusId}} ->
+                State#{janus_id=>JanusId};
+            _ ->
+                throw(room_not_found)
+        end,
+        case get_janus_op(Session, State2) of
+            {ok, Pid, State3} ->
                 Opts = #{room=>Room},
                 case nkmedia_janus_op:publish(Pid, Room, Offer, Opts) of
                     {ok, #{sdp:=_}=Answer} ->
-                        Reply = Opts#{answer=>Answer},
-                        {ok, publish, Reply, none, Answer, State2};
+                        Reply = #{answer=>Answer, room=>Room},
+                        {ok, publish, Reply, none, Answer, State3};
+                    {error, {janus_error, Error2}} ->
+                        {error, {janus_error, Error2}, State};
                     {error, Error2} ->
                         ?LLOG(warning, "janus publish error: ~p", [Error2], Session),
-                        {error, janus_error, State2}
+                        {error, janus_error, State3}
                 end;
             {error, Error3, State3} ->
                 {error, Error3, State3}
@@ -212,12 +207,12 @@ start(publish, _Session, State) ->
     {error, missing_offer, State};
 
 start(listen, #{room:=Room, publisher:=Publisher}=Session, State) ->
-    case get_janus(Session, State) of
+    case get_janus_op(Session, State) of
         {ok, Pid, State2} ->
             case nkmedia_janus_op:listen(Pid, Room, Publisher, #{}) of
                 {ok, Offer} ->
                     State3 = State2#{janus_op=>answer},
-                    Reply = #{room=>Room, publisher=>Publisher, offer=>Offer},
+                    Reply = #{room=>Room, offer=>Offer},
                     {ok, listen, Reply, Offer, none, State3};
                 {error, Error} ->
                     ?LLOG(warning, "janus listen error: ~p", [Error], Session),
@@ -265,22 +260,24 @@ answer(_Type, _Answer, _Session, _State) ->
 
 update(media, Opts, Type, Session, #{janus_pid:=Pid}=State)
         when Type==echo; Type==proxy ->
-    Opts2 = maps:with([use_audio, use_video, bitrate, record], Opts),
-    {Opts3, State3} = add_record_opts(Session, Opts2, State),
-    case nkmedia_janus_op:update(Pid, Opts3) of
+    {Opts2, State2} = get_opts(Opts, State),
+    case nkmedia_janus_op:update(Pid, Opts2) of
         ok ->
-            {ok, Type, #{}, State3};
+            {ok, Type, #{}, State2};
         {error, {janus_error, Error}} ->
-            {error, {janus_error, Error}, State3};
+            {error, {janus_error, Error}, State2};
         {error, Error} ->
             ?LLOG(warning, "janus update error: ~p", [Error], Session),
-            {error, janus_error, State3}
+            {error, janus_error, State2}
     end;
 
-update(listen_switch, #{publisher:=Publisher}, listen, Session, #{janus_pid:=Pid}=State) ->
+update(listen_switch, #{publisher:=Publisher}, listen, Session, 
+       #{janus_pid:=Pid}=State) ->
     case nkmedia_janus_op:listen_switch(Pid, Publisher, #{}) of
         ok ->
-            {ok, listen, #{publisher=>Publisher}, State};
+            {ok, listen, #{}, State};
+        {error, {janus_error, Error}} ->
+            {error, {janus_error, Error}, State};
         {error, Error} ->
             ?LLOG(warning, "janus listen switch error: ~p", [Error], Session),
             {error, janus_error, State}
@@ -306,7 +303,7 @@ stop(_Reason, _Session, State) ->
 
 
 %% @private
-get_janus(#{id:=SessId}=Session, #{janus_id:=JanusId}=State) ->
+get_janus_op(#{id:=SessId}=Session, #{janus_id:=JanusId}=State) ->
     case nkmedia_janus_op:start(JanusId, SessId) of
         {ok, Pid} ->
             State2 = State#{janus_pid=>Pid, janus_mon=>monitor(process, Pid)},
@@ -316,10 +313,10 @@ get_janus(#{id:=SessId}=Session, #{janus_id:=JanusId}=State) ->
             {error, janus_connection_error, State}
     end;
 
-get_janus(Session, State) ->
+get_janus_op(Session, State) ->
     case get_mediaserver(Session, State) of
         {ok, State2} ->
-            get_janus(Session, State2);
+            get_janus_op(Session, State2);
         {error, Error} ->
             ?LLOG(warning, "get_mediaserver error: ~p", [Error], Session),
             {error, no_mediaserver, State}
@@ -334,8 +331,8 @@ get_janus(Session, State) ->
 get_mediaserver(_Session, #{janus_id:=_}=State) ->
     {ok, State};
 
-get_mediaserver(#{srv_id:=SrvId}=Session, State) ->
-    case SrvId:nkmedia_janus_get_mediaserver(Session) of
+get_mediaserver(#{srv_id:=SrvId}, State) ->
+    case SrvId:nkmedia_janus_get_mediaserver(SrvId) of
         {ok, Id} ->
             {ok, State#{janus_id=>Id}};
         {error, Error} ->
@@ -344,15 +341,17 @@ get_mediaserver(#{srv_id:=SrvId}=Session, State) ->
 
 
 %% @private
-add_record_opts(#{id:=SessId}, #{record:=true}=Opts, State) ->
-    Pos = maps:get(janus_record_pos, State, 0),
-    Name = io_lib:format("~s_p~4..0w", [SessId, Pos]),
-    File = filename:join(<<"/tmp/record">>, list_to_binary(Name)),
-    {Opts#{filename => File}, State#{janus_record_pos=>Pos+1}};
-
-add_record_opts(_Session, Opts, State) ->
-    {Opts, State}.
-
+get_opts(#{id:=SessId}=Session, State) ->
+    Opts = maps:with([record, use_audio, use_video, use_data, bitrate], Session),
+    case Session of
+        #{record:=true} ->
+            Pos = maps:get(janus_record_pos, State, 0),
+            Name = io_lib:format("~s_p~4..0w", [SessId, Pos]),
+            File = filename:join(<<"/tmp/record">>, list_to_binary(Name)),
+            {Opts#{filename => File}, State#{janus_record_pos=>Pos+1}};
+        _ ->
+            {Opts, State}
+    end.
 
 
 
