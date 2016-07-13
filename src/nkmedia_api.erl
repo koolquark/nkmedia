@@ -23,7 +23,7 @@
 -module(nkmedia_api).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([cmd/4, forward_event/3, handle_down/4]).
--export([syntax/4]).
+-export([syntax/5]).
 
 -include_lib("nkservice/include/nkservice.hrl").
 
@@ -45,7 +45,7 @@
 %% Registers self() with the session (to be monitorized)
 %% Subscribes the caller to session events
 %% Monitorizes the session and stores info on State
-cmd(SrvId, <<"start_session">>, Data, State) ->
+cmd(<<"session">>, <<"start">>, #api_req{srv_id=SrvId, data=Data}, State) ->
 	#{type:=Type} = Data,
 	Config = Data#{register => {nkmedia_api, self()}},
 	case nkmedia_session:start(SrvId, Type, Config) of
@@ -65,12 +65,12 @@ cmd(SrvId, <<"start_session">>, Data, State) ->
 			{error, Error, State}
 	end;
 
-cmd(_SrvId, <<"stop_session">>, Data, State) ->
+cmd(<<"session">>, <<"stop">>, #api_req{data=Data}, State) ->
 	#{session_id:=SessId} = Data,
 	nkmedia_session:stop(SessId),
 	{ok, #{}, State};
 
-cmd(_SrvId, <<"set_answer">>, Data, State) ->
+cmd(<<"session">>, <<"set_answer">>, #api_req{data=Data}, State) ->
 	#{answer:=Answer, session_id:=SessId} = Data,
 	case nkmedia_session:answer(SessId, Answer) of
 		{ok, Reply} ->
@@ -79,7 +79,7 @@ cmd(_SrvId, <<"set_answer">>, Data, State) ->
 			{error, Error, State}
 	end;
 
-cmd(_SrvId, <<"update_session">>, Data, State) ->
+cmd(<<"session">>, <<"update">>, #api_req{data=Data}, State) ->
 	#{session_id:=SessId, update:=Update} = Data,
 	case nkmedia_session:update(SessId, Update, Data) of
 		{ok, _} ->
@@ -130,15 +130,12 @@ handle_down(SrvId, Mon, Reason, State) ->
 
 
 
-
-
-
 %% ===================================================================
 %% Syntax
 %% ===================================================================
 
 %% @private
-syntax(<<"start_session">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"session">>, <<"start">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			type => atom,							%% p2p, proxy...
@@ -153,7 +150,7 @@ syntax(<<"start_session">>, Syntax, Defaults, Mandatory) ->
 		[type|Mandatory]
 	};
 
-syntax(<<"stop_session">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"session">>, <<"stop">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
@@ -164,7 +161,7 @@ syntax(<<"stop_session">>, Syntax, Defaults, Mandatory) ->
 		[session_id|Mandatory]
 	};
 
-syntax(<<"set_answer">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"session">>, <<"set_answer">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
@@ -174,7 +171,7 @@ syntax(<<"set_answer">>, Syntax, Defaults, Mandatory) ->
 		[session_id, answer|Mandatory]
 	};
 
-syntax(<<"update_session">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"session">>, <<"update">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
@@ -184,7 +181,7 @@ syntax(<<"update_session">>, Syntax, Defaults, Mandatory) ->
 		[session_id, update|Mandatory]
 	};
 
-syntax(_, Syntax, Defaults, Mandatory) ->
+syntax(_Sub, _Cmd, Syntax, Defaults, Mandatory) ->
 	{Syntax, Defaults, Mandatory}.
 
 

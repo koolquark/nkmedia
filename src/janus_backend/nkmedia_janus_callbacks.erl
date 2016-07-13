@@ -30,7 +30,7 @@
 -export([nkmedia_session_start/2, nkmedia_session_answer/3,
          nkmedia_session_update/4, nkmedia_session_stop/2, 
          nkmedia_session_handle_call/3, nkmedia_session_handle_info/2]).
--export([api_cmd_syntax/6]).
+-export([api_syntax/4]).
 -export([nkdocker_notify/2]).
 
 -include_lib("nkservice/include/nkservice.hrl").
@@ -232,11 +232,12 @@ nkmedia_session_handle_info({'DOWN', Ref, process, _Pid, _Reason}, Session) ->
 %% ===================================================================
 
 %% @private
-api_cmd_syntax(<<"media">>, Cmd, Data, Syntax, Defaults, Mandatory) ->
-    {Syntax2, Defaults2, Mandatory2} = syntax(Cmd, Syntax, Defaults, Mandatory),
-    {continue, [<<"media">>, Cmd, Data, Syntax2, Defaults2, Mandatory2]};
+api_syntax(#api_req{class = <<"media">>}=Req, Syntax, Defaults, Mandatory) ->
+    #api_req{subclass=Sub, cmd=Cmd} = Req,
+    {S2, D2, M2} = syntax(Sub, Cmd, Syntax, Defaults, Mandatory),
+    {continue, [Req, S2, D2, M2]};
 
-api_cmd_syntax(_Class, _Cmd, _Data, _Syntax, _Defaults, _Mandatory) ->
+api_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
     continue.
 
 
@@ -258,7 +259,7 @@ nkdocker_notify(_MonId, _Op) ->
 %% ===================================================================
 
 %% @private
-syntax(<<"start_session">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"session">>, <<"start">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             record => boolean,
@@ -274,7 +275,7 @@ syntax(<<"start_session">>, Syntax, Defaults, Mandatory) ->
         Mandatory
     };
 
-syntax(<<"update_session">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"session">>, <<"update">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             bitrate => integer,
@@ -288,7 +289,7 @@ syntax(<<"update_session">>, Syntax, Defaults, Mandatory) ->
         Mandatory
     };
 
-syntax(_, Syntax, Defaults, Mandatory) ->
+syntax(_Sub, _Cmd, Syntax, Defaults, Mandatory) ->
     {Syntax, Defaults, Mandatory}.
 
 

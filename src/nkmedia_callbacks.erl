@@ -37,11 +37,13 @@
 		 nkmedia_call_handle_call/3, nkmedia_call_handle_cast/2, 
 		 nkmedia_call_handle_info/2]).
 -export([error_code/1]).
--export([api_cmd/8, api_cmd_syntax/6]).
--export([api_server_cmd/5, api_server_handle_info/2]).
+-export([api_cmd/2, api_syntax/4]).
+-export([api_server_cmd/2, api_server_handle_info/2]).
 -export([nkdocker_notify/2]).
 
 -include("nkmedia.hrl").
+-include_lib("nkservice/include/nkservice.hrl").
+
 
 -define(BASE_ERROR, 2000).
 
@@ -330,18 +332,19 @@ error_code(Error) ->
 %% ===================================================================
 
 %% @private
-api_cmd(SrvId, _User, _SessId, <<"media">>, Cmd, Parsed, _TId, State) ->
-	nkmedia_api:cmd(SrvId, Cmd, Parsed, State);
+api_cmd(#api_req{class = <<"media">>}=Req, State) ->
+	nkmedia_api:cmd(Req, State);
 
-api_cmd(_SrvId, _User, _SessId, _Class, _Cmd, _Parsed, _TId, _State) ->
+api_cmd(_Req, _State) ->
 	continue.
 
 
 %% @private
-api_cmd_syntax(<<"media">>, Cmd, _Data, Syntax, Defaults, Mandatory) ->
-	nkmedia_api:syntax(Cmd, Syntax, Defaults, Mandatory);
+api_syntax(#api_req{class = <<"media">>}=Req, Syntax, Defaults, Mandatory) ->
+	#api_req{subclass=Sub, cmd=Cmd} = Req,
+	nkmedia_api:syntax(Sub, Cmd, Syntax, Defaults, Mandatory);
 	
-api_cmd_syntax(_Class, _Cmd, _Data, _Syntax, _Defaults, _Mandatory) ->
+api_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
 	continue.
 
 
@@ -351,11 +354,10 @@ api_cmd_syntax(_Class, _Cmd, _Data, _Syntax, _Defaults, _Mandatory) ->
 %% ===================================================================
 
 %% @private
-api_server_cmd(<<"media">>, Cmd, Data, TId, State) ->
-	#{srv_id:=SrvId, user:=User, session_id:=SessId} = State,
-	nkservice_api:launch(SrvId, User, SessId, <<"media">>, Cmd, Data, TId, State);
+api_server_cmd(#api_req{class = <<"media">>}=Req, State) ->
+	nkservice_api:launch(Req, State);
 	
-api_server_cmd(_Class, _Cmd, _Data, _TId, _State) ->
+api_server_cmd(_Req, _State) ->
     continue.
 
 

@@ -9,20 +9,14 @@ The currently supported External API commands as described here.
 
 **Session Commands**
 
-Cmd|Description
+Class|Subclass|Cmd|Description
 ---|---
-[`start_session`](#start-a-session)|Creates a new media session
-[`stop_session`](#stop-a-session)|Destroys a new media session
-[`set-answer`](#set-an-answer)|Sets the answer for a sessions
-[`update_session`](#update-a-session)|Updates a current session
-
-
-**Call Commands**
-
-Cmd|Description
----|---
-[`start_call`](#start-a-call)|Starts a new call
-[`hangup_call`](#hangup-a-call)|Hangups a call
+`media`|`session`|[`start`](#start-a-session)|Creates a new media session
+`media`|`session`|[`stopn`](#stop-a-session)|Destroys a new media session
+`media`|`session`|[`set_answer`](#set-an-answer)|Sets the answer for a sessions
+`media`|`session`|[`update`](#update-a-session)|Updates a current session
+`media`|`call`|[`start`](#start-a-call)|Starts a new call
+`media`|`call`|[`hangup`](#hangup-a-call)|Hangups a call
 
 
 ### Start a Session
@@ -62,7 +56,8 @@ Depending on the type, you need to supply an _offer_, or an _offer_ and an _answ
 ```js
 {
 	class: "media",
-	cmd: "start_session",
+	subclass: "session",
+	cmd: "start",
 	data: {
 		type: "echo",
 		offer: {
@@ -109,9 +104,34 @@ You will get your own answer in the response.
 
 ### Update a Session
 
-Some session types allow to modify the session characteristics in real time. For example, the `listener` type allows to switch to listen to a different publisher, and the the types provided the the _nkmedia_fs_ plugin allow even to change the session type.
+Some session types allow to modify the session characteristics in real time. 
 
-See each specific plugin documentation to learn about how to use it and supported options.
+The `session_id` field is mandatory. See each specific plugin documentation to learn about how to use it and supported options.
+
+
+**Sample **
+
+```js
+{
+	class: "media",
+	subclass: "session",
+	cmd: "update",
+	data: {
+		session_id: "54c1b637-36fb-70c2-8080-28f07603cda8",
+		record: true,
+		use_audio: false,
+		bitrate: 100000
+	}
+	tid: 1
+}
+```
+-->
+```js
+{
+	result: "ok",
+	tid: 1
+}
+`
 
 
 
@@ -151,7 +171,8 @@ verto|user_id|Registered verto user to call to
 ```js
 {
 	class: "media",
-	cmd: "start_call",
+	subclass: "call"
+	cmd: "start",
 	data: {
 		type: "user",
 		session_id: "54c1b637-36fb-70c2-8080-28f07603cda8"
@@ -185,7 +206,8 @@ For `user` and `session` types, one or several (for `user`, if he has several se
 ```js
 {
 	class: "media",
-	cmd: "call_invite",
+	subclass: "call",
+	cmd: "invite",
 	data: {
 		call_id: "8b35b132-375f-b3e5-a978-28f07603cda8",
 		type: "user",
@@ -209,7 +231,7 @@ you must answer immediately with success or error:
 }
 ```
 
-then you can send the followin events: _ringing_, _accepted_ or _rejected_:
+then you can send the following events: _ringing_, _accepted_ or _rejected_:
 
 ```js
 {
@@ -292,7 +314,8 @@ You can hangup a call using the `call_id`:
 ```js
 {
 	class: "media",
-	cmd: "hangup_call",
+	subclass: "call"
+	cmd: "hangup",
 	data: {
 		call_id: "8b35b132-375f-b3e5-a978-28f07603cda8",
 		code: 0,							// Optional
