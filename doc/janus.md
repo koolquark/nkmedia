@@ -2,14 +2,14 @@
 
 ## Janus Options
 
-When the nkmedia_janus backend is selected (either manually, using the `backend` option when creating the session or automatically, depending on the type), de following types are supported:
+When the nkmedia_janus backend is selected (either manually, using the `backend: nkmedia_janus` option when creating the session or automatically, depending on the type), de following types are supported:
 
 Type|Updates|Description
 ---|---|---
-[echo](#echo)|[yes](#echo-update)|Echoes audio and/or video, managing bandwitch and recording
-[proxy](#proxy)|[yes](#proxy-update)|Routes media through the server, optionally adapting SIP and WebRTC protocols
-[publish](#publish)|[yes](#publish-update)|Publishes audio and/or video to an SFU _room_
-[listen](#listen)|[yes](#listen-update)|Listens to a publisher
+[echo](#echo)|[media](#echo-update)|Echoes audio and/or video, managing bandwitch and recording
+[proxy](#proxy)|[media](#proxy-update)|Routes media through the server, optionally adapting SIP and WebRTC protocols
+[publish](#publish)|[media](#publish-update)|Publishes audio and/or video to an SFU _room_
+[listen](#listen)|[listen_switch](#listen-update)|Listens to a publisher
 
 Most types allow modification of the media sytream, see documentation for each one.
 
