@@ -18,7 +18,7 @@ When recording is available, a file with the same name of the session will be cr
 
 ### Echo
 
-Allows to create an echo session. The caller must include the _offer_ in the [session creation request](api_command.md#start-a-session), and NkMEDIA will include the _answer_ in the response.
+Allows to create an echo session. The caller must include the _offer_ in the [session creation request](api_commands.md#start-a-session), and NkMEDIA will include the _answer_ in the response.
 
 Aditional supported options are:
 
@@ -70,7 +70,7 @@ It is possible to update the media session once started, using the [update sessi
 
 ### Proxy
 
-Allows to create a proxy session. The caller must include the _offer_ in the [session creation request](api_command.md#start-a-session), and NkMEDIA will include the _offer_ to send to the called party. Later on, when the called party returns its answer, you must use the [set answer command](api_commands.md#set-an-answer), and you will get back the answer for the caller session.
+Allows to create a proxy session. The caller must include the _offer_ in the [session creation request](api_commands.md#start-a-session), and NkMEDIA will include the _offer_ to send to the called party. Later on, when the called party returns its answer, you must use the [set answer command](api_commands.md#set-an-answer), and you will get back the answer for the caller session.
 
 
 Field|Default|Description
@@ -117,7 +117,7 @@ You must now call answer_session:
 ```js
 {
 	class: "media",
-	class: "session",
+	subclass: "session",
 	cmd: "set_answer",
 	data: {
 		session_id: "54c1b637-36fb-70c2-8080-28f07603cda8",
@@ -155,7 +155,6 @@ If you don't include a room, a new one will be created automatically (using opti
 
 Field|Default|Description
 ---|---|---
-
 room|(automatic)|Room to use
 room_audio_codec|`"opus"`|Audio codec to force (`opus`, `isac32`, `isac16`, `pcmu`, `pcma`)
 room_video_codec|`"vp8"`|Video codec to force (`vp8`, `vp9`, `h264`)
@@ -205,9 +204,9 @@ It is possible to update the media session once started, using the [update sessi
 
 ## Listen
 
-Allows to _listen_ to a previously started publisher, working as an _SFU_ (selective forwarding unit). You must tell the _publisher id_, and the room will be find automatically.
+Allows to _listen_ to a previously started publisher, working as an _SFU_ (selective forwarding unit). You must tell the _publisher id_, and the room will be found automatically.
 
-You must not include any offer in the [session creation request](api_command.md#start-a-session), and NkMEDIA will send you the _offer_ back. You must then supply an _answer_ calling tpo the [set answer command](api_commands.md#set-an-answer).
+You must not include any offer in the [session creation request](api_commands.md#start-a-session), and NkMEDIA will send you the _offer_ back. You must then supply an _answer_ calling tpo the [set answer command](api_commands.md#set-an-answer).
 
 
 
@@ -250,7 +249,7 @@ You must now call answer_session:
 ```js
 {
 	class: "media",
-	class: "session",
+	subclass: "session",
 	cmd: "set_answer",
 	data: {
 		session_id: "2052a043-3785-de87-581b-28f07603cda8",
