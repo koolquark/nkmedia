@@ -46,9 +46,9 @@
 -type config() ::
     #{
         % For room creation:
-        audiocodec => opus | isac32 | isac16 | pcmu | pcma,
-        videocodec => vp8 | vp9 | h264,
-        bitrate => integer(),
+        room_audio_codec => opus | isac32 | isac16 | pcmu | pcma,
+        room_video_codec => vp8 | vp9 | h264,
+        room_bitrate => integer(),
         publishers => integer(),
         timeout => integer(),                   % Secs
         janus_id => nkmedia_janus_engine:id(),  % Forces engine
@@ -88,8 +88,11 @@ create(Srv, Config) ->
                     case get_janus(SrvId, Config2) of
                         {ok, JanusId} ->
                             Config3 = Config2#{srv_id=>SrvId, janus_id=>JanusId},
-                            RoomConfig = maps:with(
-                                [audiocodec, videocodec, bitrate], Config3),
+                            RoomConfig = #{        
+                                audiocodec => maps:get(room_audio_codec, Config, opus),
+                                videocodec => maps:get(room_video_codec, Config, vp8),
+                                bitrate => maps:get(room_bitrate, Config, 0)
+                            },
                             case 
                                 nkmedia_janus_op:create_room(JanusId, Room, RoomConfig) 
                             of
@@ -137,17 +140,6 @@ get_info(Room) ->
 get_all() ->
     [{Room, JanusId, Pid} || 
         {{Room, JanusId}, Pid}<- nklib_proc:values(?MODULE)].
-
-
-% [#{<<"audiocodec">> => <<"opus">>,<<"bitrate">> => 128000,<<"description">> => <<"Demo Room">>,<<"fir_freq">> => 10,<<"max_publishers">> => 6,<<"num_participants">> => 0,<<"record">> => <<"false">>,<<"room">> => 1234,<<"videocodec">> => <<"vp8">>}]
-
-% syntax() ->
-%     #{
-%         audiocodec => {enum, [opus, isac32, isac16, pcmu, pcma]},
-%         videocodec => {enum , [vp8, vp9, h264]},
-%         bitrate => {integer, 0, none},
-%         publishers => {integer, 0, none}
-%     }.
 
 
 %% ===================================================================

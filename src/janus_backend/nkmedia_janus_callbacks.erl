@@ -263,13 +263,16 @@ syntax(<<"session">>, <<"start">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             record => boolean,
-            bitrate => integer,
+            bitrate => {integer, 0, none},
             proxy_type => {enum, [webrtc, rtp]},
             room => binary,
             publisher => binary,
             use_audio => boolean,
             use_video => boolean,
-            use_data => boolean
+            use_data => boolean,
+            room_bitrate => {integer, 0, none},
+            room_audio_codec => {enum, [opus, isac32, isac16, pcmu, pcma]},
+            room_video_codec => {enum , [vp8, vp9, h264]}
         },
         Defaults,
         Mandatory
