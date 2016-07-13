@@ -347,7 +347,7 @@ cert_key = /usr/local/share/janus/certs/mycert.key
 nice_debug = false
 ;ice_lite = true
 ;ice_tcp = true
-;nat_1_1_mapping = $EXT_IP          ; All host candidates will have (only) this
+nat_1_1_mapping = $EXT_IP          ; All host candidates will have (only) this
 ;turn_server = myturnserver.com
 ;turn_port = 3478
 ;turn_type = udp
@@ -572,15 +572,15 @@ secret = adminpwd
 
 %% @private
 config_videoroom() -> <<"
-[1234]
-description = Demo Room
-secret = adminpwd
-publishers = 6
-bitrate = 128000
-fir_freq = 10
+;[1234]
+;description = Demo Room
+;secret = adminpwd
+;publishers = 6
+;bitrate = 128000
+;fir_freq = 10
 ;audiocodec = opus
 ;videocodec = vp8
-record = false
+;record = false
 ;rec_dir = /tmp/janus-videoroom">>.
 
 

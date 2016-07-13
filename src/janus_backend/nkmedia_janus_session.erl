@@ -166,8 +166,10 @@ start(publish, #{srv_id:=SrvId, offer:=#{sdp:=_}=Offer}=Session, State) ->
             {ok, Room0} -> 
                 nklib_util:to_binary(Room0);
             error -> 
-                case create_room(SrvId, Session) of
-                    {ok, Room0} -> Room0;
+                RoomOpts = maps:with(
+                    [room_audio_codec, room_video_codec, room_bitrate], Session),
+                case nkmedia_janus_room:create(SrvId, RoomOpts) of
+                    {ok, Room0, _} -> Room0;
                     {error, Error} -> throw(Error)
                 end
         end,
@@ -271,7 +273,7 @@ update(listen_switch, #{publisher:=Publisher}, listen, _Session,
     end;
 
 update(_Update, _Opts, _Type, _Session, _State) ->
-    % lager:error("UPDATE: ~p, ~p, ~p", [_Update, _Opts, _Type]),
+    lager:error("UPDATE: ~p, ~p, ~p", [_Update, _Opts, _Type]),
     continue.
 
 
@@ -341,17 +343,5 @@ get_opts(#{id:=SessId}=Session, State) ->
             {Opts, State}
     end.
 
-
-%% @private
-create_room(SrvId, Opts) ->
-    Opts2 = #{
-        audiocodec => maps:get(room_audio_codec, Opts, opus),
-        videocodec => maps:get(room_video_codec, Opts, vp8),
-        bitrate => maps:get(room_bitrate, Opts, 0)
-    },
-    case nkmedia_janus_room:create(SrvId, Opts2) of
-        {ok, Room, _} -> {ok, Room};
-        {error, Error} -> {error, Error}
-    end.
 
 

@@ -286,7 +286,7 @@ syntax(<<"session">>, <<"update">>, Syntax, Defaults, Mandatory) ->
             use_video => boolean,
             use_data => boolean,
             record => boolean,
-            publisher => boolean
+            publisher => binary
         },
         Defaults,
         Mandatory

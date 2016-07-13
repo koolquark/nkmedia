@@ -409,7 +409,9 @@ process_client_msg(register, Body, Msg, NkPort, State) ->
     nklib_proc:put({?MODULE, user, User}),
     Result = #{event=>registered, username=>User},
     Resp = make_videocall_resp(Result, Msg, State),
-    send(Resp, NkPort, State#state{user=User});
+    #state{janus=Janus} = State,
+    Janus2 = Janus#{user=>User, session_id=>nklib_util:uuid_4122()},
+    send(Resp, NkPort, State#state{user=User, janus=Janus2});
 
 process_client_msg(call, Body, Msg, NkPort, #state{srv_id=SrvId}=State) ->
     CallId = nklib_util:uuid_4122(),

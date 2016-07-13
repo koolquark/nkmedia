@@ -131,7 +131,7 @@ nkmedia_session_answer(_Type, Answer, Session) ->
 	{error, term(), session()} | continue().
 
 nkmedia_session_update(_Update, _Opts, _Type, Session) ->
-	{error, unknown_operation, Session}.
+	{error, invalid_operation, Session}.
 
 
 %% @private%% @doc Called when the status of the session changes
