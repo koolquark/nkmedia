@@ -10,7 +10,7 @@ The currently supported External API commands as described here.
 **Session Commands**
 
 Class|Subclass|Cmd|Description
----|---
+---|---|---|---
 `media`|`session`|[`start`](#start-a-session)|Creates a new media session
 `media`|`session`|[`stopn`](#stop-a-session)|Destroys a new media session
 `media`|`session`|[`set_answer`](#set-an-answer)|Sets the answer for a sessions
@@ -109,7 +109,7 @@ Some session types allow to modify the session characteristics in real time.
 The `session_id` field is mandatory. See each specific plugin documentation to learn about how to use it and supported options.
 
 
-**Sample **
+**Sample**
 
 ```js
 {
@@ -131,7 +131,7 @@ The `session_id` field is mandatory. See each specific plugin documentation to l
 	result: "ok",
 	tid: 1
 }
-`
+```
 
 
 
