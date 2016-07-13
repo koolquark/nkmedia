@@ -12,7 +12,7 @@ The currently supported External API commands as described here.
 Class|Subclass|Cmd|Description
 ---|---|---|---
 `media`|`session`|[`start`](#start-a-session)|Creates a new media session
-`media`|`session`|[`stopn`](#stop-a-session)|Destroys a new media session
+`media`|`session`|[`stop`](#stop-a-session)|Destroys a new media session
 `media`|`session`|[`set_answer`](#set-an-answer)|Sets the answer for a sessions
 `media`|`session`|[`update`](#update-a-session)|Updates a current session
 `media`|`call`|[`start`](#start-a-call)|Starts a new call
@@ -106,7 +106,7 @@ You will get your own answer in the response.
 
 Some session types allow to modify the session characteristics in real time. 
 
-The `session_id` field is mandatory. See each specific plugin documentation to learn about how to use it and supported options.
+The `session_id` field is mandatory. See each specific plugin documentation to learn about how to use it and supported options. The field `type` is mandatory to set the _type_ of update.
 
 
 **Sample**
@@ -117,6 +117,7 @@ The `session_id` field is mandatory. See each specific plugin documentation to l
 	subclass: "session",
 	cmd: "update",
 	data: {
+		type: "media",
 		session_id: "54c1b637-36fb-70c2-8080-28f07603cda8",
 		record: true,
 		use_audio: false,
