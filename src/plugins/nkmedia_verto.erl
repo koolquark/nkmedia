@@ -56,7 +56,9 @@
 -type verto() :: 
     #{
         remote => binary(),
-        srv_id => nkservice:id()
+        srv_id => nkservice:id(),
+        user => binary(),
+        session_id => binary()
     }.
 
 
@@ -68,7 +70,7 @@
 %% @doc Sends an INVITE. 
 %% Listen to callbacks nkmedia_verto_answer/3 and nkmedia_verto_bye/2
 -spec invite(pid(), call_id(), nkmedia:offer(), nklib:proc_id()) ->
-    {ok, pid()} | {error, nkservice:error()}.
+    ok | {error, nkservice:error()}.
     
 invite(Pid, CallId, Offer, ProcId) ->
     do_call(Pid, {invite, CallId, Offer, ProcId}).
@@ -379,7 +381,13 @@ process_client_req(<<"login">>, Msg, NkPort, State) ->
                     true = nklib_proc:reg({?MODULE, verto_session, VertoSessId}),
                     nklib_proc:put(?MODULE, Login2),
                     nklib_proc:put({?MODULE, user, Login2}),
-                    State3 = State2#state{verto_sess_id=VertoSessId, user=Login2},
+                    #state{verto=Verto2} = State2,
+                    Verto3 = Verto2#{user=>Login2, session_id=>VertoSessId},
+                    State3 = State2#state{
+                        user = Login2,
+                        verto_sess_id = VertoSessId, 
+                        verto = Verto3
+                    },
                     ReplyParams = #{
                         <<"message">> => <<"logged in">>, 
                         <<"sessid">> => VertoSessId
@@ -541,7 +549,7 @@ process_client_resp(#trans{type={invite, CallId, _Offer}, from=From},
                     Resp, _Msg, _NkPort, State) ->
     case Resp of
         {ok, _} ->
-            gen_server:reply(From, {ok, self()}),
+            gen_server:reply(From, ok),
             {ok, insert_op({wait_answer, CallId}, none, undefined, State)};
         {error, Code, Error} -> 
             nklib_util:reply(From, {verto_error, Code, Error}),

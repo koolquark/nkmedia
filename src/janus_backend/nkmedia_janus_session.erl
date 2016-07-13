@@ -198,20 +198,25 @@ start(publish, #{srv_id:=SrvId, offer:=#{sdp:=_}=Offer}=Session, State) ->
 start(publish, _Session, State) ->
     {error, missing_offer, State};
 
-start(listen, #{room:=Room, publisher:=Publisher}=Session, State) ->
-    case get_janus_op(Session, State) of
-        {ok, Pid, State2} ->
-            {Opts, State3} = get_opts(Session, State2),
-            case nkmedia_janus_op:listen(Pid, Room, Publisher, Opts) of
-                {ok, Offer} ->
-                    State4 = State3#{janus_op=>answer},
-                    Reply = #{room=>Room, offer=>Offer},
-                    {ok, listen, Reply, Offer, none, State4};
-                {error, Error} ->
-                    {error, Error, State3}
+start(listen, #{publisher:=Publisher}=Session, State) ->
+    case nkmedia_session:do_call(Publisher, nkmedia_janus_get_room) of
+        {ok, _SrvId, Room} ->
+            case get_janus_op(Session, State) of
+                {ok, Pid, State2} ->
+                    {Opts, State3} = get_opts(Session, State2),
+                    case nkmedia_janus_op:listen(Pid, Room, Publisher, Opts) of
+                        {ok, Offer} ->
+                            State4 = State3#{janus_op=>answer},
+                            Reply = #{room=>Room, offer=>Offer},
+                            {ok, listen, Reply, Offer, none, State4};
+                        {error, Error} ->
+                            {error, Error, State3}
+                    end;
+                {error, Error, State2} ->
+                    {error, Error, State2}
             end;
-        {error, Error, State2} ->
-            {error, Error, State2}
+        _ ->
+            {error, unknown_publisher, State}
     end;
 
 start(listen, _Session, State) ->

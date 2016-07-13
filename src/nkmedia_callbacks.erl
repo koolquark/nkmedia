@@ -313,6 +313,7 @@ nkmedia_call_handle_info(Msg, Call) ->
 
 %% ===================================================================
 %% Error Codes
+
 %% ===================================================================
 
 %% @doc
@@ -333,7 +334,8 @@ error_code(Error) ->
 
 %% @private
 api_cmd(#api_req{class = <<"media">>}=Req, State) ->
-	nkmedia_api:cmd(Req, State);
+	#api_req{subclass=Sub, cmd=Cmd} = Req,
+	nkmedia_api:cmd(Sub, Cmd, Req, State);
 
 api_cmd(_Req, _State) ->
 	continue.

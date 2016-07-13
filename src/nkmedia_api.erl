@@ -53,7 +53,8 @@ cmd(<<"session">>, <<"start">>, #api_req{srv_id=SrvId, data=Data}, State) ->
 			case maps:get(subscribe, Data, true) of
 				true ->
 					RegId = nkmedia_util:session_reg_id(SrvId, <<"*">>, SessId),
-					nkservice_api_server:register(self(), RegId, #{});
+					Body = maps:get(events_body, Data, #{}),
+					nkservice_api_server:register(self(), RegId, Body);
 				false ->
 					ok
 			end,
@@ -80,8 +81,8 @@ cmd(<<"session">>, <<"set_answer">>, #api_req{data=Data}, State) ->
 	end;
 
 cmd(<<"session">>, <<"update">>, #api_req{data=Data}, State) ->
-	#{session_id:=SessId, update:=Update} = Data,
-	case nkmedia_session:update(SessId, Update, Data) of
+	#{session_id:=SessId, type:=Type} = Data,
+	case nkmedia_session:update(SessId, Type, Data) of
 		{ok, _} ->
 			{ok, #{}, State};
 		{error, Error} ->
@@ -142,6 +143,7 @@ syntax(<<"session">>, <<"start">>, Syntax, Defaults, Mandatory) ->
 			offer => offer(),
 			answer => answer(),
 			subscribe => boolean,
+			events_body => any,
 			wait_timeout => {integer, 1, none},
 			ready_timeout => {integer, 1, none},
 			backend => atom							%% nkmedia_janus, etc.
@@ -175,10 +177,10 @@ syntax(<<"session">>, <<"update">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
-			update => atom
+			type => atom
 		},
 		Defaults,
-		[session_id, update|Mandatory]
+		[session_id, type|Mandatory]
 	};
 
 syntax(_Sub, _Cmd, Syntax, Defaults, Mandatory) ->
