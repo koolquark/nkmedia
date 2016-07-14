@@ -264,11 +264,6 @@ You must now call answer_session:
 ```js
 {
 	result: "ok",
-	data: {
-		answer: {
-			sdp: "v=0..."
-		}
-	},
 	tid: 2
 }
 ```
