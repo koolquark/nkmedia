@@ -27,9 +27,9 @@ Type|Plugins
 ---|---|---
 p2p|(none)
 echo|[nkmedia_janus](janus.md#echo)
-proxy|nkmedia_janus
-publish|nkmedia_janus
-listen|nkmedia_janus
+proxy|[nkmedia_janus](janus.md#proxy)
+publish|[nkmedia_janus](janus.md#publish)
+listen|[nkmedia_janus](janus.md#listen)
 park|nkmedia_fs
 mcu|nkmedia_fs
 
