@@ -37,7 +37,7 @@
     lager:Type("NkMEDIA Janus Client (~p) "++Txt, [self()|Args])).
 
 -define(PRINT(Txt, Args, State), 
-        print(Txt, Args, State),    % Comment this
+        % print(Txt, Args, State),    % Comment this
         ok).
 
 
@@ -232,7 +232,7 @@ conn_init(NkPort) ->
         remote = Remote,
         pos = erlang:phash2(nklib_util:uid())
     },
-    ?LLOG(info, "new session (~p)", [self()], State),
+    ?LLOG(info, "new session", [], State),
     nklib_proc:put(?MODULE),
     {ok, State}.
 

@@ -18,6 +18,10 @@
 %%
 %% -------------------------------------------------------------------
 
+%% @doc Janus Operations
+%% A process is stared from nkmedia_janus_session for each operation
+%% It monitors the session (nkmedia_session)
+%% It starts and monitors a new connection to Janus
 
 -module(nkmedia_janus_op).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
@@ -253,10 +257,10 @@ update(Id, Update) ->
 
 %% @private
 -spec get_all() ->
-    [{term(), pid()}].
+    [{JanusSessId::term(), nkmedia:session_id(), pid()}].
 
 get_all() ->
-    nklib_proc:values(?MODULE).
+    [{JSId, SId, Pid} || {{JSId, SId}, Pid}<- nklib_proc:values(?MODULE)].
 
 
 
@@ -359,7 +363,7 @@ init({JanusId, MediaSessId, CallerPid}) ->
                 user_mon = monitor(process, CallerPid)
             },
             true = nklib_proc:reg({?MODULE, JanusSessId}),
-            nklib_proc:put(?MODULE, JanusSessId),
+            nklib_proc:put(?MODULE, {JanusSessId, MediaSessId}),
             self() ! send_keepalive,
             {ok, status(wait, State)};
         {error, Error} ->
@@ -572,19 +576,20 @@ code_change(_OldVsn, State, _Extra) ->
 -spec terminate(term(), #state{}) ->
     ok.
 
-terminate(_Reason, State) ->
+terminate(Reason, State) ->
     #state{from=From, status=Status} = State,
-    destroy(State),
     case Status of
         publisher ->
             #state{room=Room, nkmedia_id=SessId} = State,
-            _ = nkmedia_janus_room:event(Room, {unpublish, SessId});
+            nkmedia_janus_room:event(Room, {unpublish, SessId});
         listener ->
             #state{room=Room, nkmedia_id=SessId} = State,
-            _ = nkmedia_janus_room:event(Room, {unlisten, SessId});
+            nkmedia_janus_room:event(Room, {unlisten, SessId});
         _ ->
             ok
     end,
+    destroy(State),
+    ?LLOG(info, "process stop: ~p", [Reason], State),
     nklib_util:reply(From, {error, process_stopped}),
     ok.
 
@@ -866,7 +871,7 @@ do_publish_2(SDP_A, State) ->
     Jsep = #{sdp=>SDP_A, type=>offer, trickle=>false},
     case message(Handle, Body#{request=>configure}, Jsep, State) of
         {ok, #{<<"configured">>:=<<"ok">>}, #{<<"sdp">>:=SDP_B}} ->
-            case nkmedia_janus_room:event(Room, {publish, SessId, Opts}) of
+            case nkmedia_janus_room:event(Room, {publish, SessId}) of
                 {ok, Pid} ->
                     Mon = erlang:monitor(process, Pid),
                     State2 = State#state{room_mon=Mon},
@@ -925,15 +930,14 @@ do_listen(Listen, #state{room=Room, nkmedia_id=SessId, opts=Opts}=State) ->
     case message(Handle, Body2, #{}, State) of
         {ok, #{<<"videoroom">>:=<<"attached">>}, #{<<"sdp">>:=SDP}} ->
             State2 = State#state{handle_id=Handle},
-            Opts2 = Opts#{publisher=>Listen},
-            case nkmedia_janus_room:event(Room, {listen, SessId, Opts2}) of
+            case nkmedia_janus_room:event(Room, {listen, SessId, Listen}) of
                 {ok, Pid} ->
                     Mon = erlang:monitor(process, Pid),
                     State3 = State2#state{room_mon=Mon},
                     reply({ok, #{sdp=>SDP}}, wait(listen_answer, State3));
-                                    {error, Error} ->
+                {error, Error} ->
                     ?LLOG(notice, "listen error1: ~p", [Error], State),
-                    reply_stop({error, janus_error}, State2)
+                    reply_stop({error, janus_error}, State)
             end;
         {error, <<"(426)", _/binary>>} ->
             reply_stop({error, unknown_room}, State);
@@ -1176,6 +1180,12 @@ do_event(_Id, _Handle, {event, <<"registration_failed">>, _, _}, State) ->
 do_event(_Id, _Handle, {event, <<"hangup">>, _, _}, State) ->
     ?LLOG(notice, "hangup from Janus", [], State),
     {stop, normal, State};
+
+do_event(_Id, _Handle, 
+         {data, #{<<"videoroom">>:=<<"slow_link">>, <<"current-bitrate">>:=BR}}, 
+         State) ->
+    ?LLOG(notice, "videroom slow_link (~p)", [BR], State),
+    {noreply, State};
 
 do_event(_Id, _Handle, {data, #{<<"result">>:=Result}}, State) ->
     case Result of

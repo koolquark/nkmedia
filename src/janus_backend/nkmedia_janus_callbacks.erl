@@ -114,9 +114,11 @@ nkmedia_janus_get_mediaserver(SrvId) ->
 
 error_code(janus_error)             ->  {200, <<"Janus error">>};
 error_code(janus_connection_error)  ->  {200, <<"Janus connection error">>};
-error_code(janus_down)              ->  {200, <<"Janus engine down">>};
+error_code(janus_op_down)           ->  {200, <<"Janus op process down">>};
 error_code(janus_bye)               ->  {200, <<"Janus bye">>};
 error_code(invalid_publisher)       ->  {200, <<"Invalid publisher">>};
+error_code(publisher_stopped)       ->  {200, <<"Publisher stopped">>};
+error_code(room_destroyed)          ->  {200, <<"Room destroyed">>};
 
 error_code(_)                       ->  continue.
 
@@ -215,11 +217,11 @@ nkmedia_session_handle_call(nkmedia_janus_get_room, _From, Session) ->
     {reply, Reply, Session}.
 
 
-%% @private
+%% @private The janus_op process is down
 nkmedia_session_handle_info({'DOWN', Ref, process, _Pid, _Reason}, Session) ->
     case state(Session) of
         #{janus_mon:=Ref} ->
-            nkmedia_session:stop(self(), janus_down),
+            nkmedia_session:stop(self(), janus_op_down),
             {noreply, Session};
         _ ->
             continue

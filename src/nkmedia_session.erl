@@ -232,7 +232,7 @@ register(SessId, ProcId) ->
 
 %% @doc Registers a process with the session
 -spec unregister(id(), nklib:proc_id()) ->
-    {ok, pid()} | {error, nkservice:error()}.
+    ok | {error, nkservice:error()}.
 
 unregister(SessId, ProcId) ->
     do_call(SessId, {unregister, ProcId}).
@@ -501,8 +501,9 @@ do_start(From, #state{type=Type}=State) ->
 
 %% @private
 do_start_ok(Type, Reply, From, State) ->
-    State2 = restart_timer(State),
-    reply({ok, Reply}, From, update_type(Type, State2)).
+    State2 = restart_timer(update_type(Type, State)),
+    ?LLOG(info, "started ok", [], State2),
+    reply({ok, Reply}, From, State2).
 
 
 %% @private
@@ -521,6 +522,7 @@ do_set_answer(Answer, From, #state{type=Type}=State) ->
             State3 = update_session(answer, Answer2, State2),
             State4 = restart_timer(State3#state{has_answer=true}),
             State5 = event({answer, Answer2}, State4),
+            ?LLOG(info, "answer set", [], State),
             reply({ok, Reply}, From, State5);
         {ok, _Reply, _Answer, State2} ->
             reply({error, invalid_answer}, From, State2);
@@ -533,7 +535,9 @@ do_set_answer(Answer, From, #state{type=Type}=State) ->
 do_update(Update, Opts, From, #state{type=Type, has_answer=true}=State) ->
     case handle(nkmedia_session_update, [Update, Opts, Type], State) of
         {ok, Type2, Reply, State2} ->
-           reply({ok, Reply}, From, update_type(Type2, State2));
+            State3 = update_type(Type2, State2),
+            ?LLOG(info, "session updated", [], State3),
+           reply({ok, Reply}, From, State3);
         {error, Error, State2} ->
             reply({error, Error}, From, State2)
     end;

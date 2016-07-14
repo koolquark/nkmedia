@@ -19,6 +19,9 @@
 %% -------------------------------------------------------------------
 
 %% @doc Session Management
+%% Run inside nkmedia_session to extend its capabilities
+%% For each operation, starts and monitors a new nkmedia_janus_op process
+
 -module(nkmedia_janus_session).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
@@ -173,7 +176,7 @@ start(publish, #{srv_id:=SrvId, offer:=#{sdp:=_}=Offer}=Session, State) ->
                     {error, Error} -> throw(Error)
                 end
         end,
-        State2 = case nkmedia_janus_room:get_info(Room) of
+        State2 = case nkmedia_janus_room:get_room(Room) of
             {ok, #{janus_id:=JanusId}} ->
                 State#{janus_id=>JanusId, room=>Room};
             _ ->
