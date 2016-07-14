@@ -609,7 +609,7 @@ do_echo(#{sdp:=SDP}, #state{opts=Opts}=State) ->
             reply({ok, #{sdp=>SDP2}}, status(echo, State2));
         {error, Error} ->
             ?LLOG(notice, "echo error: ~p", [Error], State),
-            reply_stop({error, janus_error}, State)
+            reply_stop({error, Error}, State)
     end.
 
 
@@ -648,15 +648,15 @@ do_play(File, State) ->
                             reply({ok, #{sdp=>SDP}}, State3);
                         {error, Error} ->
                             ?LLOG(notice, "play error1: ~p", [Error], State),
-                            reply_stop({error, janus_error}, State2)
+                            reply_stop({error, Error}, State2)
                     end;
                 {error, Error} ->
                     ?LLOG(notice, "play error2: ~p", [Error], State),
-                    reply_stop({error, janus_error}, State2)
+                    reply_stop({error, Error}, State2)
             end;
         {error, Error} ->
             ?LLOG(notice, "play error3: ~p", [Error], State),
-            reply_stop({error, janus_error}, State2)
+            reply_stop({error, Error}, State2)
     end.
     
 
@@ -669,7 +669,7 @@ do_play_answer(#{sdp:=SDP}, #state{handle_id=Handle} = State) ->
             reply(ok, status(play, State));
         {error, Error} ->
             ?LLOG(notice, "play answer error: ~p", [Error], State),
-            reply_stop({error, janus_error}, State)
+            reply_stop({error, Error}, State)
     end.
 
 
@@ -688,7 +688,7 @@ do_videocall(#{sdp:=SDP}, From, State) ->
             do_videocall_2(SDP, State2);
         {error, Error} ->
             ?LLOG(notice, "videocall error1: ~p", [Error], State),
-            reply_stop({error, janus_error}, State)
+            reply_stop({error, Error}, State)
     end.
 
 
@@ -703,7 +703,7 @@ do_videocall_2(SDP, State) ->
             do_videocall_3(SDP, State2);
         {error, Error} ->
             ?LLOG(notice, "videocall error2: ~p", [Error], State),
-            reply({error, janus_error}, State)
+            reply({error, Error}, State)
     end.
 
 
@@ -717,7 +717,7 @@ do_videocall_3(SDP, State) ->
             noreply(wait(videocall_offer, State));
         {error, Error} ->
             ?LLOG(notice, "videocall error3: ~p", [Error], State),
-            reply_stop({error, janus_error}, State)
+            reply_stop({error, Error}, State)
     end.
 
 
@@ -736,11 +736,11 @@ do_videocall_answer(#{sdp:=SDP}, From, State) ->
                     noreply(wait(videocall_reply, State2));
                 {error, Error} ->
                     ?LLOG(notice, "videocall error4: ~p", [Error], State),
-                    reply_stop({error, janus_error}, State)
+                    reply_stop({error, Error}, State)
             end;
         {error, Error} ->
             ?LLOG(notice, "videocall error5: ~p", [Error], State),
-            reply_stop({error, janus_error}, State)
+            reply_stop({error, Error}, State)
     end.
 
 
@@ -755,11 +755,11 @@ do_videocall_update(Opts, #state{handle_id=Handle1, handle_id2=Handle2}=State) -
                     reply(ok, State);
                 {error, Error} ->
                     ?LLOG(notice, "videocall update1 error: ~p", [Error], State),
-                    reply({error, janus_error}, State)
+                    reply({error, Error}, State)
             end;
         {error, Error} ->
             ?LLOG(notice, "videocall update2 error: ~p", [Error], State),
-            reply({error, janus_error}, State)
+            reply({error, Error}, State)
     end.
 
 
@@ -779,7 +779,7 @@ do_list_rooms(State) ->
             reply_stop({ok, maps:from_list(List2)}, State);
         {error, Error} ->
             ?LLOG(notice, "list_rooms error: ~p", [Error], State),
-            reply_stop({error, janus_error}, State)
+            reply_stop({error, Error}, State)
     end.
 
 
@@ -804,11 +804,8 @@ do_create_room(#state{room=Room, opts=Opts}=State) ->
         {ok, Msg, _} ->
             #{<<"videoroom">>:=<<"created">>, <<"room">>:=RoomId} = Msg,
             reply_stop(ok, State);
-        {error, <<"(427)", _/binary>>} ->
-            reply_stop({error, room_already_exists}, State);
         {error, Error} ->
-            ?LLOG(notice, "create_room error: ~p", [Error], State),
-            reply_stop({error, janus_error}, State)
+            reply_stop({error, Error}, State)
     end.
 
 
@@ -822,11 +819,9 @@ do_destroy_room(#state{room=Room}=State) ->
         {ok, Msg, _} ->
             #{<<"videoroom">>:=<<"destroyed">>} = Msg,
             reply_stop(ok, State);
-        {error, <<"(426)", _/binary>>} ->
-            reply_stop({error, room_not_found}, State);
         {error, Error} ->
             ?LLOG(notice, "destroy_room error: ~p", [Error], State),
-            reply_stop({error, janus_error}, State)
+            reply_stop({error, Error}, State)
     end.
 
 
@@ -851,11 +846,9 @@ do_publish(#{sdp:=SDP}, #state{room=Room, nkmedia_id=SessId} = State) ->
         {ok, #{<<"videoroom">>:=<<"joined">>, <<"id">>:=Feed}, _} ->
             State2 = State#state{handle_id=Handle},
             do_publish_2(SDP, State2);
-        {error, <<"(426)", _/binary>>} ->
-            reply_stop({error, room_not_found}, State);
         {error, Error} ->
             ?LLOG(notice, "publish error1: ~p", [Error], State),
-            reply_stop({error, janus_error}, State)
+            reply_stop({error, Error}, State)
     end.
 
 
@@ -878,11 +871,11 @@ do_publish_2(SDP_A, State) ->
                     reply({ok, #{sdp=>SDP_B}}, status(publish, State2));
                 {error, Error} ->
                     ?LLOG(notice, "publish error2: ~p", [Error], State),
-                    reply_stop({error, janus_error}, State)
+                    reply_stop({error, room_not_found}, State)
             end;
         {error, Error} ->
             ?LLOG(notice, "publish error3: ~p", [Error], State),
-            reply_stop({error, janus_error}, State)
+            reply_stop({error, Error}, State)
     end.
 
 
@@ -894,7 +887,7 @@ do_unpublish(#state{handle_id=Handle} = State) ->
             reply_stop(ok, State);
         {error, Error} ->
             ?LLOG(notice, "unpublish error: ~p", [Error], State),
-            reply_stop({error, janus_error}, State)
+            reply_stop({error, Error}, State)
     end.
 
 
@@ -906,7 +899,7 @@ do_publish_update(Opts, #state{handle_id=Handle}=State) ->
             reply(ok, State);
         {error, Error} ->
             ?LLOG(notice, "publish update error: ~p", [Error], State),
-            reply({error, janus_error}, State)
+            reply({error, Error}, State)
     end.
 
 
@@ -937,15 +930,11 @@ do_listen(Listen, #state{room=Room, nkmedia_id=SessId, opts=Opts}=State) ->
                     reply({ok, #{sdp=>SDP}}, wait(listen_answer, State3));
                 {error, Error} ->
                     ?LLOG(notice, "listen error1: ~p", [Error], State),
-                    reply_stop({error, janus_error}, State)
+                    reply_stop({error, room_not_found}, State)
             end;
-        {error, <<"(426)", _/binary>>} ->
-            reply_stop({error, unknown_room}, State);
-        {error, <<"(428)", _/binary>>} ->
-            reply_stop({error, invalid_publisher}, State);
         {error, Error} ->
             ?LLOG(notice, "listen error2: ~p", [Error], State),
-            reply_stop({error, janus_error}, State)
+            reply_stop({error, Error}, State)
     end.
 
 
@@ -959,7 +948,7 @@ do_listen_answer(#{sdp:=SDP}, State) ->
             reply(ok, status(listen, State));
         {error, Error} ->
             ?LLOG(notice, "listen answer error: ~p", [Error], State),
-            reply_stop({error, janus_error}, State)
+            reply_stop({error, Error}, State)
     end.
 
 
@@ -977,11 +966,9 @@ do_listen_switch(Listen, State) ->
             Opts2 = Opts#{publisher=>Listen},
             {ok, _} = nkmedia_janus_room:event(Room, {listen, SessId, Opts2}),
             reply(ok, State);
-        {error, <<"(428)", _/binary>>} ->
-            reply({error, invalid_publisher}, State);
         {error, Error} ->
             ?LLOG(notice, "listen switch error: ~p", [Error], State),
-            reply({error, janus_error}, State)
+            reply({error, Error}, State)
     end.
 
 
@@ -993,7 +980,7 @@ do_unlisten(#state{handle_id=Handle}=State) ->
             reply_stop(ok, State);
         {error, Error} ->
             ?LLOG(notice, "unlisten error: ~p", [Error], State),
-            reply_stop({error, janus_error}, State)
+            reply_stop({error, Error}, State)
     end.
 
 
@@ -1019,7 +1006,7 @@ do_from_sip_register(#state{janus_sess_id=Id}=State) ->
             noreply(wait(from_sip, State2));
         {error, Error} ->
             ?LLOG(notice, "from_sip error: ~p", [Error], State),
-            reply_stop({error, janus_error}, State)
+            reply_stop({error, Error}, State)
     end.
 
 
@@ -1050,7 +1037,7 @@ do_from_sip_answer(#{sdp:=SDP}, From, State) ->
             noreply(wait(from_sip_invite, State#state{from=From}));
         {error, Error} ->
             ?LLOG(notice, "from_sip answer error: ~p", [Error], State),
-            reply_stop({error, janus_error}, State)
+            reply_stop({error, Error}, State)
     end.
 
 
@@ -1070,7 +1057,7 @@ do_to_sip_register(State) ->
             do_to_sip(State2);
         {error, Error} ->
             ?LLOG(notice, "to_sip error1: ~p", [Error], State),
-            reply_stop({error, janus_error}, State)
+            reply_stop({error, Error}, State)
     end.
 
 
@@ -1087,7 +1074,7 @@ do_to_sip(#state{janus_sess_id=Id, handle_id=Handle, offer=#{sdp:=SDP}}=State) -
             noreply(wait(to_sip_invite, State2));
         {error, Error} ->
             ?LLOG(notice, "to_sip error2: ~p", [Error], State),
-            reply_stop({error, janus_error}, State)
+            reply_stop({error, Error}, State)
     end.
 
 
@@ -1231,7 +1218,16 @@ message(Handle, Body, Jsep, #state{janus_sess_id=SessId, conn=Pid}) ->
         {ok, #{<<"data">>:=Data}, Jsep2} ->
             case Data of
                 #{<<"error">>:=Error, <<"error_code">>:=Code} ->
-                    {error, list_to_binary(["(", integer_to_list(Code), "): ", Error])};
+                    Error2 = case Code of
+                        426 -> room_not_found;
+                        428 -> invalid_publisher;
+                        465 -> invalid_sdp;
+                        427 -> room_already_exists;
+                        _ -> 
+                            lager:notice("Unknown Janus error: ~s", [Error]),
+                            janus_error
+                    end,
+                    {error, Error2};
                 _ ->
                     {ok, Data, Jsep2}
             end;
@@ -1415,7 +1411,5 @@ to_room(Room) -> nklib_util:to_binary(Room).
 %% @private
 to_room_id(Room) when is_integer(Room) -> Room;
 to_room_id(Room) when is_binary(Room) -> erlang:phash2(Room).
-
-
 
 

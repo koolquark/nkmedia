@@ -138,7 +138,7 @@ The `session_id` field is mandatory. See each specific plugin documentation to l
 
 ### Start a call
 
-NkMEDIA includes, along with its media processing capabilities, a flexible signaling server that you can use for your own applications. You can however use your own signaling protocol.
+NkMEDIA includes, along with its media processing capabilities, a flexible signaling server that you can use for your own applications (you can of course use any other signalling protocol)
 
 To use the signaling server, you must first create a session (typically of types _p2p_ or _proxy_). 
 
@@ -152,14 +152,14 @@ offer|{}|Offer for the call. If not included, it will not be used in the invite
 
 The offer can include metadata related for caller_id, etc. (See [concepts](concepts.md)]). It does not need to include an sdp (you can send it in a event or by any other mean).
 
-When the call is answered, the answer is automatically connected to the session. If the call is destroyed, the session is automatically stopped. The opposite is also true.
+When the call is answered, the answer sdp is automatically connected to the media session. If the call is destroyed, the session is automatically stopped. The opposite is also true.
 
-Depending on the _type_, other fields must be included. NkMEDIA supports currently the following types:
+Depending on the _type_, other fields must be included. The following types are currently supported:
 
 Type|Field|Desc
 ---|---|---
 **user**||
-user|user|Registered user to call to. All sessions will be ringed
+user|user|Registered user to call to. All sessions related to this user will be ringed
 **session**||
 session|session|Registered session to call to
 **sip**|(only with SIP plugin)
