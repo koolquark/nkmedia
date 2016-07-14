@@ -38,7 +38,7 @@
 		 nkmedia_call_handle_info/2]).
 -export([error_code/1]).
 -export([api_cmd/2, api_syntax/4]).
--export([api_server_cmd/2, api_server_handle_info/2]).
+-export([api_server_cmd/2, api_server_handle_cast/2, api_server_handle_info/2]).
 -export([nkdocker_notify/2]).
 
 -include("nkmedia.hrl").
@@ -166,6 +166,10 @@ nkmedia_session_reg_event(_SessId, {nkmedia_call, CallId, _CallPid}, Event, Sess
 	end,
 	{ok, Session};
 
+nkmedia_session_reg_event(SessId, {nkmedia_api, Pid}, {stop, _Reason}, Session) ->
+	nkmedia_api:session_stop(Pid, SessId),
+	{ok, Session};
+
 nkmedia_session_reg_event(_SessId, _RegId, _Event, Session) ->
 	{ok, Session}.
 
@@ -244,6 +248,9 @@ nkmedia_call_resolve(Dest, Call) ->
 	{remove, call()} | 
 	continue().
 
+nkmedia_call_invite(CallId, Offer, {nkmedia_api, Pid}, Call) ->
+	nkmedia_api:call_invite(CallId, Offer, Pid, Call);
+
 nkmedia_call_invite(_CallId, _Offer, _Dest, Call) ->
 	{remove, Call}.
 
@@ -251,6 +258,9 @@ nkmedia_call_invite(_CallId, _Offer, _Dest, Call) ->
 %% @doc Called when an outbound call is to be sent
 -spec nkmedia_call_cancel(call_id(), nklib:proc_id(), call()) ->
 	{ok, call()} | continue().
+
+nkmedia_call_cancel(CallId, {nkmedia_api, Pid}, Call) ->
+	nkmedia_api:call_cancel(CallId, Pid, Call);
 
 nkmedia_call_cancel(_CallId, _ProcId, Call) ->
 	{ok, Call}.
@@ -280,8 +290,12 @@ nkmedia_call_reg_event(_CallId, {session, SessId}, Event, Call) ->
 	end,
 	{ok, Call};
 
-nkmedia_call_reg_event(_CallId, _RegId, _Event, Session) ->
-	{ok, Session}.
+nkmedia_call_reg_event(CallId, {nkmedia_api, Pid}, {hangup, _Reason}, Call) ->
+	nkmedia_api:call_stop(Pid, CallId),
+	{ok, Call};
+
+nkmedia_call_reg_event(_CallId, _RegId, _Event, Call) ->
+	{ok, Call}.
 
 
 %% @doc
@@ -361,6 +375,17 @@ api_server_cmd(#api_req{class = <<"media">>}=Req, State) ->
 	
 api_server_cmd(_Req, _State) ->
     continue.
+
+
+%% @private
+api_server_handle_cast({nkmedia_api_session_down, SessId}, State) ->
+	nkmedia_api:nkmedia_api_session_down(SessId, State);
+
+api_server_handle_cast({nkmedia_api_call_down, CallId}, State) ->
+	nkmedia_api:nkmedia_api_call_down(CallId, State);
+
+api_server_handle_cast(_Msg, _State) ->
+	continue.
 
 
 %% @private

@@ -164,6 +164,7 @@ get_all() ->
 get_call(CallId) ->
     do_call(CallId, get_call).
 
+
 % ===================================================================
 %% gen_server behaviour
 %% ===================================================================
@@ -517,8 +518,13 @@ event(Event, #state{id=Id}=State) ->
 %% @private
 ext_event(Event, #state{srv_id=SrvId, id=Id}=State) ->
     Send = case Event of
-        _ ->
-            ignore
+        {ringing, _} -> 
+            {ringing, #{}};
+        {answered, _, Answer} ->
+            {answered, #{answer=>Answer}};
+        {hangup, Reason} ->
+            {Code, Txt} = SrvId:error_code(Reason),
+            {hangup, #{code=>Code, reason=>Txt}}
     end,
     case Send of
         {EvType, Body} ->

@@ -101,15 +101,12 @@ set_answer(C, SessId, Answer) ->
 
 sess_cmd(C, Cmd, SessId, Data) ->
     Data2 = Data#{session_id=>SessId},
-    Req = #api_req{class=media, subclass=session, cmd=Cmd, data=Data2},
-    nkservice_api_client:cmd(C, Req).
+    nkservice_api_client:cmd(C, media, session, Cmd, Data2).
 
 
 subscribe(SessId, WsPid, Body) ->
     Data = #{class=>media, subclass=>session, obj_id=>SessId, body=>Body},
-    Cmd = #api_req{class=core, subclass=event, cmd=subscribe, data=Data},
-    lager:warning("SU: ~p", [Data]),
-    nkservice_api_client:cmd(WsPid, Cmd).
+    nkservice_api_client:cmd(WsPid, core, event, subscribe, Data).
 
 
 listen(Publisher, Dest) ->
@@ -420,20 +417,14 @@ send_call(SrvId, #{dest:=Dest}=Offer, User, Data) ->
 
 connect(User) ->
     Fun = fun ?MODULE:api_client_fun/2,
-    % Url = "nkapic://media2.netcomposer.io:9010",
-    Url = "nkapic://localhost:9010",
+    Url = "nkapic://media2.netcomposer.io:9010",
+    % Url = "nkapic://localhost:9010",
     {ok, _, C} = nkservice_api_client:start(test, Url, User, "p1", Fun, #{}),
     C.
 
 start_session(User, Data) ->
     Pid = connect(User),
-    Req =  #api_req{
-        class = media,
-        subclass = session,
-        cmd = start,
-        data = Data
-    },
-    case nkservice_api_client:cmd(Pid, Req) of
+    case nkservice_api_client:cmd(Pid, media, session, start, Data) of
         {ok, #{<<"session_id">>:=SessId}=Res} -> {ok, SessId, Pid, Res};
         {error, {_Code, Txt}} -> {error, Txt}
     end.
