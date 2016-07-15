@@ -91,7 +91,7 @@ login(User) ->
 
 call(C) ->
    nkservice_api_client:cmd(C, media, call, start, 
-                            #{type=>user, user=><<"u2">>, ring_time=>5}).
+                            #{type=>user, user=><<"u2">>, ring_time=>10}).
  
 
 
@@ -471,15 +471,33 @@ api_client_fun(#api_req{class = <<"core">>, cmd = <<"event">>, data = Data}, Use
     end,
     {ok, #{}, UserData};
 
-api_client_fun(#api_req{cmd = <<"invite">>, data=Data}, UserData) ->
+api_client_fun(#api_req{cmd= <<"invite">>, data=Data, user=User, session=SessId}, 
+               UserData) ->
     #{<<"call_id">>:=CallId} = Data,
-    lager:notice("INVITE!: ~s", [CallId]),
-    % {ok, #{retry=>2}, UserData};
+    lager:notice("INVITE!: ~s ~s", [CallId, SessId]),
+    IsFirst = case nkservice_api_server:find_user(User) of
+        [{SessId, _}|_] -> true;
+        _ -> false
+    end,
     Self = self(),
     spawn(
         fun() ->
             timer:sleep(2000),
-            nkmedia_api_client:cmd(Self, media, call, rejected, #{call_id=>CallId})
+            nkservice_api_client:cmd(Self, media, call, ringing, 
+                                             #{call_id=>CallId})
+        end),
+    spawn(
+        fun() ->
+            case IsFirst of
+                true ->
+                    timer:sleep(8000),
+                    nkservice_api_client:cmd(Self, media, call, answered, 
+                                             #{call_id=>CallId});
+                false ->
+                    timer:sleep(4000),
+                    nkservice_api_client:cmd(Self, media, call, rejected, 
+                                             #{call_id=>CallId})
+            end
         end),
     {ok, #{}, UserData};
 

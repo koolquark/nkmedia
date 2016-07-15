@@ -34,6 +34,7 @@
 -behaviour(gen_server).
 
 -export([start/3, ringing/2, answered/3, rejected/2, hangup/2, hangup_all/0]).
+-export([register/2, unregister/2]).
 -export([find/1, get_all/0, get_call/1]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
@@ -147,6 +148,22 @@ hangup(CallId, Reason) ->
 %% @private
 hangup_all() ->
     lists:foreach(fun({CallId, _Pid}) -> hangup(CallId, 16) end, get_all()).
+
+
+%% @doc Registers a process with the session
+-spec register(id(), nklib:proc_id()) ->
+    {ok, pid()} | {error, nkservice:error()}.
+
+register(CallId, ProcId) ->
+    do_call(CallId, {register, ProcId}).
+
+
+%% @doc Registers a process with the session
+-spec unregister(id(), nklib:proc_id()) ->
+    ok | {error, nkservice:error()}.
+
+unregister(CallId, ProcId) ->
+    do_call(CallId, {unregister, ProcId}).
 
 
 %% @private
@@ -265,6 +282,17 @@ handle_call({rejected, Callee}, From, State) ->
 
 handle_call(get_call, _From, #state{call=Call}=State) -> 
     {reply, {ok, Call}, State};
+
+handle_call({register, ProcId}, _From, State) ->
+    ?LLOG(info, "proc registered (~p)", [ProcId], State),
+    Pid = nklib_links:get_pid(ProcId),
+    State2 = links_add({reg, ProcId}, none, Pid, State),
+    {reply, {ok, self()}, State2};
+
+handle_call({unregister, ProcId}, _From, State) ->
+    ?LLOG(info, "proc unregistered (~p)", [ProcId], State),
+    State2 = links_remove({reg, ProcId}, State),
+    {reply, ok, State2};
 
 handle_call(Msg, From, State) -> 
     handle(nkmedia_call_handle_call, [Msg, From], State).
@@ -586,9 +614,9 @@ links_add(Id, Data, Pid, #state{links=Links}=State) ->
 %     nklib_links:get(Id, Links).
 
 
-% %% @private
-% links_remove(Id, #state{links=Links}=State) ->
-%     State#state{links=nklib_links:remove(Id, Links)}.
+%% @private
+links_remove(Id, #state{links=Links}=State) ->
+    State#state{links=nklib_links:remove(Id, Links)}.
 
 
 %% @private

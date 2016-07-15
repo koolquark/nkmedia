@@ -259,9 +259,8 @@ nkmedia_call_invite(_CallId, _Dest, _Offer, Call) ->
 -spec nkmedia_call_cancel(call_id(), nklib:proc_id(), call()) ->
 	{ok, call()} | continue().
 
-nkmedia_call_cancel(CallId, {nkmedia_api, Data}, Call) ->
-	lager:error("Cancel ~p", [Data]),
-	nkmedia_api:call_cancel(CallId, Data, Call);
+nkmedia_call_cancel(CallId, {nkmedia_api, Pid}, Call) ->
+	nkmedia_api:call_cancel(CallId, Pid, Call);
 
 nkmedia_call_cancel(_CallId, _ProcId, Call) ->
 	{ok, Call}.
@@ -292,6 +291,7 @@ nkmedia_call_reg_event(_CallId, {session, SessId}, Event, Call) ->
 	{ok, Call};
 
 nkmedia_call_reg_event(CallId, {nkmedia_api, Pid}, {hangup, Reason}, Call) ->
+	lager:error("HH: ~p", [Pid]),
 	nkmedia_api:call_hangup(Pid, CallId, Reason),
 	{ok, Call};
 
