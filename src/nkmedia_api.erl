@@ -24,11 +24,13 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([cmd/4, handle_down/4]).
 -export([session_stop/2, nkmedia_api_session_stop/2]).
--export([call_stop/2, nkmedia_api_call_stop/2, call_invite/4, call_cancel/3]).
+-export([call_hangup/3, nkmedia_api_call_hangup/2, call_invite/4, call_cancel/3]).
 -export([syntax/5]).
 
 
 -include_lib("nkservice/include/nkservice.hrl").
+-include("nkmedia.hrl").
+
 
 %% ===================================================================
 %% Types
@@ -76,20 +78,104 @@ cmd(<<"session">>, <<"update">>, #api_req{data=Data}, State) ->
 
 cmd(<<"call">>, <<"start">>, #api_req{srv_id=SrvId, data=Data}, State) ->
 	#{type:=Type} = Data,
+	Ring = maps:get(ring_time, Data, ?DEF_RING_TIMEOUT),
 	case Type of
 		user ->
 			case maps:find(user, Data) of
 				{ok, User} ->
 					Dests = [
-						#{dest => {nkmedia_user, Id, Pid}} 
-						|| {Id, Pid} <- nkservice_api_server:find_user(User)
+						#{dest=>{nkmedia_api, {user, User, Pid}}, ring=>Ring} 
+						|| {_, Pid} <- nkservice_api_server:find_user(User)
 					],
-					start_call(SrvId, Dests, Data, State);
+					start_call(SrvId, {user, User}, Dests, Data, State);
 				error ->
 					{error, {missing_field, <<"user">>}, State}
 			end;
 		_ ->
 			{error, {syntax_error, <<"type">>}, State}
+	end;
+
+cmd(<<"call">>, <<"ringing">>, #api_req{data=Data}, State) ->
+	#{call_id:=CallId} = Data,
+	Calls = get_calls(State),
+	case lists:keyfind(CallId, 1, Calls) of
+		{CallId, Type, _Mon} ->
+			Id = case Type of
+				{user, User} -> {nkmedia_api, {user, User, self()}}
+			end,
+			case nkmedia_call:ringing(CallId, Id) of
+				ok ->
+					{ok, #{}, State};
+				{error, invite_not_found} ->
+					{error, already_answered, State};
+				{error, call_not_found} ->
+					{error, call_not_found, State};
+				{error, Error} ->
+					lager:warning("Error in call ringing: ~p", [Error]),
+					{error, call_error, State}
+			end;
+		false ->
+			{error, call_not_found, State}
+	end;
+
+cmd(<<"call">>, <<"answered">>, #api_req{data=Data}, State) ->
+	#{call_id:=CallId} = Data,
+	Calls = get_calls(State),
+	case lists:keyfind(CallId, 1, Calls) of
+		{CallId, Type, _Mon} ->
+			Id = case Type of
+				{user, User} -> {nkmedia_api, {user, User, self()}}
+			end,
+			Answer = maps:get(answer, Data, #{}),
+			case nkmedia_call:answered(CallId, Id, Answer) of
+				ok ->
+					{ok, #{}, State};
+				{error, invite_not_found} ->
+					{error, already_answered, State};
+				{error, call_not_found} ->
+					{error, call_not_found, State};
+				{error, Error} ->
+					lager:warning("Error in call answered: ~p", [Error]),
+					{error, call_error, State}
+			end;
+		false ->
+			{error, call_not_found, State}
+	end;
+
+cmd(<<"call">>, <<"rejected">>, #api_req{data=Data}, State) ->
+	#{call_id:=CallId} = Data,
+	Calls = get_calls(State),
+	case lists:keyfind(CallId, 1, Calls) of
+		{CallId, Type, _Mon} ->
+			Id = case Type of
+				{user, User} -> {nkmedia_api, {user, User, self()}}
+			end,
+			case nkmedia_call:rejected(CallId, Id) of
+				ok ->
+					{ok, #{}, State};
+				{error, invite_not_found} ->
+					{ok, #{}, State};
+				{error, call_not_found} ->
+					{error, call_not_found, State};
+				{error, Error} ->
+					lager:warning("Error in call answered: ~p", [Error]),
+					{error, call_error, State}
+			end;
+		false ->
+			{error, call_not_found, State}
+	end;
+
+cmd(<<"call">>, <<"hangup">>, #api_req{data=Data}, State) ->
+	#{call_id:=CallId} = Data,
+	Reason = maps:get(reason, Data, <<"user_hangup">>),
+	case nkmedia_call:hangup(CallId, Reason) of
+		ok ->
+			{ok, #{}, State};
+		{error, call_not_found} ->
+			{error, call_not_found, State};
+		{error, Error} ->
+			lager:warning("Error in call answered: ~p", [Error]),
+			{error, call_error, State}
 	end;
 
 cmd(_SrvId, _Other, _Data, State) ->
@@ -130,8 +216,8 @@ handle_down(SrvId, Mon, Reason, State) ->
 			{ok, set_sessions(Sessions2, State)};
 		false ->
 			Calls = get_calls(State),
-			case lists:keytake(Mon, 2, Calls) of
-				{value, {CallId, Mon}, Calls2} ->
+			case lists:keytake(Mon, 3, Calls) of
+				{value, {CallId, _Type, Mon}, Calls2} ->
 					lager:warning("Call ~s is down: ~p", [CallId, Reason]),
 					RegId = nkmedia_util:call_reg_id(SrvId, stop, CallId),
 					{Code, Txt} = SrvId:error_code(process_down),
@@ -156,42 +242,46 @@ nkmedia_api_session_stop(SessId, State) ->
 		{value, {SessId, Mon}, Sessions2} -> demonitor(Mon, [flush]);
 		false -> Sessions2 = Sessions
 	end,
-	{noreply, set_sessions(Sessions2, State)}.
+	{ok, set_sessions(Sessions2, State)}.
 
 
 %% @private Called from nkmedia_call_reg_event
-call_stop(Pid, CallId) ->
-	gen_server:cast(Pid, {nkmedia_api_call_stop, CallId}).
+call_hangup(Pid, CallId, _Reason) ->
+	gen_server:cast(Pid, {nkmedia_api_call_hangup, CallId}).
 
 
 %% @private  
-nkmedia_api_call_stop(SessId, State) ->
+nkmedia_api_call_hangup(CallId, State) ->
 	Sessions = get_calls(State),
-	case lists:keytake(SessId, 1, Sessions) of
-		{value, {SessId, Mon}, Sessions2} -> demonitor(Mon, [flush]);
+	case lists:keytake(CallId, 1, Sessions) of
+		{value, {CallId, _Type, Mon}, Sessions2} -> demonitor(Mon, [flush]);
 		false -> Sessions2 = Sessions
 	end,
-	{noreply, set_calls(Sessions2, State)}.
+	{ok, set_calls(Sessions2, State)}.
 
 
 %% @private
-call_invite(CallId, Offer, Pid, Call) ->
-	Data = #{call_id=>CallId, offer=>Offer},
+call_invite(CallId, Offer, {user, User, Pid}, Call) ->
+	Data = #{call_id=>CallId, offer=>Offer, type=>user},
 	case nkservice_api_server:cmd(Pid, media, call, invite, Data) of
-		{ok, #{<<"retry">>:=Retry}} ->
+		{ok, <<"ok">>, #{<<"retry">>:=Retry}} ->
 			case is_integer(Retry) andalso Retry>0 of
 				true -> {retry, Retry, Call};
 				false -> {remove, Call}
 			end;
-		{ok, _} ->
-			{ok, {nkmedia_api, self()}, Call};
+		{ok, <<"ok">>, _} ->
+			{ok, {nkmedia_api, {user, User, Pid}}, Call};
+		{ok, <<"error">>, _} ->
+			{remove, Call};
 		{error, _Error} ->
 			{remove, Call}
 	end.
 
 %% @private
-call_cancel(CallId, Pid, Call) ->
-	nkservice_api_server:cmd_async(Pid, media, call, cancel, #{call_id=>CallId}),
+call_cancel(CallId, {user, _User, Pid}, Call) ->
+	{Code, Txt} = nkmedia_util:error(originator_cancel),
+	nkservice_api_server:cmd_async(Pid, media, call, hangup, 
+								   #{call_id=>CallId, code=>Code, reason=>Txt}),
 	{ok, Call}.
 
 
@@ -250,18 +340,51 @@ syntax(<<"session">>, <<"update">>, Syntax, Defaults, Mandatory) ->
 syntax(<<"call">>, <<"start">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
-			session_id => binary,
 			type => atom,
 			offer => offer(),
+			ring_time => {integer, 1, none},
 			user => binary,
 			session => binary,
 			url => binary
 		},
 		Defaults,
-		[session_id, type|Mandatory]
+		[type|Mandatory]
+	};
+
+syntax(<<"call">>, <<"ringing">>, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{call_id => binary},
+		Defaults,
+		[call_id|Mandatory]
 	};
 
 
+syntax(<<"call">>, <<"answered">>, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{
+			call_id => binary,
+			answer => answer()
+		},
+		Defaults,
+		[call_id|Mandatory]
+	};
+
+syntax(<<"call">>, <<"rejected">>, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{call_id => binary},
+		Defaults,
+		[call_id|Mandatory]
+	};
+
+syntax(<<"call">>, <<"hangup">>, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{
+			call_id => binary,
+			reason => binary
+		},
+		Defaults,
+		[call_id|Mandatory]
+	};
 
 syntax(_Sub, _Cmd, Syntax, Defaults, Mandatory) ->
 	{Syntax, Defaults, Mandatory}.
@@ -344,33 +467,33 @@ set_sessions(Regs, State) ->
 
 
 %% @private
-start_call(SrvId, Dests, #{session_id:=SessId}=Data, State) ->
-	case nkmedia_session:find(SessId) of
-		{ok, _} ->
-			Config1 = #{
-				session_id => SessId,
-				register => {nkmedia_api, self()}
-			},
-			Config2 = case maps:find(offer, Data) of
-				{ok, Offer} -> Config1#{offer=>Offer};
-				error -> Config1
-			end,
-			{ok, CallId, CallPid} = nkmedia_call:start(SrvId, Dests, Config2),
-			case maps:get(subscribe, Data, true) of
-				true ->
-					RegId = nkmedia_util:call_reg_id(SrvId, <<"*">>, CallId),
-					Body = maps:get(events_body, Data, #{}),
-					nkservice_api_server:register(self(), RegId, Body);
-				false ->
-					ok
-			end,
-			Mon = monitor(process, CallPid),
-			Calls = get_calls(State),
-			Calls2 = [{CallId, Mon}|Calls],
-			{ok, #{call_id=>CallId}, set_calls(Calls2, State)};
-		not_found ->
-			{error, session_not_found, State}
-	end.
+%% We start the call
+%% The client must be susbcribed to events (ringing, answred, hangup)
+%% We implement call_invite and call_cancel and called above
+%% If it stops, we capture the DOWN event above
+%% If it sends a hangup, we also capture it in nkmedia_call_reg_event and 
+%% call_hangup/3 is called
+
+start_call(SrvId, Type, Dests, Data, State) ->
+	Config1 = #{register => {nkmedia_api, self()}},
+	Config2 = case maps:find(offer, Data) of
+		{ok, Offer} -> Config1#{offer=>Offer};
+		error -> Config1
+	end,
+	{ok, CallId, CallPid} = nkmedia_call:start(SrvId, Dests, Config2),
+	case maps:get(subscribe, Data, true) of
+		true ->
+			% In case of no_destination, the call will wait 100msecs before stop
+			RegId = nkmedia_util:call_reg_id(SrvId, <<"*">>, CallId),
+			Body = maps:get(events_body, Data, #{}),
+			nkservice_api_server:register(self(), RegId, Body);
+		false ->
+			ok
+	end,
+	Mon = monitor(process, CallPid),
+	Calls = get_calls(State),
+	Calls2 = [{CallId, Type, Mon}|Calls],
+	{ok, #{call_id=>CallId}, set_calls(Calls2, State)}.
 
 
 %% @private

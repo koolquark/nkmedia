@@ -373,8 +373,10 @@ terminate(Reason, State) ->
 launch_invites([], #state{invites=Invs}=State) ->
     ?LLOG(info, "resolved invites: ~p", [Invs], State),
     case length(Invs) of
-        0 -> hangup(self(), no_destination);
-        _ -> ok
+        0 -> 
+            hangup(self(), no_destination);
+        _ -> 
+            ok
     end,        
     State;
 

@@ -20,7 +20,7 @@
 %% -------------------------------------------------------------------
 
 %% @doc 
--module(nkmedia_test_api).
+-module(nkmedia_api_test).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -compile([export_all]).
 

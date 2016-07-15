@@ -248,10 +248,10 @@ nkmedia_call_resolve(Dest, Call) ->
 	{remove, call()} | 
 	continue().
 
-nkmedia_call_invite(CallId, Offer, {nkmedia_api, Pid}, Call) ->
-	nkmedia_api:call_invite(CallId, Offer, Pid, Call);
+nkmedia_call_invite(CallId, {nkmedia_api, Data}, Offer, Call) ->
+	nkmedia_api:call_invite(CallId, Offer, Data, Call);
 
-nkmedia_call_invite(_CallId, _Offer, _Dest, Call) ->
+nkmedia_call_invite(_CallId, _Dest, _Offer, Call) ->
 	{remove, Call}.
 
 
@@ -259,8 +259,9 @@ nkmedia_call_invite(_CallId, _Offer, _Dest, Call) ->
 -spec nkmedia_call_cancel(call_id(), nklib:proc_id(), call()) ->
 	{ok, call()} | continue().
 
-nkmedia_call_cancel(CallId, {nkmedia_api, Pid}, Call) ->
-	nkmedia_api:call_cancel(CallId, Pid, Call);
+nkmedia_call_cancel(CallId, {nkmedia_api, Data}, Call) ->
+	lager:error("Cancel ~p", [Data]),
+	nkmedia_api:call_cancel(CallId, Data, Call);
 
 nkmedia_call_cancel(_CallId, _ProcId, Call) ->
 	{ok, Call}.
@@ -290,8 +291,8 @@ nkmedia_call_reg_event(_CallId, {session, SessId}, Event, Call) ->
 	end,
 	{ok, Call};
 
-nkmedia_call_reg_event(CallId, {nkmedia_api, Pid}, {hangup, _Reason}, Call) ->
-	nkmedia_api:call_stop(Pid, CallId),
+nkmedia_call_reg_event(CallId, {nkmedia_api, Pid}, {hangup, Reason}, Call) ->
+	nkmedia_api:call_hangup(Pid, CallId, Reason),
 	{ok, Call};
 
 nkmedia_call_reg_event(_CallId, _RegId, _Event, Call) ->
@@ -381,8 +382,8 @@ api_server_cmd(_Req, _State) ->
 api_server_handle_cast({nkmedia_api_session_down, SessId}, State) ->
 	nkmedia_api:nkmedia_api_session_down(SessId, State);
 
-api_server_handle_cast({nkmedia_api_call_down, CallId}, State) ->
-	nkmedia_api:nkmedia_api_call_down(CallId, State);
+api_server_handle_cast({nkmedia_api_call_hangup, CallId}, State) ->
+	nkmedia_api:nkmedia_api_call_hangup(CallId, State);
 
 api_server_handle_cast(_Msg, _State) ->
 	continue.
