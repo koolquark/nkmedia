@@ -67,7 +67,7 @@ error(caller_hangup)			-> 	{0, <<"Caller hangup">>};
 error(callee_hangup)			-> 	{0, <<"Callee hangup">>};
 error(unknown_linked_session) 	-> 	{0, <<"Unknown linked session">>};
 error(user_monitor_stop) 		-> 	{0, <<"User monitor stop">>};
-error(reg_monitor_stop) 		-> 	{0, <<"Register monitor stop">>};
+error(registered_stop) 		    -> 	{0, <<"Registered process stop">>};
 error(room_not_found)			->  {0, <<"Room not found">>};
 error(room_already_exists)	    ->  {0, <<"Room already exists">>};
 error(call_not_found) 			->  {0, <<"Call not found">>};

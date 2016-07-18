@@ -31,7 +31,8 @@
          nkmedia_verto_dtmf/4, nkmedia_verto_terminate/2,
          nkmedia_verto_handle_call/3, nkmedia_verto_handle_cast/2,
          nkmedia_verto_handle_info/2]).
-% -export([nkmedia_call_resolve/2]).
+-export([nkmedia_call_resolve/3, nkmedia_call_invite/4, nkmedia_call_cancel/3,
+         nkmedia_call_reg_event/4]).
 
 -define(VERTO_WS_TIMEOUT, 60*60*1000).
 -include_lib("nkservice/include/nkservice.hrl").
@@ -125,6 +126,14 @@ nkmedia_verto_invite(_SrvId, _CallId, _Offer, Verto) ->
 -spec nkmedia_verto_answer(call_id(), nklib:proc_id(), nkmedia:answer(), verto()) ->
     {ok, verto()} |{hangup, nkservice:error(), verto()} | continue().
 
+nkmedia_verto_answer(_CallId, {nkmedia_verto_call, CallId, _Pid}, Answer, Verto) ->
+    case nkmedia_call:answered(CallId, {nkmedia_verto, self()}, Answer) of
+        ok ->
+            {ok, Verto};
+        {error, Error} ->
+            {hangup, Error, Verto}
+    end;
+
 nkmedia_verto_answer(_CallId, _ProcId, _Answer, Verto) ->
     {ok, Verto}.
 
@@ -133,6 +142,10 @@ nkmedia_verto_answer(_CallId, _ProcId, _Answer, Verto) ->
 -spec nkmedia_verto_rejected(call_id(), nklib:proc_id(), verto()) ->
     {ok, verto()} | continue().
 
+nkmedia_verto_rejected(_CallId, {nkmedia_verto_call, CallId, _Pid}, Verto) ->
+    nkmedia_call:rejected(CallId, {nkmedia_verto, self()}),
+    {ok, Verto};
+
 nkmedia_verto_rejected(_CallId, _ProcId, Verto) ->
     {ok, Verto}.
 
@@ -140,6 +153,10 @@ nkmedia_verto_rejected(_CallId, _ProcId, Verto) ->
 %% @doc Sends when the client sends a BYE during a call
 -spec nkmedia_verto_bye(call_id(), nklib:proc_id(), verto()) ->
     {ok, verto()} | continue().
+
+nkmedia_verto_bye(_CallId, {nkmedia_verto_call, CallId, _Pid}, Verto) ->
+    nkmedia_call:hangup(CallId, verto_bye),
+    {ok, Verto};
 
 nkmedia_verto_bye(_CallId, _ProcId, Verto) ->
     {ok, Verto}.
@@ -191,11 +208,58 @@ nkmedia_verto_handle_info(Msg, Verto) ->
 
 
 %% ===================================================================
-%% Implemented Callbacks - error
+%% Implemented Callbacks
 %% ===================================================================
 
+%% @private
 error_code(verto_bye) -> {0, <<"Verto BYE">>};
 error_code(_) -> continue.
+
+
+%% @private
+%% If call has type 'nkmedia_verto' we will capture it
+nkmedia_call_resolve(Callee, Acc, Call) ->
+    lager:error("DEST: ~p", [Callee]),
+    case maps:get(type, Call, nkmedia_verto) of
+        nkmedia_verto ->
+            DestExts = [
+                #{dest=>{nkmedia_verto, Pid}}
+                || Pid <- nkmedia_verto:find_user(Callee)
+            ],
+            {continue, [Callee, Acc++DestExts, Call]};
+        _ ->
+            continue
+    end.
+
+
+%% @private
+%% When a call is sento to {nkmedia_verto, pid()}, we capture it here
+%% We register with verto as {nkmedia_verto_call, CallId, PId},
+%% and with the call as {nkmedia_verto, Pid}
+nkmedia_call_invite(CallId, {nkmedia_verto, Pid}, Offer, Call) when is_pid(Pid) ->
+    ProcId = {nkmedia_verto_call, CallId, self()},
+    ok = nkmedia_verto:invite(Pid, CallId, Offer, ProcId),
+    {ok, {nkmedia_verto, Pid}, Call};
+
+nkmedia_call_invite(_CallId, _Dest, _Offer, _Call) ->
+    continue.
+
+
+%% @private
+nkmedia_call_cancel(CallId, {nkmedia_verto, Pid}, _Call) when is_pid(Pid) ->
+    nkmedia_verto:hangup(Pid, CallId, originator_cancel),
+    continue;
+
+nkmedia_call_cancel(_CallId, _ProcId, _Call) ->
+    continue.
+
+
+nkmedia_call_reg_event(CallId, {nkmedia_verto, Pid}, {hangup, Reason}, _Call) ->
+    nkmedia_verto:hangup(Pid, CallId, Reason),
+    continue;
+
+nkmedia_call_reg_event(_CallId, _ProcId, _Event, _Call) ->
+    continue.
 
 
 

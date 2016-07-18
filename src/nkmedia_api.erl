@@ -24,7 +24,8 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([cmd/4, handle_down/4]).
 -export([session_stop/2, nkmedia_api_session_stop/2]).
--export([call_hangup/3, nkmedia_api_call_hangup/2, call_invite/4, call_cancel/3]).
+-export([call_resolve/3, call_invite/4, call_cancel/3, 
+		 call_hangup/3, nkmedia_api_call_hangup/2]).
 
 
 -include_lib("nkservice/include/nkservice.hrl").
@@ -76,23 +77,8 @@ cmd(<<"session">>, <<"update">>, #api_req{data=Data}, State) ->
 	end;
 
 cmd(<<"call">>, <<"start">>, #api_req{srv_id=SrvId, data=Data}, State) ->
-	#{type:=Type} = Data,
-	Ring = maps:get(ring_time, Data, ?DEF_RING_TIMEOUT),
-	case Type of
-		user ->
-			case maps:find(user, Data) of
-				{ok, User} ->
-					Dests = [
-						#{dest=>{nkmedia_api, {user, Pid}}, ring=>Ring} 
-						|| {_, Pid} <- nkservice_api_server:find_user(User)
-					],
-					start_call(SrvId, Dests, Data, State);
-				error ->
-					{error, {missing_field, <<"user">>}, State}
-			end;
-		_ ->
-			{error, {syntax_error, <<"type">>}, State}
-	end;
+	#{callee:=Callee} = Data,
+	start_call(SrvId, Callee, Data, State);
 
 cmd(<<"call">>, <<"ringing">>, #api_req{data=Data}, State) ->
 	#{call_id:=CallId} = Data,
@@ -197,24 +183,33 @@ nkmedia_api_session_stop(SessId, State) ->
 	{ok, set_sessions(Sessions2, State)}.
 
 
-%% @private Called from nkmedia_call_reg_event when a call registered
-%% with {nkmedia_api, Pid} stops. Calls next functions.
-call_hangup(Pid, CallId, _Reason) ->
-	gen_server:cast(Pid, {nkmedia_api_call_hangup, CallId}).
-
-
-%% @private  
-nkmedia_api_call_hangup(CallId, State) ->
-	Sessions = get_calls(State),
-	case lists:keytake(CallId, 1, Sessions) of
-		{value, {CallId, Mon}, Sessions2} -> demonitor(Mon, [flush]);
-		false -> Sessions2 = Sessions
+%% @private Called when a new call is searching for destinations
+call_resolve(Dest, Acc, Call) ->
+	Acc2 = case maps:get(type, Call, user) of
+		user ->
+			Acc ++ [
+				#{dest=>{nkmedia_api, {user, Pid}}} 
+				|| {_, Pid} <- nkservice_api_server:find_user(Dest)
+			];
+		_ ->
+			Acc
 	end,
-	{ok, set_calls(Sessions2, State)}.
+	Acc3 = case maps:get(type, Call, session) of
+		session ->
+			Acc2 ++ case nkservice_api_server:find_session(Dest) of
+				{ok, _User, Pid} ->
+					[#{dest=>{nkmedia_api, {session, Pid}}}];
+				_ ->
+					[]
+			end;
+		_ ->
+			Acc2
+	end,
+	{ok, Acc3, Call}.
 
 
 %% @private Called from nkmedia_callback when a call invites a destination
-%% with the type {nkmedia_api, {Type, Pid}}
+%% with the type {nkmedia_api, {user|session, Pid}}
 %% Registers this callee as {nkmedia_api, Pid}
 call_invite(CallId, Offer, {Type, Pid}, Call) ->
 	Data = #{call_id=>CallId, offer=>Offer, type=>Type},
@@ -241,6 +236,23 @@ call_cancel(CallId, Pid, Call) ->
 	nkservice_api_server:cmd_async(Pid, media, call, hangup, 
 								   #{call_id=>CallId, code=>Code, reason=>Txt}),
 	{ok, Call}.
+
+
+
+%% @private Called from nkmedia_call_reg_event when a call registered
+%% with {nkmedia_api, Pid} stops. Calls next functions.
+call_hangup(Pid, CallId, _Reason) ->
+	gen_server:cast(Pid, {nkmedia_api_call_hangup, CallId}).
+
+
+%% @private  
+nkmedia_api_call_hangup(CallId, State) ->
+	Sessions = get_calls(State),
+	case lists:keytake(CallId, 1, Sessions) of
+		{value, {CallId, Mon}, Sessions2} -> demonitor(Mon, [flush]);
+		false -> Sessions2 = Sessions
+	end,
+	{ok, set_calls(Sessions2, State)}.
 
 
 
@@ -286,18 +298,14 @@ set_sessions(Regs, State) ->
 
 %% @private
 %% We start the call
-%% The client must be susbcribed to events (ringing, answred, hangup)
+%% The client must be susbcribed to events (ringing, answered, hangup)
 %% We implement call_invite and call_cancel and called above
 %% If it stops, we capture the DOWN event above
 %% If it sends a hangup, we also capture it in nkmedia_call_reg_event and 
 %% call_hangup/3 is called
-start_call(SrvId, Dests, Data, State) ->
-	Config1 = #{register => {nkmedia_api, self()}},
-	Config2 = case maps:find(offer, Data) of
-		{ok, Offer} -> Config1#{offer=>Offer};
-		error -> Config1
-	end,
-	{ok, CallId, CallPid} = nkmedia_call:start(SrvId, Dests, Config2),
+start_call(SrvId, Callee, Data, State) ->
+	Config = Data#{register => {nkmedia_api, self()}},
+	{ok, CallId, CallPid} = nkmedia_call:start(SrvId, Callee, Config),
 	case maps:get(subscribe, Data, true) of
 		true ->
 			% In case of no_destination, the call will wait 100msecs before stop

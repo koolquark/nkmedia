@@ -29,8 +29,8 @@
          nkmedia_janus_handle_call/3, nkmedia_janus_handle_cast/2,
          nkmedia_janus_handle_info/2]).
 -export([error_code/1]).
-% -export([nkmedia_session_invite/4, nkmedia_session_event/3]).
-% -export([nkmedia_call_resolve/2]).
+-export([nkmedia_call_resolve/3, nkmedia_call_invite/4, nkmedia_call_cancel/3,
+         nkmedia_call_reg_event/4]).
 
 
 -define(JANUS_WS_TIMEOUT, 60*60*1000).
@@ -75,14 +75,6 @@ plugin_stop(Config, #{name:=Name}) ->
 
 
 
-%% ===================================================================
-%% Implemented Callbacks - error
-%% ===================================================================
-
-error_code(janus_bye) -> {0, <<"Janus BYE">>};
-error_code(_) -> continue.
-
-
 
 %% ===================================================================
 %% Offering Callbacks
@@ -90,8 +82,8 @@ error_code(_) -> continue.
 
 
 
--type janus() :: nkmedia_janus:janus().
--type call_id() :: nkmedia_janus:call_id().
+-type janus() :: nkmedia_janus_proto:janus().
+-type call_id() :: nkmedia_janus_proto:call_id().
 -type continue() :: continue | {continue, list()}.
 
 
@@ -106,7 +98,7 @@ nkmedia_janus_init(_NkPort, Janus) ->
 %% @doc Called when the client sends an INVITE
 -spec nkmedia_janus_invite(nkservice:id(), call_id(), nkmedia:offer(), janus()) ->
     {ok, nklib:proc_id(), janus()} | 
-    {answer, nkmedia_janus:answer(), nklib:proc_id(), janus()} | 
+    {answer, nkmedia_janus_proto:answer(), nklib:proc_id(), janus()} | 
     {rejected, nkservice:error(), janus()} | continue().
 
 nkmedia_janus_invite(_SrvId, _CallId, _Offer, Janus) ->
@@ -118,6 +110,14 @@ nkmedia_janus_invite(_SrvId, _CallId, _Offer, Janus) ->
 -spec nkmedia_janus_answer(call_id(), nklib:proc_id(), nkmedia:answer(), janus()) ->
     {ok, janus()} |{hangup, nkservice:error(), janus()} | continue().
 
+nkmedia_janus_answer(_CallId, {nkmedia_janus_call, CallId, _Pid}, Answer, Janus) ->
+    case nkmedia_call:answered(CallId, {nkmedia_janus, self()}, Answer) of
+        ok ->
+            {ok, Janus};
+        {error, Error} ->
+            {hangup, Error, Janus}
+    end;
+
 nkmedia_janus_answer(_CallId, _ProcId, _Answer, Janus) ->
     {ok, Janus}.
 
@@ -126,12 +126,17 @@ nkmedia_janus_answer(_CallId, _ProcId, _Answer, Janus) ->
 -spec nkmedia_janus_bye(call_id(), nklib:proc_id(), janus()) ->
     {ok, janus()} | continue().
 
+nkmedia_janus_bye(_CallId, {nkmedia_janus_call, CallId, _Pid}, Janus) ->
+    nkmedia_call:hangup(CallId, janus_bye),
+    {ok, Janus};
+
 nkmedia_janus_bye(_CallId, _ProcId, Janus) ->
+    lager:error("JANUS BYE: ~p", [_ProcId]),
     {ok, Janus}.
 
 
 %% @doc Called when the client sends an START for a PLAY
--spec nkmedia_janus_start(call_id(), nkmedia_janus:offer(), janus()) ->
+-spec nkmedia_janus_start(call_id(), nkmedia:offer(), janus()) ->
     ok | {hangup, nkservice:error(), janus()} | continue().
 
 nkmedia_janus_start(SessId, Answer, Janus) ->
@@ -184,59 +189,55 @@ nkmedia_janus_handle_info(Msg, Janus) ->
 %% ===================================================================
 
 
-% %% @private
-% nkmedia_session_event(SessId, {answer, Answer}, 
-%                       #{offer:=#{nkmedia_janus_proto:=in, pid:=Pid}}) ->
-%     #{sdp:=_} = Answer,
-%     lager:info("Janus (~s) calling media available", [SessId]),
-%     ok = nkmedia_janus_proto:answer(Pid, SessId, Answer),
-%     continue;
+%% @private
+error_code(janus_bye) -> {0, <<"Janus BYE">>};
+error_code(_) -> continue.
 
 
-% nkmedia_session_event(SessId, {hangup, _}, Session) ->
-%     case Session of
-%         #{offer:=#{nkmedia_janus_proto:=in, pid:=Pid1}} ->
-%             lager:info("Janus (~s) In captured hangup", [SessId]),
-%             nkmedia_janus_proto:hangup(Pid1, SessId);
-%         _ -> 
-%             ok
-%     end,
-%     case Session of
-%         #{answer:=#{nkmedia_janus_proto:=out, pid:=Pid2}} ->
-%             lager:info("Janus (~s) Out captured hangup", [SessId]),
-%             nkmedia_janus_proto:hangup(Pid2, SessId);
-%         _ ->
-%             ok
-%     end,
-%     continue;
-
-% nkmedia_session_event(_SessId, _Event, _Session) ->
-%     continue.
+%% @private
+%% If call has type 'nkmedia_janus' we will capture it
+nkmedia_call_resolve(Callee, Acc, Call) ->
+    case maps:get(type, Call, nkmedia_janus) of
+        nkmedia_janus ->
+            DestExts = [
+                #{dest=>{nkmedia_janus, Pid}}
+                || Pid <- nkmedia_janus_proto:find_user(Callee)
+            ],
+            {continue, [Callee, Acc++DestExts, Call]};
+        _ ->
+            continue
+    end.
 
 
-% %% @private
-% nkmedia_session_invite(SessId, {nkmedia_janus_proto, Pid}, Offer, Session) ->
-%     case nkmedia_janus_proto:invite(Pid, SessId, Offer#{monitor=>self()}) of
-%         ok ->
-%             {ringing, #{nkmedia_janus_proto=>out, pid=>Pid}, Session};
-%         {error, Error} ->
-%             lager:warning("Error calling invite: ~p", [Error]),
-%             {rejected, <<"Janus Invite Error">>, Session}
-%     end;
+%% @private
+%% When a call is sento to {nkmedia_janus, pid()}, we capture it here
+%% We register with janus as {nkmedia_janus_call, CallId, PId},
+%% and with the call as {nkmedia_janus, Pid}
+nkmedia_call_invite(CallId, {nkmedia_janus, Pid}, Offer, Call) when is_pid(Pid) ->
+    ProcId = {nkmedia_janus_call, CallId, self()},
+    ok = nkmedia_janus_proto:invite(Pid, CallId, Offer, ProcId),
+    {ok, {nkmedia_janus, Pid}, Call};
 
-% nkmedia_session_invite(_SessId, _Dest, _Offer, _Session) ->
-%     continue.
+nkmedia_call_invite(_CallId, _Dest, _Offer, _Call) ->
+    continue.
 
 
-% % %% @private
-% nkmedia_call_resolve(Dest, Call) ->
-%     case nkmedia_janus_proto:find_user(Dest) of
-%         [Pid|_] ->
-%             {ok, {nkmedia_janus_proto, Pid}, Call};
-%         [] ->
-%             lager:info("Janus: user ~p not found", [Dest]),
-%             continue
-%     end.
+%% @private
+nkmedia_call_cancel(CallId, {nkmedia_janus, Pid}, _Call) when is_pid(Pid) ->
+    nkmedia_janus_proto:hangup(Pid, CallId, originator_cancel),
+    continue;
+
+nkmedia_call_cancel(_CallId, _ProcId, _Call) ->
+    continue.
+
+
+nkmedia_call_reg_event(CallId, {nkmedia_janus, Pid}, {hangup, Reason}, _Call) ->
+    nkmedia_janus_proto:hangup(Pid, CallId, Reason),
+    continue;
+
+nkmedia_call_reg_event(_CallId, _ProcId, _Event, _Call) ->
+    continue.
+
 
 
 

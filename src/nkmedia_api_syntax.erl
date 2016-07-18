@@ -80,15 +80,15 @@ syntax(<<"session">>, <<"update">>, Syntax, Defaults, Mandatory) ->
 syntax(<<"call">>, <<"start">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
+			callee => binary,
 			type => atom,
 			offer => offer(),
+			session_id => binary,
 			ring_time => {integer, 1, none},
-			user => binary,
-			session => binary,
-			url => binary
+			events_body => any
 		},
 		Defaults,
-		[type|Mandatory]
+		[callee|Mandatory]
 	};
 
 syntax(<<"call">>, <<"ringing">>, Syntax, Defaults, Mandatory) ->

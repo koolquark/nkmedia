@@ -32,7 +32,7 @@
 -export([nkmedia_session_start/2, nkmedia_session_answer/3, 
 	     nkmedia_session_update/4, nkmedia_session_stop/2]).
 -export([nkmedia_call_init/2, nkmedia_call_terminate/2, 
-		 nkmedia_call_resolve/2, nkmedia_call_invite/4, nkmedia_call_cancel/3, 
+		 nkmedia_call_resolve/3, nkmedia_call_invite/4, nkmedia_call_cancel/3, 
 		 nkmedia_call_event/3, nkmedia_call_reg_event/4,
 		 nkmedia_call_handle_call/3, nkmedia_call_handle_cast/2, 
 		 nkmedia_call_handle_info/2]).
@@ -233,12 +233,11 @@ nkmedia_call_terminate(_Reason, Call) ->
 
 
 %% @doc Called when an outbound call is to be sent
--spec nkmedia_call_resolve(nkmedia_call:dest(), call()) ->
-	{ok, nkmedia_call:dest(), [nkmedia_call:dest_ext()]} |
-	continue().
+-spec nkmedia_call_resolve(nkmedia_call:callee(), [nkmedia_call:dest_ext()], call()) ->
+	{ok, [nkmedia_call:dest_ext()], call()} | continue().
 
-nkmedia_call_resolve(Dest, Call) ->
-	{ok, Dest, Call}.
+nkmedia_call_resolve(Callee, DestExts, Call) ->
+	nkmedia_api:call_resolve(Callee, DestExts, Call).
 
 
 %% @doc Called when an outbound call is to be sent
@@ -279,9 +278,9 @@ nkmedia_call_event(_CallId, _Event, Call) ->
 -spec nkmedia_call_reg_event(call_id(),	term(), nkmedia_call:event(), call()) ->
 	{ok, session()} | continue().
 
-nkmedia_call_reg_event(_CallId, {session, SessId}, Event, Call) ->
+nkmedia_call_reg_event(_CallId, {nkmedia_session, SessId}, Event, Call) ->
 	case Event of
-		{answered, _Callee, Answer} ->
+		{answer, _Callee, Answer} ->
 			nkmedia_session:answer(SessId, Answer);
 		{hangup, Reason} ->
 			nkmedia_session:stop(SessId, Reason);
@@ -291,7 +290,6 @@ nkmedia_call_reg_event(_CallId, {session, SessId}, Event, Call) ->
 	{ok, Call};
 
 nkmedia_call_reg_event(CallId, {nkmedia_api, Pid}, {hangup, Reason}, Call) ->
-	lager:error("HH: ~p", [Pid]),
 	nkmedia_api:call_hangup(Pid, CallId, Reason),
 	{ok, Call};
 

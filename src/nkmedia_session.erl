@@ -446,7 +446,7 @@ handle_info({'DOWN', _Ref, process, Pid, Reason}=Msg, State) ->
             end,
             case Id of
                 {reg, _Term} ->
-                    do_stop(reg_monitor_stop, State2);
+                    do_stop(registered_stop, State2);
                 {peer, IdB} ->
                     {Type, _Events} = Data,  % caller | callee
                     event({linked_down, IdB, Type, Reason}, State),
@@ -657,13 +657,15 @@ event(Event, #state{id=Id}=State) ->
 %% @private
 ext_event(Event, #state{srv_id=SrvId}=State) ->
     Send = case Event of
-        {stop, Reason} ->
-            {Code, Txt} = SrvId:error_code(Reason),
-            {stop, #{code=>Code, reason=>Txt}};
+        {answer, Answer} ->
+            {answer, #{answer=>Answer}};
         {info, Info} ->
             {info, #{info=>Info}};
         {updated_type, Type} ->
             {updated_type, #{type=>Type}};
+        {stop, Reason} ->
+            {Code, Txt} = SrvId:error_code(Reason),
+            {stop, #{code=>Code, reason=>Txt}};
         _ ->
             ignore
     end,

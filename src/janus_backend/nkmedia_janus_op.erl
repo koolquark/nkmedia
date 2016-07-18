@@ -42,7 +42,7 @@
     lager:Type("NkMEDIA Janus OP ~s (~p ~p) "++Txt, 
                [State#state.nkmedia_id, State#state.janus_sess_id, State#state.status | Args])).
 
--include("nkmedia.hrl").
+-include("../../include/nkmedia.hrl").
 
 
 -define(WAIT_TIMEOUT, 10).      % Secs
@@ -590,7 +590,7 @@ terminate(Reason, State) ->
     end,
     destroy(State),
     ?LLOG(info, "process stop: ~p", [Reason], State),
-    nklib_util:reply(From, {error, process_stopped}),
+    nklib_util:reply(From, {error, process_down}),
     ok.
 
 
