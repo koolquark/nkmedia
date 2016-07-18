@@ -621,7 +621,7 @@ do_echo_update(Opts, #state{handle_id=Handle}=State) ->
             reply(ok, State);
         {error, Error} ->
             ?LLOG(notice, "echo update error: ~p", [Error], State),
-            reply({error, janus_error}, State)
+            reply({error, Error}, State)
     end.
 
 
@@ -1219,12 +1219,13 @@ message(Handle, Body, Jsep, #state{janus_sess_id=SessId, conn=Pid}) ->
             case Data of
                 #{<<"error">>:=Error, <<"error_code">>:=Code} ->
                     Error2 = case Code of
+                        413 -> invalid_parameters;
                         426 -> room_not_found;
                         428 -> invalid_publisher;
                         465 -> invalid_sdp;
                         427 -> room_already_exists;
                         _ -> 
-                            lager:notice("Unknown Janus error: ~s", [Error]),
+                            lager:notice("Unknown Janus error (~p): ~s", [Code, Error]),
                             janus_error
                     end,
                     {error, Error2};

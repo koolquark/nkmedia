@@ -45,6 +45,8 @@
     lager:Type("NkMEDIA Call ~s "++Txt, [State#state.id | Args])).
 
 -include("nkmedia.hrl").
+-include_lib("nkservice/include/nkservice.hrl").
+
 
 
 %% ===================================================================
@@ -546,7 +548,7 @@ event(Event, #state{id=Id}=State) ->
 
 
 %% @private
-ext_event(Event, #state{srv_id=SrvId, id=Id}=State) ->
+ext_event(Event, #state{srv_id=SrvId}=State) ->
     Send = case Event of
         {ringing, _} -> 
             {ringing, #{}};
@@ -558,13 +560,27 @@ ext_event(Event, #state{srv_id=SrvId, id=Id}=State) ->
     end,
     case Send of
         {EvType, Body} ->
-            RegId = nkmedia_util:call_reg_id(SrvId, EvType, Id),
-            ?LLOG(info, "ext event: ~p", [RegId], State),
-            nkservice_events:send_all(RegId, Body);
+            do_send_ext_event(EvType, Body, State);
         ignore ->
             ok
     end,
     State.
+
+
+%% @private
+do_send_ext_event(Type, Body, #state{srv_id=SrvId, id=CallId}=State) ->
+    RegId = #reg_id{
+        srv_id = SrvId,     
+        class = <<"media">>, 
+        subclass = <<"call">>,
+        type = nklib_util:to_binary(Type),
+        obj_id = CallId
+    },
+    ?LLOG(info, "ext event: ~p", [RegId], State),
+    nkservice_events:send(RegId, Body).
+
+
+
 
 
 %% @private

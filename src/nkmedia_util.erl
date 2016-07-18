@@ -22,7 +22,6 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([error/1, get_q850/1, add_uuid/1]).
--export([session_reg_id/3, call_reg_id/3]).
 -export([kill/1]).
 
 -export_type([stop_reason/0, q850/0]).
@@ -46,29 +45,6 @@ add_uuid(Config) ->
     Id = nklib_util:uuid_4122(),
     {Id, Config#{id=>Id}}.
 
-
-
-%% @private
-session_reg_id(SrvId, Type, SessId) ->
-	#reg_id{
-		srv_id = SrvId, 	
-		class = <<"media">>, 
-		subclass = <<"session">>,
-		type = nklib_util:to_binary(Type),
-		obj_id = SessId
-	}.
-
-
-
-%% @private
-call_reg_id(SrvId, Type, SessId) ->
-	#reg_id{
-		srv_id = SrvId, 	
-		class = <<"media">>, 
-		subclass = <<"call">>,
-		type = nklib_util:to_binary(Type),
-		obj_id = SessId
-	}.
 
 
 

@@ -25,7 +25,6 @@
 -export([cmd/4, handle_down/4]).
 -export([session_stop/2, nkmedia_api_session_stop/2]).
 -export([call_hangup/3, nkmedia_api_call_hangup/2, call_invite/4, call_cancel/3]).
--export([syntax/5]).
 
 
 -include_lib("nkservice/include/nkservice.hrl").
@@ -161,7 +160,7 @@ handle_down(SrvId, Mon, Reason, State) ->
 	case lists:keytake(Mon, 2, Sessions) of
 		{value, {SessId, Mon}, Sessions2} ->
 			lager:warning("Session ~s is down: ~p", [SessId, Reason]),
-			RegId = nkmedia_util:session_reg_id(SrvId, stop, SessId),
+			RegId = session_reg_id(SrvId, stop, SessId),
 			{Code, Txt} = SrvId:error_code(process_down),
 			Body = #{code=>Code, reason=>Txt},
 			nkservice_api_server:send_event(self(), RegId, Body),
@@ -171,7 +170,7 @@ handle_down(SrvId, Mon, Reason, State) ->
 			case lists:keytake(Mon, 2, Calls) of
 				{value, {CallId, Mon}, Calls2} ->
 					lager:warning("Call ~s is down: ~p", [CallId, Reason]),
-					RegId = nkmedia_util:call_reg_id(SrvId, stop, CallId),
+					RegId = call_reg_id(SrvId, stop, CallId),
 					{Code, Txt} = SrvId:error_code(process_down),
 					Body = #{code=>Code, reason=>Txt},
 					nkservice_api_server:send_event(self(), RegId, Body),
@@ -244,147 +243,6 @@ call_cancel(CallId, Pid, Call) ->
 	{ok, Call}.
 
 
-%% ===================================================================
-%% Syntax
-%% ===================================================================
-
-%% @private
-syntax(<<"session">>, <<"start">>, Syntax, Defaults, Mandatory) ->
-	{
-		Syntax#{
-			type => atom,							%% p2p, proxy...
-			offer => offer(),
-			subscribe => boolean,
-			events_body => any,
-			wait_timeout => {integer, 1, none},
-			ready_timeout => {integer, 1, none},
-			backend => atom							%% nkmedia_janus, etc.
-		},
-		Defaults,
-		[type|Mandatory]
-	};
-
-syntax(<<"session">>, <<"stop">>, Syntax, Defaults, Mandatory) ->
-	{
-		Syntax#{
-			session_id => binary,
-			code => integer,
-			reason => binary
-		},
-		Defaults,
-		[session_id|Mandatory]
-	};
-
-syntax(<<"session">>, <<"set_answer">>, Syntax, Defaults, Mandatory) ->
-	{
-		Syntax#{
-			session_id => binary,
-			answer => answer()
-		},
-		Defaults,
-		[session_id, answer|Mandatory]
-	};
-
-syntax(<<"session">>, <<"update">>, Syntax, Defaults, Mandatory) ->
-	{
-		Syntax#{
-			session_id => binary,
-			type => atom
-		},
-		Defaults,
-		[session_id, type|Mandatory]
-	};
-
-syntax(<<"call">>, <<"start">>, Syntax, Defaults, Mandatory) ->
-	{
-		Syntax#{
-			type => atom,
-			offer => offer(),
-			ring_time => {integer, 1, none},
-			user => binary,
-			session => binary,
-			url => binary
-		},
-		Defaults,
-		[type|Mandatory]
-	};
-
-syntax(<<"call">>, <<"ringing">>, Syntax, Defaults, Mandatory) ->
-	{
-		Syntax#{call_id => binary},
-		Defaults,
-		[call_id|Mandatory]
-	};
-
-
-syntax(<<"call">>, <<"answered">>, Syntax, Defaults, Mandatory) ->
-	{
-		Syntax#{
-			call_id => binary,
-			answer => answer(),
-			subscribe => boolean,
-			events_body => any
-		},
-		Defaults,
-		[call_id|Mandatory]
-	};
-
-syntax(<<"call">>, <<"rejected">>, Syntax, Defaults, Mandatory) ->
-	{
-		Syntax#{call_id => binary},
-		Defaults,
-		[call_id|Mandatory]
-	};
-
-syntax(<<"call">>, <<"hangup">>, Syntax, Defaults, Mandatory) ->
-	{
-		Syntax#{
-			call_id => binary,
-			reason => binary
-		},
-		Defaults,
-		[call_id|Mandatory]
-	};
-
-syntax(_Sub, _Cmd, Syntax, Defaults, Mandatory) ->
-	{Syntax, Defaults, Mandatory}.
-
-
-
-%% @private
-offer() ->
-	#{
-		sdp => binary,
-		sdp_type => {enum, [rtp, webrtc]},
-		dest => binary,
-        caller_name => binary,
-        caller_id => binary,
-        callee_name => binary,
-        callee_id => binary,
-        use_audio => boolean,
-        use_stereo => boolean,
-        use_video => boolean,
-        use_screen => boolean,
-        use_data => boolean,
-        in_bw => {integer, 0, none}, 
-        out_bw => {integer, 0, none}
-     }.
-
-
-%% @private
-answer() ->
-	#{
-		sdp => binary,
-		sdp_type => {enum, [rtp, webrtc]},
-        use_audio => boolean,
-        use_stereo => boolean,
-        use_video => boolean,
-        use_screen => boolean,
-        use_data => boolean
-     }.
-
-
-
 
 %% ===================================================================
 %% Internal
@@ -398,7 +256,7 @@ start_session(SrvId, Data, State) ->
 		{ok, SessId, Pid, Reply} ->
 			case maps:get(subscribe, Data, true) of
 				true ->
-					RegId = nkmedia_util:session_reg_id(SrvId, <<"*">>, SessId),
+					RegId = session_reg_id(SrvId, <<"*">>, SessId),
 					Body = maps:get(events_body, Data, #{}),
 					nkservice_api_server:register(self(), RegId, Body);
 				false ->
@@ -443,7 +301,7 @@ start_call(SrvId, Dests, Data, State) ->
 	case maps:get(subscribe, Data, true) of
 		true ->
 			% In case of no_destination, the call will wait 100msecs before stop
-			RegId = nkmedia_util:call_reg_id(SrvId, <<"*">>, CallId),
+			RegId = call_reg_id(SrvId, <<"*">>, CallId),
 			Body = maps:get(events_body, Data, #{}),
 			nkservice_api_server:register(self(), RegId, Body);
 		false ->
@@ -465,7 +323,7 @@ update_call(SrvId, CallId, Data, State) ->
 	Calls2 = [{CallId, Mon}|Calls1],
 	case maps:get(subscribe, Data, true) of
 		true ->
-			RegId = nkmedia_util:call_reg_id(SrvId, <<"*">>, CallId),
+			RegId = call_reg_id(SrvId, <<"*">>, CallId),
 			Body = maps:get(events_body, Data, #{}),
 			nkservice_api_server:register(self(), RegId, Body);
 		false -> 
@@ -485,4 +343,27 @@ set_calls(Regs, State) ->
     Data1 = maps:get(?MODULE, State, #{}),
     Data2 = Data1#{calls=>Regs},
     State#{?MODULE=>Data2}.
+
+
+
+%% @private
+session_reg_id(SrvId, Type, SessId) ->
+	#reg_id{
+		srv_id = SrvId, 	
+		class = <<"media">>, 
+		subclass = <<"session">>,
+		type = nklib_util:to_binary(Type),
+		obj_id = SessId
+	}.
+
+
+%% @private
+call_reg_id(SrvId, Type, SessId) ->
+	#reg_id{
+		srv_id = SrvId, 	
+		class = <<"media">>, 
+		subclass = <<"call">>,
+		type = nklib_util:to_binary(Type),
+		obj_id = SessId
+	}.
 

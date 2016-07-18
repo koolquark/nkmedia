@@ -359,7 +359,7 @@ api_cmd(_Req, _State) ->
 %% @private
 api_syntax(#api_req{class = <<"media">>}=Req, Syntax, Defaults, Mandatory) ->
 	#api_req{subclass=Sub, cmd=Cmd} = Req,
-	nkmedia_api:syntax(Sub, Cmd, Syntax, Defaults, Mandatory);
+	nkmedia_api_syntax:syntax(Sub, Cmd, Syntax, Defaults, Mandatory);
 	
 api_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
 	continue.
@@ -379,8 +379,8 @@ api_server_cmd(_Req, _State) ->
 
 
 %% @private
-api_server_handle_cast({nkmedia_api_session_down, SessId}, State) ->
-	nkmedia_api:nkmedia_api_session_down(SessId, State);
+api_server_handle_cast({nkmedia_api_session_stop, SessId}, State) ->
+	nkmedia_api:nkmedia_api_session_stop(SessId, State);
 
 api_server_handle_cast({nkmedia_api_call_hangup, CallId}, State) ->
 	nkmedia_api:nkmedia_api_call_hangup(CallId, State);

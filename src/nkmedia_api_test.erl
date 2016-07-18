@@ -1,4 +1,3 @@
-
 %% -------------------------------------------------------------------
 %%
 %% Copyright (c) 2016 Carlos Gonzalez Florido.  All Rights Reserved.
@@ -28,6 +27,10 @@
     lager:Type("API Sample (~s) "++Txt, [maps:get(user, State) | Args])).
 
 -include_lib("nkservice/include/nkservice.hrl").
+
+
+% -define(URL, "nkapic://media2.netcomposer.io:9010").
+-define(URL, "nkapic://127.0.0.1:9010").
 
 
 %% ===================================================================
@@ -107,6 +110,12 @@ sess_cmd(C, Cmd, SessId, Data) ->
 subscribe(SessId, WsPid, Body) ->
     Data = #{class=>media, subclass=>session, obj_id=>SessId, body=>Body},
     nkservice_api_client:cmd(WsPid, core, event, subscribe, Data).
+
+
+get_client() ->
+    [{_, C}|_] = nkservice_api_client:get_all(),
+    C.
+
 
 
 listen(Publisher, Dest) ->
@@ -303,7 +312,7 @@ send_call(SrvId, #{dest:=Dest}=Offer, User, Data) ->
                 offer => Offer,
                 events_body => Data, 
                 backend => nkmedia_janus, 
-                record => true
+                record => false
             },
             case start_session(User, Config) of
                 {ok, SessId, WsPid, #{<<"answer">>:=#{<<"sdp">>:=SDP}}} ->
@@ -346,6 +355,7 @@ send_call(SrvId, #{dest:=Dest}=Offer, User, Data) ->
             nkmedia_janus_room:create(SrvId, #{id=><<"sfu">>, room_video_codec=>vp9}),
             Config = #{
                 type => publish,
+                room => <<"sfu">>,
                 offer => Offer,
                 events_body => Data, 
                 backend => nkmedia_janus
@@ -417,9 +427,7 @@ send_call(SrvId, #{dest:=Dest}=Offer, User, Data) ->
 
 connect(User) ->
     Fun = fun ?MODULE:api_client_fun/2,
-    Url = "nkapic://media2.netcomposer.io:9010",
-    % Url = "nkapic://localhost:9010",
-    {ok, _, C} = nkservice_api_client:start(test, Url, User, "p1", Fun, #{}),
+    {ok, _, C} = nkservice_api_client:start(test, ?URL, User, "p1", Fun, #{}),
     C.
 
 start_session(User, Data) ->

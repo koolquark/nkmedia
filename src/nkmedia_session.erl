@@ -29,7 +29,7 @@
 -export([stop/1, stop/2, stop_all/0]).
 -export([answer/2, answer_async/2, update/3, update_async/3, info/2]).
 -export([register/2, unregister/2, link_session/3, get_all/0,  peer_event/3]).
--export([get_call_data/1]).
+-export([get_call_data/1, send_ext_event/3]).
 -export([find/1, do_cast/2, do_call/2, do_call/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
@@ -41,6 +41,7 @@
 
 -include("nkmedia.hrl").
 -include_lib("nklib/include/nklib.hrl").
+-include_lib("nkservice/include/nkservice.hrl").
 
 
 %% ===================================================================
@@ -238,6 +239,14 @@ unregister(SessId, ProcId) ->
     do_call(SessId, {unregister, ProcId}).
 
 
+%% @doc Sends a event inside the session
+-spec send_ext_event(id(), atom(), map()) ->
+    ok | {error, term()}.
+
+send_ext_event(SessId, Type, Body) ->
+    do_cast(SessId, {send_ext_event, Type, Body}).
+
+
 %% @private
 -spec get_all() ->
     [{id(), pid()}].
@@ -406,6 +415,10 @@ handle_cast({peer_event, PeerId, Event}, State) ->
         _ ->            
             noreply(State)
     end;
+
+handle_cast({send_ext_event, EvType, Body}, State) ->
+    do_send_ext_event(EvType, Body, State),
+    noreply(State);
 
 handle_cast({stop, Error}, State) ->
     do_stop(Error, State);
@@ -642,7 +655,7 @@ event(Event, #state{id=Id}=State) ->
 
 
 %% @private
-ext_event(Event, #state{srv_id=SrvId, id=Id}=State) ->
+ext_event(Event, #state{srv_id=SrvId}=State) ->
     Send = case Event of
         {stop, Reason} ->
             {Code, Txt} = SrvId:error_code(Reason),
@@ -656,13 +669,24 @@ ext_event(Event, #state{srv_id=SrvId, id=Id}=State) ->
     end,
     case Send of
         {EvType, Body} ->
-            RegId = nkmedia_util:session_reg_id(SrvId, EvType, Id),
-            ?LLOG(info, "ext event: ~p", [RegId], State),
-            nkservice_events:send_all(RegId, Body);
+            do_send_ext_event(EvType, Body, State);
         ignore ->
             ok
     end,
     State.
+
+
+%% @private
+do_send_ext_event(Type, Body, #state{srv_id=SrvId, id=SessId}=State) ->
+    RegId = #reg_id{
+        srv_id = SrvId,     
+        class = <<"media">>, 
+        subclass = <<"session">>,
+        type = nklib_util:to_binary(Type),
+        obj_id = SessId
+    },
+    ?LLOG(info, "ext event: ~p", [RegId], State),
+    nkservice_events:send(RegId, Body).
 
 
 %% @private

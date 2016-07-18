@@ -22,11 +22,6 @@
 %% Rooms can be created directly or from nkmedia_janus_session (for publish)
 %% When a new publisher or listener is started, nkmedia_janus_op sends an event
 %% and we monitor it
-%%
-%% 
-
-
-
 
 -module(nkmedia_janus_room).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
@@ -44,6 +39,8 @@
     lager:Type("NkMEDIA Janus Room ~s "++Txt, [State#state.id | Args])).
 
 -include_lib("nklib/include/nklib.hrl").
+-include_lib("nkservice/include/nkservice.hrl").
+
 
 %% ===================================================================
 %% Types
@@ -188,6 +185,7 @@ event(RoomId, Event) ->
 
 -record(state, {
     id :: id(),
+    srv_id :: nksevice:id(),
     janus_id :: nkmedia_janus:id(),
     room :: room(),
     links :: nklib_links:links(),
@@ -200,15 +198,18 @@ event(RoomId, Event) ->
     {ok, tuple()} | {ok, tuple(), timeout()|hibernate} |
     {stop, term()} | ignore.
 
-init([#{id:=Id, janus_id:=JanusId}=Config]) ->
+init([#{srv_id:=SrvId, id:=Id, janus_id:=JanusId}=Config]) ->
     true = nklib_proc:reg({?MODULE, Id}, JanusId),
     nklib_proc:put(?MODULE, {Id, JanusId}),
     State = #state{
         id = Id,
+        srv_id = SrvId,
         janus_id = JanusId,
         room =Config#{publish=>[], listen=>#{}},
         links = nklib_links:new()
     },
+    Body = maps:with([room_audio_codec, room_video_codec, room_bitrate], Config),
+    send_event(created, #{config=>Body}, State),
     ?LLOG(notice, "started", [], State),
     {ok, restart_timer(State)}.
 
@@ -330,6 +331,8 @@ terminate(_Reason, #state{janus_id=JanusId, id=Id, room=Room}=State) ->
     lists:foreach(
         fun(SessId) -> nkmedia_session:stop(SessId, room_destroyed) end,
         Publish ++ maps:keys(Listen)),
+    send_event(destroyed, #{}, State),
+    timer:sleep(100),
     case nkmedia_janus_op:destroy_room(JanusId, Id) of
         ok ->
             ?LLOG(info, "stopping, destroying room", [], State);
@@ -361,6 +364,7 @@ event({publish, SessId}, Pid, #state{id=_Id, room=Room}=State) ->
     Publish2 = nklib_util:store_value(SessId, Publish),
     State2 = State#state{room=Room#{publish:=Publish2}},
     % {ok, _} = nkmedia_session:register(SessId, {room, Id, self()}),
+    send_event(started_publisher, #{publisher=>SessId}, State),
     links_add(SessId, publish, Pid, State2);
 
 event({unpublish, SessId}, _Pid, #state{id=_Id, room=Room}=State) ->
@@ -372,6 +376,7 @@ event({unpublish, SessId}, _Pid, #state{id=_Id, room=Room}=State) ->
     Publish2 = Publish -- [SessId],
     State2 = State#state{room=Room#{publish:=Publish2}},
     % nkmedia_session:unregister(SessId, {room, Id, self()}),
+    send_event(stopped_publisher, #{publisher=>SessId}, State),
     links_remove(SessId, State2);
 
 event({listen, SessId, Publisher}, Pid, #state{id=_Id, room=Room}=State) ->
@@ -379,6 +384,7 @@ event({listen, SessId, Publisher}, Pid, #state{id=_Id, room=Room}=State) ->
     Listen2 = maps:put(SessId, Publisher, Listen),
     State2 = State#state{room=Room#{listen:=Listen2}},
     % {ok, _} = nkmedia_session:register(SessId, {room, Id, self()}),
+    send_event(started_listener, #{listener=>SessId, publisher=>Publisher}, State),
     links_add(SessId, listen, Pid, State2);
 
 event({unlisten, SessId}, _Pid, #state{id=_Id, room=Room}=State) ->
@@ -386,6 +392,7 @@ event({unlisten, SessId}, _Pid, #state{id=_Id, room=Room}=State) ->
     Listen2 = maps:remove(SessId, Listen),
     State2 = State#state{room=Room#{listen:=Listen2}},
     % nkmedia_session:unregister(SessId, {room, Id, self()}),
+    send_event(stopped_listener, #{listener=>SessId}, State),
     links_remove(SessId, State2).
 
 
@@ -449,3 +456,25 @@ links_down(Pid, #state{links=Links}=State) ->
 % %% @private
 % links_fold(Fun, Acc, #state{links=Links}) ->
 %     nklib_links:fold(Fun, Acc, Links).
+
+
+
+%% @private
+send_event(Type, Body, #state{srv_id=SrvId, id=Id, room=Room}) ->
+    RegId = #reg_id{
+        srv_id = SrvId,     
+        class = <<"media">>, 
+        subclass = <<"room">>,
+        type = Type,
+        obj_id = Id
+    },
+    nkservice_events:send(RegId, Body),
+    #{publish:=Publish, listen:=Listen} = Room,
+    Body2 = Body#{type=>Type, room=>Id},
+    lists:foreach(
+        fun(SessId) -> nkmedia_session:send_ext_event(SessId, room, Body2) end,
+        Publish ++ maps:keys(Listen)).
+
+
+
+
