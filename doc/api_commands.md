@@ -146,7 +146,8 @@ You can then use the _start_call_ command, with the following fields:
 
 Field|Default|Description
 ---|---|---|---
-type|(mandatory)|Call type (see bellow)
+callee|(mandatory)|Destination for the call
+type|(undefined)|Call type (see bellow)
 offer|{}|Offer for the call. If not included, it will not be used in the invite.
 subscribe|true|Subscribe automatically to call events for this call
 event_body|{}|Body to receive in the automatic events.
@@ -154,18 +155,14 @@ ring_time|30|Default ring time for the call
 
 The offer can include metadata related for caller_id, etc. (See [concepts](concepts.md)]). It does not need to include an sdp (you can send it in a event or by any other mean).
 
-Depending on the _type_, other fields must be included. The following types are currently supported:
+If no _type_ is supplied, all registered plugins will try to locate the callee. You can fix to a single one using one of the supported types:
 
-Type|Field|Desc
----|---|---
-**user**||
-user|user|Registered user to call to. All sessions related to this user will be invited
-**session**||
-session|session|Registered session to call to
-**sip**|(only with SIP plugin)
-sip|url|SIP URL
-**verto**|(only with Verto plugin)
-verto|user_id|Registered verto user to call to
+Type|Desc
+---|---
+user|The callee will be used as registered user name
+session|The callee will be used as registered session
+sip|Will be used as registered SIP user (only with SIP plugin)
+verto|Will be used as registerd Verto user (only with Verto plugin)
 
 NkMEDIA will locate all destinations (for example, por _user_ type, locating all sessions belongig to the user) and will an _invite_ to each of them in parallel, copying the offer if available, for example:
 
