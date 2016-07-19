@@ -27,10 +27,10 @@
 -export([run_name/1]).
 -export([defaults/1]).
 
--include("nkmedia.hrl").
+-include("../../include/nkmedia.hrl").
 
 -define(JANUS_COMP, <<"netcomposer">>).
--define(JANUS_VSN, <<"1c8871e">>).
+-define(JANUS_VSN, <<"f88b08a">>).
 -define(JANUS_REL, <<"r01">>).
 
 
@@ -306,7 +306,7 @@ cat > $CONF/janus.plugin.voicemail.cfg <<EOF\n", Voicemail/binary, "\nEOF
 mkdir /usr/local/log
 mkdir /usr/local/log/janus
 exec /usr/local/bin/janus
-# exec /bin/bash
+#exec /bin/bash
 ">>.
 
 
@@ -347,7 +347,7 @@ cert_key = /usr/local/share/janus/certs/mycert.key
 nice_debug = false
 ;ice_lite = true
 ;ice_tcp = true
-nat_1_1_mapping = $EXT_IP          ; All host candidates will have (only) this
+;nat_1_1_mapping = $EXT_IP          ; All host candidates will have (only) this
 ;turn_server = myturnserver.com
 ;turn_port = 3478
 ;turn_type = udp
