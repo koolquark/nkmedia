@@ -28,7 +28,7 @@
 -export([conn_init/1, conn_encode/2, conn_parse/3]).
 -export([conn_handle_call/4, conn_handle_cast/3, conn_handle_info/3]).
 
--include("nkmedia.hrl").
+-include("../../include/nkmedia.hrl").
 
 -define(CHECK_TIME, 10000).
 -define(MAX_REQ_TIME, 60000).
@@ -154,7 +154,17 @@ conn_parse({text, Data}, _NkPort, #state{proxy=Pid}=State) ->
         _ ->
             ok
     end,
-    ?PRINT("from server to client ~p\n~s", [Pid, nklib_json:encode_pretty(Msg)], State),
+    case Msg of
+        #{<<"jsep">>:=Jsep} ->
+            Msg2 = Msg#{<<"jsep">>:=Jsep#{<<"sdp">>:=<<"...">>}},
+            ?PRINT("from server ~p to client \n~s", 
+                   [Pid, nklib_json:encode_pretty(Msg2)], State),
+            timer:sleep(10),
+            io:format("\n~s\n", [maps:get(<<"sdp">>, Jsep)]);
+        _ ->
+            ?PRINT("from server ~p to client \n~s", 
+                   [Pid, nklib_json:encode_pretty(Msg)], State)
+    end,
     send_reply(Msg, State),
     {ok, update(Msg, State)}.
 
@@ -187,7 +197,17 @@ conn_handle_call(Msg, _From, _NkPort, State) ->
     {ok, #state{}} | {stop, term(), #state{}}.
 
 conn_handle_cast({send, Pid, Msg}, NkPort, State) ->
-    ?PRINT("from client ~p to server\n~s", [Pid, nklib_json:encode_pretty(Msg)], State),
+    case Msg of
+        #{<<"jsep">>:=Jsep} ->
+            Msg2 = Msg#{<<"jsep">>:=Jsep#{<<"sdp">>:=<<"...">>}},
+            ?PRINT("from client ~p to server \n~s", 
+                   [Pid, nklib_json:encode_pretty(Msg2)], State),
+            timer:sleep(10),
+            io:format("\n~s\n", [maps:get(<<"sdp">>, Jsep)]);
+        _ ->
+            ?PRINT("from client ~p to server \n~s", 
+                   [Pid, nklib_json:encode_pretty(Msg)], State)
+    end,
     case do_send(Msg, NkPort, State) of
         {ok, State2} -> 
             {ok, update(Msg, State2)};
@@ -286,37 +306,37 @@ do_send(Msg, NkPort, #state{pass=Pass}=State) ->
 %% @private
 % print_trans(_Class, _Trans) -> ok.
 
-print_trans(#trans{req=Req, resp=Resp, has_ack=HasACK}=Trans) ->
-    ACK = case HasACK of true -> "(with ack)"; false -> "" end,
-    lager:info("Req: ~s -> ~s ~s", [Req, Resp, ACK]),
-    #trans{req_msg=Msg1, resp_msg=Msg2} = Trans,
-    Msg1B = case Msg1 of
-        #{<<"jsep">>:=#{<<"sdp">>:=_}=Jsep1} ->
-            Msg1#{<<"jsep">>=>Jsep1#{<<"sdp">>=><<"...">>}};
-        _ -> 
-            Msg1
-    end,
-    Msg2B = case Msg2 of
-        #{<<"jsep">>:=#{<<"sdp">>:=_}=Jsep2} ->
-            Msg2#{<<"jsep">>=>Jsep2#{<<"sdp">>=><<"...">>}};
-        _ -> 
-            Msg2
-    end,
-    lager:info("~s -> \n~s\n\n", 
-                [nklib_json:encode_pretty(Msg1B), nklib_json:encode_pretty(Msg2B)]),
-    case Msg1 of
-        #{<<"jsep">>:=#{<<"sdp">>:=SDP1}} ->
-            io:format("\n~s\n\n", [SDP1]);
-        _ -> 
-            ok
-    end,
-    case Msg2 of
-        #{<<"jsep">>:=#{<<"sdp">>:=SDP2}} ->
-            io:format("\n~s\n\n", [SDP2]);
-        _ -> 
-            ok
-    end,
-    ok.
+% print_trans(#trans{req=Req, resp=Resp, has_ack=HasACK}=Trans) ->
+%     ACK = case HasACK of true -> "(with ack)"; false -> "" end,
+%     lager:info("Req: ~s -> ~s ~s", [Req, Resp, ACK]),
+%     #trans{req_msg=Msg1, resp_msg=Msg2} = Trans,
+%     Msg1B = case Msg1 of
+%         #{<<"jsep">>:=#{<<"sdp">>:=_}=Jsep1} ->
+%             Msg1#{<<"jsep">>=>Jsep1#{<<"sdp">>=><<"...">>}};
+%         _ -> 
+%             Msg1
+%     end,
+%     Msg2B = case Msg2 of
+%         #{<<"jsep">>:=#{<<"sdp">>:=_}=Jsep2} ->
+%             Msg2#{<<"jsep">>=>Jsep2#{<<"sdp">>=><<"...">>}};
+%         _ -> 
+%             Msg2
+%     end,
+%     lager:info("~s -> \n~s\n\n", 
+%                 [nklib_json:encode_pretty(Msg1B), nklib_json:encode_pretty(Msg2B)]),
+%     case Msg1 of
+%         #{<<"jsep">>:=#{<<"sdp">>:=SDP1}} ->
+%             io:format("\n~s\n\n", [SDP1]);
+%         _ -> 
+%             ok
+%     end,
+%     case Msg2 of
+%         #{<<"jsep">>:=#{<<"sdp">>:=SDP2}} ->
+%             io:format("\n~s\n\n", [SDP2]);
+%         _ -> 
+%             ok
+%     end,
+%     ok.
 
 
 

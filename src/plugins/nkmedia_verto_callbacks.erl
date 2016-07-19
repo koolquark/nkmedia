@@ -219,7 +219,6 @@ error_code(_) -> continue.
 %% @private
 %% If call has type 'nkmedia_verto' we will capture it
 nkmedia_call_resolve(Callee, Acc, Call) ->
-    lager:error("DEST: ~p", [Callee]),
     case maps:get(type, Call, nkmedia_verto) of
         nkmedia_verto ->
             DestExts = [

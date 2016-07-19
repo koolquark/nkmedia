@@ -31,7 +31,7 @@
 -export([conn_handle_call/4, conn_handle_cast/3, conn_handle_info/3]).
 -export([print/3]).
 
--include("nkmedia.hrl").
+-include("../../include/nkmedia.hrl").
 
 -define(LLOG(Type, Txt, Args, State),
     lager:Type("NkMEDIA Janus Client (~p) "++Txt, [self()|Args])).
@@ -625,6 +625,16 @@ print(_Txt, [#{janus:=keepalive}], _State) ->
     ok;
 print(_Txt, [#{<<"janus">>:=<<"ack">>}], _State) ->
     ok;
+print(Txt, [#{<<"jsep">>:=Jsep}=Msg], State) ->
+    Msg2 = Msg#{<<"jsep">>:=Jsep#{<<"sdp">>:=<<"...">>}},
+    print(Txt, [nklib_json:encode_pretty(Msg2)], State),
+    timer:sleep(10),
+    io:format("\n~s\n", [maps:get(<<"sdp">>, Jsep)]);
+print(Txt, [#{jsep:=Jsep}=Msg], State) ->
+    Msg2 = Msg#{jsep:=Jsep#{sdp:=<<"...">>}},
+    print(Txt, [nklib_json:encode_pretty(Msg2)], State),
+    timer:sleep(10),
+    io:format("\n~s\n", [maps:get(sdp, Jsep)]);
 print(Txt, [#{}=Map], State) ->
     print(Txt, [nklib_json:encode_pretty(Map)], State);
 print(Txt, Args, _State) ->

@@ -309,7 +309,6 @@ handle_call(Msg, From, State) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
 handle_cast(do_start, #state{call=#{callee:=Callee}}=State) ->
-    lager:error("Calling ~p", [State#state.srv_id]),
     {ok, ExtDests, State2} = handle(nkmedia_call_resolve, [Callee, []], State),
     State3 = launch_invites(ExtDests, State2),
     ?LLOG(info, "Resolved ~p", [State3#state.invites], State),
