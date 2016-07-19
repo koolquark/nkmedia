@@ -450,7 +450,8 @@ send_call(SrvId, #{dest:=Dest}=Offer, User, Data) ->
                 type => proxy,
                 proxy_type => ProxyType,
                 offer => Offer,
-                events_body => Data
+                events_body => Data,
+                record => true
             },
             % lager:error("OffVerto: ~s", [maps:get(sdp, Offer)]),
             case start_session(User, SessConfig) of

@@ -446,7 +446,7 @@ launch_out(Inv, #state{id=CallId, invites=Invs, call=Call}=State) ->
     Offer = maps:get(offer, Call, #{}),
     case handle(nkmedia_call_invite, [CallId, Dest, Offer], State) of
         {ok, ProcId, State2} ->
-            ?LLOG(notice, "launching out ~p (~p)", [Dest, Pos], State),
+            ?LLOG(info, "launching out ~p (~p)", [Dest, Pos], State),
             Inv2 = Inv#invite{launched=true, proc_id=ProcId},
             Invs2 = lists:keystore(Pos, #invite.pos, Invs, Inv2),
             {noreply, State2#state{invites=Invs2}};

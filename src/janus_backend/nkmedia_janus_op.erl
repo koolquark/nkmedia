@@ -31,7 +31,7 @@
 -export([list_rooms/1, create_room/3, destroy_room/2]).
 -export([publish/4, unpublish/1]).
 -export([listen/4, listen_switch/3, unlisten/1]).
--export([from_sip/3, to_sip/3]).
+-export([from_sip/3, to_sip/3, to_sip_record/2]).
 -export([nkmedia_sip_register/2, nkmedia_sip_invite/2]).
 -export([answer/2, update/2]).
 -export([get_all/0, stop_all/0, janus_event/4]).
@@ -239,6 +239,10 @@ to_sip(Id, Offer, Opts) ->
     do_call(Id, {to_sip, Offer, Opts}).
 
 
+to_sip_record(Id, Opts) ->
+    do_call(Id, {to_sip_record, Opts}).
+
+
 %% @doc Answers a pending request
 %% Get Janus' answer (except for listen and play)
 -spec answer(pid()|janus_id(), nkmedia:answer()) ->
@@ -410,13 +414,14 @@ handle_call({listen_switch, Listen, Opts}, _From, #state{status=listen}=State) -
 handle_call(unlisten, _From, #state{status=listen}=State) -> 
     do_unlisten(State);
 
-handle_call({from_sip, Offer, _Opts}, From, #state{status=wait}=State) ->
+handle_call({from_sip, Offer, Opts}, From, #state{status=wait}=State) ->
     % We tell Janus to register, wait the registration and
     % call do_from_sip/1
-    do_from_sip_register(State#state{from=From, offer=Offer});
+    do_from_sip_register(State#state{from=From, offer=Offer, opts=Opts});
 
-handle_call({to_sip, Offer, _Opts}, From, #state{status=wait}=State) ->
-    do_to_sip_register(State#state{from=From, offer=Offer});
+handle_call({to_sip, Offer, Opts}, From, #state{status=wait}=State) ->
+    lager:warning("Opts: ~p", [Opts]),
+    do_to_sip_register(State#state{from=From, offer=Offer, opts=Opts});
 
 handle_call({sip_registered, Contact}, _From, #state{status=Status, wait=Wait}=State) ->
     case {Status, Wait} of
@@ -463,6 +468,8 @@ handle_call({update, Opts}, _From, #state{status=Status, opts=Opts0}=State) ->
             do_videocall_update(Opts, State2);
         publish ->
             do_publish_update(Opts, State2);
+        sip ->
+            do_sip_update(Opts, State2);
         _ ->
             reply_stop({error, invalid_state}, State2)
     end;
@@ -1073,7 +1080,7 @@ remove_sdp_application(SDP) ->
 
 %% @private
 do_to_sip(#state{janus_sess_id=Id, handle_id=Handle, offer=#{sdp:=SDP}}=State) ->
-    SDP2 = remove_sdp_application(SDP),
+    SDP2 = SDP, %remove_sdp_application(SDP),
     Body = #{
         request => call,
         uri => <<"sip:", (nklib_util:to_binary(Id))/binary, "@nkmedia_janus_op">>
@@ -1100,6 +1107,49 @@ do_to_sip_answer(#{sdp:=SDP}, From, State) ->
             ?LLOG(notice, "to_sip answer: ~p", [Error], State),
             reply_stop({error, {sip_error, Error}}, State)
     end.
+
+
+%% @private
+do_sip_update(#{record:=_}, #state{handle_id=Handle, opts=Opts}=State) ->
+    Audio = maps:get(use_audio, Opts, true),
+    Video = maps:get(use_video, Opts, true),
+    Body1 = #{
+        request => recording,
+        audio => Audio,
+        video => Video,
+        peer_audio => Audio,
+        peer_video => Video
+    },
+    Body2 = case Opts of
+        #{record:=true, filename:=Filename} ->
+            Body1#{action => start, filename => Filename};
+        _ ->
+            Body1#{action => stop}
+    end,
+    case message(Handle, Body2, #{}, State) of
+        {ok, #{<<"result">>:=#{<<"event">>:=<<"recordingupdated">>}}, _} ->
+            reply(ok, State);
+        {error, Error} ->
+            ?LLOG(notice, "sip update error: ~p", [Error], State),
+            reply({error, Error}, State)
+    end;
+
+do_sip_update(#{dtmf:=DTMF}, #state{handle_id=Handle}=State) ->
+    Body = #{
+        request => dtmf_info,
+        digit => DTMF
+    },
+    case message(Handle, Body, #{}, State) of
+        {ok, #{<<"sip">>:=<<"event">>}, _} ->
+            reply(ok, State);
+        {error, Error} ->
+            ?LLOG(notice, "sip update error: ~p", [Error], State),
+            reply({error, Error}, State)
+    end;
+
+do_sip_update(_Opts, State) ->
+    reply({error, invalid_parameters}, State).
+
 
 
 %% ===================================================================
@@ -1142,13 +1192,20 @@ do_event(Id, Handle, {event, <<"accepted">>, _, #{<<"sdp">>:=SDP}}, State) ->
                     {stop, normal, State}
             end;
         #state{status=wait, wait=to_sip_reply, janus_sess_id=Id, handle_id=Handle} ->
-            lager:warning("ACCEPTED!"),
-
-
-            #state{from=From} = State,
-            gen_server:reply(From, {ok, #{sdp=>SDP}}),
+            #state{from=From, opts=Opts} = State,
             State2 = State#state{from=undefined},
-            noreply(status(sip, State2));
+            case Opts of
+                #{record:=true} ->
+                    case do_sip_update(#{record=>true}, State2) of
+                        {reply, ok, State3, _} ->
+                            gen_server:reply(From, {ok, #{sdp=>SDP}}),
+                            noreply(status(sip, State3));
+                        {error, _Error, State3} ->
+                            {stop, normal, State3}
+                    end;
+                _ ->
+                    noreply(status(sip, State2))
+            end;
         _ ->
             ?LLOG(warning, "unexpected incomingcall!", [], State),
             {stop, normal, State}
@@ -1171,6 +1228,9 @@ do_event(_Id, _Handle, {event, <<"registered">>, _, _}, State) ->
             ?LLOG(warning, "unexpected registered", [], State),
             noreply(State)
     end;
+
+do_event(_Id, _Handle, {event, <<"proceeding">>, _, _}, State) ->
+    {noreply, State};
 
 do_event(_Id, _Handle, {event, <<"registration_failed">>, _, _}, State) ->
     ?LLOG(warning, "registration error", [], State),
@@ -1236,6 +1296,7 @@ message(Handle, Body, Jsep, #state{janus_sess_id=SessId, conn=Pid}) ->
                         428 -> invalid_publisher;
                         465 -> invalid_sdp;
                         427 -> room_already_exists;
+                        444 -> invalid_parameters;
                         _ -> 
                             lager:notice("Unknown Janus error (~p): ~s", [Code, Error]),
                             janus_error

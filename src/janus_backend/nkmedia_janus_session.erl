@@ -33,7 +33,7 @@
     lager:Type("NkMEDIA JANUS Session ~s "++Txt, 
                [maps:get(id, Session) | Args])).
 
--include("nkmedia.hrl").
+-include("../../include/nkmedia.hrl").
 
 %% ===================================================================
 %% Types
@@ -335,7 +335,7 @@ get_mediaserver(#{srv_id:=SrvId}, State) ->
 
 %% @private
 get_opts(#{id:=SessId}=Session, State) ->
-    Opts = maps:with([record, use_audio, use_video, use_data, bitrate], Session),
+    Opts = maps:with([record, use_audio, use_video, use_data, bitrate, dtmf], Session),
     case Session of
         #{record:=true} ->
             Pos = maps:get(record_pos, State, 0),

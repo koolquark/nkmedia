@@ -125,7 +125,7 @@ send_invite(SrvId, CallId, Uri, Opts) ->
         #{proxy:=Proxy} -> [{route, Proxy}|InvOpts4];
         _ -> InvOpts4
     end,
-    {async, Handle} = nksip_uac:invite(nkmedia_core, Uri, InvOpts5),
+    {async, Handle} = nksip_uac:invite(SrvId, Uri, InvOpts5),
     nklib_proc:put({?MODULE, cancel, CallId}, Handle),
     receive
         {Ref, Pid} ->

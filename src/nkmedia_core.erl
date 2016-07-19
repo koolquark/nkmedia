@@ -51,8 +51,8 @@ start() ->
     end,
     Opts = #{
         class => nkmedia_core,
-        plugins => [?MODULE, nksip, nksip_uac_auto_auth, nksip_registrar, nksip_trace],
-        nksip_trace => {console, all},
+        plugins => [?MODULE, nksip, nksip_uac_auto_auth, nksip_registrar],
+        % nksip_trace => {console, all},    % Add nksip_trace
         sip_listen => <<"sip:all">>
     },
     {ok, SrvId} = nkservice:start(nkmedia_core, Opts),
