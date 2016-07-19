@@ -64,7 +64,23 @@ record|false|Perform recording of audio and video
 
 ### Echo Update
 
-It is possible to update the media session once started, using the [update session request](api_commands.md#update-a-session). For the _echo_ type, the parameters `use_audio`, `use_video`, `bitrate` and `record` can be modified. If the recording is stopped and then started again, a new file will be generated.
+It is possible to update the media session once started, using the [update session request](api_commands.md#update-a-session) and using `type: "media"`. For the _echo_ type, the parameters `use_audio`, `use_video`, `bitrate` and `record` can be modified. If the recording is stopped and then started again, a new file will be generated.
+
+**Sample**
+
+```js
+{
+	class: "media",
+	subclass: "session",
+	cmd: "update",
+	data: {
+		type: "media",
+		use_video: false,
+		record: true
+	}
+	tid: 1
+}
+```
 
 
 
@@ -112,7 +128,7 @@ record|false|Perform recording of audio and video
 }
 ```
 
-You must now call answer_session:
+You must now send the answer to the session, and you will get your own answer:
 
 ```js
 {
@@ -143,14 +159,13 @@ You must now call answer_session:
 
 ### Proxy Update
 
-It is possible to update the media session once started, using the [update session request](api_commands.md#update-a-session). For the _proxy_ type, the parameters `use_audio`, `use_video`, `bitrate` and `record` can be modified. If the recording is stopped and then started again, a new file will be generated.
-
+It is possible to update the media session once started, using the [update session request](api_commands.md#update-a-session) and `type: "media"`. For the _proxy_ type, the parameters `use_audio`, `use_video`, `bitrate` and `record` can be modified. See example for [echo](#echo-update)
 
 ## Publish
 
 Allows to _publish_ a session with audio/video to a _room_, working as an _SFU_ (selective forwarding unit). Any number of listeners can then connect to this session.
 
-If you don't include a room, a new one will be created automatically (using options `room_audiocodec`, `room_videocodec` and `room_bitrate`).
+If you don't include a room, a new one will be created automatically (using options `room_audiocodec`, `room_videocodec` and `room_bitrate`). If you include a room, it must already exist.
 
 
 Field|Default|Description
@@ -199,7 +214,7 @@ record|false|Perform recording of audio and video
 
 ### Publish update
 
-It is possible to update the media session once started, using the [update session request](api_commands.md#update-a-session). Parameters `use_audio`, `use_video`, `bitrate` and `record` can be modified. 
+It is possible to update the media session once started, using the [update session request](api_commands.md#update-a-session). Parameters `use_audio`, `use_video`, `bitrate` and `record` can be modified. See example for [echo](#echo-update).
 
 
 ## Listen
@@ -244,7 +259,7 @@ use_video|true|Include or not the video
 }
 ```
 
-You must now call answer_session:
+You must now set the answer:
 
 ```js
 {
@@ -270,7 +285,7 @@ You must now call answer_session:
 
 ### Listen update
 
-Once started the session, you can _switch_ to listen to another publisher, but only if it is in the same room.
+Once started the session, you can _switch_ to listen to another publisher, but only if it is in the same room. Must use type `listen_switch`.
 
 **Sample**
 
