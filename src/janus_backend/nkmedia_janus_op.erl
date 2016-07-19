@@ -42,6 +42,7 @@
     lager:Type("NkMEDIA Janus OP ~s (~p ~p) "++Txt, 
                [State#state.nkmedia_id, State#state.janus_sess_id, State#state.status | Args])).
 
+-include_lib("nksip/include/nksip.hrl").
 -include("../../include/nkmedia.hrl").
 
 
@@ -308,8 +309,7 @@ nkmedia_sip_invite(User, Req) ->
     SDP = nksip_sdp:unparse(Body),
     case do_call(Id, {sip_invite, Handle, Dialog, SDP}) of
         ok ->
-            noreply;
-            % {reply, ringing};
+            {reply, ringing};
         {error, Error} ->
             lager:info("JANUS OP ~p Invite error: ~p", [Id, Error]),
             {reply, forbidden}
@@ -1049,7 +1049,8 @@ do_to_sip_register(State) ->
     Body = #{
         request => register,
         proxy => <<"sip:", Ip/binary, ":",(nklib_util:to_binary(Port))/binary>>,
-        type => guest
+        type => guest,
+        username => <<"sip:test@test">>
     },
     case message(Handle, Body, #{}, State) of
         {ok, #{<<"result">>:=#{<<"event">>:=<<"registered">>}}, _} ->
@@ -1061,13 +1062,23 @@ do_to_sip_register(State) ->
     end.
 
 
+remove_sdp_application(SDP) ->
+    #sdp{medias=Medias} = SDP2 = nksip_sdp:parse(SDP),
+    Medias2 = [Media || #sdp_m{media=Name}=Media <- Medias, Name /= <<"application">>],
+    SDP3 = SDP2#sdp{medias=Medias2},
+    nksip_sdp:unparse(SDP3).
+
+
+
+
 %% @private
 do_to_sip(#state{janus_sess_id=Id, handle_id=Handle, offer=#{sdp:=SDP}}=State) ->
+    SDP2 = remove_sdp_application(SDP),
     Body = #{
         request => call,
         uri => <<"sip:", (nklib_util:to_binary(Id))/binary, "@nkmedia_janus_op">>
     },
-    Jsep = #{sdp=>SDP, type=>offer},
+    Jsep = #{sdp=>SDP2, type=>offer, trickle=>false},
     case message(Handle, Body, Jsep, State) of
         {ok, #{<<"result">>:=#{<<"event">>:=<<"calling">>}}, _} ->
             State2 = State#state{offer=undefined},
@@ -1081,7 +1092,8 @@ do_to_sip(#state{janus_sess_id=Id, handle_id=Handle, offer=#{sdp:=SDP}}=State) -
 %% @private
 do_to_sip_answer(#{sdp:=SDP}, From, State) ->
     #state{sip_handle=Handle} = State,
-    case nksip_request:reply({answer, SDP}, Handle) of
+    Body = nksip_sdp:parse(SDP),
+    case nksip_request:reply({answer, Body}, Handle) of
         ok ->
             noreply(wait(to_sip_reply, State#state{from=From}));
         {error, Error} ->

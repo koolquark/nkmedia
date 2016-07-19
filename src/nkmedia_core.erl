@@ -25,6 +25,7 @@
 
 -export([start/0, stop/0, register_session/2, invite/2]).
 -export([plugin_listen/2, plugin_start/2, plugin_stop/2]).
+-export([sip_route/5]).
 -export([sip_invite/2, sip_reinvite/2, sip_bye/2, sip_register/2]).
 
 -define(WS_TIMEOUT, 5*60*1000).
@@ -123,31 +124,49 @@ plugin_stop(Config, _Service) ->
 %% ===================================================================
 
 
-sip_invite(Req, Call) ->
+% sip_route(sip, User, <<"nkmedia">>, _Req, _Call) ->
+%     case nksip_registrar:find(test, sip, User, <<"nkmedia">>) of
+%         [Uri|_] ->
+%             {proxy, Uri};
+%         [] ->
+%             {reply, forbidden}
+%     end;
+
+sip_route(_Scheme, _User, _Domain, _Req, _Call) ->
+    % lager:warning("ROUTE: ~p, ~p, ~p", [Scheme, User, Domain]),
+    process.
+
+
+sip_invite(Req, _Call) ->
     {ok, AOR} = nksip_request:meta(aor, Req),
-    {ok, Dialog} = nksip_dialog:get_handle(Req),
+    {ok, _Dialog} = nksip_dialog:get_handle(Req),
     case AOR of
-        {sip, <<"nkmedia-", SessId/binary>>, _Domain} ->
-            case nklib_proc:values({?MODULE, session, SessId}) of
-                [{Module, Pid}|_] ->
-                    nklib_proc:put({?MODULE, dialog, Dialog}, Module, Pid),
-                    case erlang:function_exported(Module, sip_invite, 3) of
-                        true ->
-                            Module:sip_invite(Pid, Req, Call);
-                        false ->
-                            lager:notice("Unmanaged NkMEDIA Core SIP INVITE"),
-                            {reply, decline}
-                    end;
-                [] ->
-                    lager:notice("Unmanaged NkMEDIA Core SIP INVITE"),
-                    {reply, internal_error}
-            end;
+        % {sip, <<"nkmedia-", SessId/binary>>, _Domain} ->
+        %     case nklib_proc:values({?MODULE, session, SessId}) of
+        %         [{Module, Pid}|_] ->
+        %             nklib_proc:put({?MODULE, dialog, Dialog}, Module, Pid),
+        %             case erlang:function_exported(Module, sip_invite, 3) of
+        %                 true ->
+        %                     Module:sip_invite(Pid, Req, Call);
+        %                 false ->
+        %                     lager:notice("Unmanaged NkMEDIA Core SIP INVITE"),
+        %                     {reply, decline}
+        %             end;
+        %         [] ->
+        %             lager:notice("Unmanaged NkMEDIA Core SIP INVITE"),
+        %             {reply, internal_error}
+        %     end;
         {sip, User, Domain} ->
             case catch binary_to_existing_atom(Domain, latin1) of
                 {'EXIT', _} ->
                     {reply, forbidden};
                 Module ->
-                    Module:nkmedia_sip_invite(User, Req)
+                    case erlang:function_exported(Module, nkmedia_sip_invite, 2) of
+                        true ->
+                            Module:nkmedia_sip_invite(User, Req);
+                        false ->
+                            {reply, forbidden}
+                    end
             end;
         _ ->
             lager:warning("Unexpected NkMEDIA Core SIP: ~p", [AOR]),

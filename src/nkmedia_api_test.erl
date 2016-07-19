@@ -314,6 +314,26 @@ nkmedia_janus_bye(_CallId, _ProcId, _Janus) ->
 
 
 %% ===================================================================
+%% Sip callbacks
+%% ===================================================================
+
+% sip_route(_Scheme, _User, <<"192.168.0.100">>, _Req, _Call) ->
+%     proxy;
+
+sip_route(_Scheme, _User, _Domain, _Req, _Call) ->
+    % lager:warning("User: ~p, Domain: ~p", [_User, _Domain]),
+    process.
+
+
+sip_register(Req, Call) ->
+    Req2 = nksip_registrar_util:force_domain(Req, <<"nkmedia">>),
+    {continue, [Req2, Call]}.
+
+
+
+
+
+%% ===================================================================
 %% Call callbacks
 %% ===================================================================
 
@@ -421,15 +441,23 @@ send_call(SrvId, #{dest:=Dest}=Offer, User, Data) ->
                     {rejected, Error}
             end;
         <<"j", Num/binary>> ->
+            {ProxyType, Callee} = case find_user(Num) of
+                {webrtc, _} -> {webrtc, Num};
+                {rtp, _} -> {rtp, <<Num/binary, "@nkmedia">>};
+                not_found -> {webrtc, Num}
+            end,
             SessConfig = #{
                 type => proxy,
+                proxy_type => ProxyType,
                 offer => Offer,
                 events_body => Data
             },
-            case  start_session(User, SessConfig) of
+            % lager:error("OffVerto: ~s", [maps:get(sdp, Offer)]),
+            case start_session(User, SessConfig) of
                 {ok, SessId, WsPid, #{<<"offer">>:=Offer2}} ->
+                    % lager:error("SIP Offer: ~s", [maps:get(<<"sdp">>, Offer2)]),
                     CallConfig = #{
-                        callee => Num,
+                        callee => Callee,
                         session_id => SessId,
                         offer => Offer2,
                         events_body => Data
@@ -533,6 +561,7 @@ api_client_fun(#api_req{class = <<"core">>, cmd = <<"event">>, data = Data}, Use
     case {Class, Sub, Type} of
         {<<"media">>, <<"session">>, <<"answer">>} ->
             #{<<"answer">>:=#{<<"sdp">>:=SDP}} = Body,
+            % lager:error("AnsVerto: ~s", [SDP]),
             case Sender of
                 {verto, CallId, Pid} ->
                     nkmedia_verto:answer(Pid, CallId, #{sdp=>SDP});
@@ -572,10 +601,7 @@ api_client_fun(_Req, UserData) ->
     {error, not_implemented, UserData}.
 
 
-
-
-
-
+%% @private
 find_user(User) ->
     case nkmedia_verto:find_user(User) of
         [Pid|_] ->
@@ -586,11 +612,12 @@ find_user(User) ->
                     {webrtc, {nkmedia_janus_proto, Pid}};
                 [] ->
                     case 
-                        nkmedia_sip:find_registered(sample, User, <<"nkmedia_sample">>) 
+                        nksip_registrar:find(test, sip, User, <<"nkmedia">>) 
                     of
                         [Uri|_] -> 
                             {rtp, {nkmedia_sip, Uri, #{}}};
-                            []  -> not_found
+                        []  -> 
+                            not_found
                     end
             end
     end.
