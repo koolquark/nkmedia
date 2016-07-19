@@ -31,13 +31,13 @@
 -export([conn_handle_call/4, conn_handle_cast/3, conn_handle_info/3]).
 -export([print/3]).
 
--include("nkmedia.hrl").
+-include("../../include/nkmedia.hrl").
 
 -define(LLOG(Type, Txt, Args, State),
     lager:Type("NkMEDIA Janus Client (~p) "++Txt, [self()|Args])).
 
 -define(PRINT(Txt, Args, State), 
-        % print(Txt, Args, State),    % Comment this
+        print(Txt, Args, State),    % Comment this
         ok).
 
 

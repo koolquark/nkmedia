@@ -635,7 +635,7 @@ do_play(File, State) ->
     {ok, Handle} = attach(recordplay, State),
     State2 = State#state{handle_id=Handle},
     case message(Handle, #{request=>update}, #{}, State2) of
-        {ok, #{<<"list">>:=List}, _} ->
+        {ok, #{<<"recordplay">>:=<<"ok">>}, _} ->
             case message(Handle, #{request=>list}, #{}, State2) of
                 {ok, #{<<"list">>:=List}, _} ->
                     lager:error("List: ~p", [List]),

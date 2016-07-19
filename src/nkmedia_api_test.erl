@@ -334,7 +334,7 @@ send_call(SrvId, #{dest:=Dest}=Offer, User, Data) ->
                 offer => Offer,
                 events_body => Data, 
                 backend => nkmedia_janus, 
-                record => false
+                record => true
             },
             case start_session(User, Config) of
                 {ok, SessId, WsPid, #{<<"answer">>:=#{<<"sdp">>:=SDP}}} ->
@@ -445,24 +445,6 @@ send_call(SrvId, #{dest:=Dest}=Offer, User, Data) ->
             end;
 
 
-
-        %     case find_user(Num) of
-        %         {webrtc, Dest2} ->
-        %             SessConfig = #{offer=>Offer, register=>ProcId},
-        %             {ok, SessId, SessPid, #{offer:=Offer2}} = 
-        %                 nkmedia_session:start(SrvId, proxy, SessConfig),
-        %             CallConfig = #{offer=>Offer2, session_id=>SessId},
-        %             {ok, _CallId, _CallPid} = 
-        %                 nkmedia_call:start(SrvId, Dest2, CallConfig),
-        %             {ok, SessId, SessPid};
-        %         {rtp, Dest2} ->
-        %             Config = #{offer=>Offer, proxy_type=>rtp},
-        %             {ok, SessId, #{}} = nkmedia_session:start(SrvId, proxy, Config),
-        %             {ok, _CallId} = nkmedia_call:start(SrvId, Dest2, #{}),
-        %             {ok, SessId};
-        %         not_found ->
-        %             {rejected, user_not_found}
-        %     end;
         % <<"f", Num/binary>> ->
         %     case find_user(Num) of
         %         {webrtc, Dest2} ->

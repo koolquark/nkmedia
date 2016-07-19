@@ -25,11 +25,12 @@
 -export([start/1, stop/1, stop_all/0]).
 -export([notify/4]).
 
--include("nkmedia.hrl").
+-include("../../include/nkmedia.hrl").
 
 
 %% ===================================================================
 %% Types    
+
 %% ===================================================================
 
 %% ===================================================================
@@ -67,7 +68,8 @@ start(Service) ->
             {"NK_EXT_IP", ExtIp},  
             {"NK_PASS", nklib_util:to_binary(Pass)},
             {"NK_BASE", nklib_util:to_binary(BasePort)},
-            {"NK_SRV_ID", nklib_util:to_binary(SrvId)}
+            {"NK_SRV_ID", nklib_util:to_binary(SrvId)},
+            {"NK_RECORDS_DIR", "/tmp/record"}
         ],
         Labels = [
             {"nkmedia", "janus"}
