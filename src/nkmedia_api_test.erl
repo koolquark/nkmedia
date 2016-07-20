@@ -313,6 +313,7 @@ nkmedia_janus_bye(_CallId, _ProcId, _Janus) ->
 
 
 
+
 %% ===================================================================
 %% Sip callbacks
 %% ===================================================================
@@ -330,7 +331,83 @@ sip_register(Req, Call) ->
     {continue, [Req2, Call]}.
 
 
+% nkmedia_sip_invite(SrvId, {sip, _Dest, _}, Offer, Req, _Call) ->
+%     {ok, Handle} = nksip_request:get_handle(Req),
+%     {ok, Dialog} = nksip_dialog:get_handle(Req),
+%     Reg = {nkmedia_sip, {Handle, Dialog}, self()},
+%     case nkmedia_session:start(SrvId, echo, #{offer=>Offer, register=>Reg}) of
+%         {ok, _SessId, _SessPid, #{answer:=Answer}} ->
+%             {reply, nksip_sdp:parse(Answer)};
+%         {error, Error} ->
+%             {rejected, Error}
+%     end;
 
+
+nkmedia_sip_invite(SrvId, {sip, Dest, _}, Offer, Req, _Call) ->
+    % {ok, [{from_user, User}, {from_domain, _Domain}]} = 
+    %     nksip_request:metas([from_user, from_domain], Req),
+    case find_user(Dest) of
+        {webrtc, WebRTC} ->
+            {ok, Handle} = nksip_request:get_handle(Req),
+            {ok, Dialog} = nksip_dialog:get_handle(Req),
+            Reg = {nkmedia_sip, {Handle, Dialog}, self()},
+            OfferA = Offer#{sdp_type=>webrtc},
+            case nkmedia_session:start(SrvId, proxy, #{offer=>OfferA, register=>Reg}) of
+                {ok, SessId, SessPid, #{offer:=Offer2}} ->
+                    case WebRTC of
+                        {nkmedia_verto, Pid} ->
+                            % Verto will send the answer or hangup the session
+                            ok = nkmedia_verto:invite(Pid, SessId, Offer2, 
+                                                      {nkmedia_session, SessId, SessPid}),
+                            {ok, _} = 
+                                nkmedia_session:register(SessId, {nkmedia_verto, Pid}),
+                            ok
+                    end;
+                {error, Error} ->
+                    {rejected, Error}
+            end;
+        not_found ->
+            {rejected, user_not_found}
+    end;
+
+nkmedia_sip_invite(_SrvId, _AOR, _Offer, _Req, _Call) ->
+    continue.
+
+
+
+
+
+%% ===================================================================
+%% Session callbacks
+%% ===================================================================
+
+nkmedia_session_reg_event(_SessId, {nkmedia_sip, {Handle, Dialog}, _Pid}, 
+                          Event, Session) ->
+    case Event of
+        {stop, _Reason} ->
+            case Session of
+                #{answer:=#{sdp:=_}} ->
+                    nksip_uac:bye(Dialog, []);
+                _ ->
+                    lager:error("STOP2: ~p", [Handle]),
+                    nksip_request:reply(decline, Handle)
+            end;
+        {answer, #{sdp:=SDP}} ->
+            Body = nksip_sdp:parse(SDP),
+            case nksip_request:reply({answer, Body}, Handle) of
+                ok ->
+                    ok;
+                {error, Error} ->
+                    lager:error("Error in SIP reply: ~p", [Error]),
+                    nkmedia_session:hangup(self(), process_down)
+            end;
+        _ ->
+            ok
+    end,
+    {ok, Session};
+
+nkmedia_session_reg_event(_SessId, _ProcId, _Event, _Session) ->
+    continue.
 
 
 %% ===================================================================

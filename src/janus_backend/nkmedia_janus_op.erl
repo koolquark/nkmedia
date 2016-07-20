@@ -46,7 +46,7 @@
 -include("../../include/nkmedia.hrl").
 
 
--define(WAIT_TIMEOUT, 10).      % Secs
+-define(WAIT_TIMEOUT, 60).      % Secs
 -define(OP_TIMEOUT, 4*60*60).   
 -define(KEEPALIVE, 20).
 
@@ -1023,7 +1023,7 @@ do_from_sip(#state{sip_contact=Contact, offer=Offer}=State) ->
     spawn_link(
         fun() ->
             % We call Janus using SIP
-            Result = case nkmedia_core_sip:invite(Contact, Offer) of
+            Result = case nkmedia_core:invite(Contact, Offer) of
                 {ok, 200, [{dialog, _Dialog}, {body, Body}]} ->
                     {ok, Body};
                 Other ->
@@ -1069,18 +1069,9 @@ do_to_sip_register(State) ->
     end.
 
 
-remove_sdp_application(SDP) ->
-    #sdp{medias=Medias} = SDP2 = nksip_sdp:parse(SDP),
-    Medias2 = [Media || #sdp_m{media=Name}=Media <- Medias, Name /= <<"application">>],
-    SDP3 = SDP2#sdp{medias=Medias2},
-    nksip_sdp:unparse(SDP3).
-
-
-
-
 %% @private
 do_to_sip(#state{janus_sess_id=Id, handle_id=Handle, offer=#{sdp:=SDP}}=State) ->
-    SDP2 = SDP, %remove_sdp_application(SDP),
+    SDP2 = remove_sdp_application(SDP),
     Body = #{
         request => call,
         uri => <<"sip:", (nklib_util:to_binary(Id))/binary, "@nkmedia_janus_op">>
@@ -1230,6 +1221,9 @@ do_event(_Id, _Handle, {event, <<"registered">>, _, _}, State) ->
     end;
 
 do_event(_Id, _Handle, {event, <<"proceeding">>, _, _}, State) ->
+    {noreply, State};
+
+do_event(_Id, _Handle, {event, <<"hangingup">>, _, _}, State) ->
     {noreply, State};
 
 do_event(_Id, _Handle, {event, <<"registration_failed">>, _, _}, State) ->
@@ -1475,6 +1469,13 @@ append_file(Opts, Txt) ->
             Opts
     end.
 
+
+%% @private Removes the datachannel (m=application)
+remove_sdp_application(SDP) ->
+    #sdp{medias=Medias} = SDP2 = nksip_sdp:parse(SDP),
+    Medias2 = [Media || #sdp_m{media=Name}=Media <- Medias, Name /= <<"application">>],
+    SDP3 = SDP2#sdp{medias=Medias2},
+    nksip_sdp:unparse(SDP3).
 
 
 %% @private

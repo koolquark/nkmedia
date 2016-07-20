@@ -24,7 +24,7 @@
 
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
 -export([error_code/1]).
--export([nkmedia_sip_invite/4]).
+-export([nkmedia_sip_invite/5]).
 -export([sip_get_user_pass/4, sip_authorize/3]).
 -export([sip_invite/2, sip_reinvite/2, sip_cancel/3, sip_bye/2]).
 -export([nkmedia_call_resolve/3, nkmedia_call_invite/4, nkmedia_call_cancel/3,
@@ -71,10 +71,10 @@ plugin_stop(Config, #{name:=Name}) ->
 %% ===================================================================
 
 -spec nkmedia_sip_invite(nkmnedia_session:id(), nksip:aor(), 
-                         nkmedia:offer(), nksip:call()) ->
+                         nkmedia:offer(), nksip:request(), nksip:call()) ->
     ok | {rejected, nkservice:error()} | continue().
 
-nkmedia_sip_invite(_SrvId, _AOR, _Offer, _Call) ->
+nkmedia_sip_invite(_SrvId, _AOR, _Offer, _Req, _Call) ->
     {rejected, <<"Not Implemented">>}.
 
 
@@ -103,16 +103,18 @@ sip_invite(Req, Call) ->
     {ok, AOR} = nksip_request:meta(aor, Req),
     {ok, Body} = nksip_request:meta(body, Req),
     Offer = case nksip_sdp:is_sdp(Body) of
-        true -> #{sdp=>nksip_sdp:unparse(Body)};
+        true -> #{sdp=>nksip_sdp:unparse(Body), sdp_type=>rtp};
         false -> #{}
     end,
     % {ok, Handle} = nksip_request:get_handle(Req),
     % {ok, Dialog} = nksip_dialog:get_handle(Req),
     % nklib_proc:put({nkmedia_sip, dialog, Dialog}, SessId),
     % nklib_proc:put({nkmedia_sip, cancel, Handle}, SessId),
-    case SrvId:nkmedia_sip_invite(SrvId, AOR, Offer, Call) of
+    case SrvId:nkmedia_sip_invite(SrvId, AOR, Offer, Req, Call) of
         ok ->
             noreply;
+        {reply, Reply} ->
+            {reply, Reply};
         {rejected, _Reason} ->
             {reply, decline}
     end.

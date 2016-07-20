@@ -33,6 +33,7 @@
          nkmedia_verto_handle_info/2]).
 -export([nkmedia_call_resolve/3, nkmedia_call_invite/4, nkmedia_call_cancel/3,
          nkmedia_call_reg_event/4]).
+-export([nkmedia_session_reg_event/4]).
 
 -define(VERTO_WS_TIMEOUT, 60*60*1000).
 -include_lib("nkservice/include/nkservice.hrl").
@@ -126,6 +127,19 @@ nkmedia_verto_invite(_SrvId, _CallId, _Offer, Verto) ->
 -spec nkmedia_verto_answer(call_id(), nklib:proc_id(), nkmedia:answer(), verto()) ->
     {ok, verto()} |{hangup, nkservice:error(), verto()} | continue().
 
+% If the registered process happens to be {nkmedia_session, ...} and we have
+% an answer for an invite we received, we set the answer in the session
+% (we are ignoring the possible proxy answer in the reponse)
+nkmedia_verto_answer(_CallId, {nkmedia_session, SessId, _Pid}, Answer, Verto) ->
+    case nkmedia_session:answer_async(SessId, Answer) of
+        ok -> 
+            {ok, Verto};
+        {error, Error} -> 
+            {hangup, Error, Verto}
+    end;
+
+% If the registered process happens to be {nkmedia_call, ...} and we have
+% an answer for an invite we received, we set the answer in the call
 nkmedia_verto_answer(_CallId, {nkmedia_verto_call, CallId, _Pid}, Answer, Verto) ->
     case nkmedia_call:answered(CallId, {nkmedia_verto, self()}, Answer) of
         ok ->
@@ -142,6 +156,10 @@ nkmedia_verto_answer(_CallId, _ProcId, _Answer, Verto) ->
 -spec nkmedia_verto_rejected(call_id(), nklib:proc_id(), verto()) ->
     {ok, verto()} | continue().
 
+nkmedia_verto_rejected(_CallId, {nkmedia_session, SessId, _Pid}, Verto) ->
+    nkmedia_session:stop(SessId, verto_rejected),
+    {ok, Verto};
+
 nkmedia_verto_rejected(_CallId, {nkmedia_verto_call, CallId, _Pid}, Verto) ->
     nkmedia_call:rejected(CallId, {nkmedia_verto, self()}),
     {ok, Verto};
@@ -153,6 +171,10 @@ nkmedia_verto_rejected(_CallId, _ProcId, Verto) ->
 %% @doc Sends when the client sends a BYE during a call
 -spec nkmedia_verto_bye(call_id(), nklib:proc_id(), verto()) ->
     {ok, verto()} | continue().
+
+nkmedia_verto_bye(_CallId, {nkmedia_session, SessId, _Pid}, Verto) ->
+    nkmedia_session:stop(SessId, verto_bye),
+    {ok, Verto};
 
 nkmedia_verto_bye(_CallId, {nkmedia_verto_call, CallId, _Pid}, Verto) ->
     nkmedia_call:hangup(CallId, verto_bye),
@@ -212,7 +234,8 @@ nkmedia_verto_handle_info(Msg, Verto) ->
 %% ===================================================================
 
 %% @private
-error_code(verto_bye) -> {0, <<"Verto BYE">>};
+error_code(verto_bye) -> {0, <<"Verto bye">>};
+error_code(verto_rejected) -> {0, <<"Verto rejected">>};
 error_code(_) -> continue.
 
 
@@ -253,12 +276,24 @@ nkmedia_call_cancel(_CallId, _ProcId, _Call) ->
     continue.
 
 
+%% @private
 nkmedia_call_reg_event(CallId, {nkmedia_verto, Pid}, {hangup, Reason}, _Call) ->
     nkmedia_verto:hangup(Pid, CallId, Reason),
     continue;
 
 nkmedia_call_reg_event(_CallId, _ProcId, _Event, _Call) ->
     continue.
+
+
+%% @private
+nkmedia_session_reg_event(SessId, {nkmedia_verto, Pid}, {stop, Reason}, _Call) ->
+    nkmedia_verto:hangup(Pid, SessId, Reason),
+    continue;
+
+nkmedia_session_reg_event(_SessId, _ProcId, _Event, _Call) ->
+    lager:error("SESS ERG: ~p, ~p", [_ProcId, _Event]),
+    continue.
+
 
 
 

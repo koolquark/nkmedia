@@ -174,7 +174,7 @@ stop_all() ->
 %% See each operation's doc for returned info
 %% Some backends my support updating answer (like Freeswitch)
 -spec answer(id(), nkmedia:answer()) ->
-    ok | {error, nkservice:error()}.
+    {ok, map()} | {error, nkservice:error()}.
 
 answer(SessId, Answer) ->
     do_call(SessId, {answer, Answer}).
@@ -185,7 +185,7 @@ answer(SessId, Answer) ->
     ok | {error, nkservice:error()}.
 
 answer_async(SessId, Answer) ->
-    do_call(SessId, {answer, Answer}).
+    do_cast(SessId, {answer, Answer}).
 
 
 %% @doc Sets the session's current answer operation.
@@ -203,7 +203,7 @@ update(SessId, Update, Opts) ->
     ok | {error, nkservice:error()}.
 
 update_async(SessId, Update, Opts) ->
-    do_call(SessId, {update, Update, Opts}).
+    do_cast(SessId, {update, Update, Opts}).
 
 
 %% @doc Hangups the session
