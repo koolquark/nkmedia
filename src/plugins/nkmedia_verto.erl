@@ -22,7 +22,7 @@
 -module(nkmedia_verto).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([invite/4, answer/3, hangup/2, hangup/3]).
+-export([invite/4, answer/3, answer_async/3, hangup/2, hangup/3]).
 -export([find_user/1, get_all/0]).
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_handle_call/4, 
@@ -82,6 +82,14 @@ invite(Pid, CallId, Offer, ProcId) ->
 
 answer(Pid, CallId, Answer) ->
     do_call(Pid, {answer, CallId, Answer}).
+
+
+%% @doc Sends an ANSWER (only sdp is used in answer())
+-spec answer_async(pid(), call_id(), nkmedia:answer()) -> 
+    ok | {error, nkservice:error()}.
+
+answer_async(Pid, CallId, Answer) ->
+    gen_server:cast(Pid, {answer, CallId, Answer}).
 
 
 %% @doc Equivalent to hangup(Pid, CallId, 16)

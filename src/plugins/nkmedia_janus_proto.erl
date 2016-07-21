@@ -22,7 +22,7 @@
 -module(nkmedia_janus_proto).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([invite/4, answer/3, hangup/2, hangup/3]).
+-export([invite/4, answer/3, answer_async/3, hangup/2, hangup/3]).
 -export([find_user/1, find_call_id/1, get_all/0]).
 -export([register_play/3]).
 -export([transports/1, default_port/1]).
@@ -76,6 +76,14 @@ invite(Pid, CallId, Offer, ProcId) ->
 
 answer(Pid, CallId, Answer) ->
     do_call(Pid, {answer, CallId, Answer}).
+
+
+%% @doc Sends an ANSWER (only sdp is used in answer())
+-spec answer_async(pid(), call_id(), nkmedia:answer()) ->
+    ok | {error, term()}.
+
+answer_async(Pid, CallId, Answer) ->
+    gen_server:cast(Pid, {answer, CallId, Answer}).
 
 
 %% @doc Equivalent to hangup(Pid, CallId, 16)

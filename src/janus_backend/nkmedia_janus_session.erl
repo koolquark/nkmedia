@@ -118,8 +118,8 @@ start(echo, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
             {Opts, State3} = get_opts(Session, State2),
             case nkmedia_janus_op:echo(Pid, Offer, Opts) of
                 {ok, #{sdp:=_}=Answer} ->
-                    Reply = #{answer=>Answer},
-                    {ok, echo, Reply, none, Answer, State3};
+                    Reply = ExtOps = #{answer=>Answer},
+                    {ok, Reply, ExtOps, State3};
                 {error, Error} ->
                     {error, Error, State3}
             end;
@@ -150,8 +150,8 @@ start(proxy, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
                         {ok, Offer2} ->
                             State4 = State3#{janus_op=>answer},
                             Offer3 = maps:merge(Offer, Offer2),
-                            Reply = #{offer=>Offer3},
-                            {ok, proxy, Reply, Offer3, none, State4};
+                            Reply = ExtOps = #{offer=>Offer3},
+                            {ok, Reply, ExtOps, State4};
                         {error, Error} ->
                             {error, Error, State3}
                     end
@@ -178,7 +178,7 @@ start(publish, #{srv_id:=SrvId, offer:=#{sdp:=_}=Offer}=Session, State) ->
         end,
         State2 = case nkmedia_janus_room:get_room(Room) of
             {ok, #{janus_id:=JanusId}} ->
-                State#{janus_id=>JanusId, room=>Room};
+                State#{janus_id=>JanusId};
             _ ->
                 throw(room_not_found)
         end,
@@ -188,7 +188,8 @@ start(publish, #{srv_id:=SrvId, offer:=#{sdp:=_}=Offer}=Session, State) ->
                 case nkmedia_janus_op:publish(Pid, Room, Offer, Opts) of
                     {ok, #{sdp:=_}=Answer} ->
                         Reply = #{answer=>Answer, room=>Room},
-                        {ok, publish, Reply, none, Answer, State4};
+                        ExtOps = #{answer=>Answer, type_ext=>#{room=>Room}},
+                        {ok, Reply, ExtOps, State4};
                     {error, Error2} ->
                         {error, Error2, State4}
                 end;
@@ -211,8 +212,12 @@ start(listen, #{publisher:=Publisher}=Session, State) ->
                     case nkmedia_janus_op:listen(Pid, Room, Publisher, Opts) of
                         {ok, Offer} ->
                             State4 = State3#{janus_op=>answer},
-                            Reply = #{room=>Room, offer=>Offer},
-                            {ok, listen, Reply, Offer, none, State4};
+                            Reply = #{offer=>Offer, room=>Room},
+                            ExtOps = #{
+                                offer => Offer, 
+                                type_ext => #{room=>Room, publisher=>Publisher}
+                            },
+                            {ok, Reply, ExtOps, State4};
                         {error, Error} ->
                             {error, Error, State3}
                     end;
@@ -235,14 +240,16 @@ start(_Type, _Session, _State) ->
     {ok, map(), nkmedia:answer(), state()} |
     {error, term(), state()} | continue().
 
-answer(Op, Answer, _Session, #{janus_op:=answer}=State)
-        when Op==proxy; Op==listen ->
+answer(Type, Answer, _Session, #{janus_op:=answer}=State)
+        when Type==proxy; Type==listen ->
     #{janus_pid:=Pid} = State,
     case nkmedia_janus_op:answer(Pid, Answer) of
         ok ->
-            {ok, #{}, Answer, maps:remove(janus_op, State)};
+            ExtOps = #{answer=>Answer},
+            {ok, #{}, ExtOps,  maps:remove(janus_op, State)};
         {ok, Answer2} ->
-            {ok, #{answer=>Answer2}, Answer2, maps:remove(janus_op, State)};
+            Reply = ExtOps = #{answer=>Answer2},
+            {ok, Reply, ExtOps, maps:remove(janus_op, State)};
         {error, Error} ->
             {error, Error, State}
     end;
@@ -261,22 +268,23 @@ update(media, Opts, Type, #{id:=SessId}, #{janus_pid:=Pid}=State)
     {Opts2, State2} = get_opts(Opts#{id=>SessId}, State),
     case nkmedia_janus_op:update(Pid, Opts2) of
         ok ->
-            {ok, Type, #{}, State2};
+            {ok, #{}, #{}, State2};
         {error, Error} ->
             {error, Error, State2}
     end;
 
-update(listen_switch, #{publisher:=Publisher}, listen, _Session, 
+update(listen_switch, #{publisher:=Publisher}, listen, Session, 
        #{janus_pid:=Pid}=State) ->
+    #{type_ext:=Ext} = Session,
     case nkmedia_janus_op:listen_switch(Pid, Publisher, #{}) of
         ok ->
-            {ok, listen, #{}, State};
+            ExtOps = #{type_ext=>Ext#{publisher:=Publisher}},
+            {ok, #{}, ExtOps, State};
         {error, Error} ->
             {error, Error, State}
     end;
 
 update(_Update, _Opts, _Type, _Session, _State) ->
-    lager:error("UPDATE: ~p, ~p, ~p", [_Update, _Opts, _Type]),
     continue.
 
 

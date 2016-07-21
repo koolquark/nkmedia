@@ -23,7 +23,7 @@
 
 -export([error/1, get_q850/1, add_uuid/1]).
 -export([kill/1]).
-
+-export([remove_sdp_data_channel/1]).
 -export_type([stop_reason/0, q850/0]).
 
 -type stop_reason() :: atom() | q850() | binary() | string().
@@ -35,6 +35,7 @@
 % -type notify_refs() :: [{notify(), reference()|undefined}].
 
 -include_lib("nkservice/include/nkservice.hrl").
+-include_lib("nksip/include/nksip.hrl").
 
 
 %% @private
@@ -56,6 +57,7 @@ error(unknown_session_type) 	-> 	{0, <<"Unknown session type">>};
 error(missing_offer) 			-> 	{0, <<"Missing offer">>};
 error(duplicated_offer) 		-> 	{0, <<"Duplicated offer">>};
 error(offer_not_set) 			-> 	{0, <<"Offer not set">>};
+error(offer_already_set) 		-> 	{0, <<"Offer already set">>};
 error(duplicated_answer) 		-> 	{0, <<"Duplicated answer">>};
 error(answer_not_set) 			-> 	{0, <<"Answer not set">>};
 error(answer_already_set) 		-> 	{0, <<"Answer already set">>};
@@ -65,14 +67,16 @@ error(no_destination) 			->  {0, <<"No destination">>};
 error(originator_cancel)		-> 	{0, <<"Originator cancel">>};
 error(caller_hangup)			-> 	{0, <<"Caller hangup">>};
 error(callee_hangup)			-> 	{0, <<"Callee hangup">>};
+error(peer_hangup)				-> 	{0, <<"Peer hangup">>};
 error(unknown_linked_session) 	-> 	{0, <<"Unknown linked session">>};
 error(user_monitor_stop) 		-> 	{0, <<"User monitor stop">>};
 error(registered_stop) 		    -> 	{0, <<"Registered process stop">>};
 error(room_not_found)			->  {0, <<"Room not found">>};
 error(room_already_exists)	    ->  {0, <<"Room already exists">>};
+error(room_destroyed)           ->  {0, <<"Room destroyed">>};
 error(call_not_found) 			->  {0, <<"Call not found">>};
 error(already_answered) 		->  {0, <<"Already answred">>};
-error(verto_unknown_call)		->  {0, <<"Verto unknown call">>};
+
 error({verto, error, Code, Txt})-> 	
 	{0, nklib_util:msg("Verto Error (~p): ~s", [Code, Txt])};
 error(Code) when is_integer(Code) -> get_q850(Code);
@@ -175,6 +179,14 @@ kill(Type) ->
 	end,
 	lists:foreach(fun(Pid) -> exit(Pid, kill) end, Pids).
 
+
+
+%% @private Removes the datachannel (m=application)
+remove_sdp_data_channel(SDP) ->
+    #sdp{medias=Medias} = SDP2 = nksip_sdp:parse(SDP),
+    Medias2 = [Media || #sdp_m{media=Name}=Media <- Medias, Name /= <<"application">>],
+    SDP3 = SDP2#sdp{medias=Medias2},
+    nksip_sdp:unparse(SDP3).
 
 
 

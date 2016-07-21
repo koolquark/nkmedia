@@ -29,7 +29,7 @@
 -export([conn_handle_call/4, conn_handle_cast/3, conn_handle_info/3]).
 -export([print/3]).
 
--include("nkmedia.hrl").
+-include("../../include/nkmedia.hrl").
 
 
 
@@ -371,6 +371,8 @@ conn_handle_cast({originate_error, CallId, Error}, _NkPort, State) ->
             gen_server:reply(From, {error, Error}),
             ?LLOG(notice, "originate error: ~p", [Error], State),
             {stop, normal, State};
+        _ when Error==normal_clearing ->
+            {ok, State};
         _ ->
             lager:error("ORIGINATE ERROR: ~s, ~p", [CallId, Error]),
             {ok, State}

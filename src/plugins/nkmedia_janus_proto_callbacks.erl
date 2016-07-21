@@ -31,6 +31,8 @@
 -export([error_code/1]).
 -export([nkmedia_call_resolve/3, nkmedia_call_invite/4, nkmedia_call_cancel/3,
          nkmedia_call_reg_event/4]).
+-export([nkmedia_session_reg_event/4]).
+
 
 
 -define(JANUS_WS_TIMEOUT, 60*60*1000).
@@ -105,12 +107,24 @@ nkmedia_janus_invite(_SrvId, _CallId, _Offer, Janus) ->
     {rejected, not_implemented, Janus}.
 
 
-
 %% @doc Called when the client sends an ANSWER
 -spec nkmedia_janus_answer(call_id(), nklib:proc_id(), nkmedia:answer(), janus()) ->
     {ok, janus()} |{hangup, nkservice:error(), janus()} | continue().
 
-nkmedia_janus_answer(_CallId, {nkmedia_janus_call, CallId, _Pid}, Answer, Janus) ->
+% If the registered process happens to be {nkmedia_session, ...} and we have
+% an answer for an invite we received, we set the answer in the session
+% (we are ignoring the possible proxy answer in the reponse)
+nkmedia_janus_answer(_CallId, {nkmedia_session, SessId, _Pid}, Answer, Janus) ->
+    case nkmedia_session:answer_async(SessId, Answer) of
+        ok ->
+            {ok, Janus};
+        {error, Error} ->
+            {hangup, Error, Janus}
+    end;
+
+% If the registered process happens to be {nkmedia_call, ...} and we have
+% an answer for an invite we received, we set the answer in the call
+nkmedia_janus_answer(_CallId, {nkmedia_call, CallId, _Pid}, Answer, Janus) ->
     case nkmedia_call:answered(CallId, {nkmedia_janus, self()}, Answer) of
         ok ->
             {ok, Janus};
@@ -126,12 +140,16 @@ nkmedia_janus_answer(_CallId, _ProcId, _Answer, Janus) ->
 -spec nkmedia_janus_bye(call_id(), nklib:proc_id(), janus()) ->
     {ok, janus()} | continue().
 
-nkmedia_janus_bye(_CallId, {nkmedia_janus_call, CallId, _Pid}, Janus) ->
+% We recognize some special ProcIds
+nkmedia_janus_bye(_CallId, {nkmedia_session, SessId, _Pid}, Janus) ->
+    nkmedia_session:stop(SessId, janus_bye),
+    {ok, Janus};
+
+nkmedia_janus_bye(_CallId, {nkmedia_call, CallId, _Pid}, Janus) ->
     nkmedia_call:hangup(CallId, janus_bye),
     {ok, Janus};
 
 nkmedia_janus_bye(_CallId, _ProcId, Janus) ->
-    lager:error("JANUS BYE: ~p", [_ProcId]),
     {ok, Janus}.
 
 
@@ -223,6 +241,8 @@ nkmedia_call_invite(_CallId, _Dest, _Offer, _Call) ->
 
 
 %% @private
+%% Convenient functions in case we are registered with the call as
+%% {nkmedia_jsnud CallId, Pid}
 nkmedia_call_cancel(CallId, {nkmedia_janus, Pid}, _Call) when is_pid(Pid) ->
     nkmedia_janus_proto:hangup(Pid, CallId, originator_cancel),
     continue;
@@ -231,11 +251,39 @@ nkmedia_call_cancel(_CallId, _ProcId, _Call) ->
     continue.
 
 
-nkmedia_call_reg_event(CallId, {nkmedia_janus, Pid}, {hangup, Reason}, _Call) ->
+%% @private
+%% Convenient functions in case we are registered with the call as
+%% {nkmedia_janus, CallId, Pid}
+nkmedia_call_reg_event(_CallId, {nkmedia_janus, CallId, Pid}, {hangup, Reason}, _Call) ->
+    lager:info("Janus stopping after call hangup: ~p", [Reason]),
     nkmedia_janus_proto:hangup(Pid, CallId, Reason),
     continue;
 
 nkmedia_call_reg_event(_CallId, _ProcId, _Event, _Call) ->
+    continue.
+
+%% @private
+%% Convenient functions in case we are registered with the session as
+%% {nkmedia_janus, CallId, Pid}
+nkmedia_session_reg_event(_SessId, {nkmedia_janus, CallId, Pid}, Event, _Call) ->
+    case Event of
+        {answer, Answer} ->
+            % we may be blocked waiting for the same session creation
+            case nkmedia_janus_proto:answer_async(Pid, CallId, Answer) of
+                ok ->
+                    ok;
+                {error, Error} ->
+                    lager:error("Error setting Janus answer: ~p", [Error])
+            end;
+        {stop, Reason} ->
+            lager:info("Janus stopping after session stop: ~p", [Reason]),
+            nkmedia_janus_proto:hangup(Pid, CallId, Reason);
+        _ ->
+            ok
+    end,
+    continue;
+
+nkmedia_session_reg_event(_CallId, _ProcId, _Event, _Call) ->
     continue.
 
 

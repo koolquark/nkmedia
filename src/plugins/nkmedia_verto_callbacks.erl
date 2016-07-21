@@ -140,7 +140,7 @@ nkmedia_verto_answer(_CallId, {nkmedia_session, SessId, _Pid}, Answer, Verto) ->
 
 % If the registered process happens to be {nkmedia_call, ...} and we have
 % an answer for an invite we received, we set the answer in the call
-nkmedia_verto_answer(_CallId, {nkmedia_verto_call, CallId, _Pid}, Answer, Verto) ->
+nkmedia_verto_answer(_CallId, {nkmedia_call, CallId, _Pid}, Answer, Verto) ->
     case nkmedia_call:answered(CallId, {nkmedia_verto, self()}, Answer) of
         ok ->
             {ok, Verto};
@@ -172,6 +172,7 @@ nkmedia_verto_rejected(_CallId, _ProcId, Verto) ->
 -spec nkmedia_verto_bye(call_id(), nklib:proc_id(), verto()) ->
     {ok, verto()} | continue().
 
+% We recognize some special ProcIds
 nkmedia_verto_bye(_CallId, {nkmedia_session, SessId, _Pid}, Verto) ->
     nkmedia_session:stop(SessId, verto_bye),
     {ok, Verto};
@@ -277,7 +278,10 @@ nkmedia_call_cancel(_CallId, _ProcId, _Call) ->
 
 
 %% @private
-nkmedia_call_reg_event(CallId, {nkmedia_verto, Pid}, {hangup, Reason}, _Call) ->
+%% Convenient functions in case we are registered with the call as
+%% {nkmedia_verto, CallId, Pid}
+nkmedia_call_reg_event(_CallId, {nkmedia_verto, CallId, Pid}, {hangup, Reason}, _Call) ->
+    lager:info("Verto stopping after call hangup: ~p", [Reason]),
     nkmedia_verto:hangup(Pid, CallId, Reason),
     continue;
 
@@ -286,13 +290,29 @@ nkmedia_call_reg_event(_CallId, _ProcId, _Event, _Call) ->
 
 
 %% @private
-nkmedia_session_reg_event(SessId, {nkmedia_verto, Pid}, {stop, Reason}, _Call) ->
-    nkmedia_verto:hangup(Pid, SessId, Reason),
+%% Convenient functions in case we are registered with the session as
+%% {nkmedia_verto, CallId, Pid}
+nkmedia_session_reg_event(_SessId, {nkmedia_verto, CallId, Pid}, Event, _Call) ->
+    case Event of
+        {answer, Answer} ->
+            % we may be blocked waiting for the same session creation
+            case nkmedia_verto:answer_async(Pid, CallId, Answer) of
+                ok ->
+                    ok;
+                {error, Error} ->
+                    lager:error("Error setting Verto answer: ~p", [Error])
+            end;
+        {stop, Reason} ->
+            lager:info("Verto stopping after session stop: ~p", [Reason]),
+            nkmedia_verto:hangup(Pid, CallId, Reason);
+        _ ->
+            ok
+    end,
     continue;
 
 nkmedia_session_reg_event(_SessId, _ProcId, _Event, _Call) ->
-    lager:error("SESS ERG: ~p, ~p", [_ProcId, _Event]),
     continue.
+
 
 
 

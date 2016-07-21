@@ -42,7 +42,6 @@
     lager:Type("NkMEDIA Janus OP ~s (~p ~p) "++Txt, 
                [State#state.nkmedia_id, State#state.janus_sess_id, State#state.status | Args])).
 
--include_lib("nksip/include/nksip.hrl").
 -include("../../include/nkmedia.hrl").
 
 
@@ -1071,7 +1070,7 @@ do_to_sip_register(State) ->
 
 %% @private
 do_to_sip(#state{janus_sess_id=Id, handle_id=Handle, offer=#{sdp:=SDP}}=State) ->
-    SDP2 = remove_sdp_application(SDP),
+    SDP2 = nkmedia_util:remove_sdp_data_channel(SDP),
     Body = #{
         request => call,
         uri => <<"sip:", (nklib_util:to_binary(Id))/binary, "@nkmedia_janus_op">>
@@ -1469,13 +1468,6 @@ append_file(Opts, Txt) ->
             Opts
     end.
 
-
-%% @private Removes the datachannel (m=application)
-remove_sdp_application(SDP) ->
-    #sdp{medias=Medias} = SDP2 = nksip_sdp:parse(SDP),
-    Medias2 = [Media || #sdp_m{media=Name}=Media <- Medias, Name /= <<"application">>],
-    SDP3 = SDP2#sdp{medias=Medias2},
-    nksip_sdp:unparse(SDP3).
 
 
 %% @private

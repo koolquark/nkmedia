@@ -27,10 +27,10 @@
 -export([run_name/1]).
 -export([defaults/1]).
 
--include("nkmedia.hrl").
+-include("../../include/nkmedia.hrl").
 
 -define(FS_COMP, <<"netcomposer">>).
--define(FS_VSN, <<"v1.6.8">>).
+-define(FS_VSN, <<"v1.6.9">>).
 -define(FS_REL, <<"r01">>).
 
 

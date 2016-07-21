@@ -27,10 +27,10 @@
 -export([error_code/1]).
 -export([nkmedia_fs_get_mediaserver/1]).
 -export([nkmedia_session_init/2, nkmedia_session_terminate/2]).
--export([nkmedia_session_offer_op/4, nkmedia_session_answer_op/4,
-         nkmedia_session_hangup/2]).
--export([nkmedia_session_updated_answer/2]).
--export([nkmedia_session_peer_event/4, nkmedia_session_handle_cast/2]).
+-export([nkmedia_session_start/2, nkmedia_session_answer/3,
+         nkmedia_session_update/4, nkmedia_session_stop/2,
+         nkmedia_session_handle_cast/2]).
+-export([api_syntax/4]).
 -export([nkdocker_notify/2]).
 
 -include_lib("nkservice/include/nkservice.hrl").
@@ -41,7 +41,6 @@
 %% Types
 %% ===================================================================
 
--type session() :: nkmedia_session:session().
 % -type continue() :: continue | {continue, list()}.
 
 
@@ -96,10 +95,10 @@ plugin_stop(Config, #{name:=Name}) ->
 
 
 %% @private
--spec nkmedia_fs_get_mediaserver(session()) ->
+-spec nkmedia_fs_get_mediaserver(nkservice:id()) ->
     {ok, nkmedia_fs_engine:id()} | {error, term()}.
 
-nkmedia_fs_get_mediaserver(#{srv_id:=SrvId}) ->
+nkmedia_fs_get_mediaserver(SrvId) ->
     case nkmedia_fs_engine:get_all(SrvId) of
         [{FsId, _}|_] ->
             {ok, FsId};
@@ -114,7 +113,9 @@ nkmedia_fs_get_mediaserver(#{srv_id:=SrvId}) ->
 %% Implemented Callbacks - error
 %% ===================================================================
 
-error_code(fs_bridge_error)      ->  {100, <<"FS Bridge Error">>};
+error_code(fs_error)             ->  {100, <<"Freeswitch internal error">>};
+error_code(incompatible_fs_role) ->  {100, <<"Incompatible Freeswitch Role">>};
+error_code(fs_op_error)          ->  {100, <<"Error in Freeswitch operation">>};
 error_code(fs_channel_stop)      ->  {100, <<"FS Channel Stop">>};
 error_code(_)                    ->  continue.
 
@@ -139,15 +140,13 @@ nkmedia_session_terminate(Reason, Session) ->
 
 
 %% @private
-nkmedia_session_offer_op(Op, Opts, HasOffer, Session) ->
-    case maps:get(backend, Opts, freeswitch) of
-        freeswitch ->
+nkmedia_session_start(Type, Session) ->
+    case maps:get(backend, Session, nkmedia_fs) of
+        nkmedia_fs ->
             State = state(Session),
-            case 
-                nkmedia_fs_session:offer_op(Op, Opts, HasOffer, Session, State)
-            of
-                {ok, Offer, Op2, Opts2, State2} ->
-                    {ok, Offer, Op2, Opts2, session(State2, Session)};
+            case nkmedia_fs_session:start(Type, Session, State) of
+                {ok, Reply, ExtOps, State2} ->
+                    {ok, Reply, ExtOps, session(State2, Session)};
                 {error, Error, State2} ->
                     {error, Error, session(State2, Session)};
                 continue ->
@@ -159,15 +158,13 @@ nkmedia_session_offer_op(Op, Opts, HasOffer, Session) ->
 
 
 %% @private
-nkmedia_session_answer_op(Op, Opts, HasAnswer, Session) ->
-    case maps:get(backend, Opts, freeswitch) of
-        freeswitch ->
+nkmedia_session_answer(Type, Answer, Session) ->
+    case maps:get(backend, Session, nkmedia_fs) of
+        nkmedia_fs ->
             State = state(Session),
-            case 
-                nkmedia_fs_session:answer_op(Op, Opts, HasAnswer, Session, State)
-            of
-                {ok, Answer, Op2, Opts2, State2} ->
-                    {ok, Answer, Op2, Opts2, session(State2, Session)};
+            case nkmedia_fs_session:answer(Type, Answer, Session, State) of
+                {ok, Reply, ExtOps, State2} ->
+                    {ok, Reply, ExtOps, session(State2, Session)};
                 {error, Error, State2} ->
                     {error, Error, session(State2, Session)};
                 continue ->
@@ -179,56 +176,67 @@ nkmedia_session_answer_op(Op, Opts, HasAnswer, Session) ->
 
 
 %% @private
-nkmedia_session_updated_answer(#{sdp:=_}=Answer, Session) ->
-    case nkmedia_fs_session:updated_answer(Answer, Session, state(Session)) of
-        {ok, Answer2, State2} ->
-            {ok, Answer2, session(State2, Session)};
-        {error, Error, State2} ->
-            {error, Error, session(State2, Session)};
-        continue ->
-            continue
-    end;
-
-nkmedia_session_updated_answer(_Answer, _Session) ->
-    continue.
-
-
-%% @private
-nkmedia_session_peer_event(SessId, Type, Event, Session) ->
-    case Event of
-        {answer_op, _, _} ->
+nkmedia_session_update(Update, Opts, Type, Session) ->
+    case maps:get(backend, Session, nkmedia_fs) of
+        nkmedia_fs ->
             State = state(Session),
-            nkmedia_fs_session:peer_event(SessId, Type, Event, Session, State);
-        {hangup, _} ->
-            State = state(Session),
-            nkmedia_fs_session:peer_event(SessId, Type, Event, Session, State);
+            case nkmedia_fs_session:update(Update, Opts, Type, Session, State) of
+                {ok, Reply, ExtOps, State2} ->
+                    {ok, Reply, ExtOps, session(State2, Session)};
+                {error, Error, State2} ->
+                    {error, Error, session(State2, Session)};
+                continue ->
+                    continue
+            end;
         _ ->
-            ok
-    end,
-    continue.
+            continue
+    end.
+
+
+% %% @private
+% nkmedia_session_peer_event(SessId, Type, Event, Session) ->
+%     case Event of
+%         {answer_op, _, _} ->
+%             State = state(Session),
+%             nkmedia_fs_session:peer_event(SessId, Type, Event, Session, State);
+%         {hangup, _} ->
+%             State = state(Session),
+%             nkmedia_fs_session:peer_event(SessId, Type, Event, Session, State);
+%         _ ->
+%             ok
+%     end,
+%     continue.
         
 
 %% @private
-nkmedia_session_hangup(Reason, Session) ->
-    {ok, State2} = nkmedia_fs_session:hangup(Reason, Session, state(Session)),
+nkmedia_session_stop(Reason, Session) ->
+    {ok, State2} = nkmedia_fs_session:stop(Reason, Session, state(Session)),
     {continue, [Reason, session(State2, Session)]}.
 
 
 %% @private
-nkmedia_session_handle_cast({fs_event, FsId, Event}, Session) ->
-    case Session of
-        #{nkmedia_fs:=#{fs_id:=FsId}} ->
-            State = state(Session),
-            {ok, State2} = nkmedia_fs_session:do_fs_event(Event, Session, State),
-            {noreply, session(State2, Session)};
-        _ ->
-            lager:warning("NkMEDIA FS received unexpected FS event"),
-            {ok, Session}
-    end;
+nkmedia_session_handle_cast({nkmedia_fs_session, Msg}, Session) ->
+    State = state(Session),
+    {ok, State2} = nkmedia_fs_session:handle_cast(Msg, Session, State),
+    {noreply, session(State2, Session)};
 
 nkmedia_session_handle_cast(_Msg, _Session) ->
     continue.
 
+
+
+%% ===================================================================
+%% API
+%% ===================================================================
+
+%% @private
+api_syntax(#api_req{class = <<"media">>}=Req, Syntax, Defaults, Mandatory) ->
+    #api_req{subclass=Sub, cmd=Cmd} = Req,
+    {S2, D2, M2} = syntax(Sub, Cmd, Syntax, Defaults, Mandatory),
+    {continue, [Req, S2, D2, M2]};
+
+api_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
+    continue.
 
 
 %% ===================================================================
@@ -246,6 +254,33 @@ nkdocker_notify(_MonId, _Op) ->
 %% ===================================================================
 %% Internal
 %% ===================================================================
+
+
+%% @private
+syntax(<<"session">>, <<"start">>, Syntax, Defaults, Mandatory) ->
+    {
+        Syntax#{
+            room => binary,
+            mcu_layout => binary,
+            park_after_bridge => boolean
+        },
+        Defaults,
+        Mandatory
+    };
+
+syntax(<<"session">>, <<"update">>, Syntax, Defaults, Mandatory) ->
+    {
+        Syntax#{
+            type => atom,
+            mcu_layout => binary
+        },
+        Defaults,
+        Mandatory
+    };
+
+syntax(_Sub, _Cmd, Syntax, Defaults, Mandatory) ->
+    {Syntax, Defaults, Mandatory}.
+
 
 
 %% @private

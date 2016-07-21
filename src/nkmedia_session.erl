@@ -29,11 +29,11 @@
 -export([stop/1, stop/2, stop_all/0]).
 -export([answer/2, answer_async/2, update/3, update_async/3, info/2]).
 -export([register/2, unregister/2, link_session/3, get_all/0,  peer_event/3]).
--export([get_call_data/1, send_ext_event/3]).
+-export([get_call_data/1, send_ext_event/3, ext_ops/2]).
 -export([find/1, do_cast/2, do_call/2, do_call/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
--export_type([id/0, config/0, session/0, event/0]).
+-export_type([id/0, config/0, session/0, event/0, type_ext/0, ext_ops/0]).
 
 -define(LLOG(Type, Txt, Args, State),
     lager:Type("NkMEDIA Session ~s (~p) "++Txt, 
@@ -42,6 +42,7 @@
 -include("nkmedia.hrl").
 -include_lib("nklib/include/nklib.hrl").
 -include_lib("nkservice/include/nkservice.hrl").
+
 
 
 %% ===================================================================
@@ -53,7 +54,7 @@
 
 
 %% Backend plugins expand the available types
--type type() :: p2p | term().
+-type type() :: p2p | atom().
 
 
 %% Backend plugins expand the available types
@@ -78,17 +79,35 @@
     config () | 
     #{
         srv_id => nkservice:id(),
-        type => type()
+        type => type(),
+        type_ext => map(),
+        links => nklib_links:links(link_id())
     }.
 
+
+-type type_ext() :: {type(), map()}.
 
 
 -type event() ::
     {answer, nkmedia:answer()}          |   % Answer SDP is available
-    {updated_type, atom()}             |
-    {info, binary()}                      |   % User info
+    {updated_type, atom(), map()}       |
+    {info, binary()}                    |   % User info
     {stop, nkservice:error()}           |   % Session is about to hangup
     {linked_down, id(), caller|callee, Reason::term()}.
+
+
+-type ext_ops() ::
+    #{
+        offer => nkmedia:offer(),
+        answer => nkmedia:answer(),
+        type => type(),
+        type_ext => map(),
+        register => nklib:proc_id()
+    }.
+
+-type link_id() ::
+    {reg, nklib:proc_id()} | {peer, id()}.
+
 
 
 
@@ -141,9 +160,9 @@ get_answer(SessId) ->
     do_call(SessId, get_answer).
 
 
-%% @doc Get current status and remaining time to timeout
+%% @doc Get current type, type_ext and remaining time to timeout
 -spec get_type(id()) ->
-    {ok, map(), integer()}.
+    {ok, type(), map(), integer()}.
 
 get_type(SessId) ->
     do_call(SessId, get_type).
@@ -231,12 +250,12 @@ register(SessId, ProcId) ->
     do_call(SessId, {register, ProcId}).
 
 
-%% @doc Registers a process with the session
+%% @doc Unregisters a process with the session
 -spec unregister(id(), nklib:proc_id()) ->
     ok | {error, nkservice:error()}.
 
 unregister(SessId, ProcId) ->
-    do_call(SessId, {unregister, ProcId}).
+    do_cast(SessId, {unregister, ProcId}).
 
 
 %% @doc Sends a event inside the session
@@ -253,6 +272,14 @@ send_ext_event(SessId, Type, Body) ->
 
 get_all() ->
     nklib_proc:values(?MODULE).
+
+
+%% @private. Notifies that the type changed externally
+-spec ext_ops(id(), ext_ops()) ->
+    ok | {error, term()}.
+
+ext_ops(SessId, ExtOps) ->
+    do_cast(SessId, {ext_ops, ExtOps}).
 
 
 %% @private
@@ -282,15 +309,11 @@ peer_event(Id, IdB, Event) ->
 %% gen_server behaviour
 %% ===================================================================
 
--type link_id() ::
-    {reg, nklib:proc_id()} | {peer, id()}.
-
 -record(state, {
     id :: id(),
     srv_id :: nkservice:id(),
     type :: type(),
     has_answer = false :: boolean(),
-    links :: nklib_links:links(link_id()),
     timer :: reference(),
     stop_sent = false :: boolean(),
     hibernate = false :: boolean(),
@@ -305,17 +328,17 @@ peer_event(Id, IdB, Event) ->
 init([#{id:=Id, type:=Type, srv_id:=SrvId}=Session]) ->
     true = nklib_proc:reg({?MODULE, Id}),
     nklib_proc:put(?MODULE, Id),
+    Session2 = maps:merge(#{type_ext=>#{}}, Session),
     State1 = #state{
         id = Id, 
         srv_id = SrvId, 
         type = Type,
-        links = nklib_links:new(),
-        session = Session
+        session = Session2#{links=>nklib_links:new()}
     },
-    State2 = case Session of
+    State2 = case Session2 of
         #{register:=ProcId} -> 
             ProcPid = nklib_links:get_pid(ProcId),            
-            links_add({reg, ProcId}, none, ProcPid, State1);
+            links_add(ProcId, none, ProcPid, State1);
         _ ->
             State1
     end,
@@ -334,8 +357,9 @@ handle_call(do_start, From, State) ->
 handle_call(get_session, _From, #state{session=Session}=State) ->
     reply({ok, Session}, State);
 
-handle_call(get_type, _From, #state{type=Type, timer=Timer}=State) ->
-    reply({ok, Type, erlang:read_timer(Timer) div 1000}, State);
+handle_call(get_type, _From, #state{type=Type, timer=Timer, session=Session}=State) ->
+    #{type_ext:=TypeExt} = Session,
+    reply({ok, Type, TypeExt, erlang:read_timer(Timer) div 1000}, State);
 
 handle_call({answer, Answer}, From, State) ->
     do_set_answer(Answer, From, State);
@@ -376,13 +400,8 @@ handle_call({link_session, IdA, Opts}, _From, #state{id=IdB}=State) ->
 handle_call({register, ProcId}, _From, State) ->
     ?LLOG(info, "proc registered (~p)", [ProcId], State),
     Pid = nklib_links:get_pid(ProcId),
-    State2 = links_add({reg, ProcId}, none, Pid, State),
+    State2 = links_add(ProcId, none, Pid, State),
     reply({ok, self()}, State2);
-
-handle_call({unregister, ProcId}, _From, State) ->
-    ?LLOG(info, "proc unregistered (~p)", [ProcId], State),
-    State2 = links_remove({reg, ProcId}, State),
-    reply(ok, State2);
 
 handle_call(Msg, From, State) -> 
     handle(nkmedia_session_handle_call, [Msg, From], State).
@@ -400,6 +419,10 @@ handle_cast({update, Update, Opts}, State) ->
 
 handle_cast({info, Info}, State) ->
     noreply(event({info, Info}, State));
+
+handle_cast({unregister, ProcId}, State) ->
+    ?LLOG(info, "proc unregistered (~p)", [ProcId], State),
+    {noreply, links_remove(ProcId, State)};
 
 handle_cast({link_session_back, IdB, Pid, Events}, State) ->
     ?LLOG(info, "linked back from ~s (events:~p)", [IdB, Events], State),
@@ -420,6 +443,9 @@ handle_cast({send_ext_event, EvType, Body}, State) ->
     do_send_ext_event(EvType, Body, State),
     noreply(State);
 
+handle_cast({ext_ops, ExtOps}, State) ->
+    noreply(update_ext_ops(ExtOps, State));
+   
 handle_cast({stop, Error}, State) ->
     do_stop(Error, State);
 
@@ -438,19 +464,22 @@ handle_info({timeout, _, session_timeout}, State) ->
 handle_info({'DOWN', _Ref, process, Pid, Reason}=Msg, State) ->
     case links_down(Pid, State) of
         {ok, Id, Data, State2} ->
-            case Reason of
-                normal ->
-                    ?LLOG(info, "linked ~p down (normal)", [Id], State);
-                _ ->
-                    ?LLOG(notice, "linked ~p down (~p)", [Id, Reason], State)
-            end,
             case Id of
-                {reg, _Term} ->
-                    do_stop(registered_stop, State2);
                 {peer, IdB} ->
                     {Type, _Events} = Data,  % caller | callee
                     event({linked_down, IdB, Type, Reason}, State),
-                    noreply(State2)
+                    noreply(State2);
+                ProcId ->
+                    case handle(nkmedia_session_reg_down, [Id, ProcId, Reason], State2) of
+                        {ok, State3} ->
+                            {noreply, State3};
+                        {stop, normal, State3} ->
+                            do_stop(normal, State3);    
+                        {stop, Error, State3} ->
+                            ?LLOG(notice, "stopping beacuse of reg '~p' down (~p)",
+                                  [ProcId, Reason], State3),
+                            do_stop(Error, State3)
+                    end
             end;
         not_found ->
             handle(nkmedia_session_handle_info, [Msg], State)
@@ -491,38 +520,27 @@ terminate(Reason, State) ->
 %% Internal
 %% ===================================================================
 
-
 %% @private
 do_start(From, #state{type=Type}=State) ->
     case handle(nkmedia_session_start, [Type], State) of
-        {ok, Type2, Reply, #state{session=Session2}=State2} ->
-            case Session2 of
+        {ok, Reply, ExtOps, State2} ->
+            State3 = update_ext_ops_offer(ExtOps, State2),
+            State4 = update_ext_ops_answer(ExtOps, State3),
+            #state{session=Session} = State4,
+            case Session of
                 #{offer:=#{sdp:=_}} ->
-                    HasAnswer = case Session2 of
-                        #{answer:=#{sdp:=_}} -> true;
-                        _ -> false
-                    end,
-                    State3 = State2#state{has_answer=HasAnswer},
-                    do_start_ok(Type2, Reply, From, State3);
+                    State5 = update_ext_ops(ExtOps, State4),
+                    State6 = restart_timer(State5),
+                    ?LLOG(info, "started ok", [], State6),
+                    reply({ok, Reply}, From, State6);
                 _ ->
-                    do_start_error(missing_offer, From, State2)
+                    stop(self(), missing_offer),
+                    reply({error, misssing_offer}, From, State4)
             end;
         {error, Error, State2} ->
-            do_start_error(Error, From, State2)
+            stop(self(), Error),
+            reply({error, Error}, From, State2)
     end.
-
-
-%% @private
-do_start_ok(Type, Reply, From, State) ->
-    State2 = restart_timer(update_type(Type, State)),
-    ?LLOG(info, "started ok", [], State2),
-    reply({ok, Reply}, From, State2).
-
-
-%% @private
-do_start_error(Error, From, State) ->
-    stop(self(), invalid_parameters),
-    reply({error, Error}, From, State).
 
 
 %% @private
@@ -531,14 +549,15 @@ do_set_answer(_Answer, From, #state{has_answer=true}=State) ->
 
 do_set_answer(Answer, From, #state{type=Type}=State) ->
     case handle(nkmedia_session_answer, [Type, Answer], State) of
-        {ok, Reply, #{sdp:=_}=Answer2, State2} ->
-            State3 = update_session(answer, Answer2, State2),
-            State4 = restart_timer(State3#state{has_answer=true}),
-            State5 = event({answer, Answer2}, State4),
-            ?LLOG(info, "answer set", [], State),
-            reply({ok, Reply}, From, State5);
-        {ok, _Reply, _Answer, State2} ->
-            reply({error, invalid_answer}, From, State2);
+        {ok, Reply, ExtOps, State2} ->
+            State3 = update_ext_ops_answer(ExtOps, State2),
+            case State3 of
+                #state{has_answer=true} ->
+                    State4 = update_ext_ops(ExtOps, State3),
+                    reply({ok, Reply}, From, restart_timer(State4));
+                _ ->
+                    reply({error, invalid_answer}, From, State3)
+            end;
         {error, Error, State2} ->
             reply({error, Error}, From, State2)
     end.
@@ -547,10 +566,9 @@ do_set_answer(Answer, From, #state{type=Type}=State) ->
 %% @private
 do_update(Update, Opts, From, #state{type=Type, has_answer=true}=State) ->
     case handle(nkmedia_session_update, [Update, Opts, Type], State) of
-        {ok, Type2, Reply, State2} ->
-            State3 = update_type(Type2, State2),
-            ?LLOG(info, "session updated", [], State3),
-           reply({ok, Reply}, From, State3);
+        {ok, Reply, ExtOps, State2} ->
+            State3 = update_ext_ops(ExtOps, State2),
+            reply({ok, Reply}, From, State3);
         {error, Error, State2} ->
             reply({error, Error}, From, State2)
     end;
@@ -567,12 +585,62 @@ do_update(_Update, _Opts, From, State) ->
 
 
 %% @private
-update_type(Type, #state{type=Type}=State) ->
-    State;
+update_ext_ops_offer(#{offer:=Offer}, #state{session=Session}=State) ->
+    OldOffer = maps:get(offer, Session, #{}),
+    update_session(offer, maps:merge(OldOffer, Offer), State);
 
-update_type(Type, State) ->
-    State2 = update_session(type, Type, State),
-    event({updated_type, Type}, State2#state{type=Type}).
+update_ext_ops_offer(_ExtOps, State) ->
+    State.
+
+
+%% @private
+update_ext_ops_answer(#{answer:=Answer}, #state{session=Session}=State) ->
+    OldAnswer = maps:get(answer, Session, #{}),
+    NewAnswer = maps:merge(OldAnswer, Answer),
+    State2 = update_session(answer, NewAnswer, State),
+    case NewAnswer of
+        #{sdp:=_} ->
+            ?LLOG(info, "answer set", [], State2),
+            event({answer, Answer}, State2#state{has_answer=true});
+        _ ->
+            State2
+    end;
+update_ext_ops_answer(_ExtOps, State) ->
+    State.
+
+
+%% @private
+update_ext_ops(ExtOps, #state{type=OldType, session=Session}=State) ->
+    State2 = case ExtOps of
+        #{register:=ProcId} ->
+            Pid = nklib_links:get_pid(ProcId),
+            links_add(ProcId, none, Pid, State);
+        _ ->
+            State
+    end,
+    Type = maps:get(type, ExtOps, OldType),
+    OldExt = maps:get(type_ext, Session),
+    DefExt = case Type==OldType of
+        true -> OldExt;
+        false -> #{}
+    end,
+    Ext = maps:get(type_ext, ExtOps, DefExt),
+    case {Type, Ext} of
+        {OldType, OldExt} ->
+            State2;
+        _ ->
+            State3 = case Ext of
+                OldExt -> State2;
+                _ -> update_session(type_ext, Ext, State2)
+            end,
+            State4 = case Type of
+                OldType -> State3;
+                _ -> update_session(type, Type, State3#state{type=Type})
+            end,
+            ?LLOG(info, "session updated", [], State4),
+            event({updated_type, Type, Ext}, State4)
+    end.
+
 
 
 %% @private
@@ -635,18 +703,18 @@ event(Event, #state{id=Id}=State) ->
         fun
             ({peer, PeerId}, {_Type, true}) -> 
                 peer_event(PeerId, Id, Event);
-            (_, _) ->
+            (_ProcId, none) ->
                 ok
         end,
         State),
     State2 = links_fold(
         fun
-            ({reg, Reg}, none, AccState) ->
+            ({peer, _}, _, AccState) -> 
+                AccState;
+            (ProcId, none, AccState) ->
                 {ok, AccState2} = 
-                    handle(nkmedia_session_reg_event, [Id, Reg, Event], AccState),
-                    AccState2;
-            (_, _, AccState) -> 
-                AccState
+                    handle(nkmedia_session_reg_event, [Id, ProcId, Event], AccState),
+                    AccState2
         end,
         State,
         State),
@@ -661,8 +729,8 @@ ext_event(Event, #state{srv_id=SrvId}=State) ->
             {answer, #{answer=>Answer}};
         {info, Info} ->
             {info, #{info=>Info}};
-        {updated_type, Type} ->
-            {updated_type, #{type=>Type}};
+        {updated_type, Type, Ext} ->
+            {updated_type, Ext#{type=>Type}};
         {stop, Reason} ->
             {Code, Txt} = SrvId:error_code(Reason),
             {stop, #{code=>Code, reason=>Txt}};
@@ -735,35 +803,37 @@ update_session(Key, Val, #state{session=Session}=State) ->
 
 
 %% @private
-links_add(Id, Data, Pid, #state{links=Links}=State) ->
-    State#state{links=nklib_links:add(Id, Data, Pid, Links)}.
+links_add(Id, Data, Pid, #state{session=#{links:=Links}}=State) ->
+    update_session(links, nklib_links:add(Id, Data, Pid, Links), State).
 
 
 %% @private
-links_get(Id, #state{links=Links}) ->
+links_get(Id, #state{session=#{links:=Links}}) ->
     nklib_links:get(Id, Links).
 
 
 %% @private
-links_remove(Id, #state{links=Links}=State) ->
-    State#state{links=nklib_links:remove(Id, Links)}.
+links_remove(Id, #state{session=#{links:=Links}}=State) ->
+    update_session(links, nklib_links:remove(Id, Links), State).
 
 
 %% @private
-links_down(Pid, #state{links=Links}=State) ->
+links_down(Pid, #state{session=#{links:=Links}}=State) ->
     case nklib_links:down(Pid, Links) of
-        {ok, Id, Data, Links2} -> {ok, Id, Data, State#state{links=Links2}};
-        not_found -> not_found
+        {ok, Id, Data, Links2} -> 
+            {ok, Id, Data, update_session(links, Links2, State)};
+        not_found -> 
+            not_found
     end.
 
 
 %% @private
-links_iter(Fun, #state{links=Links}) ->
+links_iter(Fun, #state{session=#{links:=Links}}) ->
     nklib_links:iter(Fun, Links).
 
 
 %% @private
-links_fold(Fun, Acc, #state{links=Links}) ->
+links_fold(Fun, Acc, #state{session=#{links:=Links}}) ->
     nklib_links:fold(Fun, Acc, Links).
 
 

@@ -33,7 +33,7 @@
 	     nkmedia_session_update/4, nkmedia_session_stop/2]).
 -export([nkmedia_call_init/2, nkmedia_call_terminate/2, 
 		 nkmedia_call_resolve/3, nkmedia_call_invite/4, nkmedia_call_cancel/3, 
-		 nkmedia_call_event/3, nkmedia_call_reg_event/4,
+		 nkmedia_call_event/3, nkmedia_call_reg_event/4, nkmedia_session_reg_down/4,
 		 nkmedia_call_handle_call/3, nkmedia_call_handle_cast/2, 
 		 nkmedia_call_handle_info/2]).
 -export([error_code/1]).
@@ -105,11 +105,11 @@ nkmedia_session_terminate(_Reason, Session) ->
 
 
 -spec nkmedia_session_start(nkmedia_session:type(), session()) ->
-	{ok, nkmedia_session:type(), Reply::map(), session()} |
+	{ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
 	{error, nkservice:error(), session()} | continue().
 
 nkmedia_session_start(p2p, Session) ->
-	{ok, p2p, #{}, Session};
+	{ok, #{}, #{}, Session};
 
 nkmedia_session_start(_Type, Session) ->
 	{error, unknown_session_type, Session}.
@@ -117,17 +117,17 @@ nkmedia_session_start(_Type, Session) ->
 
 %% @private
 -spec nkmedia_session_answer(nkmedia_session:type(), nkmedia:answer(), session()) ->
-	{ok, Reply::map(), nkmedia:answer(), session()} |
+	{ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
 	{error, term(), session()} | continue().
 
-nkmedia_session_answer(_Type, Answer, Session) ->
-	{ok, #{}, Answer, Session}.
+nkmedia_session_answer(Type, Answer, Session) ->
+	{ok, #{}, #{answer=>Answer}, Session}.
 
 
 %% @private
 -spec nkmedia_session_update(nkmedia_session:update(), map(),
 					         nkmedia_session:type(), session()) ->
-	{ok, nkmedia_session:type(), Reply::map(), session()} |
+	{ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
 	{error, term(), session()} | continue().
 
 nkmedia_session_update(_Update, _Opts, _Type, Session) ->
@@ -172,6 +172,14 @@ nkmedia_session_reg_event(SessId, {nkmedia_api, Pid}, {stop, _Reason}, Session) 
 
 nkmedia_session_reg_event(_SessId, _RegId, _Event, Session) ->
 	{ok, Session}.
+
+
+%% @doc Called when a registered process fails
+-spec nkmedia_session_reg_down(session_id(), nklib:proc_id(), term(), session()) ->
+	{ok, session()} | {stop, Reason::term(), session()} | continue().
+
+nkmedia_session_reg_down(_SessId, _ProcId, _Reason, Session) ->
+	{stop, registered_down, Session}.
 
 
 %% @doc

@@ -118,7 +118,6 @@ error_code(janus_op_down)           ->  {200, <<"Janus op process down">>};
 error_code(janus_bye)               ->  {200, <<"Janus bye">>};
 error_code(invalid_publisher)       ->  {200, <<"Invalid publisher">>};
 error_code(publisher_stopped)       ->  {200, <<"Publisher stopped">>};
-error_code(room_destroyed)          ->  {200, <<"Room destroyed">>};
 
 error_code(_)                       ->  continue.
 
@@ -146,8 +145,8 @@ nkmedia_session_start(Type, Session) ->
         nkmedia_janus ->
             State = state(Session),
             case nkmedia_janus_session:start(Type, Session, State) of
-                {ok, Type2, Reply, Offer, Answer, State2} ->
-                    {ok, Type2, Reply, session(Offer, Answer, State2, Session)};
+                {ok, Reply, ExtOps, State2} ->
+                    {ok, Reply, ExtOps, session(State2, Session)};
                 {error, Error, State2} ->
                     {error, Error, session(State2, Session)};
                 continue ->
@@ -164,8 +163,8 @@ nkmedia_session_answer(Type, Answer, Session) ->
         nkmedia_janus ->
             State = state(Session),
             case nkmedia_janus_session:answer(Type, Answer, Session, State) of
-                {ok, Reply, Answer2, State2} ->
-                    {ok, Reply, Answer2, session(none, Answer2, State2, Session)};
+                {ok, Reply, ExtOps, State2} ->
+                    {ok, Reply, ExtOps, session(State2, Session)};
                 {error, Error, State2} ->
                     {error, Error, session(State2, Session)};
                 continue ->
@@ -183,8 +182,8 @@ nkmedia_session_update(Update, Opts, Type, Session) ->
         nkmedia_janus ->
             State = state(Session),
             case nkmedia_janus_session:update(Update, Opts, Type, Session, State) of
-                {ok, Type2, Reply, State2} ->
-                    {ok, Type2, Reply, session(State2, Session)};
+                {ok, Reply, ExtOps, State2} ->
+                    {ok, Reply, ExtOps, session(State2, Session)};
                 {error, Error, State2} ->
                     {error, Error, session(State2, Session)};
                 continue ->
@@ -204,17 +203,15 @@ nkmedia_session_stop(Reason, Session) ->
 %% @private
 nkmedia_session_handle_call(nkmedia_janus_get_room, _From, Session) ->
     Reply = case Session of
-        #{srv_id:=SrvId, type:=publish} ->
-            case state(Session) of
-                #{room:=Room} ->
-                    {ok, SrvId, Room};
-                _ ->
-                    {error, invalid_state}
-            end;
+        #{srv_id:=SrvId, type:=publish, type_ext:=#{room:=Room}} ->
+            {ok, SrvId, Room};
         _ ->
             {error, invalid_state}
     end,
-    {reply, Reply, Session}.
+    {reply, Reply, Session};
+
+nkmedia_session_handle_call(_Msg, _From, _Session) ->
+    continue.
 
 
 %% @private The janus_op process is down
@@ -225,8 +222,10 @@ nkmedia_session_handle_info({'DOWN', Ref, process, _Pid, _Reason}, Session) ->
             {noreply, Session};
         _ ->
             continue
-    end.
+    end;
 
+nkmedia_session_handle_info(_Msg, _Session) ->
+    continue.
 
 
 %% ===================================================================
@@ -301,19 +300,6 @@ syntax(_Sub, _Cmd, Syntax, Defaults, Mandatory) ->
 %% @private
 state(#{nkmedia_janus:=State}) ->
     State.
-
-
-%% @private
-session(Offer, Answer, State, Session) ->
-    Session2 = case Offer of
-        #{} -> Session#{offer=>Offer};
-        none -> Session
-    end,
-    Session3 = case Answer of
-        #{} -> Session2#{answer=>Answer};
-        none -> Session2
-    end,
-    Session3#{nkmedia_janus:=State}.
 
 
 %% @private

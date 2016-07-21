@@ -22,26 +22,21 @@
 -module(nkmedia_fs_session).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([init/3, terminate/3, offer_op/5, answer_op/5, peer_event/5]).
--export([fs_event/3, do_fs_event/3]).
--export([updated_answer/3, hangup/3]).
+-export([init/3, terminate/3, start/3, answer/4, update/5, stop/3]).
+-export([handle_cast/3, fs_event/3]).
 
--export_type([config/0, offer_op/0, answer_op/0, op_opts/0]).
+-export_type([config/0, type/0, opts/0, update/0]).
 
 -define(LLOG(Type, Txt, Args, Session),
     lager:Type("NkMEDIA FS Session ~s "++Txt, 
                [maps:get(id, Session) | Args])).
 
--define(OFFER_FILDS, [
-    dest, caller_name, caller_id, callee_name, callee_id, use_audio, use_stereo, 
-    use_video, use_screen, use_data, in_bw, out_bw]).
 
-
--include("nkmedia.hrl").
+-include("../../include/nkmedia.hrl").
 
 
 
-%% ===================================================================
+%% ========================= ==========================================
 %% Types
 %% ===================================================================
 
@@ -55,36 +50,36 @@
     #{
     }.
     
--type offer_op() ::
-    nkmedia_session:offer_op() |
-    park.
 
-
--type answer_op() ::
-    nkmedia_session:answer_op() |
+-type type() ::
+    nkmedia_session:type() |
     park    |
     echo    |
     mcu     |
-    bridge    |
+    bridge  |
     call.
 
+-type type_ext() :: {type(), map()}.
 
--type op_opts() ::  
-    nkmedia_session:op_opts() |
+
+-type opts() ::  
+    nkmedia_session:session() |
     #{
     }.
 
 
+-type update() ::
+    nkmedia_session:update().
+
+
 -type fs_event() ::
-    parked | {hangup, term()} | {bridge, id()} | {mcu, map()}.
+    parked | {hangup, term()} | {bridge, id()} | {mcu, map()} | stop.
 
 
 -type state() ::
     #{
         fs_id => nmedia_fs_engine:id(),
-        fs_role => offer | answer,
-        park_after => boolean(),
-        answer_op => {offer_op(), map()}    % For 'delayed' ops
+        fs_role => offer | answer
     }.
 
 
@@ -98,7 +93,7 @@
     ok.
 
 fs_event(SessId, FsId, Event) ->
-    case nkmedia_session:do_cast(SessId, {fs_event, FsId, Event}) of
+    case send_cast(SessId, {fs_event, FsId, Event}) of
         ok -> 
             ok;
         {error, _} when Event==stop ->
@@ -130,303 +125,285 @@ terminate(_Reason, _Session, State) ->
     {ok, State}.
 
 
-%% @private You must generte an offer() for this offer_op()
-%% ReplyOpts will only we used for user notification
--spec offer_op(offer_op(), op_opts(), boolean(), session(), state()) ->
-    {ok, nkmedia:offer(), offer_op(), map(), session()} |
+%% @private
+-spec start(type(), nkmedia:session(), state()) ->
+    {ok, type_ext(), map(), none|nkmedia:offer(), none|nkmedia:answer(), state()} |
     {error, term(), state()} | continue().
 
-offer_op(Op, Opts, false, Session, State) ->
-    case is_supported(Op, Opts) of
-        true ->
-            case get_fs_offer(Opts, Session, State) of
-                {ok, Offer, State2} when Op==park ->
-                    {ok, Offer, park, #{}, State2};
+start(Type, #{offer:=#{sdp:=_}}=Session, State) ->
+    case is_supported(Type) of
+        true ->  
+            case get_fs_answer(Session, State) of
+                {ok, Answer, State2}  ->
+                    case Type of
+                        park ->
+                            Reply = ExtOps = #{answer=>Answer},
+                            {ok, Reply, ExtOps, State2};
+                        _ ->
+                            case do_update(Type, Session, State2) of
+                                {ok, Reply, ExtOps, State3} ->
+                                    Reply2 = Reply#{answer=>Answer},
+                                    ExtOps2 = ExtOps#{answer=>Answer},
+                                    {ok, Reply2, ExtOps2, State3};
+                                {error, Error, State3} ->
+                                    {error, Error, State3};
+                                continue ->
+                                    {error, invalid_parameters, State2}
+                            end
+                    end;
+                {error, Error, State2} ->
+                    {error, Error, State2}
+            end;
+        false ->
+            continue
+    end;
+
+start(call, #{id:=Id, peer_id:=PeerId}=Session, State) ->
+    case nkmedia_session:register(PeerId, {nkmedia_fs_caller, Id, self()}) of
+        {ok, PeerPid} ->
+            case get_fs_offer(Session, State) of
                 {ok, Offer, State2} ->
-                    State3 = State2#{answer_op=>{Op, Opts}},
-                    {ok, Offer, Op, #{}, State3};
+                    Reply = #{offer=>Offer},
+                    ProcId = {nkmedia_fs_callee, PeerId, PeerPid},
+                    ExtOps = #{offer=>Offer, register=>ProcId},
+                    {ok, Reply, ExtOps, State2};
+                {error, Error, State2} ->
+                    {error, Error, State2}
+            end;
+        not_found ->
+            {error, peer_not_found, State}
+    end;
+
+start(Type, Session, State) ->
+    case is_supported(Type) of
+        true ->  
+            case get_fs_offer(Session, State) of
+                {ok, Offer, State2} ->
+                    Reply = ExtOps = #{offer=>Offer},
+                    {ok, Reply, ExtOps, State2};
                 {error, Error, State2} ->
                     {error, Error, State2}
             end;
         false ->
             continue
-    end;
-
-offer_op(Op, Opts, true, Session, #{fs_role:=Role}=State) ->
-    case is_supported(Op, Opts) of
-        true when Role==offer ->
-            update_op(Op, Opts, #{}, Session, State);
-        true when Role==answer ->
-            {error, incompatible_operation, State};
-        false ->
-            continue
-    end;
-
-offer_op(_Op, _Opts, _HasOffer, _Session, _State) ->
-    continue.
-
-
-%% @private
--spec answer_op(answer_op(), op_opts(), boolean(), session(), state()) ->
-    {ok, nkmedia:answer(), ReplyOpts::map(), session()} |
-    {error, term(), state()} | continue().
-
-answer_op(Op, Opts, false, Session, State) ->
-    case is_supported(Op, Opts) of
-        true ->
-            case get_fs_answer(Opts, Session, State) of
-                {ok, Answer, State2} ->
-                    update_op(Op, Opts, Answer, Session, State2);
-                {error, Error, State2} ->
-                    {error, Error, State2}
-            end;
-        false ->
-            continue
-    end;
-
-answer_op(Op, Opts, true, Session, #{fs_role:=Role}=State) ->
-    case is_supported(Op, Opts) of
-        true when Role==answer ->
-            update_op(Op, Opts, #{}, Session, State);
-        true when Role==offer ->
-            {error, incompatible_operation, State};
-        false ->
-            continue
-    end;
-
-answer_op(_Op, _Opts, _HasAnswer, _Session, _State) ->
-    continue.
-
-
-%% @private
--spec update_op(offer_op()|answer_op(), op_opts(), map(), session(), state()) ->
-    {ok, map(), nkmedia:op(), nkmedia:op_opts(), state()} |
-    {error, term(), state()} | continue().
-
-update_op(park, _Opts, OffAns, Session, State) ->
-    case fs_transfer("park", Session, State) of
-        ok ->
-            {ok, OffAns, park, #{}, State};
-        {error, Error} ->
-            {error, Error, State}
-    end;
-
-update_op(echo, _Opts, OffAns, Session, State) ->
-    case fs_transfer("echo", Session, State) of
-        ok ->
-            {ok, OffAns, echo, #{}, State};
-        {error, Error} ->
-            {error, Error, State}
-    end;
-
-update_op(mcu, Opts, OffAns, Session, State) ->
-    case maps:find(room, Opts) of
-        {ok, Room} -> ok;
-        error -> Room = nklib_util:uuid_4122()
-    end,
-    Type = maps:get(room_type, Opts, <<"video-mcu-stereo">>),
-    Cmd = [<<"conference:">>, Room, <<"@">>, Type],
-    case fs_transfer(Cmd, Session, State) of
-        ok ->
-            {ok, OffAns, mcu, #{room=>Room, room_type=>Type}, State};
-        {error, Error} ->
-            {error, Error, State}
-    end;
-
-update_op(mcu_layout, #{layout:=Layout}, OffAns, Session, #{fs_id:=FsId}=State) ->
-    case Session of
-        #{offer_op:={mcu, #{room:=Room}=Opts}} -> ok;
-        #{answer_op:={mcu, #{room:=Room}=Opts}} -> ok;
-        _ -> Opts = #{}, Room = error
-    end,
-    case Room of
-        error ->
-            {error, incompatible_operation, State};
-        _ ->
-            case nkmedia_fs_cmd:conf_layout(FsId, Room, Layout) of
-                ok  ->
-                    {ok, OffAns, mcu, Opts#{layout=>Layout}, State};
-                {error, Error} ->
-                    {error, Error, State}
-            end
-    end;
-
-update_op(bridge, #{peer:=PeerId, set_only:=true}, OffAns, _Session, State) ->
-    {ok, OffAns, bridge, #{peer_id=>PeerId}, State};
-
-update_op(bridge, #{peer:=PeerId}, OffAns, Session, State) ->
-    case fs_bridge(PeerId, Session, State) of
-        ok ->
-            {ok, OffAns, bridge, #{peer_id=>PeerId}, State};
-        {error, Error} ->
-            {error, Error, State}
-    end;
-
-update_op(call, Opts, OffAns, Session, State) ->
-    #{id:=Id, srv_id:=SrvId} = Session,
-    #{dest:=Dest} = Opts,
-    {ok, IdB, Pid} = nkmedia_session:start(SrvId, #{}),
-    ok = nkmedia_session:link_session(Pid, Id, #{send_events=>true}),
-    #{offer:=Offer} = Session,
-    Offer2 = maps:with(?OFFER_FILDS, Offer),
-    Type = maps:get(sdp_type, Opts, webrtc),
-    Offer3 = Offer2#{sdp_type=>Type},
-    State2 = State#{park_after=>maps:get(park_after, Opts, false)},
-    case nkmedia_session:offer(Pid, park, #{offer=>Offer3}) of
-        {ok, _} ->
-            ok = nkmedia_session:answer_async(Pid, invite, #{dest=>Dest}),
-            % we switch the calling session to 'fake' invite
-            % we will send it ringing, etc.
-            Opts2 =  Opts#{fs_peer=>IdB, fake=>true},
-            {ok, OffAns, invite, Opts2, State2};
-        {error, Error} ->
-            {error, Error, State2}
     end.
 
 
 %% @private
--spec updated_answer(nkmedia:answer(), session(), state()) ->
-    {ok, nkmedia:answer(), state()} |
+-spec answer(type(), nkmedia:answer(), session(), state()) ->
+    {ok, map(), nkmedia:answer(), state()} |
     {error, term(), state()} | continue().
 
-updated_answer(Answer, Session, #{fs_role:=offer}=State) -> 
-    #{id:=SessId, offer:=#{sdp_type:=Type}} = Session,
-    Mod = fs_mod(Type),
+answer(Type, Answer, Session, #{fs_role:=offer}=State) ->
+    #{id:=SessId, offer:=#{sdp_type:=SdpType}} = Session,
+    Mod = fs_mod(SdpType),
     case Mod:answer_out(SessId, Answer) of
         ok ->
             wait_park(Session),
-            case State of
-                #{answer_op:={Op, Opts}} ->
-                    nkmedia_session:offer_op_async(self(), Op, Opts),
-                    {ok, Answer, maps:remove(answer_op, State)};
+            case Type of
+                park ->     
+                    {ok, #{}, #{answer=>Answer}, State};
                 _ ->
-                    {ok, Answer, State}
+                    case do_update(Type, Session, State) of
+                        {ok, Reply, ExtOps, State2} ->
+                            {ok, Reply, ExtOps#{answer=>Answer}, State2};
+                        {error, Error, State2} ->
+                            {error, Error, State2};
+                        continue ->
+                            {error, invalid_parameters, State}
+                    end
             end;
         {error, Error} ->
             ?LLOG(warning, "error in answer_out: ~p", [Error], Session),
-            {error, mediaserver_error, State}
+            {error, fs_error, State}
     end;
 
-updated_answer(_Answer, _Session, _State) ->
+answer(_Type, _Answer, _Session, _State) ->
     continue.
 
 
-%% @doc Called when a linked peer sends an event
--spec peer_event(id(), caller|callee, nkmedia_session:event(), session(), state()) ->
-    any().
+%% @private
+-spec update(update(), map(), type(), nkmedia:session(), state()) ->
+    {ok, type_ext(), map(), state()} |
+    {error, term(), state()} | continue().
 
-peer_event(IdB, callee, {answer_op, invite, Opts}, 
-           #{answer_op:={invite, #{fake:=true}}}=Session, State) ->
-    case Opts of
-        #{status:=ringing, answer:=Answer} ->
-            nkmedia_session:invite_reply(self(), {ringing, Answer});
-        #{status:=answered, answer:=Answer} ->
-            nkmedia_session:invite_reply(self(), {answered, Answer}),
-            case fs_bridge(IdB, Session, State) of
-                ok ->
-                    ok;
-               {error, Error} ->
-                    ?LLOG(warning, "bridge error: ~p", [Error], Session),
-                    nkmedia_session:stop(IdB, fs_bridge_error),
-                    nkmedia_session:stop(self(), fs_bridge_error)
-            end;
-        #{status:=rejected, reason:=Reason} ->
-            nkmedia_session:invite_reply(self(), {rejected, Reason});
-        _ ->
-            ok
+update(type, #{type:=Type}=Opts, _OldTytpe, Session, #{fs_id:=_}=State) ->
+    do_update(Type, maps:merge(Session, Opts), State);
+
+update(mcu_layout, #{mcu_layout:=Layout}, mcu, 
+       #{type_ext:=#{room:=Room}=Ext}, #{fs_id:=FsId}=State) ->
+    case nkmedia_fs_cmd:conf_layout(FsId, Room, Layout) of
+        ok  ->
+            ExtOps = #{type_ext=>Ext#{mcu_layout=>Layout}},
+            {ok, #{}, ExtOps, State};
+        {error, Error} ->
+            {error, Error, State}
     end;
 
-peer_event(_Id, callee, {answer_op, _, _Opts}, _Session, _State) ->
-    ok;
-
-peer_event(_Id, caller, {answer_op, _, _Opts}, _Session, _State) ->
-    ok;
-
-peer_event(Id, callee, {hangup, _Reason}, Session, State) ->
-    case Session of
-        #{answer_op:={bridge, #{peer_id:=Id}}} ->
-            case State of
-                #{park_after:=true} ->
-                    ok;
-                _ ->
-                    nkmedia_session:stop(self(), callee_hangup)
-            end;
-        _ ->
-            ?LLOG(notice, "unexpected hangup from peer", [], Session)
-    end;
-
-peer_event(_Id, caller, {hangup, Reason}, _Session, _State) ->
-    nkmedia_session:stop(self(), Reason),
-    ok;
-
-peer_event(Id, Type, Event, Session, _State) ->
-    ?LLOG(notice, "Peer ~s (~p) event: ~p", [Id, Type, Event], Session),
-    ok.
+update(_Update, _Opts, _Type, _Session, _State) ->
+    continue.
 
 
 %% @private
--spec hangup(nkservice:error(), session(), state()) ->
+-spec stop(nkservice:error(), session(), state()) ->
     {ok, state()}.
 
-hangup(_Reason, #{id:=SessId}, #{fs_id:=FsId}=State) ->
+stop(_Reason, #{id:=SessId}, #{fs_id:=FsId}=State) ->
     nkmedia_fs_cmd:hangup(FsId, SessId),
     {ok, State};
 
-hangup(_Reason, _Session, State) ->
+stop(_Reason, _Session, State) ->
     {ok, State}.
 
 
+
+%% ===================================================================
+%% Private
+%% ===================================================================
+
+
+%% @private Called from nkmedia_fs_callbacks
+-spec handle_cast(term(), session(), state()) ->
+    {ok, state()}.
+
+handle_cast({fs_event, FsId, Event}, #{type:=Type}=Session, State) ->
+    case State of
+        #{fs_id:=FsId} ->
+            do_fs_event(Event, Type, Session, State);
+        _ ->
+            ?LLOG(warning, "received FS Event for unknown FsId!", [], State)
+    end,
+    {ok, State};
+
+handle_cast({bridge, PeerId}, Session, State) ->
+    ?LLOG(notice, "received remote ~s bridge request", [PeerId], Session),
+    case fs_bridge(PeerId, Session, State) of
+        ok ->
+            Ops = #{type=>bridge, type_ext=>#{peer_id=>PeerId}},
+            nkmedia_session:ext_ops(self(), Ops),
+            {ok, State};
+        {error, Error} ->
+            {error, Error, State}
+    end.
 
 
 %% ===================================================================
 %% Internal
 %% ===================================================================
 
-%% @private
-is_supported(park, _) -> true;
-is_supported(echo, _) -> true;
-is_supported(mcu, _) -> true;
-is_supported(mcu_layout, _) -> true;
-is_supported(bridge, _) -> true;
-is_supported(call, _) -> true;
-is_supported(_, _) -> false.
-
 
 %% @private
-get_fs_answer(_Opts, _Session, #{fs_role:=answer}=State) ->
-    {error, already_set, State};
+do_update(park, Session, State) ->
+    unbridge(Session),
+    case fs_transfer("park", Session, State) of
+        ok ->
+            {ok, #{}, #{type=>park}, State};
+        {error, Error} ->
+            {error, Error, State}
+    end;
 
-get_fs_answer(_Opts, _Session, #{fs_role:=offer}=State) ->
+do_update(echo, Session, State) ->
+    unbridge(Session),
+    case fs_transfer("echo", Session, State) of
+        ok ->
+            {ok, #{}, #{type=>echo}, State};
+        {error, Error} ->
+            {error, Error, State}
+    end;
+
+do_update(mcu, Session, State) ->
+    unbridge(Session),
+    Room = case maps:find(room, Session) of
+        {ok, Room0} -> nklib_util:to_binary(Room0);
+        error -> nklib_util:uuid_4122()
+    end,
+    RoomType = maps:get(room_type, Session, <<"video-mcu-stereo">>),
+    Cmd = [<<"conference:">>, Room, <<"@">>, RoomType],
+    case fs_transfer(Cmd, Session, State) of
+        ok ->
+            ExtOps = #{type=>mcu, type_ext=>#{room=>Room, room_type=>RoomType}},
+            {ok, #{}, ExtOps, State};
+        {error, Error} ->
+            {error, Error, State}
+    end;
+
+do_update(call, #{id:=Id}=Session, State) ->
+    unbridge(Session),
+    case Session of
+        #{peer_id:=PeerId} ->
+            case send_cast(PeerId, {bridge, Id}) of
+                ok ->
+                    ExtOps = #{type=>bridge, type_ext=>#{peer_id=>PeerId}},
+                    {ok, #{}, ExtOps, State};
+                {error, Error} ->
+                    {error, Error, State}
+            end;
+        _ ->
+            continue
+    end;
+
+do_update(bridge, #{id:=Id}=Session, State) ->
+    unbridge(Session),
+    case Session of
+        #{peer_id:=PeerId} ->
+            case nkmedia_session:do_call(PeerId, {bridge, Id}) of
+                ok ->
+                    ExtOps = #{type=>bridge, type_ext=>#{peer_id=>PeerId}},
+                    {ok, #{}, ExtOps, State};
+                {error, Error} ->
+                    {error, Error, State}
+            end;
+        _ ->
+            continue
+    end;
+
+do_update(_Op, _Session, _State) ->
+    continue.
+
+
+ %% @private
+is_supported(park) -> true;
+is_supported(echo) -> true;
+is_supported(mcu) -> true;
+is_supported(bridge) -> true;
+is_supported(_) -> false.
+
+
+%% @private
+get_fs_answer(_Session, #{fs_role:=answer}=State) ->
+    {error, answer_already_set, State};
+
+get_fs_answer(_Session, #{fs_role:=offer}=State) ->
     {error, incompatible_fs_role, State};
 
-get_fs_answer(_Opts, #{id:=SessId, offer:=Offer}=Session,  #{fs_id:=FsId}=State) ->
+get_fs_answer(#{id:=SessId, offer:=Offer}=Session,  #{fs_id:=FsId}=State) ->
     case nkmedia_fs_verto:start_in(SessId, FsId, Offer) of
         {ok, SDP} ->
             wait_park(Session),
             {ok, #{sdp=>SDP}, State#{fs_role=>answer}};
         {error, Error} ->
-            {error, Error, State}
+            ?LLOG(warning, "error calling start_in: ~p", [Error], State),
+            {error, fs_error, State}
     end;
 
-get_fs_answer(Opts, Session, State) ->
+get_fs_answer(Session, State) ->
     case get_mediaserver(Session, State) of
         {ok, State2} ->
-            get_fs_answer(Opts, Session, State2);
+            get_fs_answer(Session, State2);
         {error, Error} ->
-            {error, {get_fs_answer_error, Error}, State}
+            {error, Error, State}
     end.
 
 
-
 %% @private
-get_fs_offer(_Opts, _Session, #{fs_role:=offer}=State) ->
-    {error, already_set, State};
+get_fs_offer(_Session, #{fs_role:=offer}=State) ->
+    {error, offer_already_set, State};
 
-get_fs_offer(_Opts, _Session, #{fs_role:=answer}=State) ->
+get_fs_offer(_Session, #{fs_role:=answer}=State) ->
     {error, incompatible_fs_role, State};
 
-get_fs_offer(Opts, #{id:=SessId}, #{fs_id:=FsId}=State) ->
-    Offer = maps:get(offer, Opts, #{}),
+get_fs_offer(#{id:=SessId}=Session, #{fs_id:=FsId}=State) ->
+    Offer = maps:get(offer, Session, #{}),
     Type = maps:get(sdp_type, Offer, webrtc),
     Mod = fs_mod(Type),
     case Mod:start_out(SessId, FsId, #{}) of
@@ -434,15 +411,16 @@ get_fs_offer(Opts, #{id:=SessId}, #{fs_id:=FsId}=State) ->
             Offer2 = Offer#{sdp=>SDP, sdp_type=>Type},
             {ok, Offer2, State#{fs_role=>offer}};
         {error, Error} ->
-            {error, {backend_out_error, Error}, State}
+            ?LLOG(warning, "error calling start_out: ~p", [Error], State),
+            {error, fs_error, State}
     end;
 
-get_fs_offer(Opts, Session, State) ->
+get_fs_offer(Session, State) ->
     case get_mediaserver(Session, State) of
         {ok, State2} ->
-            get_fs_offer(Opts, Session, State2);
+            get_fs_offer(Session, State2);
         {error, Error} ->
-            {error, {get_fs_offer_error, Error}, State}
+            {error, Error, State}
     end.
 
 
@@ -453,8 +431,8 @@ get_fs_offer(Opts, Session, State) ->
 get_mediaserver(_Session, #{fs_id:=_}=State) ->
     {ok, State};
 
-get_mediaserver(#{srv_id:=SrvId}=Session, State) ->
-    case SrvId:nkmedia_fs_get_mediaserver(Session) of
+get_mediaserver(#{srv_id:=SrvId}, State) ->
+    case SrvId:nkmedia_fs_get_mediaserver(SrvId) of
         {ok, Id} ->
             {ok, State#{fs_id=>Id}};
         {error, Error} ->
@@ -470,7 +448,7 @@ fs_transfer(Dest, #{id:=SessId}=Session, #{fs_id:=FsId}) ->
             ok;
         {error, Error} ->
             ?LLOG(warning, "FS transfer error: ~p", [Error], Session),
-            {error, transfer_error}
+            {error, fs_op_error}
     end.
 
 
@@ -488,58 +466,58 @@ fs_bridge(SessIdB, #{id:=SessIdA}=Session, #{fs_id:=FsId}) ->
             end;
         {error, Error} ->
             ?LLOG(warning, "FS bridge error: ~p", [Error], Session),
-            {error, bridge_error}
+            {error, fs_op_error}
     end.
 
 
 
-%% @private Called from nkmedia_fs_engine and nkmedia_fs_verto
--spec do_fs_event(fs_event(), session(), state()) ->
-    state().
+%% @private
+do_fs_event(parked, park, _Session, _State) ->
+    ok;
 
-do_fs_event(parked, Session, State) ->
-    case get_op(Session, State) of
-        {_, park, _} ->
-            ok; 
-        {offer_op, _, _} -> 
-            nkmedia_session:offer_async(self(), park, #{});
-        {answer_op, _, _} ->
-            nkmedia_session:answer_async(self(), park, #{});
-        unknown_op ->
-            ?LLOG(warning, "received parked in unknown_op!", [], Session)
+do_fs_event(parked, _Type, Session, _State) ->
+    case Session of
+        #{park_after_bridge:=true} ->
+            unbridge(Session),
+            nkmedia_session:ext_ops(self(), #{type=>park});
+        _ ->
+            nkmedia_session:stop(self(), peer_hangup)
+    end;
+
+do_fs_event({bridge, PeerId}, Type, Session, _State) when Type==bridge; Type==call ->
+    case Session of
+        #{type_ext:=#{peer_id:=PeerId}} ->
+            ok;
+        #{type_ext:=Ext} ->
+            ?LLOG(warning, "received bridge for different peer ~s: ~p!", 
+                  [PeerId, Ext], Session)
     end,
-    {ok, State};
+    nkmedia_session:ext_ops(self(), #{type=>bridge, type_ext=>#{peer_id=>PeerId}});
 
-do_fs_event({bridge, IdB}, Session, State) ->
-    Opts = #{peer=>IdB, set_only=>true},
-    case get_op(Session, State) of
-        {offer_op, _, _} -> 
-            nkmedia_session:offer_async(self(), bridge, Opts);
-        {answer_op, _, _} ->
-            nkmedia_session:answer_async(self(), bridge, Opts);
-        unknown_op ->
-            ?LLOG(warning, "received bridge in unknown_op!", [], Session)
-    end,
-    {ok, State};
+do_fs_event({bridge, PeerId}, Type, Session, _State) ->
+    ?LLOG(warning, "received bridge in ~p state", [Type], Session),
+    nkmedia_session:ext_ops(self(), #{type=>bridge, type_ext=>#{peer_id=>PeerId}});
 
-do_fs_event({mcu, McuInfo}, Session, State) ->
+do_fs_event({mcu, McuInfo}, mcu, Session, State) ->
     ?LLOG(info, "FS MCU Info: ~p", [McuInfo], Session),
     {ok, State};
 
-do_fs_event({hangup, Reason}, Session, State) ->
+do_fs_event(mcu, Type, Session, _State) ->
+    ?LLOG(warning, "received mcu in ~p state", [Type], Session),
+    nkmedia_session:ext_ops(self(), #{type=>mcu, type_ext=>#{}});
+
+do_fs_event({hangup, Reason}, _Type, Session, State) ->
     ?LLOG(warning, "received hangup from FS: ~p", [Reason], Session),
     nkmedia_session:stop(self(), Reason),
     {ok, State};
 
-do_fs_event(stop, Session, State) ->
+do_fs_event(stop, _Type, Session, State) ->
     ?LLOG(info, "received stop from FS", [], Session),
     nkmedia_session:stop(self(), fs_channel_stop),
     {ok, State};
 
-do_fs_event(Event, Session, State) ->
-    ?LLOG(warning, "unexpected ms event: ~p in ~p", 
-          [Event, get_op(Session, State)], Session), 
-    {ok, State}.
+do_fs_event(Event, Type, Session, _State) ->
+    ?LLOG(warning, "received FS event ~p in type '~p'!", [Event, Type], Session).
 
 
 %% @private
@@ -547,23 +525,33 @@ fs_mod(webrtc) ->nkmedia_fs_verto;
 fs_mod(rtp) -> nkmedia_fs_sip.
 
 
-%% @private
-get_op(#{offer_op:={Op, Data}}, #{fs_role:=offer}) -> {offer_op, Op, Data};
-get_op(#{answer_op:={Op, Data}}, #{fs_role:=answer}) -> {answer_op, Op, Data};
-get_op(_, _) -> unknown_op.
-
-
 
 %% @private
 wait_park(Session) ->
     receive
-        {'$gen_cast', {fs_event, _, parked}} -> ok
+        {'$gen_cast', {nkmedia_fs_session, {fs_event, _, parked}}} -> ok
     after 
         2000 -> 
             ?LLOG(warning, "parked not received", [], Session)
     end.
 
+%% @private
+send_cast(SessId, Msg) ->
+    nkmedia_session:do_cast(SessId, {nkmedia_fs_session, Msg}).
 
+
+%% @private
+unbridge(#{links:=Links}=_Session) ->
+    nklib_links:iter(
+        fun
+            ({nkmedia_fs_caller, _Peer, _Pid}=ProcId, _) ->
+                nkmedia_session:unregister(self(), ProcId);
+            ({nkmedia_fs_callee, _Peer, _Pid}=ProcId, _) ->
+                nkmedia_session:unregister(self(), ProcId);
+            (_, _) ->
+                ok
+        end,
+        Links).
 
 
 
