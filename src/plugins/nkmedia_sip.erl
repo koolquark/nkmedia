@@ -21,10 +21,7 @@
 %% @doc Plugin implementing a SIP server and client
 -module(nkmedia_sip).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([send_invite/4, send_hangup/1]).
-
--define(LLOG(Type, Txt, Args),
-    lager:Type("NkMEDIA SIP Plugin (~s) "++Txt, [CallId|Args])).
+-export([send_invite/5, send_bye/1, register_incoming/2]).
 
 
 % -define(OP_TIME, 15000).            % Maximum operation time
@@ -44,109 +41,129 @@
 	}.
 
 
+-type id() ::
+    {nkmedia_session, nkmedia_session:id()} |
+    {nkmedia_call, nkmedia_call:id()} |
+    term().
+
 
 %% ===================================================================
 %% Public
 %% ===================================================================
 
 
-%% @private
-%% Launches an asynchronous invite
-%% Stores {?MODULE, cancel, CallId} under the current caller
-%% If the call is answered, stored also dialog and call
--spec send_invite(nkservice:id(), nkmedia_call:id(),
-                  nklib:user_uri(), invite_opts()) ->
+%% @doc
+%% Launches an asynchronous invite, from a session or call
+%% To recognize events, Id must be {nkmedia_session|nkmedia_call, Id}
+-spec send_invite(nkservice:id(), nklib:user_uri(), nkmedia:offer(),
+                  id(), invite_opts()) ->
 	{ok, nklib:proc_id()} | {error, term()}.
 
-send_invite(SrvId, CallId, Uri, Opts) ->
+send_invite(Srv, Uri, #{sdp:=SDP}, Id, Opts) ->
+    {ok, SrvId} = nkservice_srv:get_srv_id(Srv),
     Ref = make_ref(),
     Self = self(),
     Fun = fun
         ({req, _Req, _Call}) ->
             Self ! {Ref, self()};
         ({resp, Code, Resp, _Call}) when Code==180; Code==183 ->
-            ProcId = {nkmedia_sip, Ref, self()},
             {ok, Body} = nksip_response:body(Resp),
-            case nksip_sdp:is_sdp(Body) of
-                true ->
-                    _SDP = nksip_sdp:unparse(Body),
-                    nkmedia_call:ringing(CallId, ProcId);
-                false ->
-                    nkmedia_call:ringing(CallId, ProcId)
-            end;
+            _Answer = case nksip_sdp:is_sdp(Body) of
+                true -> #{sdp=>nksip_sdp:unparse(Body)};
+                false -> #{}
+            end,
+            SrvId:nkmedia_sip_invite_ringing(Id);
         ({resp, Code, _Resp, _Call}) when Code < 200 ->
             ok;
         ({resp, Code, _Resp, _Call}) when Code >= 300 ->
             lager:notice("SIP reject code: ~p", [Code]),
-            ProcId = {nkmedia_sip, Ref, self()},
-            nkmedia_call:rejected(CallId, ProcId);
+            SrvId:nkmedia_sip_invite_rejected(Id);
         ({resp, _Code, Resp, _Call}) ->
             {ok, Dialog} = nksip_dialog:get_handle(Resp),
             %% We are storing this in the session's process (Self)
-            nklib_proc:put({?MODULE, dialog, Dialog}, CallId, Self),
-            nklib_proc:put({?MODULE, call, CallId}, Dialog, Self),
-            ProcId = {nkmedia_sip, Ref, self()},
+            nklib_proc:put({nkmedia_sip_dialog_to_id, Dialog}, Id),
+            nklib_proc:put({nkmedia_sip_id_to_dialog, Id}, Dialog),
             {ok, Body} = nksip_response:body(Resp),
             case nksip_sdp:is_sdp(Body) of
                 true ->
                     Answer = #{sdp=>nksip_sdp:unparse(Body)},
-                    case nkmedia_call:answered(CallId, ProcId, Answer) of
+                    case SrvId:nkmedia_sip_invite_answered(Id, Answer) of
                         ok ->
                             ok;
                         Other ->
-                            ?LLOG(warning, "error calling call answer: ~p", 
-                                  [Other]),
+                            lager:warning("SIP error calling call answer: ~p", [Other]),
                             spawn(fun() -> nksip_uac:bye(Dialog, []) end)
                     end;
                 false ->
-                    ?LLOG(notice, "missing SDP in response", []),
+                    lager:warning("SIP: missing SDP in response"),
                     spawn(fun() -> nksip_uac:bye(Dialog, []) end),
-                    nkmedia_call:rejected(CallId, ProcId)
+                    SrvId:nkmedia_sip_invite_rejected(Id)
             end
     end,
-    ?LLOG(info, "calling ~s", [nklib_unparse:uri(Uri)]),
-    InvOpts1 = [async, {callback, Fun}, get_request, auto_2xx_ack],
+    lager:info("SIP calling ~s", [nklib_unparse:uri(Uri)]),
+    SDP2 = nksip_sdp:parse(SDP),
+    InvOpts1 = [async, {callback, Fun}, get_request, auto_2xx_ack, {body, SDP2}],
     InvOpts2 = case Opts of
-        #{sdp:=SDP} -> 
-            SDP2 = nksip_sdp:parse(SDP),
-            [{body, SDP2}|InvOpts1];
-        _ -> 
-            InvOpts1
+        #{from:=From} -> [{from, From}|InvOpts1];
+        _ -> InvOpts1
     end,
     InvOpts3 = case Opts of
-        #{from:=From} -> [{from, From}|InvOpts2];
+        #{pass:=Pass} -> [{sip_pass, Pass}|InvOpts2];
         _ -> InvOpts2
     end,
     InvOpts4 = case Opts of
-        #{pass:=Pass} -> [{sip_pass, Pass}|InvOpts3];
+        #{proxy:=Proxy} -> [{route, Proxy}|InvOpts3];
         _ -> InvOpts3
     end,
-    InvOpts5 = case Opts of
-        #{proxy:=Proxy} -> [{route, Proxy}|InvOpts4];
-        _ -> InvOpts4
-    end,
-    {async, Handle} = nksip_uac:invite(SrvId, Uri, InvOpts5),
-    nklib_proc:put({?MODULE, cancel, CallId}, Handle),
+    {async, Handle} = nksip_uac:invite(SrvId, Uri, InvOpts4),
     receive
         {Ref, Pid} ->
-            {ok, {nkmedia_sip, Ref, Pid}}
+            nklib_proc:put({nkmedia_sip_id_to_cancel, Id}, Handle, Pid),
+            {ok, Pid}
     after
         5000 ->
             {error, sip_send_error}
     end.
 
 
+%% @doc Tries to send a BYE for a registered SIP
+-spec send_bye(id()) ->
+    ok.
 
-%% @private
-send_hangup(CallId) ->
-    case nklib_proc:values({?MODULE, call, CallId}) of
-        [{Dialog, _SessPid}|_] ->
+send_bye(Id) ->
+    case nklib_proc:values({nkmedia_sip_id_to_dialog, Id}) of
+        [{Dialog, _SipPid}|_] ->
+            lager:info("SIP sending BYE for ~p", [Id]),
             nksip_uac:bye(Dialog, []);
         [] ->
-            case nklib_proc:values({?MODULE, cancel, CallId}) of
-                [{Handle, _SessPid}|_] ->
+            case nklib_proc:values({nkmedia_sip_id_to_handle, Id}) of
+                [{Handle, _SiPid}|_] ->
+                    lager:info("SIP sending CANCEL for ~p", [Id]),
                     nksip_uac:cancel(Handle, []);
                 [] ->
-                    lager:notice("Sending Hangup for unknown SIP")
+                    ok
             end
     end.
+
+
+%% @doc Reigisters an incoming SIP
+-spec register_incoming(nksip:request(), id()) ->
+    ok.
+
+register_incoming(Req, Id) ->
+    {ok, Handle} = nksip_request:get_handle(Req),
+    {ok, Dialog} = nksip_dialog:get_handle(Req),
+    nklib_proc:put({nkmedia_sip_dialog_to_id, Dialog}, Id),
+    nklib_proc:put({nkmedia_sip_id_to_dialog, Id}, Dialog),
+    nklib_proc:put({nkmedia_sip_id_to_handle, Id}, Handle),
+    nklib_proc:put({nkmedia_sip_handle_to_id, Handle}, Id).
+
+
+
+
+
+
+
+
+
+

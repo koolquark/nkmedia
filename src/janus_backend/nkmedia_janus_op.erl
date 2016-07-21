@@ -419,7 +419,6 @@ handle_call({from_sip, Offer, Opts}, From, #state{status=wait}=State) ->
     do_from_sip_register(State#state{from=From, offer=Offer, opts=Opts});
 
 handle_call({to_sip, Offer, Opts}, From, #state{status=wait}=State) ->
-    lager:warning("Opts: ~p", [Opts]),
     do_to_sip_register(State#state{from=From, offer=Offer, opts=Opts});
 
 handle_call({sip_registered, Contact}, _From, #state{status=Status, wait=Wait}=State) ->
@@ -1184,11 +1183,11 @@ do_event(Id, Handle, {event, <<"accepted">>, _, #{<<"sdp">>:=SDP}}, State) ->
         #state{status=wait, wait=to_sip_reply, janus_sess_id=Id, handle_id=Handle} ->
             #state{from=From, opts=Opts} = State,
             State2 = State#state{from=undefined},
+            gen_server:reply(From, {ok, #{sdp=>SDP}}),
             case Opts of
                 #{record:=true} ->
                     case do_sip_update(#{record=>true}, State2) of
                         {reply, ok, State3, _} ->
-                            gen_server:reply(From, {ok, #{sdp=>SDP}}),
                             noreply(status(sip, State3));
                         {error, _Error, State3} ->
                             {stop, normal, State3}

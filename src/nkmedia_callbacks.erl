@@ -157,6 +157,17 @@ nkmedia_session_peer_event(_SessId, _Type, _Event, Session) ->
 								media_session:event(), session()) ->
 	{ok, session()} | continue().
 
+nkmedia_session_reg_event(_SessId, {nkmedia_session, SessIdB, _Pid}, Event, Session) ->
+	case Event of
+		{answer, Answer} ->
+			nkmedia_session:answer(SessIdB, Answer);
+		{stop, Reason} ->
+			nkmedia_session:stop(SessIdB, Reason);
+		_ ->
+			ok
+	end,
+	{ok, Session};
+
 nkmedia_session_reg_event(_SessId, {nkmedia_call, CallId, _CallPid}, Event, Session) ->
 	case Event of
 		{stop, Reason} ->

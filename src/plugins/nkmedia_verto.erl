@@ -386,7 +386,12 @@ process_client_req(<<"login">>, Msg, NkPort, State) ->
                     Reply = make_error(-32001, "Authentication Failure", Msg),
                     send(Reply, NkPort, State2);
                 _ ->
-                    true = nklib_proc:reg({?MODULE, verto_session, VertoSessId}),
+                    case nklib_proc:reg({?MODULE, verto_session, VertoSessId}) of
+                        true -> 
+                            ok;
+                        {false, Pid} -> 
+                            ?LLOG(notice, "duplicated Verto login: ~p", [Pid], State)
+                    end,
                     nklib_proc:put(?MODULE, Login2),
                     nklib_proc:put({?MODULE, user, Login2}),
                     #state{verto=Verto2} = State2,
@@ -711,7 +716,7 @@ send_bw_test(Iter, Acc, NkPort) ->
 user_reply(#trans{from={async, Pid, Ref}}, Msg) ->
     Pid ! {?MODULE, Ref, Msg};
 user_reply(#trans{from=From}, Msg) ->
-    gen_server:reply(From, Msg).
+    nklib_util:reply(From, Msg).
 
 
 %% @private Send 256*1024 => 262144 bytes

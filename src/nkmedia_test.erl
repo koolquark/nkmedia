@@ -18,7 +18,53 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc 
+%% @doc Tests for media functionality
+%% Things to test:
+%% - Register a Verto or a Janus (videocall)
+%%   - Call e for Janus echo
+%%     Verto/Janus register with the session on start as {nkmedia_verto, CallId, Pid}
+%%     The session returns its ProcId, and it is registered with Janus/Verto
+%%     When the sessions answers, Verto/Janus get the answer from their callback
+%%     modules (nkmedia_session_reg_event). Same if it stops normally.
+%%     If the session is killed it is detected by both
+%%     If you hangup, the functions nkmedia_verto_bye (/janus) stops the session
+%%     If Verto/Janus is killed, it is detected by the session
+%%   - fe, p, p2, m1, m2 work the same way
+%%   - start a listener with listen(Publisher, {reg, Num})
+%%     This is the first operarion where we "call". We can reject the call, or accept it
+%%     We create a session that generates an offer, and call Verto/Janus,
+%%     then we register Verto/Janus with the session
+%%     When Verto/Janus answers, their nkmedia_..._answer functions (or rejected) 
+%%     sets the answer or stops the session (nkmedia_..._bye).
+%%   - d to call other party directly
+%%   - j to call other party with Janus. Both parties are rgistered
+%%   - f to call with FS
+%%     We first starts a session in park state
+%%     Then we start another with "call" and the id of the first. When it answers,
+%%     sends a message to the first an both enter bridge.
+%%     After that can use update_type con echo, park, or fs_call again
+%%     Use park_after_bridge
+%%   
+%%  - Register a SIP Phone
+%%    - Incoming. When a call arrives, we create a proxy session with janus  
+%%      a register {nkmedia_sip, Pid} with it. 
+%%      We call nkmedia_sip:register_incoming to store handle and dialog in SIP's 
+%%      We can call any destination (d1009, j1009, etc. all should work), 
+%%      and we start a second session (registered with {nkmedia_session, ...}) 
+%%      so that when it answers, sends the answer back to the first. 
+%%      SIP detects the answer in nkmedia_sip_calls (nkmedia_session_reg_event),
+%%      finds the Handle and answers. If we can cancel, sip_cancel find the session
+%%      When the answer arrives, it is detected in nkmedia_session_reg_event
+%%      If we send BYE, the session is found in sip_bye
+%%      If the session stops, it is detected in nkmedia_session_reg_event
+%%    - Outcoming. When any invite example calls to a registered SIP endpoint,
+%%      the option proxy_type=rtp is added (FS??) 
+%%      we call send_invite that returns the PID and we register with the session
+%%      
+
+
+
+
 -module(nkmedia_test).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -compile([export_all]).
@@ -30,8 +76,6 @@
 -include_lib("nksip/include/nksip.hrl").
 
 
-% -define(URL, "nkapic://media2.netcomposer.io:9010").
--define(URL, "nkapic://127.0.0.1:9010").
 
 
 %% ===================================================================
@@ -115,18 +159,17 @@ mcu_layout(SessId, Layout) ->
 
 
 fs_call(SessId, Dest) ->
-    Config = #{peer_id=>SessId},
-    case start_invite(call, Config, {invite, Dest}) of
+    Config = #{peer_id=>SessId, park_after_bridge=>true},
+    case start_invite(call, Config, {reg, Dest}) of
         {ok, _SessProcIdB} ->
             ok;
-        {error, Error} ->
+        {rejected, Error} ->
             lager:notice("Error in start_invite: ~p", [Error]),
-             nkmedia_session:stop(SessId)
+            nkmedia_session:stop(SessId)
    end.
 
+
 %% ===================================================================
-
-
 %% nkmedia_verto callbacks
 %% ===================================================================
 
@@ -185,11 +228,7 @@ nkmedia_janus_invite(_SrvId, CallId, Offer, Janus) ->
 %% Sip callbacks
 %% ===================================================================
 
-% sip_route(_Scheme, _User, <<"192.168.0.100">>, _Req, _Call) ->
-%     proxy;
-
 sip_route(_Scheme, _User, _Domain, _Req, _Call) ->
-    % lager:warning("User: ~p, Domain: ~p", [_User, _Domain]),
     process.
 
 
@@ -198,89 +237,56 @@ sip_register(Req, Call) ->
     {continue, [Req2, Call]}.
 
 
-% nkmedia_sip_invite(SrvId, {sip, _Dest, _}, Offer, Req, _Call) ->
+% Version that generates a Janus proxy before going on
+nkmedia_sip_invite(_SrvId, {sip, Dest, _}, Offer, Req, _Call) ->
+    Config1 = #{offer=>Offer, register=>{nkmedia_sip, in, self()}},
+    % We register with the session as {nkmedia_sip, ...}, so:
+    % - we will detect the answer in nkmedia_sip_callbacks:nkmedia_session_reg_event
+    % - we stop the session if thip process stops
+    {offer, Offer2, ProcId2} = start_session(proxy, Config1),
+    {nkmedia_session, SessId, _} = ProcId2,
+    nkmedia_sip:register_incoming(Req, {nkmedia_session, SessId}),
+    % Since we are registering as {nkmedia_session, ..}, the second session
+    % will be linked with the first, and will send answer back
+    % We return {ok, ProcId} or {rejected, Reason}
+    % nkmedia_sip will store that ProcId
+    send_call(Offer2#{dest=>Dest}, ProcId2).
+
+
+% % Version that go directly to FS
+% nkmedia_sip_invite(_SrvId, {sip, Dest, _}, Offer, Req, _Call) ->
 %     {ok, Handle} = nksip_request:get_handle(Req),
 %     {ok, Dialog} = nksip_dialog:get_handle(Req),
-%     Reg = {nkmedia_sip, {Handle, Dialog}, self()},
-%     case nkmedia_session:start(SrvId, echo, #{offer=>Offer, register=>Reg}) of
-%         {ok, _SessId, _SessPid, #{answer:=Answer}} ->
-%             {reply, nksip_sdp:parse(Answer)};
-%         {error, Error} ->
-%             {rejected, Error}
-%     end;
+%     ProcId = {nkmedia_sip, {Handle, Dialog}, self()},
+%     send_call(Offer#{dest=>Dest}, ProcId).
 
 
-nkmedia_sip_invite(SrvId, {sip, Dest, _}, Offer, Req, _Call) ->
-    % {ok, [{from_user, User}, {from_domain, _Domain}]} = 
-    %     nksip_request:metas([from_user, from_domain], Req),
-    case find_user(Dest) of
-        {webrtc, WebRTC} ->
-            {ok, Handle} = nksip_request:get_handle(Req),
-            {ok, Dialog} = nksip_dialog:get_handle(Req),
-            Reg = {nkmedia_sip, {Handle, Dialog}, self()},
-            OfferA = Offer#{sdp_type=>webrtc},
-            case nkmedia_session:start(SrvId, proxy, #{offer=>OfferA, register=>Reg}) of
-                {ok, SessId, SessPid, #{offer:=Offer2}} ->
-                    case WebRTC of
-                        {nkmedia_verto, Pid} ->
-                            % Verto will send the answer or hangup the session
-                            ok = nkmedia_verto:invite(Pid, SessId, Offer2, 
-                                                      {nkmedia_session, SessId, SessPid}),
-                            {ok, _} = 
-                                nkmedia_session:register(SessId, {nkmedia_verto, Pid}),
-                            ok
-                    end;
-                {error, Error} ->
-                    {rejected, Error}
-            end;
-        not_found ->
-            {rejected, user_not_found}
-    end;
-
-nkmedia_sip_invite(_SrvId, _AOR, _Offer, _Req, _Call) ->
-    continue.
-
-
-
-
-
-%% ===================================================================
-%% Session callbacks
-%% ===================================================================
-
-nkmedia_session_reg_event(_SessId, {nkmedia_sip, {Handle, Dialog}, _Pid}, 
-                          Event, Session) ->
-    case Event of
-        {stop, _Reason} ->
-            case Session of
-                #{answer:=#{sdp:=_}} ->
-                    nksip_uac:bye(Dialog, []);
-                _ ->
-                    lager:error("STOP2: ~p", [Handle]),
-                    nksip_request:reply(decline, Handle)
-            end;
-        {answer, #{sdp:=SDP}} ->
-            Body = nksip_sdp:parse(SDP),
-            case nksip_request:reply({answer, Body}, Handle) of
-                ok ->
-                    ok;
-                {error, Error} ->
-                    lager:error("Error in SIP reply: ~p", [Error]),
-                    nkmedia_session:hangup(self(), process_down)
-            end;
-        _ ->
-            ok
-    end,
-    {ok, Session};
-
-nkmedia_session_reg_event(_SessId, _ProcId, _Event, _Session) ->
-    continue.
-
-
-%% ===================================================================
-%% Call callbacks
-%% ===================================================================
-
+% % Version that calls Verto Directly
+% nkmedia_sip_invite(SrvId, {sip, Dest, _}, Offer, Req, _Call) ->
+%     case find_user(Dest) of
+%         {webrtc, WebRTC} ->
+%             {ok, Handle} = nksip_request:get_handle(Req),
+%             {ok, Dialog} = nksip_dialog:get_handle(Req),
+%             Config = #{
+%                 offer => Offer,
+%                 register => {nkmedia_sip, {Handle, Dialog}, self()}
+%             },
+%             {offer, Offer2, ProcId2} = start_session(proxy, Config),
+%             {nkmedia_session, SessId2, _} = ProcId2,
+%             case WebRTC of
+%                 {nkmedia_verto, VertoPid} ->
+%                     % Verto will send the answer or hangup to the session
+%                     ok = nkmedia_verto:invite(VertoPid, SessId, Offer2, 
+%                                               {nkmedia_session, SessId, SessPid}),
+%                     {ok, _} = 
+%                         nkmedia_session:register(SessId, {nkmedia_verto, Pid}),
+%                     {ok, ProcId2};
+%                 {error, Error} ->
+%                     {rejected, Error}
+%             end;
+%         not_found ->
+%             {rejected, user_not_found}
+%     end.
 
 
 
@@ -323,16 +329,16 @@ send_call(#{dest:=Dest}=Offer, ProcId) ->
             },
             start_session(publish, Config);
         <<"p2">> ->
-            nkmedia_janus_room:create(test, #{id=><<"sfu">>, room_video_codec=>vp9}),
+            nkmedia_janus_room:create(test, #{id=><<"sfu">>}),
             Config = #{offer=>Offer, room=><<"sfu">>, register=>ProcId},
             start_session(publish, Config);
         <<"d", Num/binary>> ->
             % We share the same session, with both caller and callee registered to it
             Config = #{offer => Offer, register => ProcId},
-            start_invite(p2p, Config, {invite, Num});
+            start_invite(p2p, Config, {reg, Num});
         <<"j", Num/binary>> ->
             Config = #{offer => Offer, register => ProcId},
-            start_invite(proxy, Config, {invite, Num});
+            start_invite(proxy, Config, {reg, Num});
         <<"f", Num/binary>> ->
             ConfigA = #{
                 offer => Offer, 
@@ -370,55 +376,69 @@ start_session(Type, Config) ->
     end.
 
 
+%% Creates a new session that must generate an offer (a p2p, proxy, listen or call)
+%% Then invites Verto, Janus or SIP with that offer
 start_invite(Type, Config, Dest) ->
-    case start_session(Type, Config) of
+    User = case Dest of
+        {reg, Inv} -> find_user(Inv)
+    end,
+    Config2 = case User of
+        {rtp, _} -> Config#{proxy_type=>rtp};
+        _ -> Config
+    end,
+    case start_session(Type, Config2) of
         {offer, Offer, SessProcId} ->
             {nkmedia_session, SessId, _} = SessProcId,
-            case Dest of 
-                {invite, User} ->
-                    case find_user(User) of
-                        {webrtc, {nkmedia_verto, VertoPid}} ->
-                            % With this SessProcId, when Verto answers it will send
-                            % the answer to the session
-                            % Also will detect session kill
-                            ok = nkmedia_verto:invite(VertoPid, SessId, 
-                                                      Offer, SessProcId),
-                            VertoProcId = {nkmedia_verto, SessId, VertoPid},
-                            % With this VertoProcId, verto can use nkmedia_session_reg_event to detect hangup
-                            % Also the session will detect Verto kill
-                            {ok, _} = nkmedia_session:register(SessId, VertoProcId),
-                            {ok, SessProcId};
-                        {webrtc, {nkmedia_janus, JanusPid}} ->
-                            ok = nkmedia_janus_proto:invite(JanusPid, SessId, 
-                                                            Offer, SessProcId),
-                            JanusProcId = {nkmedia_janus, SessId, JanusPid},
-                            {ok, _} = nkmedia_session:register(SessId, JanusProcId),
-                            {ok, SessProcId};
-                        not_found ->
-                            nkmedia_session:stop(SessId),
-                            {error, invalid_user}
-                    end 
+            case User of 
+                {webrtc, {nkmedia_verto, VertoPid}} ->
+                    % With this SessProcId, when Verto answers it will send
+                    % the answer to the session
+                    % Also will detect session kill
+                    ok = nkmedia_verto:invite(VertoPid, SessId, 
+                                              Offer, SessProcId),
+                    VertoProcId = {nkmedia_verto, SessId, VertoPid},
+                    % With this VertoProcId, verto can use nkmedia_session_reg_event to detect hangup
+                    % Also the session will detect Verto kill
+                    {ok, _} = nkmedia_session:register(SessId, VertoProcId),
+                    {ok, SessProcId};
+                {webrtc, {nkmedia_janus, JanusPid}} ->
+                    ok = nkmedia_janus_proto:invite(JanusPid, SessId, 
+                                                    Offer, SessProcId),
+                    JanusProcId = {nkmedia_janus, SessId, JanusPid},
+                    {ok, _} = nkmedia_session:register(SessId, JanusProcId),
+                    {ok, SessProcId};
+                {rtp, {nkmedia_sip, Uri, Opts}} ->
+                    Id = {nkmedia_session, SessId},
+                    {ok, SipPid} = 
+                        nkmedia_sip:send_invite(test, Uri, Offer, Id, Opts),
+                    SipProcId = {nkmedia_sip, out, SipPid},
+                    {ok, _} = nkmedia_session:register(SessId, SipProcId),
+                    {ok, SessProcId};
+                not_found ->
+                    nkmedia_session:stop(SessId),
+                    {rejected, unknown_user}
             end;
-        {error, user_not_found} ->
-            {error, user_not_found}
+        {error, Error} ->
+            {rejected, Error}
     end.
 
 
 %% @private
 find_user(User) ->
-    case nkmedia_verto:find_user(User) of
+    User2 = nklib_util:to_binary(User),
+    case nkmedia_verto:find_user(User2) of
         [Pid|_] ->
             {webrtc, {nkmedia_verto, Pid}};
         [] ->
-            case nkmedia_janus_proto:find_user(User) of
+            case nkmedia_janus_proto:find_user(User2) of
                 [Pid|_] ->
                     {webrtc, {nkmedia_janus, Pid}};
                 [] ->
                     case 
-                        nksip_registrar:find(test, sip, User, <<"nkmedia">>) 
+                        nksip_registrar:find(test, sip, User2, <<"nkmedia">>) 
                     of
                         [Uri|_] -> 
-                            {rtp, {nkmedia_sip, Uri, #{}}};
+                            {rtp, {nkmedia_sip, Uri, []}};
                         []  -> 
                             not_found
                     end

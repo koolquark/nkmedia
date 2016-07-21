@@ -399,7 +399,7 @@ nkmedia_session_reg_event(_SessId, {nkmedia_sip, {Handle, Dialog}, _Pid},
                     ok;
                 {error, Error} ->
                     lager:error("Error in SIP reply: ~p", [Error]),
-                    nkmedia_session:hangup(self(), process_down)
+                    nkmedia_session:stop(self(), process_down)
             end;
         _ ->
             ok

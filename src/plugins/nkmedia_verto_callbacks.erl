@@ -292,7 +292,7 @@ nkmedia_call_reg_event(_CallId, _ProcId, _Event, _Call) ->
 %% @private
 %% Convenient functions in case we are registered with the session as
 %% {nkmedia_verto, CallId, Pid}
-nkmedia_session_reg_event(_SessId, {nkmedia_verto, CallId, Pid}, Event, _Call) ->
+nkmedia_session_reg_event(_SessId, {nkmedia_verto, CallId, Pid}, Event, _Session) ->
     case Event of
         {answer, Answer} ->
             % we may be blocked waiting for the same session creation
