@@ -310,6 +310,7 @@ nkmedia_session_reg_event(SessId, {nkmedia_sip, in, _SipPid}, Event, Session) ->
 
 nkmedia_session_reg_event(SessId, {nkmedia_sip, out, _SipPid}, 
                           {stop, _Reason}, Session) ->
+    lager:error("SIP OUT STOP"),
     spawn(fun() -> nkmedia_sip:send_bye({nkmedia_session, SessId}) end),
     {ok, Session};
 

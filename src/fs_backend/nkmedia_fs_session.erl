@@ -158,24 +158,11 @@ start(Type, #{offer:=#{sdp:=_}}=Session, State) ->
             continue
     end;
 
-start(call, #{id:=Id, peer_id:=PeerId}=Session, State) ->
-    case nkmedia_session:register(PeerId, {nkmedia_fs_caller, Id, self()}) of
-        {ok, PeerPid} ->
-            case get_fs_offer(Session, State) of
-                {ok, Offer, State2} ->
-                    Reply = #{offer=>Offer},
-                    ProcId = {nkmedia_fs_callee, PeerId, PeerPid},
-                    ExtOps = #{offer=>Offer, register=>ProcId},
-                    {ok, Reply, ExtOps, State2};
-                {error, Error, State2} ->
-                    {error, Error, State2}
-            end;
-        not_found ->
-            {error, peer_not_found, State}
-    end;
-
 start(Type, Session, State) ->
-    case is_supported(Type) of
+    case 
+        (Type==call andalso maps:is_key(caller_peer, Session))
+        orelse is_supported(Type) 
+    of
         true ->  
             case get_fs_offer(Session, State) of
                 {ok, Offer, State2} ->
@@ -203,6 +190,11 @@ answer(Type, Answer, Session, #{fs_role:=offer}=State) ->
             case Type of
                 park ->     
                     {ok, #{}, #{answer=>Answer}, State};
+                call ->
+                    % When we set the answer event, it will be captured
+                    % in nkmedia_fs_callbacks
+                    #{caller_peer:=Peer} = Session,
+                    {ok, #{}, #{answer=>Answer, type_ext=>#{peer=>Peer}}, State};
                 _ ->
                     case do_update(Type, Session, State) of
                         {ok, Reply, ExtOps, State2} ->
@@ -279,7 +271,7 @@ handle_cast({bridge, PeerId}, Session, State) ->
     ?LLOG(notice, "received remote ~s bridge request", [PeerId], Session),
     case fs_bridge(PeerId, Session, State) of
         ok ->
-            Ops = #{type=>bridge, type_ext=>#{peer_id=>PeerId}},
+            Ops = #{type=>bridge, type_ext=>#{peer=>PeerId}},
             nkmedia_session:ext_ops(self(), Ops),
             {ok, State};
         {error, Error} ->
@@ -294,7 +286,7 @@ handle_cast({bridge, PeerId}, Session, State) ->
 
 %% @private
 do_update(park, Session, State) ->
-    unbridge(Session),
+    nkmedia_session:unlink_session(self()),
     case fs_transfer("park", Session, State) of
         ok ->
             {ok, #{}, #{type=>park}, State};
@@ -303,7 +295,7 @@ do_update(park, Session, State) ->
     end;
 
 do_update(echo, Session, State) ->
-    unbridge(Session),
+    nkmedia_session:unlink_session(self()),
     case fs_transfer("echo", Session, State) of
         ok ->
             {ok, #{}, #{type=>echo}, State};
@@ -312,7 +304,7 @@ do_update(echo, Session, State) ->
     end;
 
 do_update(mcu, Session, State) ->
-    unbridge(Session),
+    nkmedia_session:unlink_session(self()),
     Room = case maps:find(room, Session) of
         {ok, Room0} -> nklib_util:to_binary(Room0);
         error -> nklib_util:uuid_4122()
@@ -327,28 +319,13 @@ do_update(mcu, Session, State) ->
             {error, Error, State}
     end;
 
-do_update(call, #{id:=Id}=Session, State) ->
-    unbridge(Session),
-    case Session of
-        #{peer_id:=PeerId} ->
-            case send_cast(PeerId, {bridge, Id}) of
-                ok ->
-                    ExtOps = #{type=>bridge, type_ext=>#{peer_id=>PeerId}},
-                    {ok, #{}, ExtOps, State};
-                {error, Error} ->
-                    {error, Error, State}
-            end;
-        _ ->
-            continue
-    end;
-
 do_update(bridge, #{id:=Id}=Session, State) ->
-    unbridge(Session),
+    nkmedia_session:unlink_session(self()),
     case Session of
         #{peer_id:=PeerId} ->
             case nkmedia_session:do_call(PeerId, {bridge, Id}) of
                 ok ->
-                    ExtOps = #{type=>bridge, type_ext=>#{peer_id=>PeerId}},
+                    ExtOps = #{type=>bridge, type_ext=>#{peer=>PeerId}},
                     {ok, #{}, ExtOps, State};
                 {error, Error} ->
                     {error, Error, State}
@@ -403,15 +380,15 @@ get_fs_offer(_Session, #{fs_role:=answer}=State) ->
     {error, incompatible_fs_role, State};
 
 get_fs_offer(#{id:=SessId}=Session, #{fs_id:=FsId}=State) ->
-    Offer = maps:get(offer, Session, #{}),
-    Type = maps:get(sdp_type, Offer, webrtc),
+    Type = maps:get(proxy_type, Session, webrtc),
     Mod = fs_mod(Type),
     case Mod:start_out(SessId, FsId, #{}) of
         {ok, SDP} ->
+            Offer = maps:get(offer, Session, #{}),
             Offer2 = Offer#{sdp=>SDP, sdp_type=>Type},
             {ok, Offer2, State#{fs_role=>offer}};
         {error, Error} ->
-            ?LLOG(warning, "error calling start_out: ~p", [Error], State),
+            ?LLOG(warning, "error calling start_out: ~p", [Error], Session),
             {error, fs_error, State}
     end;
 
@@ -478,7 +455,7 @@ do_fs_event(parked, park, _Session, _State) ->
 do_fs_event(parked, _Type, Session, _State) ->
     case Session of
         #{park_after_bridge:=true} ->
-            unbridge(Session),
+            nkmedia_session:unlink_session(self()),
             nkmedia_session:ext_ops(self(), #{type=>park});
         _ ->
             nkmedia_session:stop(self(), peer_hangup)
@@ -486,17 +463,17 @@ do_fs_event(parked, _Type, Session, _State) ->
 
 do_fs_event({bridge, PeerId}, Type, Session, _State) when Type==bridge; Type==call ->
     case Session of
-        #{type_ext:=#{peer_id:=PeerId}} ->
+        #{type_ext:=#{peer:=PeerId}} ->
             ok;
         #{type_ext:=Ext} ->
             ?LLOG(warning, "received bridge for different peer ~s: ~p!", 
                   [PeerId, Ext], Session)
     end,
-    nkmedia_session:ext_ops(self(), #{type=>bridge, type_ext=>#{peer_id=>PeerId}});
+    nkmedia_session:ext_ops(self(), #{type=>bridge, type_ext=>#{peer=>PeerId}});
 
 do_fs_event({bridge, PeerId}, Type, Session, _State) ->
     ?LLOG(warning, "received bridge in ~p state", [Type], Session),
-    nkmedia_session:ext_ops(self(), #{type=>bridge, type_ext=>#{peer_id=>PeerId}});
+    nkmedia_session:ext_ops(self(), #{type=>bridge, type_ext=>#{peer=>PeerId}});
 
 do_fs_event({mcu, McuInfo}, mcu, Session, State) ->
     ?LLOG(info, "FS MCU Info: ~p", [McuInfo], Session),
@@ -539,19 +516,6 @@ wait_park(Session) ->
 send_cast(SessId, Msg) ->
     nkmedia_session:do_cast(SessId, {nkmedia_fs_session, Msg}).
 
-
-%% @private
-unbridge(#{links:=Links}=_Session) ->
-    nklib_links:iter(
-        fun
-            ({nkmedia_fs_caller, _Peer, _Pid}=ProcId, _) ->
-                nkmedia_session:unregister(self(), ProcId);
-            ({nkmedia_fs_callee, _Peer, _Pid}=ProcId, _) ->
-                nkmedia_session:unregister(self(), ProcId);
-            (_, _) ->
-                ok
-        end,
-        Links).
 
 
 

@@ -29,7 +29,7 @@
 -export([nkmedia_session_init/2, nkmedia_session_terminate/2]).
 -export([nkmedia_session_start/2, nkmedia_session_answer/3,
          nkmedia_session_update/4, nkmedia_session_stop/2,
-         nkmedia_session_handle_cast/2]).
+         nkmedia_session_reg_event/4, nkmedia_session_handle_cast/2]).
 -export([api_syntax/4]).
 -export([nkdocker_notify/2]).
 
@@ -193,25 +193,24 @@ nkmedia_session_update(Update, Opts, Type, Session) ->
     end.
 
 
-% %% @private
-% nkmedia_session_peer_event(SessId, Type, Event, Session) ->
-%     case Event of
-%         {answer_op, _, _} ->
-%             State = state(Session),
-%             nkmedia_fs_session:peer_event(SessId, Type, Event, Session, State);
-%         {hangup, _} ->
-%             State = state(Session),
-%             nkmedia_fs_session:peer_event(SessId, Type, Event, Session, State);
-%         _ ->
-%             ok
-%     end,
-%     continue.
-        
-
 %% @private
 nkmedia_session_stop(Reason, Session) ->
     {ok, State2} = nkmedia_fs_session:stop(Reason, Session, state(Session)),
     {continue, [Reason, session(State2, Session)]}.
+
+
+%% @private
+nkmedia_session_reg_event(SessId, {caller_peer, SessIdB}, {answer, _Ans}, Session) ->
+    case Session of
+        #{type:=call} ->
+            nkmedia_session:do_cast(SessIdB, {nkmedia_fs_session, {bridge, SessId}}),
+            {ok, Session};
+        _ ->
+            continue
+    end;
+
+nkmedia_session_reg_event(_SessId, _ProcId, _Event, _Session) ->
+    continue.
 
 
 %% @private

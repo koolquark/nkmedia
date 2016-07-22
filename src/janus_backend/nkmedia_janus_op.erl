@@ -1070,9 +1070,10 @@ do_to_sip_register(State) ->
 %% @private
 do_to_sip(#state{janus_sess_id=Id, handle_id=Handle, offer=#{sdp:=SDP}}=State) ->
     SDP2 = nkmedia_util:remove_sdp_data_channel(SDP),
+    BinId = nklib_util:to_binary(Id),
     Body = #{
         request => call,
-        uri => <<"sip:", (nklib_util:to_binary(Id))/binary, "@nkmedia_janus_op">>
+        uri => <<"sip:nkmedia_janus_op-", BinId/binary, "@nkmedia">>
     },
     Jsep = #{sdp=>SDP2, type=>offer, trickle=>false},
     case message(Handle, Body, Jsep, State) of

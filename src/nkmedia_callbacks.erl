@@ -25,8 +25,7 @@
 
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
 -export([nkmedia_session_init/2, nkmedia_session_terminate/2, 
-		 nkmedia_session_event/3, nkmedia_session_peer_event/4, 
-		 nkmedia_session_reg_event/4,
+		 nkmedia_session_event/3, nkmedia_session_reg_event/4,
 		 nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2, 
 		 nkmedia_session_handle_info/2]).
 -export([nkmedia_session_start/2, nkmedia_session_answer/3, 
@@ -142,22 +141,13 @@ nkmedia_session_event(_SessId, _Event, Session) ->
 	{ok, Session}.
 
 				  
-%% @doc Called when the status of the session changes
--spec nkmedia_session_peer_event(session_id(), nkmedia_session:event(), 
-								 caller|callee, session()) ->
-	{ok, session()} | continue().
-
-nkmedia_session_peer_event(_SessId, _Type, _Event, Session) ->
-	{ok, Session}.
-
-
 %% @doc Called when the status of the session changes, for each registered
 %% process to the session
 -spec nkmedia_session_reg_event(session_id(), term(), 
 								media_session:event(), session()) ->
 	{ok, session()} | continue().
 
-nkmedia_session_reg_event(_SessId, {nkmedia_session, SessIdB, _Pid}, Event, Session) ->
+nkmedia_session_reg_event(_SessId, {caller_peer, SessIdB}, Event, Session) ->
 	case Event of
 		{answer, Answer} ->
 			nkmedia_session:answer(SessIdB, Answer);
@@ -168,13 +158,12 @@ nkmedia_session_reg_event(_SessId, {nkmedia_session, SessIdB, _Pid}, Event, Sess
 	end,
 	{ok, Session};
 
-nkmedia_session_reg_event(_SessId, {nkmedia_call, CallId, _CallPid}, Event, Session) ->
-	case Event of
-		{stop, Reason} ->
-			nkmedia_call:hangup(CallId, Reason);
-		_ ->
-			ok
-	end,
+nkmedia_session_reg_event(_SessId, {callee_peer, SessIdB}, {stop, Reason}, Session) ->
+	nkmedia_session:stop(SessIdB, Reason),
+	{ok, Session};
+
+nkmedia_session_reg_event(_SessId, {nkmedia_call, CallId, _CallPid}, {stop, Reason}, 						  Session) ->
+	nkmedia_call:hangup(CallId, Reason),
 	{ok, Session};
 
 nkmedia_session_reg_event(SessId, {nkmedia_api, Pid}, {stop, _Reason}, Session) ->

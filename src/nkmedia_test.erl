@@ -47,7 +47,7 @@
 %%   
 %%  - Register a SIP Phone
 %%    - Incoming. When a call arrives, we create a proxy session with janus  
-%%      a register {nkmedia_sip, Pid} with it. 
+%%      and register {nkmedia_sip, in, Pid} with it. 
 %%      We call nkmedia_sip:register_incoming to store handle and dialog in SIP's 
 %%      We can call any destination (d1009, j1009, etc. all should work), 
 %%      and we start a second session (registered with {nkmedia_session, ...}) 
@@ -58,11 +58,19 @@
 %%      If we send BYE, the session is found in sip_bye
 %%      If the session stops, it is detected in nkmedia_session_reg_event
 %%    - Outcoming. When any invite example calls to a registered SIP endpoint,
-%%      the option proxy_type=rtp is added (FS??) 
-%%      we call send_invite that returns the PID and we register with the session
-%%      
-
-
+%%      the option proxy_type=rtp is added (recognized by Janus and FS)
+%%      If we use "j...", we call send_invite with proxy 
+%%      (Janus will generate the SIP offer) or we use "f..." we first start a 
+%%      session A and then launch the send_invite with type call, and FS will 
+%%      make the SIP offer.
+%%      Then we call nkmedia_sip:send_invite thant launchs the invite and registers
+%%      data for callbacks and dialogs.
+%%      When receiving events, calls nkmedia_sip_invite_... in callbacks module,
+%%      rejecting the session or setting the answer. When the sessions 
+%%      (or the second session in the FS case, and sends it to the first) has the
+%%      answer, the caller (Verto, etc.) is notified as above.
+%%      If the sessions stops, sip detects it in nkmedia_sip_callbacks
+%%      (nkmedia_session_reg_event), if the BYE we locate and stop the session.
 
 
 -module(nkmedia_test).
@@ -159,7 +167,7 @@ mcu_layout(SessId, Layout) ->
 
 
 fs_call(SessId, Dest) ->
-    Config = #{peer_id=>SessId, park_after_bridge=>true},
+    Config = #{peer=>SessId, park_after_bridge=>true},
     case start_invite(call, Config, {reg, Dest}) of
         {ok, _SessProcIdB} ->
             ok;
@@ -346,10 +354,20 @@ send_call(#{dest:=Dest}=Offer, ProcId) ->
                 park_after_bridge => true
             },
             case start_session(park, ConfigA) of
-                {ok, SessAProcId} ->
-                    {nkmedia_session, SessIdA, _} = SessAProcId,
-                    spawn(fun() -> fs_call(SessIdA, Num) end),
-                    {ok, SessAProcId};
+                {ok, SessProcIdA} ->
+                    {nkmedia_session, SessIdA, _} = SessProcIdA,
+                    ConfigB = #{peer=>SessIdA, park_after_bridge=>false},
+                    spawn(
+                        fun() -> 
+                            case start_invite(call, ConfigB, {reg, Num}) of
+                                {ok, _} -> 
+                                    ok;
+                                {rejected, Error} ->
+                                    lager:notice("Error in start_invite: ~p", [Error]),
+                                    nkmedia_session:stop(SessIdA)
+                            end
+                        end),
+                    {ok, SessProcIdA};
                 {error, Error} ->
                     {rejected, Error}
             end;

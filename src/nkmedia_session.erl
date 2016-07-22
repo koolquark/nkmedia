@@ -28,7 +28,8 @@
 -export([start/3, get_type/1, get_session/1, get_offer/1, get_answer/1]).
 -export([stop/1, stop/2, stop_all/0]).
 -export([answer/2, answer_async/2, update/3, update_async/3, info/2]).
--export([register/2, unregister/2, link_session/3, get_all/0,  peer_event/3]).
+-export([register/2, unregister/2, link_session/2, unlink_session/1]).
+-export([get_all/0]).
 -export([get_call_data/1, send_ext_event/3, ext_ops/2]).
 -export([find/1, do_cast/2, do_call/2, do_call/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
@@ -61,10 +62,14 @@
 -type update() :: term().
 
 
-
+%% Session configuration
+%% If we set a peer session, we will consider it 'caller' and we are 'callee'
+%% If one of them stops, the other will stop (see nkmedia_callbacks)
+%% If the callee has an answer, it will send it back to the caller
 -type config() :: 
     #{
         id => id(),                             % Generated if not included
+        peer => id(),                           % See above
         wait_timeout => integer(),              % Secs
         ready_timeout => integer(),
         backend => nkemdia:backend(),
@@ -81,7 +86,9 @@
         srv_id => nkservice:id(),
         type => type(),
         type_ext => map(),
-        links => nklib_links:links(link_id())
+        links => nklib_links:links(link_id()),
+        caller_peer => id(),
+        callee_peer => id()
     }.
 
 
@@ -234,12 +241,25 @@ info(SessId, Info) ->
 
 
 %% @doc Links this session to another
-%% If the other session fails, an event will be generated
--spec link_session(id(), id(), #{send_events=>boolean()}) ->
+%% See peer option
+-spec link_session(id(), id()) ->
+    {ok, pid()} | {error, nkservice:error()}.
+
+link_session(SessId, SessIdB) ->
+    case find(SessIdB) of
+        {ok, PidB} ->
+            do_call(SessId, {link_callee_session, SessIdB, PidB});
+        not_found ->
+            {error, peer_session_not_found}
+    end.
+
+
+%% @doc Unkinks this session from its peer 
+-spec unlink_session(id()) ->
     ok | {error, nkservice:error()}.
 
-link_session(SessId, SessIdB, Opts) ->
-    do_call(SessId, {link_session, SessIdB, Opts}).
+unlink_session(SessId) ->
+    do_cast(SessId, unlink_session).
 
 
 %% @doc Registers a process with the session
@@ -297,12 +317,6 @@ get_call_data(SessId) ->
 %% Internal
 %% ===================================================================
 
-%% @private
--spec peer_event(id(), id(), event()) ->
-    ok | {error, nkservice:error()}.
-
-peer_event(Id, IdB, Event) ->
-    do_cast(Id, {peer_event, IdB, Event}).
 
 
 % ===================================================================
@@ -341,6 +355,18 @@ init([#{id:=Id, type:=Type, srv_id:=SrvId}=Session]) ->
             links_add(ProcId, none, ProcPid, State1);
         _ ->
             State1
+    end,
+    case Session2 of
+        #{peer:=Peer} -> 
+            case link_session(Peer, Id) of
+                {ok, _} -> ok;
+                {error, _Error} -> 
+                    lager:error("EE: ~p, ~s", [_Error, Peer]),
+
+                    stop(self(), peer_stopped)
+            end;
+        _ -> 
+            ok
     end,
     lager:info("NkMEDIA Session ~s starting (~p)", [Id, self()]),
     handle(nkmedia_session_init, [Id], restart_timer(State2)).
@@ -384,18 +410,12 @@ handle_call(get_call_data, _From, #state{srv_id=SrvId, session=Session}=State) -
     #{offer:=Offer} = Session,
     reply({ok, SrvId, Offer, self()}, State);
 
-handle_call({link_session, IdA, Opts}, _From, #state{id=IdB}=State) ->
-    case find(IdA) of
-        {ok, Pid} ->
-            Events = maps:get(send_events, Opts, false),
-            ?LLOG(info, "linked to ~s (events:~p)", [IdA, Events], State),
-            gen_server:cast(Pid, {link_session_back, IdB, self(), Events}),
-            State2 = links_add({peer, IdA}, {caller, Events}, Pid, State),
-            reply(ok, State2);
-        not_found ->
-            ?LLOG(warning, "trying to link unknown session ~s", [IdB], State),
-            do_stop(unknown_linked_session, State)
-    end;
+handle_call({link_callee_session, IdB, PidB}, _From, #state{id=IdA}=State) ->
+    ?LLOG(notice, "linked to callee ~s", [IdB], State),
+    do_cast(PidB, {link_caller_session, IdA, self()}),
+    State2 = links_add({callee_peer, IdB}, none, PidB, State),
+    State3 = add_to_session(callee_peer, IdB, State2),
+    reply({ok, self()}, State3);
 
 handle_call({register, ProcId}, _From, State) ->
     ?LLOG(info, "proc registered (~p)", [ProcId], State),
@@ -420,24 +440,31 @@ handle_cast({update, Update, Opts}, State) ->
 handle_cast({info, Info}, State) ->
     noreply(event({info, Info}, State));
 
+handle_cast({link_caller_session, IdB, PidB}, State) ->
+    ?LLOG(notice, "linked to caller ~s", [IdB], State),
+    State2 = links_add({caller_peer, IdB}, none, PidB, State),
+    State3 = add_to_session(caller_peer, IdB, State2),
+    noreply(State3);
+
+handle_cast(unlink_session, #state{session=Session}=State) ->
+    case Session of
+        #{caller_peer:=IdB} ->
+            ?LLOG(notice, "unlinked from caller ~s", [IdB], State),
+            do_cast(IdB, unlink_session),
+            State2 = links_remove({caller_peer, IdB}, State),
+            noreply(remove_from_session(caller_peer, State2));
+        #{callee_peer:=IdB} ->
+            ?LLOG(notice, "unlinked from callee ~s", [IdB], State),
+            do_cast(IdB, unlink_session),
+            State2 = links_remove({callee_peer, IdB}, State),
+            noreply(remove_from_session(callee_peer, State2));
+        _ ->
+            noreply(State)
+    end;
+
 handle_cast({unregister, ProcId}, State) ->
     ?LLOG(info, "proc unregistered (~p)", [ProcId], State),
     {noreply, links_remove(ProcId, State)};
-
-handle_cast({link_session_back, IdB, Pid, Events}, State) ->
-    ?LLOG(info, "linked back from ~s (events:~p)", [IdB, Events], State),
-    State2 = links_add({peer, IdB}, {callee, Events}, Pid, State),
-    noreply(State2);
-
-handle_cast({peer_event, PeerId, Event}, State) ->
-    case links_get({peer, PeerId}, State) of
-        {ok, {Type, true}} ->
-            {ok, State2} = 
-                handle(nkmedia_session_peer_event, [PeerId, Type, Event], State),
-            noreply(State2);
-        _ ->            
-            noreply(State)
-    end;
 
 handle_cast({send_ext_event, EvType, Body}, State) ->
     do_send_ext_event(EvType, Body, State),
@@ -461,25 +488,18 @@ handle_info({timeout, _, session_timeout}, State) ->
     ?LLOG(info, "operation timeout", [], State),
     do_stop(session_timeout, State);
 
-handle_info({'DOWN', _Ref, process, Pid, Reason}=Msg, State) ->
+handle_info({'DOWN', _Ref, process, Pid, Reason}=Msg, #state{id=Id}=State) ->
     case links_down(Pid, State) of
-        {ok, Id, Data, State2} ->
-            case Id of
-                {peer, IdB} ->
-                    {Type, _Events} = Data,  % caller | callee
-                    event({linked_down, IdB, Type, Reason}, State),
-                    noreply(State2);
-                ProcId ->
-                    case handle(nkmedia_session_reg_down, [Id, ProcId, Reason], State2) of
-                        {ok, State3} ->
-                            {noreply, State3};
-                        {stop, normal, State3} ->
-                            do_stop(normal, State3);    
-                        {stop, Error, State3} ->
-                            ?LLOG(notice, "stopping beacuse of reg '~p' down (~p)",
-                                  [ProcId, Reason], State3),
-                            do_stop(Error, State3)
-                    end
+        {ok, ProcId, none, State2} ->
+            case handle(nkmedia_session_reg_down, [Id, ProcId, Reason], State2) of
+                {ok, State3} ->
+                    {noreply, State3};
+                {stop, normal, State3} ->
+                    do_stop(normal, State3);    
+                {stop, Error, State3} ->
+                    ?LLOG(notice, "stopping beacuse of reg '~p' down (~p)",
+                          [ProcId, Reason], State3),
+                    do_stop(Error, State3)
             end;
         not_found ->
             handle(nkmedia_session_handle_info, [Msg], State)
@@ -587,7 +607,7 @@ do_update(_Update, _Opts, From, State) ->
 %% @private
 update_ext_ops_offer(#{offer:=Offer}, #state{session=Session}=State) ->
     OldOffer = maps:get(offer, Session, #{}),
-    update_session(offer, maps:merge(OldOffer, Offer), State);
+    add_to_session(offer, maps:merge(OldOffer, Offer), State);
 
 update_ext_ops_offer(_ExtOps, State) ->
     State.
@@ -597,7 +617,7 @@ update_ext_ops_offer(_ExtOps, State) ->
 update_ext_ops_answer(#{answer:=Answer}, #state{session=Session}=State) ->
     OldAnswer = maps:get(answer, Session, #{}),
     NewAnswer = maps:merge(OldAnswer, Answer),
-    State2 = update_session(answer, NewAnswer, State),
+    State2 = add_to_session(answer, NewAnswer, State),
     case NewAnswer of
         #{sdp:=_} ->
             ?LLOG(info, "answer set", [], State2),
@@ -631,11 +651,11 @@ update_ext_ops(ExtOps, #state{type=OldType, session=Session}=State) ->
         _ ->
             State3 = case Ext of
                 OldExt -> State2;
-                _ -> update_session(type_ext, Ext, State2)
+                _ -> add_to_session(type_ext, Ext, State2)
             end,
             State4 = case Type of
                 OldType -> State3;
-                _ -> update_session(type, Type, State3#state{type=Type})
+                _ -> add_to_session(type, Type, State3#state{type=Type})
             end,
             ?LLOG(info, "session updated", [], State4),
             event({updated_type, Type, Ext}, State4)
@@ -699,22 +719,11 @@ event(Event, #state{id=Id}=State) ->
         _ -> 
             ?LLOG(info, "sending 'event': ~p", [Event], State)
     end,
-    links_iter(
-        fun
-            ({peer, PeerId}, {_Type, true}) -> 
-                peer_event(PeerId, Id, Event);
-            (_ProcId, none) ->
-                ok
-        end,
-        State),
     State2 = links_fold(
-        fun
-            ({peer, _}, _, AccState) -> 
-                AccState;
-            (ProcId, none, AccState) ->
-                {ok, AccState2} = 
-                    handle(nkmedia_session_reg_event, [Id, ProcId, Event], AccState),
-                    AccState2
+        fun(ProcId, none, AccState) ->
+            {ok, AccState2} = 
+                handle(nkmedia_session_reg_event, [Id, ProcId, Event], AccState),
+                AccState2
         end,
         State,
         State),
@@ -797,39 +806,44 @@ do_cast(SessId, Msg) ->
 
 
 %% @private
-update_session(Key, Val, #state{session=Session}=State) ->
+add_to_session(Key, Val, #state{session=Session}=State) ->
     Session2 = maps:put(Key, Val, Session),
     State#state{session=Session2}.
+
+remove_from_session(Key, #state{session=Session}=State) ->
+    Session2 = maps:remove(Key, Session),
+    State#state{session=Session2}.
+
 
 
 %% @private
 links_add(Id, Data, Pid, #state{session=#{links:=Links}}=State) ->
-    update_session(links, nklib_links:add(Id, Data, Pid, Links), State).
+    add_to_session(links, nklib_links:add(Id, Data, Pid, Links), State).
 
 
-%% @private
-links_get(Id, #state{session=#{links:=Links}}) ->
-    nklib_links:get(Id, Links).
+% %% @private
+% links_get(Id, #state{session=#{links:=Links}}) ->
+%     nklib_links:get(Id, Links).
 
 
 %% @private
 links_remove(Id, #state{session=#{links:=Links}}=State) ->
-    update_session(links, nklib_links:remove(Id, Links), State).
+    add_to_session(links, nklib_links:remove(Id, Links), State).
 
 
 %% @private
 links_down(Pid, #state{session=#{links:=Links}}=State) ->
     case nklib_links:down(Pid, Links) of
         {ok, Id, Data, Links2} -> 
-            {ok, Id, Data, update_session(links, Links2, State)};
+            {ok, Id, Data, add_to_session(links, Links2, State)};
         not_found -> 
             not_found
     end.
 
 
-%% @private
-links_iter(Fun, #state{session=#{links:=Links}}) ->
-    nklib_links:iter(Fun, Links).
+% %% @private
+% links_iter(Fun, #state{session=#{links:=Links}}) ->
+%     nklib_links:iter(Fun, Links).
 
 
 %% @private

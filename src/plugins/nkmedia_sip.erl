@@ -118,7 +118,7 @@ send_invite(Srv, Uri, #{sdp:=SDP}, Id, Opts) ->
     {async, Handle} = nksip_uac:invite(SrvId, Uri, InvOpts4),
     receive
         {Ref, Pid} ->
-            nklib_proc:put({nkmedia_sip_id_to_cancel, Id}, Handle, Pid),
+            nklib_proc:put({nkmedia_sip_id_to_handle, Id}, Handle, Pid),
             {ok, Pid}
     after
         5000 ->
@@ -155,8 +155,8 @@ register_incoming(Req, Id) ->
     {ok, Dialog} = nksip_dialog:get_handle(Req),
     nklib_proc:put({nkmedia_sip_dialog_to_id, Dialog}, Id),
     nklib_proc:put({nkmedia_sip_id_to_dialog, Id}, Dialog),
-    nklib_proc:put({nkmedia_sip_id_to_handle, Id}, Handle),
-    nklib_proc:put({nkmedia_sip_handle_to_id, Handle}, Id).
+    nklib_proc:put({nkmedia_sip_handle_to_id, Handle}, Id),
+    nklib_proc:put({nkmedia_sip_id_to_handle, Id}, Handle).
 
 
 

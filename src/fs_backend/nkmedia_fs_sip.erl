@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([start_out/3, answer_out/2]).
--export([sip_invite/3, sip_reinvite/3, sip_bye/3]).
+-export([nkmedia_sip_invite/2, nkmedia_sip_bye/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
 
@@ -47,7 +47,7 @@
 %% nkmedia_sip will find any process registered under {nkmedia_sip, call, SessId}
 %% and {nkmedia_sip_dialog, Dialog} and will send messages
 -spec start_out(nkmedia_session:id(), nkmedia_fs:id(), map()) ->
-    {ok, pid()} | {error, term()}.
+    {ok, binary()} | {error, term()}.
 
 start_out(SessId, FsId, #{}) ->
     {ok, Pid} = gen_server:start(?MODULE, [FsId, SessId, #{}], []),
@@ -59,33 +59,45 @@ start_out(SessId, FsId, #{}) ->
     ok | {error, term()}.
 
 answer_out(SessId, Answer) ->
-    case nklib_proc:values({?MODULE, SessId}) of
-        [{undefined, Pid}|_] ->
+    case find(SessId) of
+        {ok, Pid} ->
             nkservice_util:call(Pid, {answer, Answer});
         [] ->
-            {error, unknown_sess_id}
+            {error, unknown_session}
     end.
 
 
+%% @private Called from nkmedia_core
+nkmedia_sip_invite(SessId, Req) ->
+    case find(SessId) of
+        {ok, Pid} ->
+            {ok, Handle} = nksip_request:get_handle(Req),
+            {ok, Dialog} = nksip_dialog:get_handle(Req),
+            {ok, SDP} = nksip_request:body(Req),
+            SDP2 = nksip_sdp:unparse(SDP),
+            nkservice_util:call(Pid, {sip_invite, Handle, Dialog, SDP2});
+        not_found ->
+            lager:warning("Received unexpected INVITE from FS"),
+            {reply, decline}
+    end.
 
-%% @private
-sip_invite(Pid, Req, _Call) ->
-    {ok, Handle} = nksip_request:get_handle(Req),
-    {ok, Dialog} = nksip_dialog:get_handle(Req),
-    {ok, SDP} = nksip_request:body(Req),
-    SDP2 = nksip_sdp:unparse(SDP),
-    nkservice_util:call(Pid, {sip_invite, Handle, Dialog, SDP2}).
 
-
-%% @private
-sip_reinvite(_Pid, _Req, _Call) ->
-    {reply, decline}.
-
-
-%% @private
-sip_bye(Pid, _Req, _Call) ->
-    gen_server:cast(Pid, sip_bye),
+%% @private Called from nkmedia_core
+nkmedia_sip_bye(SessId, _Req) ->
+    case find(SessId) of
+        {ok, Pid} -> gen_server:cast(Pid, sip_bye);
+        not_found -> ok
+    end,
     {reply, ok}.
+
+
+%% @private
+find(SessId) ->
+    case nklib_proc:values({?MODULE, SessId}) of
+        [{undefined, Pid}] -> {ok, Pid};
+        [] -> not_found
+    end.
+
 
 
 
@@ -110,14 +122,13 @@ sip_bye(Pid, _Req, _Call) ->
     {stop, term()} | ignore.
 
 init([FsId, SessId, _Opts]) ->
-    nkmedia_core_sip:register_session(SessId, ?MODULE),
     true = nklib_proc:reg({?MODULE, SessId}),
     Host = nklib_util:to_host(nkmedia_app:get(erlang_ip)),
     Port = nkmedia_app:get(sip_port),
-    Sip = <<Host/binary, ":", (nklib_util:to_binary(Port))/binary, ";transport=tcp">>,
+    Proxy = <<Host/binary, ":", (nklib_util:to_binary(Port))/binary, ";transport=tcp">>,
     Vars = [{<<"nkstatus">>, <<"outbound">>}], 
     CallOpts = #{vars=>Vars, call_id=>SessId},
-    Dest = <<"sofia/internal/nkmedia-", SessId/binary, "@", Sip/binary>>,
+    Dest = <<"sofia/internal/nkmedia_fs_sip-", SessId/binary, "@", Proxy/binary>>,
     Self = self(),
     Caller = spawn_link(
         fun() ->
