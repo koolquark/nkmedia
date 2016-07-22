@@ -446,19 +446,42 @@ handle_cast({link_caller_session, IdB, PidB}, State) ->
     State3 = add_to_session(caller_peer, IdB, State2),
     noreply(State3);
 
-handle_cast(unlink_session, #state{session=Session}=State) ->
-    case Session of
-        #{caller_peer:=IdB} ->
-            ?LLOG(notice, "unlinked from caller ~s", [IdB], State),
-            do_cast(IdB, unlink_session),
-            State2 = links_remove({caller_peer, IdB}, State),
-            noreply(remove_from_session(caller_peer, State2));
-        #{callee_peer:=IdB} ->
+handle_cast(unlink_session, #state{id=IdA, session=Session}=State) ->
+    case maps:find(callee_peer, Session) of
+        {ok, IdB} ->
+            % We are a caller, IdB is a caller
+            do_cast(self(), {unlink_callee_session, IdB}),
+            do_cast(IdB, {unlink_caller_session, IdA});
+        error ->
+            ok
+    end,
+    case maps:find(caller_peer, Session) of
+        {ok, IdC} ->
+            % We are a callee, IdC is a caller
+            do_cast(self(), {unlink_caller_session, IdC}),
+            do_cast(IdC, {unlink_callee_session, IdC});
+        error ->
+            ok
+    end,
+    noreply(State);
+
+handle_cast({unlink_callee_session, IdB}, #state{session=Session}=State) ->
+    case maps:find(callee_peer, Session) of
+        {ok, IdB} ->
             ?LLOG(notice, "unlinked from callee ~s", [IdB], State),
-            do_cast(IdB, unlink_session),
             State2 = links_remove({callee_peer, IdB}, State),
             noreply(remove_from_session(callee_peer, State2));
-        _ ->
+        error ->
+            noreply(State)
+    end;
+
+handle_cast({unlink_caller_session, IdB}, #state{session=Session}=State) ->
+    case maps:find(caller_peer, Session) of
+        {ok, IdB} ->
+            ?LLOG(notice, "unlinked from caller ~s", [IdB], State),
+            State2 = links_remove({caller_peer, IdB}, State),
+            noreply(remove_from_session(caller_peer, State2));
+        error ->
             noreply(State)
     end;
 

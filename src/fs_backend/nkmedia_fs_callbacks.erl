@@ -271,6 +271,7 @@ syntax(<<"session">>, <<"update">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             type => atom,
+            new_type => binary,
             mcu_layout => binary
         },
         Defaults,

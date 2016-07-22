@@ -219,7 +219,7 @@ answer(_Type, _Answer, _Session, _State) ->
     {ok, type_ext(), map(), state()} |
     {error, term(), state()} | continue().
 
-update(type, #{type:=Type}=Opts, _OldTytpe, Session, #{fs_id:=_}=State) ->
+update(type, #{new_type:=Type}=Opts, _OldTytpe, Session, #{fs_id:=_}=State) ->
     do_update(Type, maps:merge(Session, Opts), State);
 
 update(mcu_layout, #{mcu_layout:=Layout}, mcu, 
@@ -233,6 +233,7 @@ update(mcu_layout, #{mcu_layout:=Layout}, mcu,
     end;
 
 update(_Update, _Opts, _Type, _Session, _State) ->
+    lager:error("U: ~p, ~p", [_Update, _Opts]),
     continue.
 
 

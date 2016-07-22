@@ -200,7 +200,9 @@ nkmedia_verto_login(Login, Pass, Verto) ->
 % If verto dies, it is detected in the session because of the registration
 % If the sessions dies, it is detected in verto because of the registration
 nkmedia_verto_invite(_SrvId, CallId, Offer, Verto) ->
-    case send_call(Offer, {nkmedia_verto, CallId, self()}) of
+    #{dest:=Dest} = Offer, 
+    Base = #{offer=>Offer, register=>{nkmedia_verto, CallId, self()}},
+    case send_call(Dest, Base) of
         {ok, ProcId} ->
             {ok, ProcId, Verto};
         {answer, Answer, ProcId} ->
@@ -219,7 +221,9 @@ nkmedia_verto_invite(_SrvId, CallId, Offer, Verto) ->
 
 % @private Called when we receive INVITE from Janus
 nkmedia_janus_invite(_SrvId, CallId, Offer, Janus) ->
-    case send_call(Offer, {nkmedia_janus, CallId, self()}) of
+    #{dest:=Dest} = Offer, 
+    Base = #{offer=>Offer, register=>{nkmedia_janus, CallId, self()}},
+    case send_call(Dest, Base) of
         {ok, ProcId} ->
             {ok, ProcId, Janus};
         {answer, Answer, ProcId} ->
@@ -240,6 +244,19 @@ sip_route(_Scheme, _User, _Domain, _Req, _Call) ->
     process.
 
 
+nks_sip_connection_sent(SipMsg, _Packet) ->
+    case SipMsg#sipmsg.cseq of
+        {_, 'REGISTER'} -> ok;
+        _ -> continue
+    end.
+
+nks_sip_connection_recv(SipMsg, _Packet) ->
+    case SipMsg#sipmsg.cseq of
+        {_, 'REGISTER'} -> ok;
+        _ -> continue
+    end.
+
+
 sip_register(Req, Call) ->
     Req2 = nksip_registrar_util:force_domain(Req, <<"nkmedia">>),
     {continue, [Req2, Call]}.
@@ -258,7 +275,7 @@ nkmedia_sip_invite(_SrvId, {sip, Dest, _}, Offer, Req, _Call) ->
     % will be linked with the first, and will send answer back
     % We return {ok, ProcId} or {rejected, Reason}
     % nkmedia_sip will store that ProcId
-    send_call(Offer2#{dest=>Dest}, ProcId2).
+    send_call(Dest, #{offer=>Offer2, peer=>SessId}).
 
 
 % % Version that go directly to FS
@@ -304,94 +321,70 @@ nkmedia_sip_invite(_SrvId, {sip, Dest, _}, Offer, Req, _Call) ->
 %% Internal
 %% ===================================================================
 
-send_call(#{dest:=Dest}=Offer, ProcId) ->
-    case Dest of 
-        <<"e">> ->
-            Config = #{
-                offer => Offer, 
-                backend => nkmedia_janus, 
-                register => ProcId,
-                record => false
-            },
-            start_session(echo, Config);
-        <<"fe">> ->
-            Config = #{
-                offer => Offer, 
-                backend => nkmedia_fs, 
-                register => ProcId
-            },
-            start_session(echo, Config);
-        <<"m1">> ->
-            Config = #{offer=>Offer, room=>"mcu1", register=>ProcId},
-            start_session(mcu, Config);
-        <<"m2">> ->
-            Config = #{offer=>Offer, room=>"mcu2", register=>ProcId},
-            start_session(mcu, Config);
-        <<"p">> ->
-            Config = #{
-                offer => Offer,
-                register => ProcId,
-                room_audio_codec => pcma,
-                room_video_codec => vp9,
-                room_bitrate => 100000
-            },
-            start_session(publish, Config);
-        <<"p2">> ->
-            nkmedia_janus_room:create(test, #{id=><<"sfu">>}),
-            Config = #{offer=>Offer, room=><<"sfu">>, register=>ProcId},
-            start_session(publish, Config);
-        <<"d", Num/binary>> ->
-            % We share the same session, with both caller and callee registered to it
-            Config = #{offer => Offer, register => ProcId},
-            start_invite(p2p, Config, {reg, Num});
-        <<"j", Num/binary>> ->
-            Config = #{offer => Offer, register => ProcId},
-            start_invite(proxy, Config, {reg, Num});
-        <<"f", Num/binary>> ->
-            ConfigA = #{
-                offer => Offer, 
-                register => ProcId,
-                park_after_bridge => true
-            },
-            case start_session(park, ConfigA) of
-                {ok, SessProcIdA} ->
-                    {nkmedia_session, SessIdA, _} = SessProcIdA,
-                    ConfigB = #{peer=>SessIdA, park_after_bridge=>false},
-                    spawn(
-                        fun() -> 
-                            case start_invite(call, ConfigB, {reg, Num}) of
-                                {ok, _} -> 
-                                    ok;
-                                {rejected, Error} ->
-                                    lager:notice("Error in start_invite: ~p", [Error]),
-                                    nkmedia_session:stop(SessIdA)
-                            end
-                        end),
-                    {ok, SessProcIdA};
-                {error, Error} ->
-                    {rejected, Error}
-            end;
-        _ ->
-            {rejected, no_destination}
-    end.
+send_call(<<"e">>, Base) ->
+    Config = Base#{
+        backend => nkmedia_janus, 
+        record => false
+    },
+    start_session(echo, Config);
 
+send_call(<<"fe">>, Base) ->
+    Config = Base#{backend => nkmedia_fs},
+    start_session(echo, Config);
 
-%% @private
-start_session(Type, Config) ->
-    case nkmedia_session:start(test, Type, Config) of
-        {ok, SessId, SessPid, #{answer:=_}} ->
-            % We don't return the answer since, Verto and Janus are going to 
-            % detect it in their callbacks modules (nkmedia_session_reg_event) and
-            % we would be sending two answers
-            {ok, {nkmedia_session, SessId, SessPid}};
-        {ok, SessId, SessPid, #{offer:=Offer}} ->
-            {offer, Offer, {nkmedia_session, SessId, SessPid}};
-        {ok, SessId, SessPid, #{}} ->
-            Offer = maps:get(offer, Config),
-            {offer, Offer, {nkmedia_session, SessId, SessPid}};
+send_call(<<"m1">>, Base) ->
+    Config = Base#{room=>"mcu1"},
+    start_session(mcu, Config);
+
+send_call(<<"m2">>, Base) ->
+    Config = Base#{room=>"mcu2"},
+    start_session(mcu, Config);
+
+send_call(<<"p">>, Base) ->
+    Config = Base#{
+        room_audio_codec => pcma,
+        room_video_codec => vp9,
+        room_bitrate => 100000
+    },
+    start_session(publish, Config);
+
+send_call(<<"p2">>, Base) ->
+    nkmedia_janus_room:create(test, #{id=><<"sfu">>}),
+    Config = Base#{room=><<"sfu">>},
+    start_session(publish, Config);
+
+send_call(<<"d", Num/binary>>, Base) ->
+    % We share the same session, with both caller and callee registered to it
+    start_invite(p2p, Base, {reg, Num});
+
+send_call(<<"j", Num/binary>> , Base) ->
+    start_invite(proxy, Base, {reg, Num});
+
+send_call(<<"f", Num/binary>>, Base) ->
+    ConfigA = Base#{
+        park_after_bridge => true
+    },
+    case start_session(park, ConfigA) of
+        {ok, SessProcIdA} ->
+            {nkmedia_session, SessIdA, _} = SessProcIdA,
+            ConfigB = #{peer=>SessIdA, park_after_bridge=>false},
+            spawn(
+                fun() -> 
+                    case start_invite(call, ConfigB, {reg, Num}) of
+                        {ok, _} -> 
+                            ok;
+                        {rejected, Error} ->
+                            lager:notice("Error in start_invite: ~p", [Error]),
+                            nkmedia_session:stop(SessIdA)
+                    end
+                end),
+            {ok, SessProcIdA};
         {error, Error} ->
             {rejected, Error}
-    end.
+    end;
+
+send_call(_, _Base) ->
+    {rejected, no_destination}.
 
 
 %% Creates a new session that must generate an offer (a p2p, proxy, listen or call)
@@ -436,6 +429,24 @@ start_invite(Type, Config, Dest) ->
                     nkmedia_session:stop(SessId),
                     {rejected, unknown_user}
             end;
+        {error, Error} ->
+            {rejected, Error}
+    end.
+
+
+%% @private
+start_session(Type, Config) ->
+    case nkmedia_session:start(test, Type, Config) of
+        {ok, SessId, SessPid, #{answer:=_}} ->
+            % We don't return the answer since, Verto and Janus are going to 
+            % detect it in their callbacks modules (nkmedia_session_reg_event) and
+            % we would be sending two answers
+            {ok, {nkmedia_session, SessId, SessPid}};
+        {ok, SessId, SessPid, #{offer:=Offer}} ->
+            {offer, Offer, {nkmedia_session, SessId, SessPid}};
+        {ok, SessId, SessPid, #{}} ->
+            Offer = maps:get(offer, Config),
+            {offer, Offer, {nkmedia_session, SessId, SessPid}};
         {error, Error} ->
             {rejected, Error}
     end.
