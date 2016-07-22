@@ -87,7 +87,7 @@ create(Srv, Config) ->
     {Id, Config2} = nkmedia_util:add_uuid(Config),
     case find(Id) of
         {ok, _} ->
-            {error, already_started};
+            {error, room_already_exists};
         not_found ->
             case nkservice_srv:get_srv_id(Srv) of
                 {ok, SrvId} ->
@@ -105,7 +105,7 @@ create(Srv, Config) ->
                                 ok ->
                                     {ok, Pid} = gen_server:start(?MODULE, [Config3], []),
                                     {ok, Id, Pid};
-                                {error, already_exists} ->
+                                {error, room_already_exists} ->
                                     {ok, Pid} = gen_server:start(?MODULE, [Config3], []),
                                     {ok, Id, Pid};
                                 {error, Error} ->
@@ -426,7 +426,7 @@ do_call(Room, Msg, Timeout) ->
         {ok, Pid} -> 
             nkservice_util:call(Pid, Msg, Timeout);
         not_found -> 
-            {error, not_found}
+            {error, room_not_found}
     end.
 
 
