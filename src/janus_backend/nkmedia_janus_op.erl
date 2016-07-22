@@ -498,6 +498,12 @@ handle_cast({event, _Id, _Handle, #{<<"janus">>:=<<"media">>}=Msg}, State) ->
     ?LLOG(info, "WEBRTC Media ~s: ~s", [Type, Bool], State),
     {noreply, State};
 
+handle_cast({event, _Id, _Handle, #{<<"janus">>:=<<"slowlink">>}=Msg}, State) ->
+    Nacks = maps:get(<<"nacks">>, Msg, 0), 
+    UpLink = maps:get(<<"uplink">>, Msg, <<>>),
+    ?LLOG(notice, "Janus slowlink (nacks: ~p, uplink: ~p)", [Nacks, UpLink], State),
+    {noreply, State};
+
 handle_cast({event, Id, Handle, Msg}, State) ->
     case parse_event(Msg) of
         error ->
