@@ -203,7 +203,7 @@ nkmedia_session_stop(Reason, Session) ->
 nkmedia_session_reg_event(SessId, {caller_peer, SessIdB}, {answer, _Ans}, Session) ->
     case Session of
         #{type:=call} ->
-            nkmedia_session:do_cast(SessIdB, {nkmedia_fs_session, {bridge, SessId}}),
+            nkmedia_fs_session:send_bridge(SessIdB, SessId),
             {ok, Session};
         _ ->
             continue
@@ -271,7 +271,9 @@ syntax(<<"session">>, <<"update">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             type => atom,
-            new_type => binary,
+            session_type => atom,
+            room => binary,
+            peer => binary,
             mcu_layout => binary
         },
         Defaults,

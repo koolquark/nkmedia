@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([init/3, terminate/3, start/3, answer/4, update/5, stop/3]).
--export([handle_cast/3, fs_event/3]).
+-export([handle_cast/3, fs_event/3, send_bridge/2]).
 
 -export_type([config/0, type/0, opts/0, update/0]).
 
@@ -84,7 +84,7 @@
 
 
 %% ===================================================================
-%% Events
+%% External
 %% ===================================================================
 
 
@@ -102,6 +102,13 @@ fs_event(SessId, FsId, Event) ->
             lager:warning("NkMEDIA Session: FS event ~p for unknown session ~s", 
                           [Event, SessId])
     end.
+
+
+%% @private
+send_bridge(Remote, Local) ->
+    nkmedia_session:do_cast(Remote, {nkmedia_fs_session, {bridge, Local}}).
+
+
 
 
 
@@ -219,7 +226,7 @@ answer(_Type, _Answer, _Session, _State) ->
     {ok, type_ext(), map(), state()} |
     {error, term(), state()} | continue().
 
-update(type, #{new_type:=Type}=Opts, _OldTytpe, Session, #{fs_id:=_}=State) ->
+update(session_type, #{session_type:=Type}=Opts, _OldTytpe, Session, #{fs_id:=_}=State) ->
     do_update(Type, maps:merge(Session, Opts), State);
 
 update(mcu_layout, #{mcu_layout:=Layout}, mcu, 
@@ -233,7 +240,6 @@ update(mcu_layout, #{mcu_layout:=Layout}, mcu,
     end;
 
 update(_Update, _Opts, _Type, _Session, _State) ->
-    lager:error("U: ~p, ~p", [_Update, _Opts]),
     continue.
 
 
@@ -323,14 +329,10 @@ do_update(mcu, Session, State) ->
 do_update(bridge, #{id:=Id}=Session, State) ->
     nkmedia_session:unlink_session(self()),
     case Session of
-        #{peer_id:=PeerId} ->
-            case nkmedia_session:do_call(PeerId, {bridge, Id}) of
-                ok ->
-                    ExtOps = #{type=>bridge, type_ext=>#{peer=>PeerId}},
-                    {ok, #{}, ExtOps, State};
-                {error, Error} ->
-                    {error, Error, State}
-            end;
+        #{peer:=PeerId} ->
+            send_bridge(PeerId, Id),
+            ExtOps = #{type=>bridge, type_ext=>#{peer=>PeerId}},
+            {ok, #{}, ExtOps, State};
         _ ->
             continue
     end;

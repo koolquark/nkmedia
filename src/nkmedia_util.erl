@@ -69,13 +69,12 @@ error(caller_hangup)			-> 	{0, <<"Caller hangup">>};
 error(callee_hangup)			-> 	{0, <<"Callee hangup">>};
 error(peer_hangup)				-> 	{0, <<"Peer hangup">>};
 error(unknown_linked_session) 	-> 	{0, <<"Unknown linked session">>};
-error(user_monitor_stop) 		-> 	{0, <<"User monitor stop">>};
-error(registered_stop) 		    -> 	{0, <<"Registered process stop">>};
+error(registered_down) 		    -> 	{0, <<"Registered process stop">>};
 error(room_not_found)			->  {0, <<"Room not found">>};
 error(room_already_exists)	    ->  {0, <<"Room already exists">>};
 error(room_destroyed)           ->  {0, <<"Room destroyed">>};
 error(call_not_found) 			->  {0, <<"Call not found">>};
-error(already_answered) 		->  {0, <<"Already answred">>};
+error(already_answered) 		->  {0, <<"Already answered">>};
 
 error({verto, error, Code, Txt})-> 	
 	{0, nklib_util:msg("Verto Error (~p): ~s", [Code, Txt])};
