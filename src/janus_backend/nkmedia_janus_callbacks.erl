@@ -30,7 +30,7 @@
 -export([nkmedia_session_start/2, nkmedia_session_answer/3,
          nkmedia_session_update/4, nkmedia_session_stop/2, 
          nkmedia_session_handle_call/3, nkmedia_session_handle_info/2]).
--export([api_syntax/4]).
+-export([api_cmd/2, api_syntax/4]).
 -export([nkdocker_notify/2]).
 
 -include_lib("nkservice/include/nkservice.hrl").
@@ -233,9 +233,18 @@ nkmedia_session_handle_info(_Msg, _Session) ->
 %% ===================================================================
 
 %% @private
+api_cmd(#api_req{class = <<"media">>}=Req, State) ->
+    #api_req{subclass=Sub, cmd=Cmd} = Req,
+    nkmedia_janus_api:cmd(Sub, Cmd, Req, State);
+
+api_cmd(_Req, _State) ->
+    continue.
+
+
+%% @private
 api_syntax(#api_req{class = <<"media">>}=Req, Syntax, Defaults, Mandatory) ->
     #api_req{subclass=Sub, cmd=Cmd} = Req,
-    {S2, D2, M2} = syntax(Sub, Cmd, Syntax, Defaults, Mandatory),
+    {S2, D2, M2} = nkmedia_janus_api:syntax(Sub, Cmd, Syntax, Defaults, Mandatory),
     {continue, [Req, S2, D2, M2]};
 
 api_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
@@ -258,43 +267,6 @@ nkdocker_notify(_MonId, _Op) ->
 %% ===================================================================
 %% Internal
 %% ===================================================================
-
-%% @private
-syntax(<<"session">>, <<"start">>, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{
-            record => boolean,
-            bitrate => {integer, 0, none},
-            proxy_type => {enum, [webrtc, rtp]},
-            room => binary,
-            publisher => binary,
-            use_audio => boolean,
-            use_video => boolean,
-            use_data => boolean,
-            room_bitrate => {integer, 0, none},
-            room_audio_codec => {enum, [opus, isac32, isac16, pcmu, pcma]},
-            room_video_codec => {enum , [vp8, vp9, h264]}
-        },
-        Defaults,
-        Mandatory
-    };
-
-syntax(<<"session">>, <<"update">>, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{
-            bitrate => integer,
-            use_audio => boolean,
-            use_video => boolean,
-            use_data => boolean,
-            record => boolean,
-            publisher => binary
-        },
-        Defaults,
-        Mandatory
-    };
-
-syntax(_Sub, _Cmd, Syntax, Defaults, Mandatory) ->
-    {Syntax, Defaults, Mandatory}.
 
 
 %% @private

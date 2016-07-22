@@ -30,8 +30,8 @@
 -include_lib("nksip/include/nksip.hrl").
 
 
-% -define(URL, "nkapic://media2.netcomposer.io:9010").
--define(URL, "nkapic://127.0.0.1:9010").
+-define(URL1, "nkapic://127.0.0.1:9010").
+-define(URL2, "nkapic://media2.netcomposer.io:9010").
 
 
 %% ===================================================================
@@ -93,7 +93,12 @@ plugin_deps() ->
 
 connect(User) ->
     Fun = fun ?MODULE:api_client_fun/2,
-    {ok, _, C} = nkservice_api_client:start(test, ?URL, User, "p1", Fun, #{}),
+    {ok, _, C} = nkservice_api_client:start(test, ?URL1, User, "p1", Fun, #{}),
+    C.
+
+connect2(User) ->
+    Fun = fun ?MODULE:api_client_fun/2,
+    {ok, _, C} = nkservice_api_client:start(test, ?URL2, User, "p1", Fun, #{}),
     C.
 
 start_session(User, Data) ->
@@ -130,8 +135,20 @@ update_listen(C, SessId, Publisher) ->
 update(C, SessId, Type, Data) ->
     sess_cmd(C, update, SessId, Data#{type=>Type}).
 
+room_list(C) ->
+    room_cmd(C, list, #{}).
 
+room_create(C, Data) ->
+    room_cmd(C, create, Data).
 
+room_destroy(C, Id) ->
+    room_cmd(C, destroy, #{id=>Id}).
+
+room_info(C, Id) ->
+    room_cmd(C, info, #{id=>Id}).
+
+room_cmd(C, Cmd, Data) ->
+    nkservice_api_client:cmd(C, media, room, Cmd, Data).
 
 
 
