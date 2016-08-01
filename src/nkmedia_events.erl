@@ -1,0 +1,146 @@
+%% -------------------------------------------------------------------
+%%
+%% Copyright (c) 2016 Carlos Gonzalez Florido.  All Rights Reserved.
+%%
+%% This file is provided to you under the Apache License,
+%% Version 2.0 (the "License"); you may not use this file
+%% except in compliance with the License.  You may obtain
+%% a copy of the License at
+%%
+%%   http://www.apache.org/licenses/LICENSE-2.0
+%%
+%% Unless required by applicable law or agreed to in writing,
+%% software distributed under the License is distributed on an
+%% "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+%% KIND, either express or implied.  See the License for the
+%% specific language governing permissions and limitations
+%% under the License.
+%%
+%% -------------------------------------------------------------------
+
+%% @doc NkMEDIA external events processing
+
+-module(nkmedia_events).
+-author('Carlos Gonzalez <carlosj.gf@gmail.com>').
+
+-export([session_event/3, call_event/3, room_event/3]).
+
+-include_lib("nkservice/include/nkservice.hrl").
+
+
+
+%% ===================================================================
+%% Callbacks
+%% ===================================================================
+
+%% @private
+-spec session_event(nkmedia_session:id(), nkmedia_session:event(), 
+				    nkmedia_session:session()) ->
+	{ok, nkmedia_sesison:session()}.
+
+session_event(SessId, Event, #{srv_id:=SrvId}=Session) ->
+    Send = case Event of
+        {answer, Answer} ->
+            {answer, #{answer=>Answer}};
+        {info, Info} ->
+            {info, #{info=>Info}};
+        {updated_type, Type, Ext} ->
+            {updated_type, Ext#{type=>Type}};
+        {stop, Reason} ->
+            {Code, Txt} = SrvId:error_code(Reason),
+            {stop, #{code=>Code, reason=>Txt}};
+        _ ->
+            ignore
+    end,
+    case Send of
+        {EvType, Body} ->
+            send_event(SrvId, session, SessId, EvType, Body);
+        ignore ->
+            ok
+    end,
+    {ok, Session}.
+
+
+
+%% @private
+-spec call_event(nkmedia_call:id(), nkmedia_call:event(), nkmedia_call:call()) ->
+	{ok, nkmedia_call:call()}.
+
+call_event(CallId, Event, #{srv_id:=SrvId}=Call) ->
+    Send = case Event of
+        {ringing, _} -> 
+            {ringing, #{}};
+        {answer, _, Answer} ->
+            {answer, #{answer=>Answer}};
+        {hangup, Reason} ->
+            {Code, Txt} = SrvId:error_code(Reason),
+            {hangup, #{code=>Code, reason=>Txt}};
+        _ ->
+        	ignore
+    end,
+    case Send of
+        {EvType, Body} ->
+            send_event(SrvId, call, CallId, EvType, Body);
+        ignore ->
+            ok
+    end,
+    {ok, Call}.
+
+
+
+%% @private
+-spec room_event(nkmedia_room:id(), nkmedia_room:event(), nkmedia_room:room()) ->
+	{ok, nkmedia_room:room()}.
+
+room_event(RoomId, Event, #{srv_id:=SrvId}=Room) ->
+    Send = case Event of
+    	{started, Room} ->
+    		Data = maps:with([audio_codec, video_codec, bitrate, class, backend]),
+    		{started, Data};
+    	{destroyed, Reason} ->
+            {Code, Txt} = SrvId:error_code(Reason),
+            {destroyed, #{code=>Code, reason=>Txt}};
+        {started_publisher, Publisher, Opts} ->
+            User = maps:get(user, Opts, <<>>),
+        	{started_publisher, #{id=>Publisher, user=>User}};
+        {stopped_publisher, Publisher, Opts} ->
+            User = maps:get(user, Opts, <<>>),
+        	{stopped_publisher, #{id=>Publisher, user=>User}};
+        {started_listener, Listener, Opts} ->
+            User = maps:get(user, Opts, <<>>),
+            Peer = maps:get(peer, Opts, <<>>),
+        	{started_listener, #{id=>Listener, peer=>Peer, user=>User}};
+        {stopped_listener, Listener, Opts} ->
+            User = maps:get(user, Opts, <<>>),
+        	{stopped_listener, #{id=>Listener, user=>User}};
+        _ ->
+        	ignore
+    end,
+    case Send of
+        {EvType, Body} ->
+            send_event(SrvId, room, RoomId, EvType, Body);
+        ignore ->
+            ok
+    end,
+    {ok, Room}.
+
+
+
+%% ===================================================================
+%% Internal
+%% ===================================================================
+
+
+
+%% @private
+send_event(SrvId, Class, Id, Type, Body) ->
+    lager:warning("MEDIA EVENT (~s:~s:~s): ~p", [Class, Type, Id, Body]),
+    RegId = #reg_id{
+        srv_id = SrvId,     
+        class = <<"media">>, 
+        subclass = nklib_util:to_binary(Class),
+        type = nklib_util:to_binary(Type),
+        obj_id = Id
+    },
+    nkservice_events:send(RegId, Body).
+

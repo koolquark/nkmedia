@@ -362,7 +362,7 @@ send_call(<<"p">>, User, Base) ->
     start_session(User, Config);
 
 send_call(<<"p2">>, User, Base) ->
-    nkmedia_janus_room:create(test, #{id=><<"sfu">>}),
+    nkmedia_room:start(test, #{id=><<"sfu">>}),
     Config = Base#{type=>publish, room=><<"sfu">>},
     start_session(User, Config);
 

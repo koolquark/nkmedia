@@ -545,43 +545,7 @@ event(Event, #state{id=Id}=State) ->
         State,
         ProcIds),
     {ok, State3} = handle(nkmedia_call_event, [Id, Event], State2),
-    ext_event(Event, State3).
-
-
-%% @private
-ext_event(Event, #state{srv_id=SrvId}=State) ->
-    Send = case Event of
-        {ringing, _} -> 
-            {ringing, #{}};
-        {answer, _, Answer} ->
-            {answer, #{answer=>Answer}};
-        {hangup, Reason} ->
-            {Code, Txt} = SrvId:error_code(Reason),
-            {hangup, #{code=>Code, reason=>Txt}}
-    end,
-    case Send of
-        {EvType, Body} ->
-            do_send_ext_event(EvType, Body, State);
-        ignore ->
-            ok
-    end,
-    State.
-
-
-%% @private
-do_send_ext_event(Type, Body, #state{srv_id=SrvId, id=CallId}=State) ->
-    RegId = #reg_id{
-        srv_id = SrvId,     
-        class = <<"media">>, 
-        subclass = <<"call">>,
-        type = nklib_util:to_binary(Type),
-        obj_id = CallId
-    },
-    ?LLOG(info, "ext event: ~p", [RegId], State),
-    nkservice_events:send(RegId, Body).
-
-
-
+    State3.
 
 
 %% @private

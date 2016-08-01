@@ -30,7 +30,7 @@
 -export([answer/2, answer_async/2, update/3, update_async/3, info/2]).
 -export([register/2, unregister/2, link_session/2, unlink_session/1]).
 -export([get_all/0]).
--export([get_call_data/1, send_ext_event/3, ext_ops/2]).
+-export([get_call_data/1, ext_ops/2]).
 -export([find/1, do_cast/2, do_call/2, do_call/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
@@ -74,6 +74,8 @@
         ready_timeout => integer(),
         backend => nkemdia:backend(),
         register => nklib:proc_id(),
+        user_id => nkservice:user_id(),
+        user_session => nkservice:user_session(),
         term() => term()                        % Plugin data
     }.
 
@@ -169,10 +171,18 @@ get_answer(SessId) ->
 
 %% @doc Get current type, type_ext and remaining time to timeout
 -spec get_type(id()) ->
-    {ok, type(), map(), integer()}.
+    {ok, type(), map(), integer()} | {error, term()}.
 
 get_type(SessId) ->
     do_call(SessId, get_type).
+
+
+% %% @doc Get current type, type_ext and remaining time to timeout
+% -spec get_user(id()) ->
+%     {ok, nkservice:user_id(), nkservice:user_session()} | {error, term()}.
+
+% get_user(SessId) ->
+%     do_call(SessId, get_user).
 
 
 %% @doc Hangups the session
@@ -278,14 +288,6 @@ unregister(SessId, ProcId) ->
     do_cast(SessId, {unregister, ProcId}).
 
 
-%% @doc Sends a event inside the session
--spec send_ext_event(id(), atom(), map()) ->
-    ok | {error, term()}.
-
-send_ext_event(SessId, Type, Body) ->
-    do_cast(SessId, {send_ext_event, Type, Body}).
-
-
 %% @private
 -spec get_all() ->
     [{id(), pid()}].
@@ -386,6 +388,11 @@ handle_call(get_session, _From, #state{session=Session}=State) ->
 handle_call(get_type, _From, #state{type=Type, timer=Timer, session=Session}=State) ->
     #{type_ext:=TypeExt} = Session,
     reply({ok, Type, TypeExt, erlang:read_timer(Timer) div 1000}, State);
+
+% handle_call(get_user, _From, #state{session=Session}=State) ->
+%     UserId = maps:get(user_id, Session, <<>>),
+%     UserSession = maps:get(user_session, Session, <<>>),
+%     reply({ok, UserId, UserSession}, State);
 
 handle_call({answer, Answer}, From, State) ->
     do_set_answer(Answer, From, State);
@@ -488,10 +495,6 @@ handle_cast({unlink_caller_session, IdB}, #state{session=Session}=State) ->
 handle_cast({unregister, ProcId}, State) ->
     ?LLOG(info, "proc unregistered (~p)", [ProcId], State),
     {noreply, links_remove(ProcId, State)};
-
-handle_cast({send_ext_event, EvType, Body}, State) ->
-    do_send_ext_event(EvType, Body, State),
-    noreply(State);
 
 handle_cast({ext_ops, ExtOps}, State) ->
     noreply(update_ext_ops(ExtOps, State));
@@ -751,44 +754,7 @@ event(Event, #state{id=Id}=State) ->
         State,
         State),
     {ok, State3} = handle(nkmedia_session_event, [Id, Event], State2),
-    ext_event(Event, State3).
-
-
-%% @private
-ext_event(Event, #state{srv_id=SrvId}=State) ->
-    Send = case Event of
-        {answer, Answer} ->
-            {answer, #{answer=>Answer}};
-        {info, Info} ->
-            {info, #{info=>Info}};
-        {updated_type, Type, Ext} ->
-            {updated_type, Ext#{type=>Type}};
-        {stop, Reason} ->
-            {Code, Txt} = SrvId:error_code(Reason),
-            {stop, #{code=>Code, reason=>Txt}};
-        _ ->
-            ignore
-    end,
-    case Send of
-        {EvType, Body} ->
-            do_send_ext_event(EvType, Body, State);
-        ignore ->
-            ok
-    end,
-    State.
-
-
-%% @private
-do_send_ext_event(Type, Body, #state{srv_id=SrvId, id=SessId}=State) ->
-    RegId = #reg_id{
-        srv_id = SrvId,     
-        class = <<"media">>, 
-        subclass = <<"session">>,
-        type = nklib_util:to_binary(Type),
-        obj_id = SessId
-    },
-    ?LLOG(info, "ext event: ~p", [RegId], State),
-    nkservice_events:send(RegId, Body).
+    State3.
 
 
 %% @private

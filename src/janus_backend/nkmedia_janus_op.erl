@@ -77,6 +77,7 @@
         use_data => boolean(),
         bitrate => integer(),
         record => boolean(),   
+        user_id => binary(),        % For events
         info => term()
     }.
 
@@ -85,7 +86,8 @@
     #{
         audio => boolean(),
         video => boolean(),
-        data => boolean()
+        data => boolean(),
+        user_id => binary()
     }.
 
 
@@ -587,15 +589,14 @@ code_change(_OldVsn, State, _Extra) ->
 -spec terminate(term(), #state{}) ->
     ok.
 
-terminate(Reason, State) ->
-    #state{from=From, status=Status} = State,
+terminate(Reason, #state{from=From, status=Status}=State) ->
     case Status of
         publisher ->
             #state{room=Room, nkmedia_id=SessId} = State,
-            nkmedia_janus_room:event(Room, {unpublish, SessId});
+            nkmedia_janus_room:janus_event(Room, {stopped_publisher, SessId});
         listener ->
             #state{room=Room, nkmedia_id=SessId} = State,
-            nkmedia_janus_room:event(Room, {unlisten, SessId});
+            nkmedia_janus_room:janus_event(Room, {stopped_listener, SessId});
         _ ->
             ok
     end,
@@ -875,7 +876,9 @@ do_publish_2(SDP_A, State) ->
     Jsep = #{sdp=>SDP_A, type=>offer, trickle=>false},
     case message(Handle, Body#{request=>configure}, Jsep, State) of
         {ok, #{<<"configured">>:=<<"ok">>}, #{<<"sdp">>:=SDP_B}} ->
-            case nkmedia_janus_room:event(Room, {publish, SessId}) of
+            User = maps:get(user, Opts, <<>>),
+            JanusEvent = {started_publisher, SessId, #{user=>User, pid=>self()}},
+            case nkmedia_janus_room:janus_event(Room, JanusEvent) of
                 {ok, Pid} ->
                     Mon = erlang:monitor(process, Pid),
                     State2 = State#state{room_mon=Mon},
@@ -934,7 +937,13 @@ do_listen(Listen, #state{room=Room, nkmedia_id=SessId, opts=Opts}=State) ->
     case message(Handle, Body2, #{}, State) of
         {ok, #{<<"videoroom">>:=<<"attached">>}, #{<<"sdp">>:=SDP}} ->
             State2 = State#state{handle_id=Handle},
-            case nkmedia_janus_room:event(Room, {listen, SessId, Listen}) of
+            User = maps:get(user_id, Opts, <<>>),
+            JanusEvent = {
+                started_listener, 
+                SessId, 
+                #{user=>User, pid=>self(), peer=>Listen}
+            },
+            case nkmedia_janus_room:janus_event(Room, JanusEvent) of 
                 {ok, Pid} ->
                     Mon = erlang:monitor(process, Pid),
                     State3 = State2#state{room_mon=Mon},
@@ -974,8 +983,13 @@ do_listen_switch(Listen, State) ->
     },
     case message(Handle, Body2, #{}, State) of
         {ok, #{<<"switched">>:=<<"ok">>}, _} ->
-            Opts2 = Opts#{publisher=>Listen},
-            {ok, _} = nkmedia_janus_room:event(Room, {listen, SessId, Opts2}),
+            User = maps:get(user, Opts, <<>>),
+            JanusEvent = {
+                started_listener, 
+                SessId, 
+                #{user=>User, pid=>self(), peer=>Listen}
+            },
+            {ok, _} = nkmedia_janus_room:janus_event(Room, JanusEvent),
             reply(ok, State);
         {error, Error} ->
             ?LLOG(notice, "listen switch error: ~p", [Error], State),

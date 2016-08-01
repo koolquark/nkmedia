@@ -352,7 +352,7 @@ send_call(SrvId, #{dest:=Dest}=Offer, User, Data) ->
                     {rejected, Error}
             end;
         <<"p2">> ->
-            nkmedia_janus_room:create(SrvId, #{id=><<"sfu">>, room_video_codec=>vp9}),
+            nkmedia_room:start(SrvId, #{id=><<"sfu">>, room_video_codec=>vp9}),
             Config = #{
                 type => publish,
                 offer => Offer,

@@ -129,9 +129,43 @@ syntax(<<"call">>, <<"hangup">>, Syntax, Defaults, Mandatory) ->
 		[call_id|Mandatory]
 	};
 
+syntax(<<"room">>, <<"create">>, Syntax, Defaults, Mandatory) ->
+    {
+        Syntax#{
+            id => binary,
+            class => atom,
+            backend => atom,
+            bitrate => {integer, 0, none},
+            audio_codec => {enum, [opus, isac32, isac16, pcmu, pcma]},
+            video_codec => {enum , [vp8, vp9, h264]}
+        },
+        Defaults,
+        Mandatory
+    };
+
+syntax(<<"room">>, <<"destroy">>, Syntax, Defaults, Mandatory) ->
+    {
+        Syntax#{id => binary},
+        Defaults,
+        [id|Mandatory]
+    };
+
+syntax(<<"room">>, <<"list">>, Syntax, Defaults, Mandatory) ->
+    {
+        Syntax#{service => fun nkservice_api:parse_service/1},
+        Defaults, 
+        Mandatory
+    };
+
+syntax(<<"room">>, <<"info">>, Syntax, Defaults, Mandatory) ->
+    {
+        Syntax#{id => binary},
+        Defaults, 
+        [id|Mandatory]
+    };
+
 syntax(_Sub, _Cmd, Syntax, Defaults, Mandatory) ->
 	{Syntax, Defaults, Mandatory}.
-
 
 
 %% @private

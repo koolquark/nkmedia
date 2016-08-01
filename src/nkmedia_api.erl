@@ -50,8 +50,9 @@
 %% Registers self() with the session (to be monitorized)
 %% Subscribes the caller to session events
 %% Monitorizes the session and stores info on State
-cmd(<<"session">>, <<"start">>, #api_req{srv_id=SrvId, data=Data}, State) ->
-	start_session(SrvId, Data, State);
+cmd(<<"session">>, <<"start">>, Req, State) ->
+	#api_req{srv_id=SrvId, data=Data, user=User, session=Session} = Req,
+	start_session(SrvId, Data, User, Session, State);
 
 cmd(<<"session">>, <<"stop">>, #api_req{data=Data}, State) ->
 	#{session_id:=SessId} = Data,
@@ -136,30 +137,60 @@ cmd(<<"call">>, <<"hangup">>, #api_req{data=Data}, State) ->
 			{error, call_error, State}
 	end;
 
+cmd(<<"room">>, <<"create">>, #api_req{srv_id=SrvId, data=Data}, State) ->
+    case nkmedia_room:start(SrvId, Data) of
+        {ok, Id, _Pid} ->
+            {ok, #{id=>Id}, State};
+        {error, Error} ->
+            {error, Error, State}
+    end;
+
+cmd(<<"room">>, <<"destroy">>, #api_req{data=#{id:=Id}}, State) ->
+    case nkmedia_room:stop(Id, api_command) of
+        ok ->
+            {ok, #{}, State};
+        {error, Error} ->
+            {error, Error, State}
+    end;
+
+cmd(<<"room">>, <<"list">>, _Req, State) ->
+    Ids = [#{id=>Id, class=>Class} || {Id, Class, _Pid} <- nkmedia_room:get_all()],
+    {ok, Ids, State};
+
+cmd(<<"room">>, <<"info">>, #api_req{data=#{id:=RoomId}}, State) ->
+    case nkmedia_room:get_room(RoomId) of
+        {ok, Room} ->
+        	Keys = [audio_codec, video_codec, bitrate, class, backend, 
+        	        publishers, listeners],
+            {ok, maps:with(Keys, Room), State};
+        {error, Error} ->
+            {error, Error, State}
+    end;
+
 cmd(_SrvId, _Other, _Data, State) ->
 	{error, unknown_command, State}.
 
 
 %% @doc Called when a registered session or call goes down
-handle_down(SrvId, Mon, Reason, State) ->
+handle_down(_SrvId, Mon, Reason, State) ->
 	Sessions = get_sessions(State),
 	case lists:keytake(Mon, 2, Sessions) of
 		{value, {SessId, Mon}, Sessions2} ->
 			lager:warning("Session ~s is down: ~p", [SessId, Reason]),
-			RegId = session_reg_id(SrvId, stop, SessId),
-			{Code, Txt} = SrvId:error_code(process_down),
-			Body = #{code=>Code, reason=>Txt},
-			nkservice_api_server:send_event(self(), RegId, Body),
+			% RegId = session_reg_id(SrvId, stop, SessId),
+			% {Code, Txt} = SrvId:error_code(process_down),
+			% Body = #{code=>Code, reason=>Txt},
+			% nkservice_api_server:send_event(self(), RegId, Body),
 			{ok, set_sessions(Sessions2, State)};
 		false ->
 			Calls = get_calls(State),
 			case lists:keytake(Mon, 2, Calls) of
 				{value, {CallId, Mon}, Calls2} ->
 					lager:warning("Call ~s is down: ~p", [CallId, Reason]),
-					RegId = call_reg_id(SrvId, stop, CallId),
-					{Code, Txt} = SrvId:error_code(process_down),
-					Body = #{code=>Code, reason=>Txt},
-					nkservice_api_server:send_event(self(), RegId, Body),
+					% RegId = call_reg_id(SrvId, stop, CallId),
+					% {Code, Txt} = SrvId:error_code(process_down),
+					% Body = #{code=>Code, reason=>Txt},
+					% nkservice_api_server:send_event(self(), RegId, Body),
 					{ok, set_calls(Calls2, State)};
 				_ ->
 					continue
@@ -261,9 +292,13 @@ nkmedia_api_call_hangup(CallId, State) ->
 %% ===================================================================
 
 %% Monitorizes the session and stores info on State
-start_session(SrvId, Data, State) ->
+start_session(SrvId, Data, User, UserSession, State) ->
 	#{type:=Type} = Data,
-	Config = Data#{register => {nkmedia_api, self()}},
+	Config = Data#{
+		register => {nkmedia_api, self()},
+		user_id => User,
+		user_session => UserSession
+	},
 	case nkmedia_session:start(SrvId, Type, Config) of
 		{ok, SessId, Pid, Reply} ->
 			case maps:get(subscribe, Data, true) of

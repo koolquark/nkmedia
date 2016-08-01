@@ -30,7 +30,7 @@
 %%     If you hangup, the functions nkmedia_verto_bye (/janus) stops the session
 %%     If Verto/Janus is killed, it is detected by the session
 %%   - fe, p, p2, m1, m2 work the same way
-%%   - start a listener with listen(Publisher, {reg, Num})
+%%   - start a listener with listen(Publisher, Num)
 %%     This is the first operarion where we "call". We can reject the call, or accept it
 %%     We create a session that generates an offer, and call Verto/Janus,
 %%     then we register Verto/Janus with the session
@@ -168,7 +168,7 @@ mcu_layout(SessId, Layout) ->
 
 fs_call(SessId, Dest) ->
     Config = #{peer=>SessId, park_after_bridge=>true},
-    case start_invite(call, Config, {reg, Dest}) of
+    case start_invite(call, Config, Dest) of
         {ok, _SessProcIdB} ->
             ok;
         {rejected, Error} ->
@@ -349,16 +349,16 @@ send_call(<<"p">>, Base) ->
     start_session(publish, Config);
 
 send_call(<<"p2">>, Base) ->
-    nkmedia_janus_room:create(test, #{id=><<"sfu">>}),
+    nkmedia_room:start(test, #{id=><<"sfu">>}),
     Config = Base#{room=><<"sfu">>},
     start_session(publish, Config);
 
 send_call(<<"d", Num/binary>>, Base) ->
     % We share the same session, with both caller and callee registered to it
-    start_invite(p2p, Base, {reg, Num});
+    start_invite(p2p, Base, Num);
 
 send_call(<<"j", Num/binary>> , Base) ->
-    start_invite(proxy, Base, {reg, Num});
+    start_invite(proxy, Base, Num);
 
 send_call(<<"f", Num/binary>>, Base) ->
     ConfigA = Base#{
@@ -370,7 +370,7 @@ send_call(<<"f", Num/binary>>, Base) ->
             ConfigB = #{peer=>SessIdA, park_after_bridge=>false},
             spawn(
                 fun() -> 
-                    case start_invite(call, ConfigB, {reg, Num}) of
+                    case start_invite(call, ConfigB, Num) of
                         {ok, _} -> 
                             ok;
                         {rejected, Error} ->
@@ -390,9 +390,7 @@ send_call(_, _Base) ->
 %% Creates a new session that must generate an offer (a p2p, proxy, listen or call)
 %% Then invites Verto, Janus or SIP with that offer
 start_invite(Type, Config, Dest) ->
-    User = case Dest of
-        {reg, Inv} -> find_user(Inv)
-    end,
+    User = find_user(Dest),
     Config2 = case User of
         {rtp, _} -> Config#{proxy_type=>rtp};
         _ -> Config

@@ -169,15 +169,28 @@ start(publish, #{srv_id:=SrvId, offer:=#{sdp:=_}=Offer}=Session, State) ->
             {ok, Room0} -> 
                 nklib_util:to_binary(Room0);
             error -> 
-                RoomOpts = maps:with(
-                    [room_audio_codec, room_video_codec, room_bitrate], Session),
-                case nkmedia_janus_room:create(SrvId, RoomOpts) of
+                RoomOpts1 = [
+                    case maps:find(room_audio_codec, Session) of
+                        {ok, AC} -> {audio_codec, AC};
+                        error -> []
+                    end,
+                    case maps:find(room_video_codec, Session) of
+                        {ok, VC} -> {video_codec, VC};
+                        error -> []
+                    end,
+                    case maps:find(room_bitrate, Session) of
+                        {ok, BR} -> {bitrate, BR};
+                        error -> []
+                    end
+                ],
+                RoomOpts2 = maps:from_list(lists:flatten(RoomOpts1)),
+                case nkmedia_room:start(SrvId, RoomOpts2) of
                     {ok, Room0, _} -> Room0;
                     {error, Error} -> throw(Error)
                 end
         end,
-        State2 = case nkmedia_janus_room:get_room(Room) of
-            {ok, #{janus_id:=JanusId}} ->
+        State2 = case nkmedia_room:get_room(Room) of
+            {ok, #{nkmedia_janus:=#{janus_id:=JanusId}}} ->
                 State#{janus_id=>JanusId};
             _ ->
                 throw(room_not_found)
@@ -343,15 +356,20 @@ get_mediaserver(#{srv_id:=SrvId}, State) ->
 
 %% @private
 get_opts(#{id:=SessId}=Session, State) ->
-    Opts = maps:with([record, use_audio, use_video, use_data, bitrate, dtmf], Session),
+    Keys = [record, use_audio, use_video, use_data, bitrate, dtmf],
+    Opts1 = maps:with(Keys, Session),
+    Opts2 = case Session of
+        #{user_id:=UserId} -> Opts1#{user=>UserId};
+        _ -> Opts1
+    end,
     case Session of
         #{record:=true} ->
             Pos = maps:get(record_pos, State, 0),
             Name = io_lib:format("~s_p~4..0w", [SessId, Pos]),
             File = filename:join(<<"/tmp/record">>, list_to_binary(Name)),
-            {Opts#{filename => File}, State#{record_pos=>Pos+1}};
+            {Opts2#{filename => File}, State#{record_pos=>Pos+1}};
         _ ->
-            {Opts, State}
+            {Opts2, State}
     end.
 
 

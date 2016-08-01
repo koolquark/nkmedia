@@ -75,9 +75,7 @@ error(room_already_exists)	    ->  {0, <<"Room already exists">>};
 error(room_destroyed)           ->  {0, <<"Room destroyed">>};
 error(call_not_found) 			->  {0, <<"Call not found">>};
 error(already_answered) 		->  {0, <<"Already answered">>};
-
-error({verto, error, Code, Txt})-> 	
-	{0, nklib_util:msg("Verto Error (~p): ~s", [Code, Txt])};
+error(no_participants)		    ->  {0, <<"No participants">>};
 error(Code) when is_integer(Code) -> get_q850(Code);
 error(_) -> not_found.
 

@@ -35,6 +35,10 @@
 		 nkmedia_call_event/3, nkmedia_call_reg_event/4, nkmedia_session_reg_down/4,
 		 nkmedia_call_handle_call/3, nkmedia_call_handle_cast/2, 
 		 nkmedia_call_handle_info/2]).
+-export([nkmedia_room_init/2, nkmedia_room_terminate/2, 
+		 nkmedia_room_event/3, nkmedia_room_reg_event/4, nkmedia_room_reg_down/4,
+		 nkmedia_room_handle_call/3, nkmedia_room_handle_cast/2, 
+		 nkmedia_room_handle_info/2]).
 -export([error_code/1]).
 -export([api_cmd/2, api_syntax/4]).
 -export([api_server_cmd/2, api_server_handle_cast/2, api_server_handle_info/2]).
@@ -137,8 +141,8 @@ nkmedia_session_update(_Update, _Opts, _Type, Session) ->
 -spec nkmedia_session_event(session_id(), nkmedia_session:event(), session()) ->
 	{ok, session()} | continue().
 
-nkmedia_session_event(_SessId, _Event, Session) ->
-	{ok, Session}.
+nkmedia_session_event(SessId, Event, Session) ->
+	nkmedia_events:session_event(SessId, Event, Session).
 
 				  
 %% @doc Called when the status of the session changes, for each registered
@@ -277,8 +281,8 @@ nkmedia_call_cancel(_CallId, _ProcId, Call) ->
 -spec nkmedia_call_event(call_id(), nkmedia_call:event(), call()) ->
 	{ok, call()} | continue().
 
-nkmedia_call_event(_CallId, _Event, Call) ->
-	{ok, Call}.
+nkmedia_call_event(CallId, Event, Call) ->
+	nkmedia_events:call_event(CallId, Event, Call).
 
 
 %% @doc Called when the status of the call changes, for each registered
@@ -333,8 +337,85 @@ nkmedia_call_handle_info(Msg, Call) ->
 
 
 %% ===================================================================
-%% Error Codes
+%% Room Callbacks
+%% ===================================================================
 
+-type room_id() :: nkmedia_room:id().
+-type room() :: nkmedia_room:room().
+
+
+%% @doc Called when a new room starts
+-spec nkmedia_room_init(room_id(), room()) ->
+	{ok, room()} | {error, term()}.
+
+nkmedia_room_init(_Id, #{class:=_, backend:=_}=Room) ->
+	{ok, Room};
+
+nkmedia_room_init(_Id, _Room) ->
+	{error, not_implemented}.
+
+%% @doc Called when the room stops
+-spec nkmedia_room_terminate(Reason::term(), room()) ->
+	{ok, room()}.
+
+nkmedia_room_terminate(_Reason, Room) ->
+	{ok, Room}.
+
+
+%% @doc Called when the status of the room changes
+-spec nkmedia_room_event(room_id(), nkmedia_room:event(), room()) ->
+	{ok, room()} | continue().
+
+nkmedia_room_event(RoomId, Event, Room) ->
+	nkmedia_events:room_event(RoomId, Event, Room).
+
+
+%% @doc Called when the status of the room changes, for each registered
+%% process to the room
+-spec nkmedia_room_reg_event(room_id(),	term(), nkmedia_room:event(), room()) ->
+	{ok, room()} | continue().
+
+nkmedia_room_reg_event(_RoomId, _RegId, _Event, Room) ->
+	{ok, Room}.
+
+
+%% @doc Called when a registered process fails
+-spec nkmedia_room_reg_down(room_id(), nklib:proc_id(), term(), room()) ->
+	{ok, room()} | {stop, Reason::term(), room()} | continue().
+
+nkmedia_room_reg_down(_RoomId, _ProcId, _Reason, Session) ->
+	{stop, registered_down, Session}.
+
+
+%% @doc
+-spec nkmedia_room_handle_call(term(), {pid(), term()}, room()) ->
+	{reply, term(), room()} | {noreply, room()} | continue().
+
+nkmedia_room_handle_call(Msg, _From, Room) ->
+	lager:error("Module nkmedia_room received unexpected call: ~p", [Msg]),
+	{noreply, Room}.
+
+
+%% @doc
+-spec nkmedia_room_handle_cast(term(), room()) ->
+	{noreply, room()} | continue().
+
+nkmedia_room_handle_cast(Msg, Room) ->
+	lager:error("Module nkmedia_room received unexpected cast: ~p", [Msg]),
+	{noreply, Room}.
+
+
+%% @doc
+-spec nkmedia_room_handle_info(term(), room()) ->
+	{noreply, room()} | continue().
+
+nkmedia_room_handle_info(Msg, Room) ->
+	lager:warning("Module nkmedia_room received unexpected info: ~p", [Msg]),
+	{noreply, Room}.
+
+
+%% ===================================================================
+%% Error Codes
 %% ===================================================================
 
 %% @doc
