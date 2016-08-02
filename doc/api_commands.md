@@ -123,7 +123,7 @@ answer|{}|Answer for the session
 
 Some session types allow to modify the session characteristics in real time. 
 
-The fields `session_id` and `update_type`field is mandatory. See each specific plugin documentation to learn about how to use it and supported options. 
+The fields `session_id` and `update_type` are mandatory. See each specific plugin documentation to learn about how to use it and supported options. 
 
 
 **Sample**
@@ -177,7 +177,7 @@ This API allows you to get some information about a started session. The only re
 	    type: "echo",
 	    type_ext: {},
 	    user_id: "user@domain.com",
-	    user_session": "1f0fbffa-3919-6d40-03f5-38c9862f00d9"
+	    user_session: "1f0fbffa-3919-6d40-03f5-38c9862f00d9"
 	},
 	tid: 1
 }
@@ -308,7 +308,7 @@ Gets information about a started room. For _sfu_ rooms, you will get the list of
 {
 	result: "ok",
 	data: {
-		class" "sfu,
+		class: "sfu",
 		backend: "nkmedia_janus",
     	listeners: {
       		"0737dc33-391a-2700-1470-38c9862f00d9": {
