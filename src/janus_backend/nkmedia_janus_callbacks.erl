@@ -132,13 +132,13 @@ error_code(_)                       ->  continue.
 nkmedia_session_init(Id, Session) ->
     State = maps:get(nkmedia_janus, Session, #{}),
     {ok, State2} = nkmedia_janus_session:init(Id, Session, State),
-    {ok, Session#{nkmedia_janus=>State2}}.
+    {ok, update_state(State2, Session)}.
 
 
 %% @private
 nkmedia_session_terminate(Reason, Session) ->
     nkmedia_janus_session:terminate(Reason, Session, state(Session)),
-    {ok, maps:remove(nkmedia_janus, Session)}.
+    {ok, nkmedia_session:do_rm(nkmedia_janus, Session)}.
 
 
 %% @private
@@ -148,9 +148,11 @@ nkmedia_session_start(Type, Session) ->
             State = state(Session),
             case nkmedia_janus_session:start(Type, Session, State) of
                 {ok, Reply, ExtOps, State2} ->
-                    {ok, Reply, ExtOps, update_state(State2, Session)};
+                    Session2 = nkmedia_session:do_add(backend, nkmedia_janus, Session),
+                    {ok, Reply, ExtOps, update_state(State2, Session2)};
                 {error, Error, State2} ->
-                    {error, Error, update_state(State2, Session)};
+                    Session2 = nkmedia_session:do_add(backend, nkmedia_janus, Session),
+                    {error, Error, update_state(State2, Session2)};
                 continue ->
                     continue
             end;
@@ -205,7 +207,7 @@ nkmedia_session_stop(Reason, Session) ->
 %% @private
 nkmedia_session_handle_call(nkmedia_janus_get_room, _From, Session) ->
     Reply = case Session of
-        #{srv_id:=SrvId, type:=publish, type_ext:=#{room:=Room}} ->
+        #{srv_id:=SrvId, type:=publish, type_ext:=#{room_id:=Room}} ->
             {ok, SrvId, Room};
         _ ->
             {error, invalid_state}
@@ -371,9 +373,8 @@ state(_) ->
 
 
 %% @private
-update_state(State, Map) ->
-    Map#{nkmedia_janus:=State}.
-
+update_state(State, Session) ->
+    nkmedia_session:do_add(nkmedia_janus, State, Session).
 
 
 %% @private

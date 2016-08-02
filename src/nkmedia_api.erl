@@ -69,10 +69,22 @@ cmd(<<"session">>, <<"set_answer">>, #api_req{data=Data}, State) ->
 	end;
 
 cmd(<<"session">>, <<"update">>, #api_req{data=Data}, State) ->
-	#{session_id:=SessId, type:=Type} = Data,
+	#{session_id:=SessId, update_type:=Type} = Data,
 	case nkmedia_session:update(SessId, Type, Data) of
 		{ok, _} ->
 			{ok, #{}, State};
+		{error, Error} ->
+			{error, Error, State}
+	end;
+
+cmd(<<"session">>, <<"info">>, #api_req{data=Data}, State) ->
+	#{session_id:=SessId} = Data,
+	case nkmedia_session:get_session(SessId) of
+		{ok, Session} ->
+			Keys = [id, peer, wait_timeout, ready_timeout, backend, 
+			        user_id, user_session, type, type_ext, caller_peer, callee_peer],
+			Data2 = maps:with(Keys, Session),
+			{ok, Data2, State};
 		{error, Error} ->
 			{error, Error, State}
 	end;
@@ -140,12 +152,12 @@ cmd(<<"call">>, <<"hangup">>, #api_req{data=Data}, State) ->
 cmd(<<"room">>, <<"create">>, #api_req{srv_id=SrvId, data=Data}, State) ->
     case nkmedia_room:start(SrvId, Data) of
         {ok, Id, _Pid} ->
-            {ok, #{id=>Id}, State};
+            {ok, #{room_id=>Id}, State};
         {error, Error} ->
             {error, Error, State}
     end;
 
-cmd(<<"room">>, <<"destroy">>, #api_req{data=#{id:=Id}}, State) ->
+cmd(<<"room">>, <<"destroy">>, #api_req{data=#{room_id:=Id}}, State) ->
     case nkmedia_room:stop(Id, api_command) of
         ok ->
             {ok, #{}, State};
@@ -154,10 +166,10 @@ cmd(<<"room">>, <<"destroy">>, #api_req{data=#{id:=Id}}, State) ->
     end;
 
 cmd(<<"room">>, <<"list">>, _Req, State) ->
-    Ids = [#{id=>Id, class=>Class} || {Id, Class, _Pid} <- nkmedia_room:get_all()],
+    Ids = [#{room_id=>Id, class=>Class} || {Id, Class, _Pid} <- nkmedia_room:get_all()],
     {ok, Ids, State};
 
-cmd(<<"room">>, <<"info">>, #api_req{data=#{id:=RoomId}}, State) ->
+cmd(<<"room">>, <<"info">>, #api_req{data=#{room_id:=RoomId}}, State) ->
     case nkmedia_room:get_room(RoomId) of
         {ok, Room} ->
         	Keys = [audio_codec, video_codec, bitrate, class, backend, 

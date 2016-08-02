@@ -11,6 +11,7 @@
 ## Management Interface
 * [Introduction](api_intro.md)
 * [Core API](api_commands.md)
+* [Core API Events](api_events.md)
 * Plugins API
   * [nkmedia_janus](janus.md)
   * nkmedia_fs

@@ -76,6 +76,7 @@ error(room_destroyed)           ->  {0, <<"Room destroyed">>};
 error(call_not_found) 			->  {0, <<"Call not found">>};
 error(already_answered) 		->  {0, <<"Already answered">>};
 error(no_participants)		    ->  {0, <<"No participants">>};
+error(unknown_publisher)	    ->  {0, <<"Unknown publisher">>};
 error(Code) when is_integer(Code) -> get_q850(Code);
 error(_) -> not_found.
 

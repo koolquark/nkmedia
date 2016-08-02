@@ -62,6 +62,7 @@ record|false|Perform recording of audio and video
 }
 ```
 
+
 ### Echo Update
 
 It is possible to update the media session once started, using the [update session request](api_commands.md#update-a-session) and using `type: "media"`. For the _echo_ type, the parameters `use_audio`, `use_video`, `bitrate` and `record` can be modified. If the recording is stopped and then started again, a new file will be generated.

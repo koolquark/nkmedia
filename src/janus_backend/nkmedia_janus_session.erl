@@ -63,8 +63,8 @@
     nkmedia_session:session() |
     #{
         record => boolean(),            %
-        room => binary(),               % publish, listen
-        publisher => binary(),          % listen
+        room_id => binary(),            % publish, listen
+        publisher_id => binary(),       % listen
         proxy_type => webrtc | rtp      % proxy
     }.
 
@@ -81,7 +81,7 @@
         janus_mon => reference(),
         janus_op => answer,
         record_pos => integer(),
-        room => binary()
+        room_id => binary()
     }.
 
 
@@ -165,7 +165,7 @@ start(proxy, _Session, State) ->
 
 start(publish, #{srv_id:=SrvId, offer:=#{sdp:=_}=Offer}=Session, State) ->
     try
-        Room = case maps:find(room, Session) of
+        Room = case maps:find(room_id, Session) of
             {ok, Room0} -> 
                 nklib_util:to_binary(Room0);
             error -> 
@@ -200,8 +200,8 @@ start(publish, #{srv_id:=SrvId, offer:=#{sdp:=_}=Offer}=Session, State) ->
                 {Opts, State4} = get_opts(Session, State3),
                 case nkmedia_janus_op:publish(Pid, Room, Offer, Opts) of
                     {ok, #{sdp:=_}=Answer} ->
-                        Reply = #{answer=>Answer, room=>Room},
-                        ExtOps = #{answer=>Answer, type_ext=>#{room=>Room}},
+                        Reply = #{answer=>Answer, room_id=>Room},
+                        ExtOps = #{answer=>Answer, type_ext=>#{room_id=>Room}},
                         {ok, Reply, ExtOps, State4};
                     {error, Error2} ->
                         {error, Error2, State4}
@@ -216,7 +216,7 @@ start(publish, #{srv_id:=SrvId, offer:=#{sdp:=_}=Offer}=Session, State) ->
 start(publish, _Session, State) ->
     {error, missing_offer, State};
 
-start(listen, #{publisher:=Publisher}=Session, State) ->
+start(listen, #{publisher_id:=Publisher}=Session, State) ->
     case nkmedia_session:do_call(Publisher, nkmedia_janus_get_room) of
         {ok, _SrvId, Room} ->
             case get_janus_op(Session, State) of
@@ -225,10 +225,10 @@ start(listen, #{publisher:=Publisher}=Session, State) ->
                     case nkmedia_janus_op:listen(Pid, Room, Publisher, Opts) of
                         {ok, Offer} ->
                             State4 = State3#{janus_op=>answer},
-                            Reply = #{offer=>Offer, room=>Room},
+                            Reply = #{offer=>Offer, room_id=>Room},
                             ExtOps = #{
                                 offer => Offer, 
-                                type_ext => #{room=>Room, publisher=>Publisher}
+                                type_ext => #{room_id=>Room, publisher_id=>Publisher}
                             },
                             {ok, Reply, ExtOps, State4};
                         {error, Error} ->
@@ -286,12 +286,12 @@ update(media, Opts, Type, #{id:=SessId}, #{janus_pid:=Pid}=State)
             {error, Error, State2}
     end;
 
-update(listen_switch, #{publisher:=Publisher}, listen, Session, 
+update(listen_switch, #{publisher_id:=Publisher}, listen, Session, 
        #{janus_pid:=Pid}=State) ->
     #{type_ext:=Ext} = Session,
     case nkmedia_janus_op:listen_switch(Pid, Publisher, #{}) of
         ok ->
-            ExtOps = #{type_ext=>Ext#{publisher:=Publisher}},
+            ExtOps = #{type_ext=>Ext#{publisher_id:=Publisher}},
             {ok, #{}, ExtOps, State};
         {error, Error} ->
             {error, Error, State}

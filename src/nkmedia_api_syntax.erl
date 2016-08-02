@@ -72,10 +72,17 @@ syntax(<<"session">>, <<"update">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
-			type => atom
+			update_type => atom
 		},
 		Defaults,
-		[session_id, type|Mandatory]
+		[session_id, update_type|Mandatory]
+	};
+
+syntax(<<"session">>, <<"info">>, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{session_id => binary},
+		Defaults,
+		[session_id|Mandatory]
 	};
 
 syntax(<<"call">>, <<"start">>, Syntax, Defaults, Mandatory) ->
@@ -132,22 +139,22 @@ syntax(<<"call">>, <<"hangup">>, Syntax, Defaults, Mandatory) ->
 syntax(<<"room">>, <<"create">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
-            id => binary,
             class => atom,
+            room_id => binary,
             backend => atom,
             bitrate => {integer, 0, none},
             audio_codec => {enum, [opus, isac32, isac16, pcmu, pcma]},
             video_codec => {enum , [vp8, vp9, h264]}
         },
         Defaults,
-        Mandatory
+        [class|Mandatory]
     };
 
 syntax(<<"room">>, <<"destroy">>, Syntax, Defaults, Mandatory) ->
     {
-        Syntax#{id => binary},
+        Syntax#{room_id => binary},
         Defaults,
-        [id|Mandatory]
+        [room_id|Mandatory]
     };
 
 syntax(<<"room">>, <<"list">>, Syntax, Defaults, Mandatory) ->
@@ -159,9 +166,9 @@ syntax(<<"room">>, <<"list">>, Syntax, Defaults, Mandatory) ->
 
 syntax(<<"room">>, <<"info">>, Syntax, Defaults, Mandatory) ->
     {
-        Syntax#{id => binary},
+        Syntax#{room_id => binary},
         Defaults, 
-        [id|Mandatory]
+        [room_id|Mandatory]
     };
 
 syntax(_Sub, _Cmd, Syntax, Defaults, Mandatory) ->

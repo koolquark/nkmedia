@@ -30,7 +30,7 @@
 -export([answer/2, answer_async/2, update/3, update_async/3, info/2]).
 -export([register/2, unregister/2, link_session/2, unlink_session/1]).
 -export([get_all/0]).
--export([get_call_data/1, ext_ops/2]).
+-export([get_call_data/1, ext_ops/2, do_add/3, do_rm/2]).
 -export([find/1, do_cast/2, do_call/2, do_call/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
@@ -320,6 +320,15 @@ get_call_data(SessId) ->
 %% ===================================================================
 
 
+%% @private
+do_add(Key, Val, Session) ->
+    maps:put(Key, Val, Session).
+
+
+%% @private
+do_rm(Key, Session) ->
+    maps:remove(Key, Session).
+
 
 % ===================================================================
 %% gen_server behaviour
@@ -361,10 +370,9 @@ init([#{id:=Id, type:=Type, srv_id:=SrvId}=Session]) ->
     case Session2 of
         #{peer:=Peer} -> 
             case link_session(Peer, Id) of
-                {ok, _} -> ok;
+                {ok, _} -> 
+                    ok;
                 {error, _Error} -> 
-                    lager:error("EE: ~p, ~s", [_Error, Peer]),
-
                     stop(self(), peer_stopped)
             end;
         _ -> 
@@ -796,11 +804,11 @@ do_cast(SessId, Msg) ->
 
 %% @private
 add_to_session(Key, Val, #state{session=Session}=State) ->
-    Session2 = maps:put(Key, Val, Session),
+    Session2 = do_add(Key, Val, Session),
     State#state{session=Session2}.
 
 remove_from_session(Key, #state{session=Session}=State) ->
-    Session2 = maps:remove(Key, Session),
+    Session2 = do_rm(Key, Session),
     State#state{session=Session2}.
 
 

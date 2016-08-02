@@ -130,13 +130,13 @@ error_code(_)                    ->  continue.
 nkmedia_session_init(Id, Session) ->
     State = maps:get(nkmedia_fs, Session, #{}),
     {ok, State2} = nkmedia_fs_session:init(Id, Session, State),
-    {ok, Session#{nkmedia_fs=>State2}}.
+    {ok, update_state(State2, Session)}.
 
 
 %% @private
 nkmedia_session_terminate(Reason, Session) ->
     nkmedia_fs_session:terminate(Reason, Session, state(Session)),
-    {ok, maps:remove(nkmedia_fs, Session)}.
+    {ok, nkmedia_session:do_rm(nkmedia_fs, Session)}.
 
 
 %% @private
@@ -146,9 +146,11 @@ nkmedia_session_start(Type, Session) ->
             State = state(Session),
             case nkmedia_fs_session:start(Type, Session, State) of
                 {ok, Reply, ExtOps, State2} ->
-                    {ok, Reply, ExtOps, session(State2, Session)};
+                    Session2 = nkmedia_session:do_add(backend, nkmedia_fs, Session),
+                    {ok, Reply, ExtOps, update_state(State2, Session2)};
                 {error, Error, State2} ->
-                    {error, Error, session(State2, Session)};
+                    Session2 = nkmedia_session:do_add(backend, nkmedia_fs, Session),
+                    {error, Error, update_state(State2, Session2)};
                 continue ->
                     continue
             end;
@@ -164,9 +166,9 @@ nkmedia_session_answer(Type, Answer, Session) ->
             State = state(Session),
             case nkmedia_fs_session:answer(Type, Answer, Session, State) of
                 {ok, Reply, ExtOps, State2} ->
-                    {ok, Reply, ExtOps, session(State2, Session)};
+                    {ok, Reply, ExtOps, update_state(State2, Session)};
                 {error, Error, State2} ->
-                    {error, Error, session(State2, Session)};
+                    {error, Error, update_state(State2, Session)};
                 continue ->
                     continue
             end;
@@ -182,9 +184,9 @@ nkmedia_session_update(Update, Opts, Type, Session) ->
             State = state(Session),
             case nkmedia_fs_session:update(Update, Opts, Type, Session, State) of
                 {ok, Reply, ExtOps, State2} ->
-                    {ok, Reply, ExtOps, session(State2, Session)};
+                    {ok, Reply, ExtOps, update_state(State2, Session)};
                 {error, Error, State2} ->
-                    {error, Error, session(State2, Session)};
+                    {error, Error, update_state(State2, Session)};
                 continue ->
                     continue
             end;
@@ -196,7 +198,7 @@ nkmedia_session_update(Update, Opts, Type, Session) ->
 %% @private
 nkmedia_session_stop(Reason, Session) ->
     {ok, State2} = nkmedia_fs_session:stop(Reason, Session, state(Session)),
-    {continue, [Reason, session(State2, Session)]}.
+    {continue, [Reason, update_state(State2, Session)]}.
 
 
 %% @private
@@ -217,7 +219,7 @@ nkmedia_session_reg_event(_SessId, _ProcId, _Event, _Session) ->
 nkmedia_session_handle_cast({nkmedia_fs_session, Msg}, Session) ->
     State = state(Session),
     {ok, State2} = nkmedia_fs_session:handle_cast(Msg, Session, State),
-    {noreply, session(State2, Session)};
+    {noreply, update_state(State2, Session)};
 
 nkmedia_session_handle_cast(_Msg, _Session) ->
     continue.
@@ -259,7 +261,7 @@ nkdocker_notify(_MonId, _Op) ->
 syntax(<<"session">>, <<"start">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
-            room => binary,
+            room_id => binary,
             mcu_layout => binary,
             park_after_bridge => boolean
         },
@@ -272,8 +274,7 @@ syntax(<<"session">>, <<"update">>, Syntax, Defaults, Mandatory) ->
         Syntax#{
             type => atom,
             session_type => atom,
-            room => binary,
-            peer => binary,
+            room_id => binary,
             mcu_layout => binary
         },
         Defaults,
@@ -291,8 +292,8 @@ state(#{nkmedia_fs:=State}) ->
 
 
 %% @private
-session(State, Session) ->
-    Session#{nkmedia_fs:=State}.
+update_state(State, Session) ->
+    nkmedia_session:do_add(nkmedia_fs, State, Session).
 
 
 

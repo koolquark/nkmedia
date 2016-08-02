@@ -128,6 +128,9 @@ get_client() ->
 stop_session(C, SessId) ->
     sess_cmd(C, stop, SessId, #{}).
 
+info_session(C, SessId) ->
+    sess_cmd(C, info, SessId, #{}).
+
 set_answer(C, SessId, Answer) ->
     sess_cmd(C, set_answer, SessId, #{answer=>Answer}).
 
@@ -149,10 +152,10 @@ update_type(C, SessId, Type, Data) ->
     update(C, SessId, session_type, Data#{session_type=>Type}).
 
 update_listen(C, SessId, Publisher) ->
-    update(C, SessId, listen_switch, #{publisher=>Publisher}).
+    update(C, SessId, listen_switch, #{publisher_id=>Publisher}).
 
 update(C, SessId, Type, Data) ->
-    sess_cmd(C, update, SessId, Data#{type=>Type}).
+    sess_cmd(C, update, SessId, Data#{update_type=>Type}).
 
 
 %% Room
@@ -164,10 +167,10 @@ room_create(C, Data) ->
     room_cmd(C, create, Data).
 
 room_destroy(C, Id) ->
-    room_cmd(C, destroy, #{id=>Id}).
+    room_cmd(C, destroy, #{room_id=>Id}).
 
 room_info(C, Id) ->
-    room_cmd(C, info, #{id=>Id}).
+    room_cmd(C, info, #{room_id=>Id}).
 
 room_cmd(C, Cmd, Data) ->
     nkservice_api_client:cmd(C, media, room, Cmd, Data).
@@ -188,7 +191,7 @@ listen(Publisher, Dest) ->
         type => listen,
         subscribe => false,
         % events_body => Data, 
-        publisher=>Publisher, 
+        publisher_id=>Publisher, 
         use_video=>true
     },
     start_invite(listen, Dest, Config).
@@ -363,7 +366,7 @@ send_call(<<"p">>, User, Base) ->
 
 send_call(<<"p2">>, User, Base) ->
     nkmedia_room:start(test, #{id=><<"sfu">>}),
-    Config = Base#{type=>publish, room=><<"sfu">>},
+    Config = Base#{type=>publish, room_id=><<"sfu">>},
     start_session(User, Config);
 
 send_call(<<"d", Num/binary>>, _User, Base) ->

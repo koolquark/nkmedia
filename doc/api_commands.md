@@ -11,12 +11,16 @@ Class|Subclass|Cmd|Description
 `media`|`session`|[`stop`](#stop-a-session)|Destroys a new media session
 `media`|`session`|[`set_answer`](#set-an-answer)|Sets the answer for a sessions
 `media`|`session`|[`update`](#update-a-session)|Updates a current session
+`media`|`session`|[`info`](#get-info-about-a-session)|Gets info about a session
 `media`|`call`|[`start`](#start-a-call)|Starts a new call
 `media`|`call`|[`ringing`](#notify-call-ringing)|Notifies the call is ringing
 `media`|`call`|[`answered`](#notify-call-answered)|Notifies the call is answered
 `media`|`call`|[`answered`](#notify-call-rejected)|Notifies the call is rejected
 `media`|`call`|[`hangup`](#hangup-a-call)|Hangups a call
-
+`media`|`room`|[`create`](#create-a-room)|Starts a new room
+`media`|`room`|[`destroy`](#destroy-a-room)|Destroys a room
+`media`|`room`|[`list`](#list-rooms)|List known rooms
+`media`|`room`|[`info`](#get-info-about-a-room)|Gets information about a room
 
 ## Start a Session
 
@@ -25,12 +29,12 @@ Performs the creation of a new media session. The mandatory `type` field defines
 Type|Plugins
 ---|---|---
 p2p|(none)
-echo|[nkmedia_janus](janus.md#echo)
+echo|[nkmedia_janus](janus.md#echo, fs.md#echo)
 proxy|[nkmedia_janus](janus.md#proxy)
 publish|[nkmedia_janus](janus.md#publish)
 listen|[nkmedia_janus](janus.md#listen)
-park|nkmedia_fs
-mcu|nkmedia_fs
+park|[nkmedia_fs](fs.md#park)
+mcu|[nkmedia_fs](fs.md#mcu)
 
 See each specific plugin documentation to learn about how to use it and supported options.
 
@@ -46,9 +50,9 @@ ready_timeout||Timeout for sessions in _reay_ state
 subscribe|true|Subscribe to session events
 event_body|{}|Body to receive in the automatic events.
 backend|(automatic)|Forces a specific plugin for the request
+peer|(none)|See bellow
 
 Depending on the type, you need to supply an _offer_, or an _offer_ and an _answer_. The response from the server may include the _answer_, or the _offer_ to the other party.
-
 
 
 **Sample**
@@ -60,6 +64,7 @@ Depending on the type, you need to supply an _offer_, or an _offer_ and an _answ
 	cmd: "start",
 	data: {
 		type: "echo",
+		backend: "nkmedia_janus",
 		offer: {
 			sdp: "v=0.."
 		},
@@ -81,11 +86,21 @@ Depending on the type, you need to supply an _offer_, or an _offer_ and an _answ
 }
 ```
 
+**Peer Sessions**
+
+When you start a session using the `peer` key poiting to another existing session, this session will be _linked_ to the peer session. This new session will take the _callee role_, and the peer session will take the _caller role_.
+
+This means:
+* When the new _callee_ session gets an answer, it will be automatically sent to the _caller_ session. This way, you can _chain_ together any number of sessions.
+* If any of the sessions stop, the other will stop automatically.
+
+
+
 
 
 ## Stop a Session
 
-Destroys a started session.
+Destroys a started session. You can include an optional _code_ and _reason_.
 
 Field|Default|Description
 ---|---|---|---
@@ -96,17 +111,19 @@ reason||String error reason
 
 ## Set an Answer
 
-When the started session's type means that you must supply an answer (like `proxy`), you must use this API to set the remote party's answer.
+When the started session's type requires you to supply an answer (like `proxy`), you must use this API to set the remote party's answer. You will get your own answer in the response. See [nkmedia_janus](janus.md#proxy) for samples.
 
-You will get your own answer in the response.
-
+Field|Default|Description
+---|---|---|---
+session_id|(mandatory)|Session Id
+answer|{}|Answer for the session
 
 
 ## Update a Session
 
 Some session types allow to modify the session characteristics in real time. 
 
-The `session_id` field is mandatory. See each specific plugin documentation to learn about how to use it and supported options. The field `type` is mandatory to set the _type_ of update.
+The fields `session_id` and `update_type`field is mandatory. See each specific plugin documentation to learn about how to use it and supported options. 
 
 
 **Sample**
@@ -117,8 +134,8 @@ The `session_id` field is mandatory. See each specific plugin documentation to l
 	subclass: "session",
 	cmd: "update",
 	data: {
-		type: "media",
 		session_id: "54c1b637-36fb-70c2-8080-28f07603cda8",
+		update_type: "media",
 		record: true,
 		use_audio: false,
 		bitrate: 100000
@@ -133,6 +150,185 @@ The `session_id` field is mandatory. See each specific plugin documentation to l
 	tid: 1
 }
 ```
+
+## Get info about a session
+
+This API allows you to get some information about a started session. The only required field os `session_id`.
+
+**Sample**
+
+```js
+{
+	class: "media",
+	subclass: "session",
+	cmd: "info",
+	data: {
+		session_id: "54c1b637-36fb-70c2-8080-28f07603cda8",
+	}
+	tid: 1
+}
+```
+-->
+```js
+{
+	result: "ok",
+	data: {
+		backend: "nkmedia_fs",
+	    type: "echo",
+	    type_ext: {},
+	    user_id: "user@domain.com",
+	    user_session": "1f0fbffa-3919-6d40-03f5-38c9862f00d9"
+	},
+	tid: 1
+}
+```
+
+
+## Create a room
+
+NkMEDIA allows to create generic media rooms. Installed plugis support one or several room classes. The currently supported room classes and supported backends are:
+
+Class|Plugins
+---|---|---
+sfu|[nkmedia_janus](janus.md)
+mcu|[nkmedia_fs](fs.md)
+
+Room Ids are global for all backends and services.
+
+The required fields are:
+
+Field|Default|Description
+---|---|---|---
+class|(mandatory)|Room class
+room_id|(automatic)|Room Id (will be autogenerated if not included)
+backend|(automatic)|Forces a specific plugin for the room
+audio_codec|"opus"|See each plugin documentation
+video_codec|"vp8"|See each plugin documentation
+bitrate|0|See each plugin documentation
+
+
+**Sample**
+
+ ```js
+{
+	class: "media",
+  	subclass: "room",
+  	cmd: "create",
+  	data: {
+    	class: "sfu",
+    	video_codec: "vp9"
+  },
+  tid: 1
+}
+```
+-->
+ ```js
+{
+	result: "ok",
+	data: {
+    	room_id: "4611e276-3919-9683-0bae-38c9862f00d9"
+    },
+    tid: 1
+}
+```
+
+
+## Destroy a room
+
+Destroys a started room. Current participant sessions, if any, will be removed.
+
+**Sample**
+
+ ```js
+{
+	class: "media",
+  	subclass: "room",
+  	cmd: "destroy",
+  	data: {
+    	room_id: "4611e276-3919-9683-0bae-38c9862f00d9"
+  	},
+  	tid: 1
+}
+```
+
+
+## List rooms
+
+Gets a list of known rooms, along with its class
+
+**Sample**
+
+ ```js
+{
+	class: "media",
+  	subclass: "room",
+  	cmd: "list",
+    tid: 1
+}
+```
+-->
+ ```js
+{
+	result: "ok",
+	data: [
+	    {
+	      class: "sfu",
+	      room_id: "002f5758-3919-9408-4a02-38c9862f00d9"
+	    },
+	    {
+	      class: "sfu",
+	      room_id: "8a87bfc2-3919-9161-b1ab-38c9862f00d9"
+	    }
+  	],
+    tid: 1
+}
+```
+
+
+## Get info about a room
+
+Gets information about a started room. For _sfu_ rooms, you will get the list of publishers and listeners.
+
+
+**Sample**
+
+ ```js
+{
+	class: "media",
+  	subclass: "room",
+  	cmd: "info",
+  	data: {
+  		room_id: "002f5758-3919-9408-4a02-38c9862f00d9"
+  	},
+    tid: 1
+}
+```
+-->
+ ```js
+{
+	result: "ok",
+	data: {
+		class" "sfu,
+		backend: "nkmedia_janus",
+    	listeners: {
+      		"0737dc33-391a-2700-1470-38c9862f00d9": {
+        		peer: "39ce4076-391a-1260-75db-38c9862f00d9",
+        		user: "listener1@domain.com"
+      		}
+    	},
+    	publishers: {
+      		"39ce4076-391a-1260-75db-38c9862f00d9": {
+        		user: "1009"
+      		},
+      		"90076c74-391a-153c-f6c7-38c9862f00d9": {
+        		user: "1008"
+      		}
+    	}
+    },
+    tid: 1
+}
+```
+
 
 
 

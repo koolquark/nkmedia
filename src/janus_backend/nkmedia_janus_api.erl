@@ -59,8 +59,8 @@ syntax(<<"session">>, <<"start">>, Syntax, Defaults, Mandatory) ->
             record => boolean,
             bitrate => {integer, 0, none},
             proxy_type => {enum, [webrtc, rtp]},
-            room => binary,
-            publisher => binary,
+            room_id => binary,
+            publisher_id => binary,
             use_audio => boolean,
             use_video => boolean,
             use_data => boolean,
@@ -80,7 +80,7 @@ syntax(<<"session">>, <<"update">>, Syntax, Defaults, Mandatory) ->
             use_video => boolean,
             use_data => boolean,
             record => boolean,
-            publisher => binary
+            publisher_id => binary
         },
         Defaults,
         Mandatory

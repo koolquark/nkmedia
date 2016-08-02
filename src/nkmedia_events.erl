@@ -102,17 +102,17 @@ room_event(RoomId, Event, #{srv_id:=SrvId}=Room) ->
             {destroyed, #{code=>Code, reason=>Txt}};
         {started_publisher, Publisher, Opts} ->
             User = maps:get(user, Opts, <<>>),
-        	{started_publisher, #{id=>Publisher, user=>User}};
+        	{started_publisher, #{session_id=>Publisher, user=>User}};
         {stopped_publisher, Publisher, Opts} ->
             User = maps:get(user, Opts, <<>>),
-        	{stopped_publisher, #{id=>Publisher, user=>User}};
+        	{stopped_publisher, #{session_id=>Publisher, user=>User}};
         {started_listener, Listener, Opts} ->
             User = maps:get(user, Opts, <<>>),
             Peer = maps:get(peer, Opts, <<>>),
-        	{started_listener, #{id=>Listener, peer=>Peer, user=>User}};
+        	{started_listener, #{session_id=>Listener, peer=>Peer, user=>User}};
         {stopped_listener, Listener, Opts} ->
             User = maps:get(user, Opts, <<>>),
-        	{stopped_listener, #{id=>Listener, user=>User}};
+        	{stopped_listener, #{session_id=>Listener, user=>User}};
         _ ->
         	ignore
     end,

@@ -148,17 +148,17 @@ update_media(SessId, Media) ->
 
 listen(Publisher, Dest) ->
     Config = #{
-        publisher => Publisher, 
+        publisher_id => Publisher, 
         use_video => true
     },
     start_invite(listen, Config, Dest).
 
 listen_swich(SessId, Publisher) ->
-    nkmedia_session:update(SessId, listen_switch, #{publisher=>Publisher}).
+    nkmedia_session:update(SessId, listen_switch, #{publisher_id=>Publisher}).
 
 
 update_type(SessId, Type, Opts) ->
-    nkmedia_session:update(SessId, type, Opts#{type=>Type}).
+    nkmedia_session:update(SessId, type, Opts#{updapte_type=>Type}).
 
 
 mcu_layout(SessId, Layout) ->
