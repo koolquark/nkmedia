@@ -57,7 +57,8 @@ start(_Type, _Args) ->
         sip_port => integer,        
         no_docker => boolean,
         log_dir => fullpath,
-        record_dir => fullpath
+        record_dir => fullpath,
+        docker_log => any
     },
     Defaults = #{
         admin_url => "wss://all:9010",
