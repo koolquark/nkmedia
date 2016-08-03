@@ -36,7 +36,7 @@
 
 -define(CALL_TIME, 30000).
 -define(KEEPALIVE, 30000).
--include("nkmedia.hrl").
+-include("../../include/nkmedia.hrl").
 
 
 %% ===================================================================
@@ -72,8 +72,10 @@ connect(#{name:=Name, host:=Host, base:=Base}=Config) ->
 			case get_config(KmsPid) of
 				{ok, #{vsn:=Vsn, rel:=Rel}} ->
 					{error, {already_started, KmsPid}};
-				_ ->
-					{error, {incompatible_version}}
+				{ok, _} ->
+					{error, incompatible_version};
+				{error, Error} ->
+					{error, Error}
 			end
 	end.
 

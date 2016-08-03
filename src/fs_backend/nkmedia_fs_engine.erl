@@ -60,7 +60,7 @@
 	<<"TRAP">>
 ]).
 
--include("nkmedia.hrl").
+-include("../../include/nkmedia.hrl").
 
 
 %% ===================================================================
@@ -98,8 +98,10 @@ connect(#{name:=Name, host:=Host, base:=Base, pass:=Pass}=Config) ->
 			case get_config(FsPid) of
 				{ok, #{vsn:=Vsn, rel:=Rel, pass:=Pass}} ->
 					{error, {already_started, FsPid}};
-				_ ->
-					{error, incompatible_version}
+				{ok, _} ->
+					{error, incompatible_version};
+				{error, Error} ->
+					{error, Error}
 			end
 	end.
 

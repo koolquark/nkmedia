@@ -74,8 +74,10 @@ connect(#{name:=Name, host:=Host, base:=Base, pass:=Pass}=Config) ->
 			case get_config(JanusPid) of
 				{ok, #{vsn:=Vsn, rel:=Rel, pass:=Pass}} ->
 					{error, {already_started, JanusPid}};
-				_ ->
-					{error, {incompatible_version}}
+				{ok, _} ->
+					{error, incompatible_version};
+				{error, Error} ->
+					{error, Error}
 			end
 	end.
 
