@@ -69,7 +69,9 @@ start() ->
         kurento_proxy => "kms:all:8433",
         nksip_trace => {console, all},
         sip_listen => "sip:all:9012",
-        log_level => debug
+        log_level => debug,
+
+        api_gelf_server => "c1.netc.io"
     },
     nkservice:start(test, Spec).
 
@@ -95,7 +97,8 @@ plugin_deps() ->
         nkmedia_sip,  nksip_registrar, nksip_trace,
         nkmedia_verto, nkmedia_fs, nkmedia_fs_verto_proxy,
         nkmedia_janus_proto, nkmedia_janus_proxy, nkmedia_janus,
-        nkmedia_kms, nkmedia_kms_proxy
+        nkmedia_kms, nkmedia_kms_proxy,
+        nkservice_api_gelf
     ].
 
 
