@@ -163,19 +163,19 @@ update(Id, Update) ->
 
 
 %% @doc Registers a process with the call
--spec register(id(), nklib:proc_id()) ->     
+-spec register(id(), nklib:link()) ->     
     {ok, pid()} | {error, nkservice:error()}.
 
-register(CallId, ProcId) ->
-    do_call(CallId, {register, ProcId}).
+register(CallId, Link) ->
+    do_call(CallId, {register, Link}).
 
 
 %% @doc Registers a process with the call
--spec unregister(id(), nklib:proc_id()) ->
+-spec unregister(id(), nklib:link()) ->
     ok | {error, nkservice:error()}.
 
-unregister(CallId, ProcId) ->
-    do_call(CallId, {unregister, ProcId}).
+unregister(CallId, Link) ->
+    do_call(CallId, {unregister, Link}).
 
 
 %% @doc Gets all started rooms
@@ -222,9 +222,8 @@ init([#{srv_id:=SrvId, id:=RoomId, class:=Class}=Room]) ->
         room = Room#{links=>nklib_links:new()}
     },
     State2 = case Room of
-        #{register:=ProcId} -> 
-            ProcPid = nklib_links:get_pid(ProcId),            
-            links_add(ProcId, reg, ProcPid, State1);
+        #{register:=Link} -> 
+            links_add(Link, State1);
         _ ->
             State1
     end,
@@ -248,10 +247,9 @@ handle_call({update, Update}, _From, State) ->
             {reply, {error, Error}, State2}
     end; 
 
-handle_call({register, ProcId}, _From, State) ->
-    ?LLOG(info, "proc registered (~p)", [ProcId], State),
-    Pid = nklib_links:get_pid(ProcId),
-    State2 = links_add(ProcId, reg, Pid, State),
+handle_call({register, Link}, _From, State) ->
+    ?LLOG(info, "proc registered (~p)", [Link], State),
+    State2 = links_add(Link, State),
     {reply, {ok, self()}, State2};
 
 handle_call(get_state, _From, State) ->
@@ -266,9 +264,9 @@ handle_call(Msg, From, State) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
 %% @private
-handle_cast({unregister, ProcId}, State) ->
-    ?LLOG(info, "proc unregistered (~p)", [ProcId], State),
-    {noreply, links_remove(ProcId, State)};
+handle_cast({unregister, Link}, State) ->
+    ?LLOG(info, "proc unregistered (~p)", [Link], State),
+    {noreply, links_remove(Link, State)};
 
 handle_cast(restart_timer, State) ->
     {noreply, restart_timer(State)};
@@ -288,23 +286,23 @@ handle_cast(Msg, State) ->
 handle_info(room_timeout, State) ->
     {noreply, event(timeout, State)};
 
-handle_info({'DOWN', _Ref, process, Pid, Reason}=Msg, #state{id=Id}=State) ->
-    case links_down(Pid, State) of
+handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, #state{id=Id}=State) ->
+    case links_down(Ref, State) of
         {ok, SessId, publisher, State2} ->
             {ok, State3} = do_update({stopped_publisher, SessId}, State2),
             {noreply, State3};
         {ok, SessId, listener, State2} ->
             {ok, State3} = do_update({stopped_listener, SessId}, State2),
             {noreply, State3};
-        {ok, ProcId, reg, State2} ->
-            case handle(nkmedia_room_reg_down, [Id, ProcId, Reason], State2) of
+        {ok, Link, reg, State2} ->
+            case handle(nkmedia_room_reg_down, [Id, Link, Reason], State2) of
                 {ok, State3} ->
                     {noreply, State3};
                 {stop, normal, State3} ->
                     do_stop(normal, State3);    
                 {stop, Error, State3} ->
                     ?LLOG(notice, "stopping beacuse of reg '~p' down (~p)",
-                          [ProcId, Error], State3),
+                          [Link, Error], State3),
                     do_stop(Error, State3)
             end;
         not_found ->
@@ -452,11 +450,11 @@ event(Event, #state{id=Id}=State) ->
     ?LLOG(info, "sending 'event': ~p", [Event], State),
     State2 = links_fold(
         fun
-            (ProcId, reg, AccState) ->
+            (Link, reg, AccState) ->
                 {ok, AccState2} = 
-                    handle(nkmedia_room_reg_event, [Id, ProcId, Event], AccState),
+                    handle(nkmedia_room_reg_event, [Id, Link, Event], AccState),
                     AccState2;
-            (_ProcId, _Type, AccState) ->   % publisher | listener
+            (_Link, _Type, AccState) ->   % publisher | listener
                     AccState
         end,
         State,
@@ -483,20 +481,26 @@ update_room(Key, Val, #state{room=Room}=State) ->
 
 
 %% @private
-links_add(Id, Data, Pid, #state{room=#{links:=Links}}=State) ->
-    update_room(links, nklib_links:add(Id, Data, Pid, Links), State).
+links_add(Link, State) ->
+    Pid = nklib_links:get_pid(Link),
+    links_add(Link, reg, Pid, State).
 
 
 %% @private
-links_remove(Id, #state{room=#{links:=Links}}=State) ->
-    update_room(links, nklib_links:remove(Id, Links), State).
+links_add(Link, Data, Pid, #state{room=#{links:=Links}}=State) ->
+    update_room(links, nklib_links:add(Link, Data, Pid, Links), State).
 
 
 %% @private
-links_down(Pid, #state{room=#{links:=Links}}=State) ->
-    case nklib_links:down(Pid, Links) of
-        {ok, Id, Data, Links2} -> 
-            {ok, Id, Data, update_room(links, Links2, State)};
+links_remove(Link, #state{room=#{links:=Links}}=State) ->
+    update_room(links, nklib_links:remove(Link, Links), State).
+
+
+%% @private
+links_down(Ref, #state{room=#{links:=Links}}=State) ->
+    case nklib_links:down(Ref, Links) of
+        {ok, Link, Data, Links2} -> 
+            {ok, Link, Data, update_room(links, Links2, State)};
         not_found -> 
             not_found
     end.

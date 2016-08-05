@@ -211,7 +211,7 @@ nkmedia_session_reg_event(SessId, {caller_peer, SessIdB}, {answer, _Ans}, Sessio
             continue
     end;
 
-nkmedia_session_reg_event(_SessId, _ProcId, _Event, _Session) ->
+nkmedia_session_reg_event(_SessId, _Link, _Event, _Session) ->
     continue.
 
 

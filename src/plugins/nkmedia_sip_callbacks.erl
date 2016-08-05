@@ -73,7 +73,7 @@ plugin_stop(Config, #{name:=Name}) ->
 %% @doc Called when a new SIP invite arrives
 -spec nkmedia_sip_invite(nkservice:id(), nksip:aor(), 
                          nkmedia:offer(), nksip:request(), nksip:call()) ->
-    {ok, nklib:proc_id()} | {rejected, nkservice:error()} | continue().
+    {ok, nklib:link()} | {rejected, nkservice:error()} | continue().
 
 nkmedia_sip_invite(_SrvId, _AOR, _Offer, _Req, _Call) ->
     {rejected, <<"Not Implemented">>}.
@@ -149,11 +149,11 @@ sip_invite(Req, Call) ->
         false -> #{}
     end,
     case SrvId:nkmedia_sip_invite(SrvId, AOR, Offer, Req, Call) of
-        {ok, _ProcId} ->
+        {ok, _Link} ->
             % {ok, Handle} = nksip_request:get_handle(Req),
             % {ok, Dialog} = nksip_dialog:get_handle(Req),
-            % nklib_proc:put({nkmedia_sip, dialog, Dialog}, ProcId),
-            % nklib_proc:put({nkmedia_sip, cancel, Handle}, ProcId),
+            % nklib_proc:put({nkmedia_sip, dialog, Dialog}, Link),
+            % nklib_proc:put({nkmedia_sip, cancel, Handle}, Link),
             noreply;
         {reply, Reply} ->
             {reply, Reply};
@@ -257,7 +257,7 @@ nkmedia_call_cancel(CallId, {nkmedia_sip, _Pid}, _Call) ->
     nkmedia_sip:send_bye({nkmedia_call, CallId}),
     continue;
 
-nkmedia_call_cancel(_CallId, _ProcId, _Call) ->
+nkmedia_call_cancel(_CallId, _Link, _Call) ->
     continue.
 
 
@@ -265,7 +265,7 @@ nkmedia_call_reg_event(CallId, {nkmedia_sip, _Pid}, {hangup, _Reason}, _Call) ->
     nkmedia_sip:send_bye({nkmedia_call, CallId}),
     continue;
 
-nkmedia_call_reg_event(_CallId, _ProcId, _Event, _Call) ->
+nkmedia_call_reg_event(_CallId, _Link, _Event, _Call) ->
     continue.
 
 
@@ -314,7 +314,7 @@ nkmedia_session_reg_event(SessId, {nkmedia_sip, out, _SipPid},
     spawn(fun() -> nkmedia_sip:send_bye({nkmedia_session, SessId}) end),
     {ok, Session};
 
-nkmedia_session_reg_event(_SessId, _ProcId, _Event, _Session) ->
+nkmedia_session_reg_event(_SessId, _Link, _Event, _Session) ->
     continue.
 
 

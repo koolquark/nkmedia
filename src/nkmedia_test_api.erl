@@ -248,10 +248,10 @@ nkmedia_verto_invite(_SrvId, CallId, Offer, Verto) ->
         }
     },
     case send_call(Dest, User, Base) of
-        {ok, ProcId} ->
-            {ok, ProcId, Verto};
-        {answer, Answer, ProcId} ->
-            {answer, Answer, ProcId, Verto};
+        {ok, Link} ->
+            {ok, Link, Verto};
+        {answer, Answer, Link} ->
+            {answer, Answer, Link, Verto};
         {rejected, Reason} ->
             lager:notice("Verto invite rejected ~p", [Reason]),
             {rejected, Reason, Verto}
@@ -262,7 +262,7 @@ nkmedia_verto_answer(_CallId, {nkmedia_session, SessId, _Pid}, Answer, Verto) ->
     {ok, _} = set_answer(AnyClient, SessId, Answer),
     {ok, Verto};
 
-nkmedia_verto_answer(_CallId, _ProcId, _Answer, Verto) ->
+nkmedia_verto_answer(_CallId, _Link, _Answer, Verto) ->
     {ok, Verto}.
 
 
@@ -274,7 +274,7 @@ nkmedia_verto_bye(_CallId, {test_api_session, SessId, WsPid}, Verto) ->
     nkservice_api_client:stop(WsPid),
     {ok, Verto};
 
-nkmedia_verto_bye(_CallId, _ProcId, _Verto) ->
+nkmedia_verto_bye(_CallId, _Link, _Verto) ->
     continue.
 
 
@@ -296,10 +296,10 @@ nkmedia_janus_invite(_SrvId, CallId, Offer, Janus) ->
         }
     },
     case send_call(Dest, User, Base) of
-        {ok, ProcId} ->
-            {ok, ProcId, Janus};
-        {answer, Answer, ProcId} ->
-            {answer, Answer, ProcId, Janus};
+        {ok, Link} ->
+            {ok, Link, Janus};
+        {answer, Answer, Link} ->
+            {answer, Answer, Link, Janus};
         {rejected, Reason} ->
             lager:notice("Janus invite rejected: ~p", [Reason]),
             {rejected, Reason, Janus}
@@ -311,7 +311,7 @@ nkmedia_janus_answer(_CallId, {nkmedia_session, SessId, _Pid}, Answer, Janus) ->
     {ok, _} = set_answer(AnyClient, SessId, Answer),
     {ok, Janus};
 
-nkmedia_janus_answer(_CallId, _ProcId, _Answer, Janus) ->
+nkmedia_janus_answer(_CallId, _Link, _Answer, Janus) ->
     {ok, Janus}.
 
 
@@ -323,7 +323,7 @@ nkmedia_janus_bye(_CallId, {test_api_session, SessId, WsPid}, Janus) ->
     nkservice_api_client:stop(WsPid),
     {ok, Janus};
 
-nkmedia_janus_bye(_CallId, _ProcId, _Janus) ->
+nkmedia_janus_bye(_CallId, _Link, _Janus) ->
     continue.
 
 
@@ -384,20 +384,20 @@ send_call(<<"f", Num/binary>>, User, Base) ->
         type => park,
         park_after_bridge => true
     },
-    {answer, AnswerA, SessProcIdA} = start_session(User, ConfigA),
-    {test_api_session, SessIdA, WsPid} = SessProcIdA,
+    {answer, AnswerA, SessLinkA} = start_session(User, ConfigA),
+    {test_api_session, SessIdA, WsPid} = SessLinkA,
     ConfigB = #{type=>call, peer=>SessIdA, park_after_bridge=>false},
     spawn(
         fun() -> 
             case start_invite(WsPid, Num, ConfigB) of
-                {ok, _SessProcIdB} ->
+                {ok, _SessLinkB} ->
                     ok;
                 {rejected, Error} ->
                     lager:notice("Error in start_invite: ~p", [Error]),
                     nkmedia_session:stop(SessIdA)
             end
         end),
-    {answer, AnswerA, SessProcIdA};
+    {answer, AnswerA, SessLinkA};
 
 send_call(_, _User, _Base) ->
     {rejected, no_destination}.
@@ -430,22 +430,22 @@ start_invite(User, Num, Config) ->
         {rtp, _} -> Config#{proxy_type=>rtp};
         _ -> Config
     end,
-    {offer, Offer, SessProcId} = start_session(User, Config2),
-    {test_api_session, SessId, _WsPid} = SessProcId,
+    {offer, Offer, SessLink} = start_session(User, Config2),
+    {test_api_session, SessId, _WsPid} = SessLink,
     {ok, SessPid} = nkmedia_session:find(SessId), 
     case Dest of 
         {webrtc, {nkmedia_verto, VertoPid}} ->
             ok = nkmedia_verto:invite(VertoPid, SessId, 
                                       Offer, {nkmedia_session, SessId, SessPid}),
-            VertoProcId = {nkmedia_verto, SessId, VertoPid},
-            {ok, _} = nkmedia_session:register(SessId, VertoProcId),
-            {ok, SessProcId};
+            VertoLink = {nkmedia_verto, SessId, VertoPid},
+            {ok, _} = nkmedia_session:register(SessId, VertoLink),
+            {ok, SessLink};
         {webrtc, {nkmedia_janus, JanusPid}} ->
             ok = nkmedia_janus_proto:invite(JanusPid, SessId, 
                                       Offer, {nkmedia_session, SessId, SessPid}),
-            JanusProcId = {nkmedia_janus, SessId, JanusPid},
-            {ok, _} = nkmedia_session:register(SessId, JanusProcId),
-            {ok, SessProcId};
+            JanusLink = {nkmedia_janus, SessId, JanusPid},
+            {ok, _} = nkmedia_session:register(SessId, JanusLink),
+            {ok, SessLink};
         not_found ->
             nkmedia_session:stop(SessId),
             {rejected, unknown_user}

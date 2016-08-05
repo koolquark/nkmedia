@@ -115,8 +115,8 @@ nkmedia_verto_login(_Login, _Pass, Verto) ->
 %% @doc Called when the client sends an INVITE
 %% If {ok, ...} is returned, we must call nkmedia_verto:answer/3.
 -spec nkmedia_verto_invite(nkservice:id(), call_id(), nkmedia:offer(), verto()) ->
-    {ok, nklib:proc_id(), verto()} | 
-    {answer, nkmedia:answer(), nklib_:proc_id(), verto()} | 
+    {ok, nklib:link(), verto()} | 
+    {answer, nkmedia:answer(), nklib_:link(), verto()} | 
     {rejected, nkservice:error(), verto()} | continue().
 
 nkmedia_verto_invite(_SrvId, _CallId, _Offer, Verto) ->
@@ -124,7 +124,7 @@ nkmedia_verto_invite(_SrvId, _CallId, _Offer, Verto) ->
 
 
 %% @doc Called when the client sends an ANSWER after nkmedia_verto:invite/4
--spec nkmedia_verto_answer(call_id(), nklib:proc_id(), nkmedia:answer(), verto()) ->
+-spec nkmedia_verto_answer(call_id(), nklib:link(), nkmedia:answer(), verto()) ->
     {ok, verto()} |{hangup, nkservice:error(), verto()} | continue().
 
 % If the registered process happens to be {nkmedia_session, ...} and we have
@@ -148,12 +148,12 @@ nkmedia_verto_answer(_CallId, {nkmedia_call, CallId, _Pid}, Answer, Verto) ->
             {hangup, Error, Verto}
     end;
 
-nkmedia_verto_answer(_CallId, _ProcId, _Answer, Verto) ->
+nkmedia_verto_answer(_CallId, _Link, _Answer, Verto) ->
     {ok, Verto}.
 
 
 %% @doc Called when the client sends an BYE after nkmedia_verto:invite/4
--spec nkmedia_verto_rejected(call_id(), nklib:proc_id(), verto()) ->
+-spec nkmedia_verto_rejected(call_id(), nklib:link(), verto()) ->
     {ok, verto()} | continue().
 
 nkmedia_verto_rejected(_CallId, {nkmedia_session, SessId, _Pid}, Verto) ->
@@ -164,15 +164,15 @@ nkmedia_verto_rejected(_CallId, {nkmedia_verto_call, CallId, _Pid}, Verto) ->
     nkmedia_call:rejected(CallId, {nkmedia_verto, self()}),
     {ok, Verto};
 
-nkmedia_verto_rejected(_CallId, _ProcId, Verto) ->
+nkmedia_verto_rejected(_CallId, _Link, Verto) ->
     {ok, Verto}.
 
 
 %% @doc Sends when the client sends a BYE during a call
--spec nkmedia_verto_bye(call_id(), nklib:proc_id(), verto()) ->
+-spec nkmedia_verto_bye(call_id(), nklib:link(), verto()) ->
     {ok, verto()} | continue().
 
-% We recognize some special ProcIds
+% We recognize some special Links
 nkmedia_verto_bye(_CallId, {nkmedia_session, SessId, _Pid}, Verto) ->
     nkmedia_session:stop(SessId, verto_bye),
     {ok, Verto};
@@ -181,15 +181,15 @@ nkmedia_verto_bye(_CallId, {nkmedia_verto_call, CallId, _Pid}, Verto) ->
     nkmedia_call:hangup(CallId, verto_bye),
     {ok, Verto};
 
-nkmedia_verto_bye(_CallId, _ProcId, Verto) ->
+nkmedia_verto_bye(_CallId, _Link, Verto) ->
     {ok, Verto}.
 
 
 %% @doc
--spec nkmedia_verto_dtmf(call_id(), nklib:proc_id(), DTMF::binary(), verto()) ->
+-spec nkmedia_verto_dtmf(call_id(), nklib:link(), DTMF::binary(), verto()) ->
     {ok, verto()} | continue().
 
-nkmedia_verto_dtmf(_CallId, _ProcId, _DTMF, Verto) ->
+nkmedia_verto_dtmf(_CallId, _Link, _DTMF, Verto) ->
     {ok, Verto}.
 
 
@@ -260,8 +260,8 @@ nkmedia_call_resolve(Callee, Acc, Call) ->
 %% We register with verto as {nkmedia_verto_call, CallId, PId},
 %% and with the call as {nkmedia_verto, Pid}
 nkmedia_call_invite(CallId, {nkmedia_verto, Pid}, Offer, Call) when is_pid(Pid) ->
-    ProcId = {nkmedia_verto_call, CallId, self()},
-    ok = nkmedia_verto:invite(Pid, CallId, Offer, ProcId),
+    Link = {nkmedia_verto_call, CallId, self()},
+    ok = nkmedia_verto:invite(Pid, CallId, Offer, Link),
     {ok, {nkmedia_verto, Pid}, Call};
 
 nkmedia_call_invite(_CallId, _Dest, _Offer, _Call) ->
@@ -273,7 +273,7 @@ nkmedia_call_cancel(CallId, {nkmedia_verto, Pid}, _Call) when is_pid(Pid) ->
     nkmedia_verto:hangup(Pid, CallId, originator_cancel),
     continue;
 
-nkmedia_call_cancel(_CallId, _ProcId, _Call) ->
+nkmedia_call_cancel(_CallId, _Link, _Call) ->
     continue.
 
 
@@ -285,7 +285,7 @@ nkmedia_call_reg_event(_CallId, {nkmedia_verto, CallId, Pid}, {hangup, Reason}, 
     nkmedia_verto:hangup(Pid, CallId, Reason),
     continue;
 
-nkmedia_call_reg_event(_CallId, _ProcId, _Event, _Call) ->
+nkmedia_call_reg_event(_CallId, _Link, _Event, _Call) ->
     continue.
 
 
@@ -310,7 +310,7 @@ nkmedia_session_reg_event(_SessId, {nkmedia_verto, CallId, Pid}, Event, _Session
     end,
     continue;
 
-nkmedia_session_reg_event(_SessId, _ProcId, _Event, _Call) ->
+nkmedia_session_reg_event(_SessId, _Link, _Event, _Call) ->
     continue.
 
 

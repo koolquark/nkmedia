@@ -99,8 +99,8 @@ nkmedia_janus_init(_NkPort, Janus) ->
 
 %% @doc Called when the client sends an INVITE
 -spec nkmedia_janus_invite(nkservice:id(), call_id(), nkmedia:offer(), janus()) ->
-    {ok, nklib:proc_id(), janus()} | 
-    {answer, nkmedia_janus_proto:answer(), nklib:proc_id(), janus()} | 
+    {ok, nklib:link(), janus()} | 
+    {answer, nkmedia_janus_proto:answer(), nklib:link(), janus()} | 
     {rejected, nkservice:error(), janus()} | continue().
 
 nkmedia_janus_invite(_SrvId, _CallId, _Offer, Janus) ->
@@ -108,7 +108,7 @@ nkmedia_janus_invite(_SrvId, _CallId, _Offer, Janus) ->
 
 
 %% @doc Called when the client sends an ANSWER
--spec nkmedia_janus_answer(call_id(), nklib:proc_id(), nkmedia:answer(), janus()) ->
+-spec nkmedia_janus_answer(call_id(), nklib:link(), nkmedia:answer(), janus()) ->
     {ok, janus()} |{hangup, nkservice:error(), janus()} | continue().
 
 % If the registered process happens to be {nkmedia_session, ...} and we have
@@ -132,15 +132,15 @@ nkmedia_janus_answer(_CallId, {nkmedia_call, CallId, _Pid}, Answer, Janus) ->
             {hangup, Error, Janus}
     end;
 
-nkmedia_janus_answer(_CallId, _ProcId, _Answer, Janus) ->
+nkmedia_janus_answer(_CallId, _Link, _Answer, Janus) ->
     {ok, Janus}.
 
 
 %% @doc Sends when the client sends a BYE
--spec nkmedia_janus_bye(call_id(), nklib:proc_id(), janus()) ->
+-spec nkmedia_janus_bye(call_id(), nklib:link(), janus()) ->
     {ok, janus()} | continue().
 
-% We recognize some special ProcIds
+% We recognize some special Links
 nkmedia_janus_bye(_CallId, {nkmedia_session, SessId, _Pid}, Janus) ->
     nkmedia_session:stop(SessId, janus_bye),
     {ok, Janus};
@@ -149,7 +149,7 @@ nkmedia_janus_bye(_CallId, {nkmedia_call, CallId, _Pid}, Janus) ->
     nkmedia_call:hangup(CallId, janus_bye),
     {ok, Janus};
 
-nkmedia_janus_bye(_CallId, _ProcId, Janus) ->
+nkmedia_janus_bye(_CallId, _Link, Janus) ->
     {ok, Janus}.
 
 
@@ -232,8 +232,8 @@ nkmedia_call_resolve(Callee, Acc, Call) ->
 %% We register with janus as {nkmedia_janus_call, CallId, PId},
 %% and with the call as {nkmedia_janus, Pid}
 nkmedia_call_invite(CallId, {nkmedia_janus, Pid}, Offer, Call) when is_pid(Pid) ->
-    ProcId = {nkmedia_janus_call, CallId, self()},
-    ok = nkmedia_janus_proto:invite(Pid, CallId, Offer, ProcId),
+    Link = {nkmedia_janus_call, CallId, self()},
+    ok = nkmedia_janus_proto:invite(Pid, CallId, Offer, Link),
     {ok, {nkmedia_janus, Pid}, Call};
 
 nkmedia_call_invite(_CallId, _Dest, _Offer, _Call) ->
@@ -247,7 +247,7 @@ nkmedia_call_cancel(CallId, {nkmedia_janus, Pid}, _Call) when is_pid(Pid) ->
     nkmedia_janus_proto:hangup(Pid, CallId, originator_cancel),
     continue;
 
-nkmedia_call_cancel(_CallId, _ProcId, _Call) ->
+nkmedia_call_cancel(_CallId, _Link, _Call) ->
     continue.
 
 
@@ -259,7 +259,7 @@ nkmedia_call_reg_event(_CallId, {nkmedia_janus, CallId, Pid}, {hangup, Reason}, 
     nkmedia_janus_proto:hangup(Pid, CallId, Reason),
     continue;
 
-nkmedia_call_reg_event(_CallId, _ProcId, _Event, _Call) ->
+nkmedia_call_reg_event(_CallId, _Link, _Event, _Call) ->
     continue.
 
 %% @private
@@ -283,7 +283,7 @@ nkmedia_session_reg_event(_SessId, {nkmedia_janus, CallId, Pid}, Event, _Call) -
     end,
     continue;
 
-nkmedia_session_reg_event(_CallId, _ProcId, _Event, _Call) ->
+nkmedia_session_reg_event(_CallId, _Link, _Event, _Call) ->
     continue.
 
 

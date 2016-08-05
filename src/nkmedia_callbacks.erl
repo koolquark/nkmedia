@@ -179,10 +179,10 @@ nkmedia_session_reg_event(_SessId, _RegId, _Event, Session) ->
 
 
 %% @doc Called when a registered process fails
--spec nkmedia_session_reg_down(session_id(), nklib:proc_id(), term(), session()) ->
+-spec nkmedia_session_reg_down(session_id(), nklib:link(), term(), session()) ->
 	{ok, session()} | {stop, Reason::term(), session()} | continue().
 
-nkmedia_session_reg_down(_SessId, _ProcId, _Reason, Session) ->
+nkmedia_session_reg_down(_SessId, _Link, _Reason, Session) ->
 	{stop, registered_down, Session}.
 
 
@@ -254,7 +254,7 @@ nkmedia_call_resolve(Callee, DestExts, Call) ->
 
 %% @doc Called when an outbound call is to be sent
 -spec nkmedia_call_invite(call_id(), nkmedia_call:dest(), nkmedia:offer(), call()) ->
-	{ok, nklib:proc_id(), call()} | 
+	{ok, nklib:link(), call()} | 
 	{retry, Secs::pos_integer(), call()} | 
 	{remove, call()} | 
 	continue().
@@ -267,13 +267,13 @@ nkmedia_call_invite(_CallId, _Dest, _Offer, Call) ->
 
 
 %% @doc Called when an outbound call is to be sent
--spec nkmedia_call_cancel(call_id(), nklib:proc_id(), call()) ->
+-spec nkmedia_call_cancel(call_id(), nklib:link(), call()) ->
 	{ok, call()} | continue().
 
 nkmedia_call_cancel(CallId, {nkmedia_api, Pid}, Call) ->
 	nkmedia_api:call_cancel(CallId, Pid, Call);
 
-nkmedia_call_cancel(_CallId, _ProcId, Call) ->
+nkmedia_call_cancel(_CallId, _Link, Call) ->
 	{ok, Call}.
 
 
@@ -380,10 +380,10 @@ nkmedia_room_reg_event(_RoomId, _RegId, _Event, Room) ->
 
 
 %% @doc Called when a registered process fails
--spec nkmedia_room_reg_down(room_id(), nklib:proc_id(), term(), room()) ->
+-spec nkmedia_room_reg_down(room_id(), nklib:link(), term(), room()) ->
 	{ok, room()} | {stop, Reason::term(), room()} | continue().
 
-nkmedia_room_reg_down(_RoomId, _ProcId, _Reason, Session) ->
+nkmedia_room_reg_down(_RoomId, _Link, _Reason, Session) ->
 	{stop, registered_down, Session}.
 
 

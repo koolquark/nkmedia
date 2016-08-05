@@ -73,13 +73,11 @@
         wait_timeout => integer(),              % Secs
         ready_timeout => integer(),
         backend => nkemdia:backend(),
-        register => nklib:proc_id(),
+        register => nklib:link(),
         user_id => nkservice:user_id(),
         user_session => nkservice:user_session(),
         term() => term()                        % Plugin data
     }.
-
-
 
 
 -type session() ::
@@ -88,7 +86,6 @@
         srv_id => nkservice:id(),
         type => type(),
         type_ext => map(),
-        links => nklib_links:links(link_id()),
         caller_peer => id(),
         callee_peer => id()
     }.
@@ -111,12 +108,8 @@
         answer => nkmedia:answer(),
         type => type(),
         type_ext => map(),
-        register => nklib:proc_id()
+        register => nklib:link()
     }.
-
--type link_id() ::
-    {reg, nklib:proc_id()} | {peer, id()}.
-
 
 
 
@@ -273,19 +266,19 @@ unlink_session(SessId) ->
 
 
 %% @doc Registers a process with the session
--spec register(id(), nklib:proc_id()) ->
+-spec register(id(), nklib:link()) ->
     {ok, pid()} | {error, nkservice:error()}.
 
-register(SessId, ProcId) ->
-    do_call(SessId, {register, ProcId}).
+register(SessId, Link) ->
+    do_call(SessId, {register, Link}).
 
 
 %% @doc Unregisters a process with the session
--spec unregister(id(), nklib:proc_id()) ->
+-spec unregister(id(), nklib:link()) ->
     ok | {error, nkservice:error()}.
 
-unregister(SessId, ProcId) ->
-    do_cast(SessId, {unregister, ProcId}).
+unregister(SessId, Link) ->
+    do_cast(SessId, {unregister, Link}).
 
 
 %% @private
@@ -342,6 +335,7 @@ do_rm(Key, Session) ->
     timer :: reference(),
     stop_sent = false :: boolean(),
     hibernate = false :: boolean(),
+    links :: nklib_links:links(),
     session :: session()
 }).
 
@@ -358,12 +352,12 @@ init([#{id:=Id, type:=Type, srv_id:=SrvId}=Session]) ->
         id = Id, 
         srv_id = SrvId, 
         type = Type,
-        session = Session2#{links=>nklib_links:new()}
+        links = nklib_links:new(),
+        session = Session2
     },
     State2 = case Session2 of
-        #{register:=ProcId} -> 
-            ProcPid = nklib_links:get_pid(ProcId),            
-            links_add(ProcId, none, ProcPid, State1);
+        #{register:=Link} -> 
+            links_add(Link, State1);
         _ ->
             State1
     end,
@@ -428,14 +422,13 @@ handle_call(get_call_data, _From, #state{srv_id=SrvId, session=Session}=State) -
 handle_call({link_callee_session, IdB, PidB}, _From, #state{id=IdA}=State) ->
     ?LLOG(notice, "linked to callee ~s", [IdB], State),
     do_cast(PidB, {link_caller_session, IdA, self()}),
-    State2 = links_add({callee_peer, IdB}, none, PidB, State),
+    State2 = links_add({callee_peer, IdB}, PidB, State),
     State3 = add_to_session(callee_peer, IdB, State2),
     reply({ok, self()}, State3);
 
-handle_call({register, ProcId}, _From, State) ->
-    ?LLOG(info, "proc registered (~p)", [ProcId], State),
-    Pid = nklib_links:get_pid(ProcId),
-    State2 = links_add(ProcId, none, Pid, State),
+handle_call({register, Link}, _From, State) ->
+    ?LLOG(info, "proc registered (~p)", [Link], State),
+    State2 = links_add(Link, State),
     reply({ok, self()}, State2);
 
 handle_call(Msg, From, State) -> 
@@ -457,7 +450,7 @@ handle_cast({info, Info}, State) ->
 
 handle_cast({link_caller_session, IdB, PidB}, State) ->
     ?LLOG(notice, "linked to caller ~s", [IdB], State),
-    State2 = links_add({caller_peer, IdB}, none, PidB, State),
+    State2 = links_add({caller_peer, IdB}, PidB, State),
     State3 = add_to_session(caller_peer, IdB, State2),
     noreply(State3);
 
@@ -500,9 +493,9 @@ handle_cast({unlink_caller_session, IdB}, #state{session=Session}=State) ->
             noreply(State)
     end;
 
-handle_cast({unregister, ProcId}, State) ->
-    ?LLOG(info, "proc unregistered (~p)", [ProcId], State),
-    {noreply, links_remove(ProcId, State)};
+handle_cast({unregister, Link}, State) ->
+    ?LLOG(info, "proc unregistered (~p)", [Link], State),
+    {noreply, links_remove(Link, State)};
 
 handle_cast({ext_ops, ExtOps}, State) ->
     noreply(update_ext_ops(ExtOps, State));
@@ -522,17 +515,17 @@ handle_info({timeout, _, session_timeout}, State) ->
     ?LLOG(info, "operation timeout", [], State),
     do_stop(session_timeout, State);
 
-handle_info({'DOWN', _Ref, process, Pid, Reason}=Msg, #state{id=Id}=State) ->
-    case links_down(Pid, State) of
-        {ok, ProcId, none, State2} ->
-            case handle(nkmedia_session_reg_down, [Id, ProcId, Reason], State2) of
+handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, #state{id=Id}=State) ->
+    case links_down(Ref, State) of
+        {ok, Link, State2} ->
+            case handle(nkmedia_session_reg_down, [Id, Link, Reason], State2) of
                 {ok, State3} ->
                     {noreply, State3};
                 {stop, normal, State3} ->
                     do_stop(normal, State3);    
                 {stop, Error, State3} ->
                     ?LLOG(notice, "stopping beacuse of reg '~p' down (~p)",
-                          [ProcId, Reason], State3),
+                          [Link, Reason], State3),
                     do_stop(Error, State3)
             end;
         not_found ->
@@ -666,9 +659,8 @@ update_ext_ops_answer(_ExtOps, State) ->
 %% @private
 update_ext_ops(ExtOps, #state{type=OldType, session=Session}=State) ->
     State2 = case ExtOps of
-        #{register:=ProcId} ->
-            Pid = nklib_links:get_pid(ProcId),
-            links_add(ProcId, none, Pid, State);
+        #{register:=Link} ->
+            links_add(Link, State);
         _ ->
             State
     end,
@@ -754,9 +746,9 @@ event(Event, #state{id=Id}=State) ->
             ?LLOG(info, "sending 'event': ~p", [Event], State)
     end,
     State2 = links_fold(
-        fun(ProcId, none, AccState) ->
+        fun(Link, AccState) ->
             {ok, AccState2} = 
-                handle(nkmedia_session_reg_event, [Id, ProcId, Event], AccState),
+                handle(nkmedia_session_reg_event, [Id, Link, Event], AccState),
                 AccState2
         end,
         State,
@@ -814,37 +806,33 @@ remove_from_session(Key, #state{session=Session}=State) ->
 
 
 %% @private
-links_add(Id, Data, Pid, #state{session=#{links:=Links}}=State) ->
-    add_to_session(links, nklib_links:add(Id, Data, Pid, Links), State).
-
-
-% %% @private
-% links_get(Id, #state{session=#{links:=Links}}) ->
-%     nklib_links:get(Id, Links).
+links_add(Link, #state{links=Links}=State) ->
+    State#state{links=nklib_links:add(Link, Links)}.
 
 
 %% @private
-links_remove(Id, #state{session=#{links:=Links}}=State) ->
-    add_to_session(links, nklib_links:remove(Id, Links), State).
+links_add(Link, Pid, #state{links=Links}=State) ->
+    State#state{links=nklib_links:add(Link, none, Pid, Links)}.
+
 
 
 %% @private
-links_down(Pid, #state{session=#{links:=Links}}=State) ->
-    case nklib_links:down(Pid, Links) of
-        {ok, Id, Data, Links2} -> 
-            {ok, Id, Data, add_to_session(links, Links2, State)};
+links_remove(Link, #state{links=Links}=State) ->
+    State#state{links=nklib_links:remove(Link, Links)}.
+
+
+%% @private
+links_down(Mon, #state{links=Links}=State) ->
+    case nklib_links:down(Mon, Links) of
+        {ok, Link, _Data, Links2} -> 
+            {ok, Link, State#state{links=Links2}};
         not_found -> 
             not_found
     end.
 
 
-% %% @private
-% links_iter(Fun, #state{session=#{links:=Links}}) ->
-%     nklib_links:iter(Fun, Links).
-
-
 %% @private
-links_fold(Fun, Acc, #state{session=#{links:=Links}}) ->
+links_fold(Fun, Acc, #state{links=Links}) ->
     nklib_links:fold(Fun, Acc, Links).
 
 

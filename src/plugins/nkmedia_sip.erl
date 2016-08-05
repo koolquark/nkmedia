@@ -57,7 +57,7 @@
 %% To recognize events, Id must be {nkmedia_session|nkmedia_call, Id}
 -spec send_invite(nkservice:id(), nklib:user_uri(), nkmedia:offer(),
                   id(), invite_opts()) ->
-	{ok, nklib:proc_id()} | {error, term()}.
+	{ok, nklib:link()} | {error, term()}.
 
 send_invite(Srv, Uri, #{sdp:=SDP}, Id, Opts) ->
     {ok, SrvId} = nkservice_srv:get_srv_id(Srv),

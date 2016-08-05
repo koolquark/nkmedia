@@ -263,7 +263,7 @@ call_invite(CallId, Offer, {Type, Pid}, Call) ->
 				false -> {remove, Call}
 			end;
 		{ok, <<"ok">>, _} ->
-			% The proc_id is {nkmedia_api, Pid}
+			% The link is {nkmedia_api, Pid}
 			{ok, {nkmedia_api, Pid}, Call};
 		{ok, <<"error">>, _} ->
 			{remove, Call};

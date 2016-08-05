@@ -23,7 +23,7 @@
 %% - Register a Verto or a Janus (videocall)
 %%   - Call e for Janus echo
 %%     Verto/Janus register with the session on start as {nkmedia_verto, CallId, Pid}
-%%     The session returns its ProcId, and it is registered with Janus/Verto
+%%     The session returns its Link, and it is registered with Janus/Verto
 %%     When the sessions answers, Verto/Janus get the answer from their callback
 %%     modules (nkmedia_session_reg_event). Same if it stops normally.
 %%     If the session is killed it is detected by both
@@ -169,7 +169,7 @@ mcu_layout(SessId, Layout) ->
 fs_call(SessId, Dest) ->
     Config = #{peer=>SessId, park_after_bridge=>true},
     case start_invite(call, Config, Dest) of
-        {ok, _SessProcIdB} ->
+        {ok, _SessLinkB} ->
             ok;
         {rejected, Error} ->
             lager:notice("Error in start_invite: ~p", [Error]),
@@ -203,10 +203,10 @@ nkmedia_verto_invite(_SrvId, CallId, Offer, Verto) ->
     #{dest:=Dest} = Offer, 
     Base = #{offer=>Offer, register=>{nkmedia_verto, CallId, self()}},
     case send_call(Dest, Base) of
-        {ok, ProcId} ->
-            {ok, ProcId, Verto};
-        {answer, Answer, ProcId} ->
-            {answer, Answer, ProcId, Verto};
+        {ok, Link} ->
+            {ok, Link, Verto};
+        {answer, Answer, Link} ->
+            {answer, Answer, Link, Verto};
         {rejected, Reason} ->
             lager:notice("Verto invite rejected ~p", [Reason]),
             {rejected, Reason, Verto}
@@ -224,10 +224,10 @@ nkmedia_janus_invite(_SrvId, CallId, Offer, Janus) ->
     #{dest:=Dest} = Offer, 
     Base = #{offer=>Offer, register=>{nkmedia_janus, CallId, self()}},
     case send_call(Dest, Base) of
-        {ok, ProcId} ->
-            {ok, ProcId, Janus};
-        {answer, Answer, ProcId} ->
-            {answer, Answer, ProcId, Janus};
+        {ok, Link} ->
+            {ok, Link, Janus};
+        {answer, Answer, Link} ->
+            {answer, Answer, Link, Janus};
         {rejected, Reason} ->
             lager:notice("Janus invite rejected: ~p", [Reason]),
             {rejected, Reason, Janus}
@@ -268,13 +268,13 @@ nkmedia_sip_invite(_SrvId, {sip, Dest, _}, Offer, Req, _Call) ->
     % We register with the session as {nkmedia_sip, ...}, so:
     % - we will detect the answer in nkmedia_sip_callbacks:nkmedia_session_reg_event
     % - we stop the session if thip process stops
-    {offer, Offer2, ProcId2} = start_session(proxy, Config1),
-    {nkmedia_session, SessId, _} = ProcId2,
+    {offer, Offer2, Link2} = start_session(proxy, Config1),
+    {nkmedia_session, SessId, _} = Link2,
     nkmedia_sip:register_incoming(Req, {nkmedia_session, SessId}),
     % Since we are registering as {nkmedia_session, ..}, the second session
     % will be linked with the first, and will send answer back
-    % We return {ok, ProcId} or {rejected, Reason}
-    % nkmedia_sip will store that ProcId
+    % We return {ok, Link} or {rejected, Reason}
+    % nkmedia_sip will store that Link
     send_call(Dest, #{offer=>Offer2, peer=>SessId}).
 
 
@@ -282,8 +282,8 @@ nkmedia_sip_invite(_SrvId, {sip, Dest, _}, Offer, Req, _Call) ->
 % nkmedia_sip_invite(_SrvId, {sip, Dest, _}, Offer, Req, _Call) ->
 %     {ok, Handle} = nksip_request:get_handle(Req),
 %     {ok, Dialog} = nksip_dialog:get_handle(Req),
-%     ProcId = {nkmedia_sip, {Handle, Dialog}, self()},
-%     send_call(Offer#{dest=>Dest}, ProcId).
+%     Link = {nkmedia_sip, {Handle, Dialog}, self()},
+%     send_call(Offer#{dest=>Dest}, Link).
 
 
 % % Version that calls Verto Directly
@@ -296,8 +296,8 @@ nkmedia_sip_invite(_SrvId, {sip, Dest, _}, Offer, Req, _Call) ->
 %                 offer => Offer,
 %                 register => {nkmedia_sip, {Handle, Dialog}, self()}
 %             },
-%             {offer, Offer2, ProcId2} = start_session(proxy, Config),
-%             {nkmedia_session, SessId2, _} = ProcId2,
+%             {offer, Offer2, Link2} = start_session(proxy, Config),
+%             {nkmedia_session, SessId2, _} = Link2,
 %             case WebRTC of
 %                 {nkmedia_verto, VertoPid} ->
 %                     % Verto will send the answer or hangup to the session
@@ -305,7 +305,7 @@ nkmedia_sip_invite(_SrvId, {sip, Dest, _}, Offer, Req, _Call) ->
 %                                               {nkmedia_session, SessId, SessPid}),
 %                     {ok, _} = 
 %                         nkmedia_session:register(SessId, {nkmedia_verto, Pid}),
-%                     {ok, ProcId2};
+%                     {ok, Link2};
 %                 {error, Error} ->
 %                     {rejected, Error}
 %             end;
@@ -365,8 +365,8 @@ send_call(<<"f", Num/binary>>, Base) ->
         park_after_bridge => true
     },
     case start_session(park, ConfigA) of
-        {ok, SessProcIdA} ->
-            {nkmedia_session, SessIdA, _} = SessProcIdA,
+        {ok, SessLinkA} ->
+            {nkmedia_session, SessIdA, _} = SessLinkA,
             ConfigB = #{peer=>SessIdA, park_after_bridge=>false},
             spawn(
                 fun() -> 
@@ -378,7 +378,7 @@ send_call(<<"f", Num/binary>>, Base) ->
                             nkmedia_session:stop(SessIdA)
                     end
                 end),
-            {ok, SessProcIdA};
+            {ok, SessLinkA};
         {error, Error} ->
             {rejected, Error}
     end;
@@ -396,33 +396,32 @@ start_invite(Type, Config, Dest) ->
         _ -> Config
     end,
     case start_session(Type, Config2) of
-        {offer, Offer, SessProcId} ->
-            {nkmedia_session, SessId, _} = SessProcId,
+        {offer, Offer, SessLink} ->
+            {nkmedia_session, SessId, _} = SessLink,
             case User of 
                 {webrtc, {nkmedia_verto, VertoPid}} ->
-                    % With this SessProcId, when Verto answers it will send
+                    % With this SessLink, when Verto answers it will send
                     % the answer to the session
                     % Also will detect session kill
-                    ok = nkmedia_verto:invite(VertoPid, SessId, 
-                                              Offer, SessProcId),
-                    VertoProcId = {nkmedia_verto, SessId, VertoPid},
-                    % With this VertoProcId, verto can use nkmedia_session_reg_event to detect hangup
+                    ok = nkmedia_verto:invite(VertoPid, SessId, Offer, SessLink),
+                    VertoLink = {nkmedia_verto, SessId, VertoPid},
+                    % With this VertoLink, verto can use nkmedia_session_reg_event to detect hangup
                     % Also the session will detect Verto kill
-                    {ok, _} = nkmedia_session:register(SessId, VertoProcId),
-                    {ok, SessProcId};
+                    {ok, _} = nkmedia_session:register(SessId, VertoLink),
+                    {ok, SessLink};
                 {webrtc, {nkmedia_janus, JanusPid}} ->
                     ok = nkmedia_janus_proto:invite(JanusPid, SessId, 
-                                                    Offer, SessProcId),
-                    JanusProcId = {nkmedia_janus, SessId, JanusPid},
-                    {ok, _} = nkmedia_session:register(SessId, JanusProcId),
-                    {ok, SessProcId};
+                                                    Offer, SessLink),
+                    JanusLink = {nkmedia_janus, SessId, JanusPid},
+                    {ok, _} = nkmedia_session:register(SessId, JanusLink),
+                    {ok, SessLink};
                 {rtp, {nkmedia_sip, Uri, Opts}} ->
                     Id = {nkmedia_session, SessId},
                     {ok, SipPid} = 
                         nkmedia_sip:send_invite(test, Uri, Offer, Id, Opts),
-                    SipProcId = {nkmedia_sip, out, SipPid},
-                    {ok, _} = nkmedia_session:register(SessId, SipProcId),
-                    {ok, SessProcId};
+                    SipLink = {nkmedia_sip, out, SipPid},
+                    {ok, _} = nkmedia_session:register(SessId, SipLink),
+                    {ok, SessLink};
                 not_found ->
                     nkmedia_session:stop(SessId),
                     {rejected, unknown_user}

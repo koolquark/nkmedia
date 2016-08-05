@@ -135,14 +135,14 @@ listen(Publisher, Dest) ->
                             BinPid = list_to_binary(pid_to_list(Pid)),
                             Body = #{call_id=>SessId, verto_pid=>BinPid},
                             subscribe(SessId, WsPid, Body),
-                            ProcId = {test_answer, SessId, WsPid},
-                            ok = nkmedia_verto:invite(Pid, SessId, #{sdp=>SDP}, ProcId);
+                            Link = {test_answer, SessId, WsPid},
+                            ok = nkmedia_verto:invite(Pid, SessId, #{sdp=>SDP}, Link);
                         {webrtc, {nkmedia_janus_proto, Pid}} ->
                             BinPid = list_to_binary(pid_to_list(Pid)),
                             Body = #{call_id=>SessId, janus_pid=>BinPid},
                             subscribe(SessId, WsPid, Body),
-                            ProcId = {test_answer, SessId, WsPid},
-                            ok = nkmedia_janus_proto:invite(Pid, SessId, #{sdp=>SDP}, ProcId);
+                            Link = {test_answer, SessId, WsPid},
+                            ok = nkmedia_janus_proto:invite(Pid, SessId, #{sdp=>SDP}, Link);
                         not_found ->
                           {error, invalid_user}
                     end 
@@ -371,7 +371,7 @@ send_call(SrvId, #{dest:=Dest}=Offer, User, Data) ->
         %     % 3) The call invites and registers a called process
         %     case find_user(Num) of
         %         {webrtc, Dest2} ->
-        %             SessConfig = #{offer=>Offer, register=>ProcId},
+        %             SessConfig = #{offer=>Offer, register=>Link},
         %             {ok, SessId, SessPid, #{}} = 
         %                 nkmedia_session:start(SrvId, p2p, SessConfig),
         %             CallConfig = #{offer=>Offer, session_id=>SessId},
@@ -384,7 +384,7 @@ send_call(SrvId, #{dest:=Dest}=Offer, User, Data) ->
         % <<"j", Num/binary>> ->
         %     case find_user(Num) of
         %         {webrtc, Dest2} ->
-        %             SessConfig = #{offer=>Offer, register=>ProcId},
+        %             SessConfig = #{offer=>Offer, register=>Link},
         %             {ok, SessId, SessPid, #{offer:=Offer2}} = 
         %                 nkmedia_session:start(SrvId, proxy, SessConfig),
         %             CallConfig = #{offer=>Offer2, session_id=>SessId},

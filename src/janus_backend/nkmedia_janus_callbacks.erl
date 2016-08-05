@@ -288,7 +288,7 @@ nkmedia_room_event(RoomId, Event, Room) ->
 
 
 % %% @private
-% nkmedia_room_reg_down(_RoomId, _ProcId, _Reason, Session) ->
+% nkmedia_room_reg_down(_RoomId, _Link, _Reason, Session) ->
 %     {stop, registered_down, Session}.
 
 
