@@ -158,7 +158,7 @@ listen_swich(SessId, Publisher) ->
 
 
 update_type(SessId, Type, Opts) ->
-    nkmedia_session:update(SessId, type, Opts#{updapte_type=>Type}).
+    nkmedia_session:update(SessId, session_type, Opts#{session_type=>Type}).
 
 
 mcu_layout(SessId, Layout) ->
@@ -350,7 +350,7 @@ send_call(<<"p">>, Base) ->
 
 send_call(<<"p2">>, Base) ->
     nkmedia_room:start(test, #{id=><<"sfu">>}),
-    Config = Base#{room=><<"sfu">>},
+    Config = Base#{room_id=><<"sfu">>},
     start_session(publish, Config);
 
 send_call(<<"d", Num/binary>>, Base) ->

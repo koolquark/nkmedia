@@ -28,7 +28,7 @@
 -export([start/3, get_type/1, get_session/1, get_offer/1, get_answer/1]).
 -export([stop/1, stop/2, stop_all/0]).
 -export([answer/2, answer_async/2, update/3, update_async/3, info/2]).
--export([register/2, unregister/2, link_session/2, unlink_session/1]).
+-export([register/2, unregister/2, link_slave/2, unlink_session/1]).
 -export([get_all/0]).
 -export([get_call_data/1, ext_ops/2, do_add/3, do_rm/2]).
 -export([find/1, do_cast/2, do_call/2, do_call/3]).
@@ -63,9 +63,9 @@
 
 
 %% Session configuration
-%% If we set a peer session, we will consider it 'caller' and we are 'callee'
+%% If we set a peer session, we will consider it 'master' and we are 'slave'
 %% If one of them stops, the other will stop (see nkmedia_callbacks)
-%% If the callee has an answer, it will send it back to the caller
+%% If the slave has an answer, it will send it back to the master
 -type config() :: 
     #{
         id => id(),                             % Generated if not included
@@ -86,8 +86,8 @@
         srv_id => nkservice:id(),
         type => type(),
         type_ext => map(),
-        caller_peer => id(),
-        callee_peer => id()
+        master_peer => id(),
+        slave_peer => id()
     }.
 
 
@@ -170,14 +170,6 @@ get_type(SessId) ->
     do_call(SessId, get_type).
 
 
-% %% @doc Get current type, type_ext and remaining time to timeout
-% -spec get_user(id()) ->
-%     {ok, nkservice:user_id(), nkservice:user_session()} | {error, term()}.
-
-% get_user(SessId) ->
-%     do_call(SessId, get_user).
-
-
 %% @doc Hangups the session
 -spec stop(id()) ->
     ok | {error, nkservice:error()}.
@@ -243,15 +235,15 @@ info(SessId, Info) ->
     do_cast(SessId, {info, nklib_util:to_binary(Info)}).
 
 
-%% @doc Links this session to another
+%% @doc Links this session to another. We are master, other is slave
 %% See peer option
--spec link_session(id(), id()) ->
+-spec link_slave(id(), id()) ->
     {ok, pid()} | {error, nkservice:error()}.
 
-link_session(SessId, SessIdB) ->
+link_slave(SessId, SessIdB) ->
     case find(SessIdB) of
         {ok, PidB} ->
-            do_call(SessId, {link_callee_session, SessIdB, PidB});
+            do_call(SessId, {link_to_slave, SessIdB, PidB});
         not_found ->
             {error, peer_session_not_found}
     end.
@@ -363,7 +355,7 @@ init([#{id:=Id, type:=Type, srv_id:=SrvId}=Session]) ->
     end,
     case Session2 of
         #{peer:=Peer} -> 
-            case link_session(Peer, Id) of
+            case link_slave(Peer, Id) of
                 {ok, _} -> 
                     ok;
                 {error, _Error} -> 
@@ -419,11 +411,11 @@ handle_call(get_call_data, _From, #state{srv_id=SrvId, session=Session}=State) -
     #{offer:=Offer} = Session,
     reply({ok, SrvId, Offer, self()}, State);
 
-handle_call({link_callee_session, IdB, PidB}, _From, #state{id=IdA}=State) ->
-    ?LLOG(notice, "linked to callee ~s", [IdB], State),
-    do_cast(PidB, {link_caller_session, IdA, self()}),
-    State2 = links_add({callee_peer, IdB}, PidB, State),
-    State3 = add_to_session(callee_peer, IdB, State2),
+handle_call({link_to_slave, IdB, PidB}, _From, #state{id=IdA}=State) ->
+    ?LLOG(notice, "linked to slave session ~s", [IdB], State),
+    do_cast(PidB, {link_to_master, IdA, self()}),
+    State2 = links_add({slave_peer, IdB}, PidB, State),
+    State3 = add_to_session(slave_peer, IdB, State2),
     reply({ok, self()}, State3);
 
 handle_call({register, Link}, _From, State) ->
@@ -448,48 +440,48 @@ handle_cast({update, Update, Opts}, State) ->
 handle_cast({info, Info}, State) ->
     noreply(event({info, Info}, State));
 
-handle_cast({link_caller_session, IdB, PidB}, State) ->
-    ?LLOG(notice, "linked to caller ~s", [IdB], State),
-    State2 = links_add({caller_peer, IdB}, PidB, State),
-    State3 = add_to_session(caller_peer, IdB, State2),
+handle_cast({link_to_master, IdB, PidB}, State) ->
+    ?LLOG(notice, "linked to master ~s", [IdB], State),
+    State2 = links_add({master_peer, IdB}, PidB, State),
+    State3 = add_to_session(master_peer, IdB, State2),
     noreply(State3);
 
 handle_cast(unlink_session, #state{id=IdA, session=Session}=State) ->
-    case maps:find(callee_peer, Session) of
+    case maps:find(slave_peer, Session) of
         {ok, IdB} ->
-            % We are a caller, IdB is a caller
-            do_cast(self(), {unlink_callee_session, IdB}),
-            do_cast(IdB, {unlink_caller_session, IdA});
+            % We are a master, IdB is a slave
+            do_cast(self(), {unlink_from_slave, IdB}),
+            do_cast(IdB, {unlink_from_master, IdA});
         error ->
             ok
     end,
-    case maps:find(caller_peer, Session) of
+    case maps:find(master_peer, Session) of
         {ok, IdC} ->
-            % We are a callee, IdC is a caller
-            do_cast(self(), {unlink_caller_session, IdC}),
-            do_cast(IdC, {unlink_callee_session, IdC});
+            % We are a slave, IdC is a master
+            do_cast(self(), {unlink_from_master, IdC}),
+            do_cast(IdC, {unlink_from_slave, IdC});
         error ->
             ok
     end,
     noreply(State);
 
-handle_cast({unlink_callee_session, IdB}, #state{session=Session}=State) ->
-    case maps:find(callee_peer, Session) of
+handle_cast({unlink_from_slave, IdB}, #state{session=Session}=State) ->
+    case maps:find(slave_peer, Session) of
         {ok, IdB} ->
-            ?LLOG(notice, "unlinked from callee ~s", [IdB], State),
-            State2 = links_remove({callee_peer, IdB}, State),
-            noreply(remove_from_session(callee_peer, State2));
-        error ->
+            ?LLOG(notice, "unlinked from slave ~s", [IdB], State),
+            State2 = links_remove({slave_peer, IdB}, State),
+            noreply(remove_from_session(slave_peer, State2));
+        _ ->
             noreply(State)
     end;
 
-handle_cast({unlink_caller_session, IdB}, #state{session=Session}=State) ->
-    case maps:find(caller_peer, Session) of
+handle_cast({unlink_from_master, IdB}, #state{session=Session}=State) ->
+    case maps:find(master_peer, Session) of
         {ok, IdB} ->
-            ?LLOG(notice, "unlinked from caller ~s", [IdB], State),
-            State2 = links_remove({caller_peer, IdB}, State),
-            noreply(remove_from_session(caller_peer, State2));
-        error ->
+            ?LLOG(notice, "unlinked from master ~s", [IdB], State),
+            State2 = links_remove({master_peer, IdB}, State),
+            noreply(remove_from_session(master_peer, State2));
+        _ ->
             noreply(State)
     end;
 

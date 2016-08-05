@@ -202,7 +202,7 @@ nkmedia_session_stop(Reason, Session) ->
 
 
 %% @private
-nkmedia_session_reg_event(SessId, {caller_peer, SessIdB}, {answer, _Ans}, Session) ->
+nkmedia_session_reg_event(SessId, {master_peer, SessIdB}, {answer, _Ans}, Session) ->
     case Session of
         #{type:=call} ->
             nkmedia_fs_session:send_bridge(SessIdB, SessId),

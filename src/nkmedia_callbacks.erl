@@ -151,7 +151,7 @@ nkmedia_session_event(SessId, Event, Session) ->
 								media_session:event(), session()) ->
 	{ok, session()} | continue().
 
-nkmedia_session_reg_event(_SessId, {caller_peer, SessIdB}, Event, Session) ->
+nkmedia_session_reg_event(_SessId, {master_peer, SessIdB}, Event, Session) ->
 	case Event of
 		{answer, Answer} ->
 			nkmedia_session:answer(SessIdB, Answer);
@@ -162,7 +162,7 @@ nkmedia_session_reg_event(_SessId, {caller_peer, SessIdB}, Event, Session) ->
 	end,
 	{ok, Session};
 
-nkmedia_session_reg_event(_SessId, {callee_peer, SessIdB}, {stop, Reason}, Session) ->
+nkmedia_session_reg_event(_SessId, {slave_peer, SessIdB}, {stop, Reason}, Session) ->
 	nkmedia_session:stop(SessIdB, Reason),
 	{ok, Session};
 

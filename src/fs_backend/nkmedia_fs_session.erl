@@ -167,7 +167,7 @@ start(Type, #{offer:=#{sdp:=_}}=Session, State) ->
 
 start(Type, Session, State) ->
     case 
-        (Type==call andalso maps:is_key(caller_peer, Session))
+        (Type==call andalso maps:is_key(master_peer, Session))
         orelse is_supported(Type) 
     of
         true ->  
@@ -200,7 +200,7 @@ answer(Type, Answer, Session, #{fs_role:=offer}=State) ->
                 call ->
                     % When we set the answer event, it will be captured
                     % in nkmedia_fs_callbacks
-                    #{caller_peer:=Peer} = Session,
+                    #{master_peer:=Peer} = Session,
                     {ok, #{}, #{answer=>Answer, type_ext=>#{peer=>Peer}}, State};
                 _ ->
                     case do_update(Type, Session, State) of

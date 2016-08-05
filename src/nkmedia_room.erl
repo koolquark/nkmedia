@@ -204,6 +204,7 @@ restart_timer() ->
     class :: atom(),
     timer :: reference(),
     stop_sent = false :: boolean(),
+    links :: nklib_links:links(),
     room :: room()
 }).
 
@@ -219,7 +220,8 @@ init([#{srv_id:=SrvId, id:=RoomId, class:=Class}=Room]) ->
         id = RoomId, 
         srv_id = SrvId, 
         class = Class,
-        room = Room#{links=>nklib_links:new()}
+        links = nklib_links:new(),
+        room = Room
     },
     State2 = case Room of
         #{register:=Link} -> 
@@ -487,26 +489,26 @@ links_add(Link, State) ->
 
 
 %% @private
-links_add(Link, Data, Pid, #state{room=#{links:=Links}}=State) ->
-    update_room(links, nklib_links:add(Link, Data, Pid, Links), State).
+links_add(Link, Data, Pid, #state{links=Links}=State) ->
+    State#state{links=nklib_links:add(Link, Data, Pid, Links)}.
 
 
 %% @private
-links_remove(Link, #state{room=#{links:=Links}}=State) ->
-    update_room(links, nklib_links:remove(Link, Links), State).
+links_remove(Link, #state{links=Links}=State) ->
+    State#state{links=nklib_links:remove(Link, Links)}.
 
 
 %% @private
-links_down(Ref, #state{room=#{links:=Links}}=State) ->
+links_down(Ref, #state{links=Links}=State) ->
     case nklib_links:down(Ref, Links) of
         {ok, Link, Data, Links2} -> 
-            {ok, Link, Data, update_room(links, Links2, State)};
+            {ok, Link, Data, State#state{links=Links2}};
         not_found -> 
             not_found
     end.
 
 %% @private
-links_fold(Fun, Acc, #state{room=#{links:=Links}}) ->
-    nklib_links:fold(Fun, Acc, Links).
+links_fold(Fun, Acc, #state{links=Links}) ->
+    nklib_links:fold_values(Fun, Acc, Links).
 
 

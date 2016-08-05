@@ -95,7 +95,7 @@ call_event(CallId, Event, #{srv_id:=SrvId}=Call) ->
 room_event(RoomId, Event, #{srv_id:=SrvId}=Room) ->
     Send = case Event of
     	{started, Room} ->
-    		Data = maps:with([audio_codec, video_codec, bitrate, class, backend]),
+    		Data = maps:with([audio_codec, video_codec, bitrate, class, backend], Room),
     		{started, Data};
     	{destroyed, Reason} ->
             {Code, Txt} = SrvId:error_code(Reason),
