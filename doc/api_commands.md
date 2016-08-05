@@ -15,7 +15,7 @@ Class|Subclass|Cmd|Description
 `media`|`call`|[`start`](#start-a-call)|Starts a new call
 `media`|`call`|[`ringing`](#notify-call-ringing)|Notifies the call is ringing
 `media`|`call`|[`answered`](#notify-call-answered)|Notifies the call is answered
-`media`|`call`|[`answered`](#notify-call-rejected)|Notifies the call is rejected
+`media`|`call`|[`rejected`](#notify-call-rejected)|Notifies the call is rejected
 `media`|`call`|[`hangup`](#hangup-a-call)|Hangups a call
 `media`|`room`|[`create`](#create-a-room)|Starts a new room
 `media`|`room`|[`destroy`](#destroy-a-room)|Destroys a room
@@ -29,12 +29,13 @@ Performs the creation of a new media session. The mandatory `type` field defines
 Type|Plugins
 ---|---|---
 p2p|(none)
-echo|[nkmedia_janus](janus.md#echo, fs.md#echo)
+echo|[nkmedia_janus](janus.md#echo, fs.md#echo), nkmedia_fs](fs.md#echo)
 proxy|[nkmedia_janus](janus.md#proxy)
 publish|[nkmedia_janus](janus.md#publish)
 listen|[nkmedia_janus](janus.md#listen)
 park|[nkmedia_fs](fs.md#park)
 mcu|[nkmedia_fs](fs.md#mcu)
+bridge|[nkmedia_fs](fs.md#bridge)
 
 See each specific plugin documentation to learn about how to use it and supported options.
 
