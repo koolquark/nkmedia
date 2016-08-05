@@ -230,7 +230,7 @@ update(session_type, #{session_type:=Type}=Opts, _OldTytpe, Session, #{fs_id:=_}
     do_update(Type, maps:merge(Session, Opts), State);
 
 update(mcu_layout, #{mcu_layout:=Layout}, mcu, 
-       #{type_ext:=#{room:=Room}=Ext}, #{fs_id:=FsId}=State) ->
+       #{type_ext:=#{room_id:=Room}=Ext}, #{fs_id:=FsId}=State) ->
     case nkmedia_fs_cmd:conf_layout(FsId, Room, Layout) of
         ok  ->
             ExtOps = #{type_ext=>Ext#{mcu_layout=>Layout}},
@@ -312,7 +312,7 @@ do_update(echo, Session, State) ->
 
 do_update(mcu, Session, State) ->
     nkmedia_session:unlink_session(self()),
-    Room = case maps:find(room, Session) of
+    Room = case maps:find(room_id, Session) of
         {ok, Room0} -> nklib_util:to_binary(Room0);
         error -> nklib_util:uuid_4122()
     end,
@@ -320,8 +320,8 @@ do_update(mcu, Session, State) ->
     Cmd = [<<"conference:">>, Room, <<"@">>, RoomType],
     case fs_transfer(Cmd, Session, State) of
         ok ->
-            ExtOps = #{type=>mcu, type_ext=>#{room=>Room, room_type=>RoomType}},
-            {ok, #{}, ExtOps, State};
+            ExtOps = #{type=>mcu, type_ext=>#{room_id=>Room, room_type=>RoomType}},
+            {ok, #{room_id=>Room}, ExtOps, State};
         {error, Error} ->
             {error, Error, State}
     end;
