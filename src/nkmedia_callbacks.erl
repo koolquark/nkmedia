@@ -41,7 +41,8 @@
 		 nkmedia_room_handle_info/2]).
 -export([error_code/1]).
 -export([api_cmd/2, api_syntax/4]).
--export([api_server_cmd/2, api_server_handle_cast/2, api_server_handle_info/2]).
+-export([api_server_cmd/2, api_server_reg_down/3, 
+	     api_server_handle_cast/2, api_server_handle_info/2]).
 -export([nkdocker_notify/2]).
 
 -include("nkmedia.hrl").
@@ -142,12 +143,13 @@ nkmedia_session_update(_Update, _Opts, _Type, Session) ->
 	{ok, session()} | continue().
 
 nkmedia_session_event(SessId, Event, Session) ->
-	nkmedia_events:session_event(SessId, Event, Session).
+	{ok, Session2} = nkmedia_events:session_event(SessId, Event, Session),
+	{ok, Session2}.
 
 				  
 %% @doc Called when the status of the session changes, for each registered
 %% process to the session
--spec nkmedia_session_reg_event(session_id(), term(), 
+-spec nkmedia_session_reg_event(session_id(), nklib:link(), 
 								media_session:event(), session()) ->
 	{ok, session()} | continue().
 
@@ -170,11 +172,8 @@ nkmedia_session_reg_event(_SessId, {nkmedia_call, CallId, _CallPid}, {stop, Reas
 	nkmedia_call:hangup(CallId, Reason),
 	{ok, Session};
 
-nkmedia_session_reg_event(SessId, {nkmedia_api, Pid}, {stop, _Reason}, Session) ->
-	nkmedia_api:session_stop(Pid, SessId),
-	{ok, Session};
-
-nkmedia_session_reg_event(_SessId, _RegId, _Event, Session) ->
+nkmedia_session_reg_event(SessId, Link, Event, Session) ->
+	nkmedia_api:nkmedia_session_reg_event(SessId, Link, Event, Session),
 	{ok, Session}.
 
 
@@ -249,7 +248,7 @@ nkmedia_call_terminate(_Reason, Call) ->
 	{ok, [nkmedia_call:dest_ext()], call()} | continue().
 
 nkmedia_call_resolve(Callee, DestExts, Call) ->
-	nkmedia_api:call_resolve(Callee, DestExts, Call).
+	nkmedia_api:nkmedia_call_resolve(Callee, DestExts, Call).
 
 
 %% @doc Called when an outbound call is to be sent
@@ -259,22 +258,16 @@ nkmedia_call_resolve(Callee, DestExts, Call) ->
 	{remove, call()} | 
 	continue().
 
-nkmedia_call_invite(CallId, {nkmedia_api, Data}, Offer, Call) ->
-	nkmedia_api:call_invite(CallId, Offer, Data, Call);
-
-nkmedia_call_invite(_CallId, _Dest, _Offer, Call) ->
-	{remove, Call}.
+nkmedia_call_invite(CallId, Dest, Offer, Call) ->
+	nkmedia_api:nkmedia_call_invite(CallId, Dest, Offer, Call).
 
 
 %% @doc Called when an outbound call is to be sent
 -spec nkmedia_call_cancel(call_id(), nklib:link(), call()) ->
 	{ok, call()} | continue().
 
-nkmedia_call_cancel(CallId, {nkmedia_api, Pid}, Call) ->
-	nkmedia_api:call_cancel(CallId, Pid, Call);
-
-nkmedia_call_cancel(_CallId, _Link, Call) ->
-	{ok, Call}.
+nkmedia_call_cancel(CallId, Link, Call) ->
+	nkmedia_api:nkmedia_api_call_cancel(CallId, Link, Call).
 
 
 %% @doc Called when the status of the call changes
@@ -287,7 +280,7 @@ nkmedia_call_event(CallId, Event, Call) ->
 
 %% @doc Called when the status of the call changes, for each registered
 %% process to the session
--spec nkmedia_call_reg_event(call_id(),	term(), nkmedia_call:event(), call()) ->
+-spec nkmedia_call_reg_event(call_id(),	nklib:link(), nkmedia_call:event(), call()) ->
 	{ok, session()} | continue().
 
 nkmedia_call_reg_event(_CallId, {nkmedia_session, SessId}, Event, Call) ->
@@ -301,12 +294,8 @@ nkmedia_call_reg_event(_CallId, {nkmedia_session, SessId}, Event, Call) ->
 	end,
 	{ok, Call};
 
-nkmedia_call_reg_event(CallId, {nkmedia_api, Pid}, {hangup, Reason}, Call) ->
-	nkmedia_api:call_hangup(Pid, CallId, Reason),
-	{ok, Call};
-
-nkmedia_call_reg_event(_CallId, _RegId, _Event, Call) ->
-	{ok, Call}.
+nkmedia_call_reg_event(CallId, Link, Event, Call) ->
+	nkmedia_api:nkmedia_call_reg_event(CallId, Link, Event, Call).
 
 
 %% @doc
@@ -372,10 +361,10 @@ nkmedia_room_event(RoomId, Event, Room) ->
 
 %% @doc Called when the status of the room changes, for each registered
 %% process to the room
--spec nkmedia_room_reg_event(room_id(),	term(), nkmedia_room:event(), room()) ->
+-spec nkmedia_room_reg_event(room_id(),	nklib:link(), nkmedia_room:event(), room()) ->
 	{ok, room()} | continue().
 
-nkmedia_room_reg_event(_RoomId, _RegId, _Event, Room) ->
+nkmedia_room_reg_event(_RoomId, _Link, _Event, Room) ->
 	{ok, Room}.
 
 
@@ -466,14 +455,13 @@ api_server_cmd(_Req, _State) ->
 
 
 %% @private
-api_server_handle_cast({nkmedia_api_session_stop, SessId}, State) ->
-	nkmedia_api:nkmedia_api_session_stop(SessId, State);
+api_server_reg_down(Link, Reason, State) ->
+	nkmedia_api:api_server_reg_down(Link, Reason, State).
 
-api_server_handle_cast({nkmedia_api_call_hangup, CallId}, State) ->
-	nkmedia_api:nkmedia_api_call_hangup(CallId, State);
 
-api_server_handle_cast(_Msg, _State) ->
-	continue.
+%% @private
+api_server_handle_cast(Msg, State) ->
+	nkmedia_api:api_server_handle_cast(Msg, State).
 
 
 %% @private

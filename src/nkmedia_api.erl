@@ -22,11 +22,11 @@
 
 -module(nkmedia_api).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([cmd/4, handle_down/4]).
--export([session_stop/2, nkmedia_api_session_stop/2]).
--export([call_resolve/3, call_invite/4, call_cancel/3, 
-		 call_hangup/3, nkmedia_api_call_hangup/2]).
-
+-export([cmd/4]).
+-export([api_server_reg_down/3, api_server_handle_cast/2]).
+-export([nkmedia_session_reg_event/4]).
+-export([nkmedia_call_invite/4, nkmedia_call_resolve/3, 
+	     nkmedia_call_cancel/3, nkmedia_call_reg_event/4]).
 
 -include_lib("nkservice/include/nkservice.hrl").
 -include("nkmedia.hrl").
@@ -45,14 +45,33 @@
 -spec cmd(nkservice:id(), atom(), Data::map(), map()) ->
 	{ok, map(), State::map()} | {error, nkservice:error(), State::map()}.
 
-
-%% Starts a new session
-%% Registers self() with the session (to be monitorized)
-%% Subscribes the caller to session events
-%% Monitorizes the session and stores info on State
+%% Registers the media session with the API session (to monitor DOWNs)
+%% as (nkmedia_session, SessId, SessPid)
+%% Registers the API session with the media session (as nkmedia_api, pid())
+%% Subscribes to events
 cmd(<<"session">>, <<"start">>, Req, State) ->
-	#api_req{srv_id=SrvId, data=Data, user=User, session=Session} = Req,
-	start_session(SrvId, Data, User, Session, State);
+	#api_req{srv_id=SrvId, data=Data, user=User, session=UserSession} = Req,
+	#{type:=Type} = Data,
+	Config = Data#{
+		register => {nkmedia_api, self()},
+		user_id => User,
+		user_session => UserSession
+	},
+	case nkmedia_session:start(SrvId, Type, Config) of
+		{ok, SessId, Pid, Reply} ->
+			nkservice_api_server:register(self(), {nkmedia_session, SessId, Pid}),
+			case maps:get(subscribe, Data, true) of
+				true ->
+					RegId = session_reg_id(SrvId, <<"*">>, SessId),
+					Body = maps:get(events_body, Data, #{}),
+					nkservice_api_server:register_events(self(), RegId, Body);
+				false ->
+					ok
+			end,
+			{ok, Reply#{session_id=>SessId}, State};
+		{error, Error} ->
+			{error, Error, State}
+	end;
 
 cmd(<<"session">>, <<"stop">>, #api_req{data=Data}, State) ->
 	#{session_id:=SessId} = Data,
@@ -89,9 +108,30 @@ cmd(<<"session">>, <<"info">>, #api_req{data=Data}, State) ->
 			{error, Error, State}
 	end;
 
-cmd(<<"call">>, <<"start">>, #api_req{srv_id=SrvId, data=Data}, State) ->
+%% Registers the call session with the API session (to monitor DOWNs)
+%% as (nkmedia_call, CallId, CallPid)
+%% Registers the API session with the media session (as nkmedia_api, pid())
+%% Subscribes to events
+cmd(<<"call">>, <<"start">>, Req, State) ->
+	#api_req{srv_id=SrvId, data=Data, user=User, session=UserSession} = Req,
 	#{callee:=Callee} = Data,
-	start_call(SrvId, Callee, Data, State);
+	Config = Data#{
+		register => {nkmedia_api, self()},
+		user_id => User,
+		user_session => UserSession
+	},
+	{ok, CallId, Pid} = nkmedia_call:start(SrvId, Callee, Config),
+	nkservice_api_server:register(self(), {nkmedia_call, CallId, Pid}),	
+	case maps:get(subscribe, Data, true) of
+		true ->
+			% In case of no_destination, the call will wait 100msecs before stop
+			RegId = call_reg_id(SrvId, <<"*">>, CallId),
+			Body = maps:get(events_body, Data, #{}),
+			nkservice_api_server:register_events(self(), RegId, Body);
+		false ->
+			ok
+	end,
+	{ok, #{call_id=>CallId}, State};
 
 cmd(<<"call">>, <<"ringing">>, #api_req{data=Data}, State) ->
 	#{call_id:=CallId} = Data,
@@ -183,51 +223,30 @@ cmd(_SrvId, _Other, _Data, State) ->
 	{error, unknown_command, State}.
 
 
-%% @doc Called when a registered session or call goes down
-handle_down(_SrvId, Mon, Reason, State) ->
-	Sessions = get_sessions(State),
-	case lists:keytake(Mon, 2, Sessions) of
-		{value, {SessId, Mon}, Sessions2} ->
-			lager:warning("Session ~s is down: ~p", [SessId, Reason]),
-			% RegId = session_reg_id(SrvId, stop, SessId),
-			% {Code, Txt} = SrvId:error_code(process_down),
-			% Body = #{code=>Code, reason=>Txt},
-			% nkservice_api_server:send_event(self(), RegId, Body),
-			{ok, set_sessions(Sessions2, State)};
-		false ->
-			Calls = get_calls(State),
-			case lists:keytake(Mon, 2, Calls) of
-				{value, {CallId, Mon}, Calls2} ->
-					lager:warning("Call ~s is down: ~p", [CallId, Reason]),
-					% RegId = call_reg_id(SrvId, stop, CallId),
-					% {Code, Txt} = SrvId:error_code(process_down),
-					% Body = #{code=>Code, reason=>Txt},
-					% nkservice_api_server:send_event(self(), RegId, Body),
-					{ok, set_calls(Calls2, State)};
-				_ ->
-					continue
-			end
-	end.
 
 
-%% @private Called from nkmedia_session_reg_event when a session 
-%% registered with {nkmedia_api, Pid} stops. Calls next function.
-session_stop(Pid, SessId) ->
-	gen_server:cast(Pid, {nkmedia_api_session_stop, SessId}).
+%% ===================================================================
+%% Session callbacks
+%% ===================================================================
+
+%% @private Sent by the session when it is stopping
+%% We sent a message to the API session to remove the session before 
+%% it receives the DOWN.
+nkmedia_session_reg_event(SessId, {nkmedia_api, Pid}, {stop, _Reason}, _Session) ->
+	gen_server:cast(Pid, {nkmedia_api_session_stop, SessId, self()});
+
+nkmedia_session_reg_event(_SessId, _RegId, _Event, _Session) ->
+	ok.
 
 
-%% @private  
-nkmedia_api_session_stop(SessId, State) ->
-	Sessions = get_sessions(State),
-	case lists:keytake(SessId, 1, Sessions) of
-		{value, {SessId, Mon}, Sessions2} -> demonitor(Mon, [flush]);
-		false -> Sessions2 = Sessions
-	end,
-	{ok, set_sessions(Sessions2, State)}.
+
+%% ===================================================================
+%% Call callbacks
+%% ===================================================================
 
 
-%% @private Called when a new call is searching for destinations
-call_resolve(Dest, Acc, Call) ->
+%% @private
+nkmedia_call_resolve(Dest, Acc, Call) ->
 	Acc2 = case maps:get(type, Call, user) of
 		user ->
 			Acc ++ [
@@ -251,10 +270,8 @@ call_resolve(Dest, Acc, Call) ->
 	{ok, Acc3, Call}.
 
 
-%% @private Called from nkmedia_callback when a call invites a destination
-%% with the type {nkmedia_api, {user|session, Pid}}
-%% Registers this callee as {nkmedia_api, Pid}
-call_invite(CallId, Offer, {Type, Pid}, Call) ->
+%% @private
+nkmedia_call_invite(CallId, {nkmedia_api, {Type, Pid}}, Offer, Call) ->
 	Data = #{call_id=>CallId, offer=>Offer, type=>Type},
 	case nkservice_api_server:cmd(Pid, media, call, invite, Data) of
 		{ok, <<"ok">>, #{<<"retry">>:=Retry}} ->
@@ -269,33 +286,62 @@ call_invite(CallId, Offer, {Type, Pid}, Call) ->
 			{remove, Call};
 		{error, _Error} ->
 			{remove, Call}
-	end.
+	end;
+
+nkmedia_call_invite(_CallId, _Dest, _Offer, Call) ->
+	{remove, Call}.
 
 
-%% @private Called from nkmedia_callback when a call cancels the callee
-%% {nkmedia_api, Pid}
-call_cancel(CallId, Pid, Call) ->
+%% @private
+nkmedia_call_cancel(CallId, {nkmedia_api, Pid}, Call) ->
 	{Code, Txt} = nkmedia_util:error(originator_cancel),
 	nkservice_api_server:cmd_async(Pid, media, call, hangup, 
 								   #{call_id=>CallId, code=>Code, reason=>Txt}),
+	{ok, Call};
+
+nkmedia_call_cancel(_CallId, _Link, Call) ->
+	{ok, Call}.
+
+
+%% @private
+nkmedia_call_reg_event(CallId, {nkmedia_api, Pid}, {hangup, _Reason}, Call) ->
+	gen_server:cast(Pid, {nkmedia_api_call_hangup, CallId, self()}),
+	{ok, Call};
+
+nkmedia_call_reg_event(_CallId, _RegId, _Event, Call) ->
 	{ok, Call}.
 
 
 
-%% @private Called from nkmedia_call_reg_event when a call registered
-%% with {nkmedia_api, Pid} stops. Calls next functions.
-call_hangup(Pid, CallId, _Reason) ->
-	gen_server:cast(Pid, {nkmedia_api_call_hangup, CallId}).
+%% ===================================================================
+%% API server callbacks
+%% ===================================================================
 
 
-%% @private  
-nkmedia_api_call_hangup(CallId, State) ->
-	Sessions = get_calls(State),
-	case lists:keytake(CallId, 1, Sessions) of
-		{value, {CallId, Mon}, Sessions2} -> demonitor(Mon, [flush]);
-		false -> Sessions2 = Sessions
-	end,
-	{ok, set_calls(Sessions2, State)}.
+%% @private Called from nkmedia_callbacks, if a registered link is down
+api_server_reg_down({nkmedia_session, SessId, _SessPid}, Reason, State) ->
+	lager:warning("API Server: Session ~s is down: ~p", [SessId, Reason]),
+	{ok, State};
+
+api_server_reg_down({nkmedia_call, CallId, _CallPid}, Reason, State) ->
+	lager:warning("API Server: Call ~s is down: ~p", [CallId, Reason]),
+	{ok, State};
+
+api_server_reg_down(_Link, _Reason, _State) ->
+	continue.
+
+
+%% @private
+api_server_handle_cast({nkmedia_api_session_stop, SessId, Pid}, State) ->
+	nkservice_api_server:unregister(self(), {nkmedia_session, SessId, Pid}),
+	{ok, State};
+
+api_server_handle_cast({nkmedia_api_call_hangup, CallId, Pid}, State) ->
+	nkservice_api_server:unregister(self(), {nkmedia_call, CallId, Pid}),
+	{ok, State};
+
+api_server_handle_cast(_Msg, _State) ->
+	continue.
 
 
 
@@ -303,102 +349,21 @@ nkmedia_api_call_hangup(CallId, State) ->
 %% Internal
 %% ===================================================================
 
-%% Monitorizes the session and stores info on State
-start_session(SrvId, Data, User, UserSession, State) ->
-	#{type:=Type} = Data,
-	Config = Data#{
-		register => {nkmedia_api, self()},
-		user_id => User,
-		user_session => UserSession
-	},
-	case nkmedia_session:start(SrvId, Type, Config) of
-		{ok, SessId, Pid, Reply} ->
-			case maps:get(subscribe, Data, true) of
-				true ->
-					RegId = session_reg_id(SrvId, <<"*">>, SessId),
-					Body = maps:get(events_body, Data, #{}),
-					nkservice_api_server:register(self(), RegId, Body);
-				false ->
-					ok
-			end,
-			Mon = monitor(process, Pid),
-			Sessions = get_sessions(State),
-			Sessions2 = [{SessId, Mon}|Sessions],
-			{ok, Reply#{session_id=>SessId}, set_sessions(Sessions2, State)};
-		{error, Error} ->
-			{error, Error, State}
-	end.
-
-
-%% @private
-get_sessions(State) ->
-    Data = maps:get(?MODULE, State, #{}),
-    maps:get(sessions, Data, []).
-
-
-%% @private
-set_sessions(Regs, State) ->
-    Data1 = maps:get(?MODULE, State, #{}),
-    Data2 = Data1#{sessions=>Regs},
-    State#{?MODULE=>Data2}.
-
-
-%% @private
-%% We start the call
-%% The client must be susbcribed to events (ringing, answered, hangup)
-%% We implement call_invite and call_cancel and called above
-%% If it stops, we capture the DOWN event above
-%% If it sends a hangup, we also capture it in nkmedia_call_reg_event and 
-%% call_hangup/3 is called
-start_call(SrvId, Callee, Data, State) ->
-	Config = Data#{register => {nkmedia_api, self()}},
-	{ok, CallId, CallPid} = nkmedia_call:start(SrvId, Callee, Config),
-	case maps:get(subscribe, Data, true) of
-		true ->
-			% In case of no_destination, the call will wait 100msecs before stop
-			RegId = call_reg_id(SrvId, <<"*">>, CallId),
-			Body = maps:get(events_body, Data, #{}),
-			nkservice_api_server:register(self(), RegId, Body);
-		false ->
-			ok
-	end,
-	Mon = monitor(process, CallPid),
-	Calls1 = get_calls(State),
-	Calls2 = [{CallId, Mon}|Calls1],
-	{ok, #{call_id=>CallId}, set_calls(Calls2, State)}.
-
 
 %% @private
 %% We have a B leg to the call
 %% We monitor the call, and also capture hangup
 update_call(SrvId, CallId, Data, State) ->
-	{ok, CallPid} = nkmedia_call:register(CallId, {nkmedia_api, self()}),
-	Mon = monitor(process, CallPid),
-	Calls1 = get_calls(State),
-	Calls2 = [{CallId, Mon}|Calls1],
+	{ok, _CallPid} = nkmedia_call:register(CallId, {nkmedia_api, self()}),
 	case maps:get(subscribe, Data, true) of
 		true ->
 			RegId = call_reg_id(SrvId, <<"*">>, CallId),
 			Body = maps:get(events_body, Data, #{}),
-			nkservice_api_server:register(self(), RegId, Body);
+			nkservice_api_server:register_events(self(), RegId, Body);
 		false -> 
 			ok
 	end,
-	{ok, #{}, set_calls(Calls2, State)}.
-
-
-%% @private
-get_calls(State) ->
-    Data = maps:get(?MODULE, State, #{}),
-    maps:get(calls, Data, []).
-
-
-%% @private
-set_calls(Regs, State) ->
-    Data1 = maps:get(?MODULE, State, #{}),
-    Data2 = Data1#{calls=>Regs},
-    State#{?MODULE=>Data2}.
-
+	{ok, #{}, State}.
 
 
 %% @private
