@@ -29,7 +29,7 @@ Performs the creation of a new media session. The mandatory `type` field defines
 Type|Plugins
 ---|---|---
 p2p|(none)
-echo|[nkmedia_janus](janus.md#echo, fs.md#echo), nkmedia_fs](fs.md#echo)
+echo|[nkmedia_janus](janus.md#echo, fs.md#echo), [nkmedia_fs](fs.md#echo)
 proxy|[nkmedia_janus](janus.md#proxy)
 publish|[nkmedia_janus](janus.md#publish)
 listen|[nkmedia_janus](janus.md#listen)
