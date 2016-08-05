@@ -2,18 +2,16 @@
 
 ## Freeswitch Options
 
-When the nkmedia_janus backend is selected (either manually, using the `backend: nkmedia_fs` option when creating the session or automatically, depending on the type), de following types are supported:
+When the nkmedia_janus backend is selected (either manually, using the `backend: nkmedia_fs` option when creating the session or automatically, depending on the type), following session types are supported:
 
 Type|Description
 ---|---|---
 [park](#park)|_Parks_ the session (see bellow)
-[echo](#echo)|Echoes audio and/or video, managing bandwitch and recording
+[echo](#echo)|Echoes audio and/or video
 [mcu](#mcu)|Starts a mixing MCU for audio and video
 [bridge](#bridge)|Connects two sessions
 
-An unique characteristic of this backend is that any session, once started, can be updated to any other session type without starting a new SDP negotiation. This means that you can start a `park` session, and later on, _connect_ the caller to an _mcu_ or to another session.
-
-
+An unique characteristic of this backend is that any session, once started, can be updated to any other session type without starting a new SDP negotiation. This means that you can start a `park` session, and later on, _connect_ the same session to an _mcu_ or to another user's session (both must belong to the same Freeswitch instance).
 
 ### Park
 
@@ -53,8 +51,7 @@ You can use this session type to _place_ the session at the Freeswitch mediaserv
 
 ### Echo
 
-This session type echos any audio or video received.
-
+This session type echos any received audio or video.
 
 **Sample**
 
@@ -79,7 +76,7 @@ This session type echos any audio or video received.
 	result: "ok",
 	data: {
 		session_id: "54c1b637-36fb-70c2-8080-28f07603cda8",
-		offer: {
+		answer: {
 			sdp: "v=0..."
 		}
 	},
@@ -89,8 +86,8 @@ This session type echos any audio or video received.
 
 ### MCU
 
-This session 
-
+This session type connects the session to a new or existing MCU conference at a Freeswitch instance.
+The optional field `room_id` can be used to connect to an existing room, or creare a new one with this name.
 
 **Sample**
 
@@ -100,7 +97,8 @@ This session
 	subclass: "session",
 	cmd: "start",
 	data: {
-		type: "echo",
+		type: "mcu",
+		room_id: "41605362-3955-8f28-e371-38c9862f00d9",
 		offer: {
 			sdp: "v=0.."
 		}
@@ -114,10 +112,22 @@ This session
 	result: "ok",
 	data: {
 		session_id: "54c1b637-36fb-70c2-8080-28f07603cda8",
-		offer: {
+		room_id: "41605362-3955-8f28-e371-38c9862f00d9",
+		answer: {
 			sdp: "v=0..."
 		}
 	},
 	tid: 1
 }
 ```
+
+### Room updates
+
+You can perform a large number of updates over a session of type room, like changing the layout.
+
+## Bridge
+
+Allows to connect two sessions at the same Freeswitch instance.
+
+
+

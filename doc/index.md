@@ -14,7 +14,7 @@
 * [Core API Events](api_events.md)
 * Plugins API
   * [nkmedia_janus](janus.md)
-  * nkmedia_fs
+  * [nkmedia_fs](fs.md)
   * nkmedia_kms
   * nkmedia_sip
   * nkmedia_verto
