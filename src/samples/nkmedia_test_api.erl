@@ -209,6 +209,7 @@ listen(Publisher, Dest) ->
 
 %% @doc Called on login
 api_server_login(#{<<"user">>:=User}, _SessId, State) ->
+    nkservice_api_server:start_ping(self(), 60),
     {true, User, State};
 
 api_server_login(_Data, _SessId, _State) ->
