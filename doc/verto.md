@@ -1,12 +1,10 @@
-# NkMEDIA External Interface
-
-## Verto Plugin
+# Verto Plugin
 
 NkMEDIA includes a [Verto](http://evoluxbr.github.io/verto-docs/) compatible server, meaning that you can use any Verto client, like [Verto Communicator](https://freeswitch.org/confluence/display/FREESWITCH/Verto+Communicator) to connect to NkMEDIA and place and receive calls.
 
 Verto clients can be used with or withouth Freeswtich backend, since NkMEDIA includes a full Verto server (like Freeswitch does).
 
-To use it, your service must include the [nkmedia_verto](../src/plugins/nkmedia_verto.erl) plugin. The followingf configuration options are available:
+To use it, your service must include the [nkmedia_verto](../src/plugins/nkmedia_verto.erl) plugin. The following configuration options are available:
 
 Option|Sample|Description
 ---|---|---
@@ -27,7 +25,7 @@ sip:...|sip:103|SIP call
 
 For _p2p_ calls, a session will be started (with `p2p` type), and a new call with type `user`. The selected user will receive the call with the original SDP from Verto, so it will be a _peer to peer_ call.
 
-For _verto_ calls, a session is started with `user` type, but only verto users are selected. Also, the call is sent through a Janus proxy.
+For _verto_ calls, a session is started with `user` type, but only verto users are selected. Also, the call is sent through a Janus proxy, and it is sent using native Verto signaling.
 
 For _sip_ calls, the selected destination will be searched to see if it is already registered (if the domain is not used, the default in config is used). Full sip addresses can also be used. A `proxy` session will be started, converting Verto's WebRTC to an SDP-compatible one.
 
