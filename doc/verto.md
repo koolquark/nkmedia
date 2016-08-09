@@ -6,13 +6,13 @@ NkMEDIA includes a [Verto](http://evoluxbr.github.io/verto-docs/) compatible ser
 
 Verto clients can be used with or withouth Freeswtich backend, since NkMEDIA includes a full Verto server (like Freeswitch does).
 
-To use it, your service must include the [nkmedia_verto](../srv/nkmedia_verto.erl) plugin. The followingf configuration options are available:
+To use it, your service must include the [nkmedia_verto](../src/plugins/nkmedia_verto.erl) plugin. The followingf configuration options are available:
 
 Option|Sample|Description
 ---|---|---
 verto_listen|"verto:all:8082"|Interface and port to listen on
 
-Once started, when a new Verto connection arrives, the callback `nkmedia_verto_login/3` would be called. (See [nkmedia_verto_callbacks.erl](../src/nkmedia_verto_callbacks.erl)), you can authorize the request.
+Once started, when a new Verto connection arrives, the callback `nkmedia_verto_login/3` would be called. (See [nkmedia_verto_callbacks.erl](../src/plugins/nkmedia_verto_callbacks.erl)), so you can authorize the request.
 
 To call to a Verto destination, you must use NkMEDIA's built-in calling facility. You must use call type `verto`, and `callee` must point to the called user.
 
