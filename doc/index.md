@@ -21,11 +21,12 @@
 
 ## Cookbook
 * Peer to Peer calls
-* Call throw Janus
-* Call throw Freeswitch
+* Call through Janus
+* Call through Freeswitch
 * Recording with Janus
 * SFU (Selective Forwarding Unit)
 * MCU (Multipoint Control Unit)
+* SIP Gateway
 
 ## Advanced
 * Plugin architecture
