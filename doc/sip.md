@@ -1,6 +1,6 @@
 # SIP Plugin
 
-NkMEDIA includes a full blown SIP server, based on [NkSIP](), so it is extremely flexible and scalable. It can be used to make SIP gateways or any other SIP entity. It also includes a registrar server.
+NkMEDIA includes a full blown SIP server, based on [NkSIP](https://github.com/NetComposer/nksip), so it is extremely flexible and scalable. It can be used to make SIP gateways or any other SIP entity. It also includes a registrar server.
 
 To use it, your service must include the [nkmedia_sip](../src/plugins/nkmedia_sip.erl) plugin. The following configuration options are available:
 
@@ -20,7 +20,7 @@ Destination|Sample|Description
 ---|---|---
 p2p:...|p2p:123|Peer to Peer call
 verto:...|verto:1008|SIP-to-Verto call
-...|1008|User call
+...|1008|SIP-to-WebRTC User call
 
 For _p2p_ calls, a session will be started (with `p2p` type), and a new call with type `user`. The selected user will receive the call with the original SDP from Verto, so it will be a _peer to peer_ call.
 
