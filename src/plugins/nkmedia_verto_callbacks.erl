@@ -120,7 +120,7 @@ nkmedia_verto_login(_Login, _Pass, Verto) ->
     {rejected, nkservice:error(), verto()} | continue().
 
 nkmedia_verto_invite(SrvId, CallId, Offer, Verto) ->
-    case get_invite_call(SrvId, CallId, Offer) of
+    case start_session(SrvId, CallId, Offer) of
         {ok, {CallType, Callee, Offer2, SessId, SessPid}} ->
             Config = #{
                 type => CallType,
