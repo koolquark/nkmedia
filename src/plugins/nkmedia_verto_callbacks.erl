@@ -299,8 +299,8 @@ nkmedia_call_cancel(_CallId, _Link, _Call) ->
 
 %% @private
 %% Convenient functions in case we are registered with the call as
-%% {nkmedia_verto, CallId, Pid}
-nkmedia_call_reg_event(_CallId, {nkmedia_verto, CallId, Pid}, {hangup, Reason}, _Call) ->
+%% {nkmedia_verto, Pid}
+nkmedia_call_reg_event(CallId, {nkmedia_verto, Pid}, {hangup, Reason}, _Call) ->
     lager:info("Verto stopping after call hangup: ~p", [Reason]),
     nkmedia_verto:hangup(Pid, CallId, Reason),
     continue;
@@ -337,12 +337,14 @@ nkmedia_session_reg_event(_SessId, _Link, _Event, _Call) ->
 
 
 
+
 %% ===================================================================
 %% Internal
 %% ===================================================================
 
-
-get_invite_call(SrvId, CallId, #{dest:=Dest} = Offer) ->
+%% @private
+%% We start a sesion and register with it to get the answer and stops
+start_session(SrvId, CallId, #{dest:=Dest} = Offer) ->
     Config1 = #{offer=>Offer, register=>{nkmedia_verto, CallId, self()}},
     case Dest of
         <<"p2p:", Callee/binary>> ->

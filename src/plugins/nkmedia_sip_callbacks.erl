@@ -116,32 +116,31 @@ plugin_stop(Config, #{name:=Name}) ->
 %% @doc Called when a new SIP invite arrives
 -spec nkmedia_sip_invite(nkservice:id(), nksip:aor(), 
                          nkmedia:offer(), nksip:request(), nksip:call()) ->
-    {ok, nklib:link()} | {rejected, nkservice:error()} | continue().
+    {ok, nkmedia_sip:id()} | {rejected, nkservice:error()} | continue().
 
-nkmedia_sip_invite(_SrvId, _AOR, _Offer, _Req, _Call) ->
-    case AOR of
-        {Scheme, User, _Domain} when Scheme==sip; Scheme==sips ->
-            Config1 = #{offer=>Offer, register=>{nkmedia_sip, in, self()}},
-
-
-
-
-
- Config1 = #{offer=>Offer, register=>{nkmedia_sip, in, self()}},
-    % We register with the session as {nkmedia_sip, ...}, so:
-    % - we will detect the answer in nkmedia_sip_callbacks:nkmedia_session_reg_event
-    % - we stop the session if thip process stops
-    {offer, Offer2, Link2} = start_session(proxy, Config1),
-    {nkmedia_session, SessId, _} = Link2,
-    nkmedia_sip:register_incoming(Req, {nkmedia_session, SessId}),
-    % Since we are registering as {nkmedia_session, ..}, the second session
-    % will be linked with the first, and will send answer back
-    % We return {ok, Link} or {rejected, Reason}
-    % nkmedia_sip will store that Link
-    send_call(Dest, #{offer=>Offer2, peer=>SessId}).
-
-
-    {rejected, <<"Not Implemented">>}.
+nkmedia_sip_invite(SrvId, Dest, Offer, _Req, _Call) ->
+    case start_session(SrvId, Dest, Offer) of
+        {ok, {CallType, Callee, Offer2, SessId, _SessPid}} ->
+            Config = #{
+                type => CallType,
+                callee => Callee, 
+                offer => Offer2, 
+                session_id => SessId,
+                register => {nkmedia_sip, self()},
+                meta => #{}
+            },
+            lager:error("SIP INVITE: ~p ~p ~p", [Dest, CallType, Callee]),
+            case nkmedia_call:start(SrvId, Callee, Config) of
+                {ok, _CallId, _CallPid} ->
+                    {ok, {nkmedia_session, SessId}};
+                {error, Error} ->
+                    lager:warning("NkMEDIA SIP Invite error: ~p", [Error]),
+                    {rejected, call_error}
+            end;
+        {error, Error} ->
+            lager:warning("NkMEDIA SIP Invite error: ~p", [Error]),
+            {rejected, session_error}
+    end.
 
 
 %% @doc Called when a SIP INVITE we are launching is ringing
@@ -235,18 +234,23 @@ sip_register(Req, Call) ->
 %% @private
 sip_invite(Req, Call) ->
     SrvId = nksip_call:srv_id(Call),
+    Config = nkservice_srv:get_item(SrvId, config_nkmedia_sip),
+    #sip_config{domain = DefDomain} = Config,
     {ok, AOR} = nksip_request:meta(aor, Req),
+    {_Scheme, User, Domain} = AOR,
+    lager:error("AOR: ~p", [AOR]),
+    Dest = case Domain of
+        DefDomain -> User;
+        _ -> <<User/binary, $@, Domain/binary>>
+    end,
     {ok, Body} = nksip_request:meta(body, Req),
     Offer = case nksip_sdp:is_sdp(Body) of
         true -> #{sdp=>nksip_sdp:unparse(Body), sdp_type=>rtp};
         false -> #{}
     end,
-    case SrvId:nkmedia_sip_invite(SrvId, AOR, Offer, Req, Call) of
-        {ok, _Link} ->
-            % {ok, Handle} = nksip_request:get_handle(Req),
-            % {ok, Dialog} = nksip_dialog:get_handle(Req),
-            % nklib_proc:put({nkmedia_sip, dialog, Dialog}, Link),
-            % nklib_proc:put({nkmedia_sip, cancel, Handle}, Link),
+    case SrvId:nkmedia_sip_invite(SrvId, Dest, Offer, Req, Call) of
+        {ok, Id} ->
+            nkmedia_sip:register_incoming(Req, Id),
             noreply;
         {reply, Reply} ->
             {reply, Reply};
@@ -361,6 +365,7 @@ nkmedia_call_cancel(_CallId, _Link, _Call) ->
 
 
 nkmedia_call_reg_event(CallId, {nkmedia_sip, _Pid}, {hangup, _Reason}, _Call) ->
+    lager:error("SIP CALL BYE"),
     nkmedia_sip:send_bye({nkmedia_call, CallId}),
     continue;
 
@@ -374,9 +379,6 @@ nkmedia_call_reg_event(_CallId, _Link, _Event, _Call) ->
 
 
 %% @private
-%% We recognize for Id:
-%% - {incoming, Handle, Dialog}:
-%% - {nkmedia_session, SessId}
 nkmedia_session_reg_event(SessId, {nkmedia_sip, in, _SipPid}, Event, Session) ->
     Id = {nkmedia_session, SessId},
     spawn(
@@ -409,7 +411,6 @@ nkmedia_session_reg_event(SessId, {nkmedia_sip, in, _SipPid}, Event, Session) ->
 
 nkmedia_session_reg_event(SessId, {nkmedia_sip, out, _SipPid}, 
                           {stop, _Reason}, Session) ->
-    lager:error("SIP OUT STOP"),
     spawn(fun() -> nkmedia_sip:send_bye({nkmedia_session, SessId}) end),
     {ok, Session};
 
@@ -422,17 +423,20 @@ nkmedia_session_reg_event(_SessId, _Link, _Event, _Session) ->
 %% ===================================================================
 
 
-get_invite_call(SrvId, Dest, Offer) ->
+%% @private
+%% We start a session, and register with it with {nkmedia_sip, in, pid()} 
+%% so that we detect answer and stop
+start_session(SrvId, Dest, Offer) ->
     Config1 = #{offer=>Offer, register=>{nkmedia_sip, in, self()}},
     case Dest of
-        <<"p2p:", Callee/binary>> ->
+        <<"sip-", Callee/binary>> ->
             case nkmedia_session:start(SrvId, p2p, Config1) of
                 {ok, SessId, SessPid, #{}} ->
                     {ok, {sip, Callee, Offer, SessId, SessPid}};
                 {error, Error} ->
                     {error, Error}
             end;
-        <<"verto:", Callee/binary>> ->
+        <<"verto-", Callee/binary>> ->
             Config2 = Config1#{backend => nkmedia_janus},
             case nkmedia_session:start(SrvId, proxy, Config2) of
                 {ok, SessId, SessPid, #{offer:=Offer2}} ->
