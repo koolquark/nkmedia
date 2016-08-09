@@ -68,15 +68,15 @@
 %% If the slave has an answer, it will send it back to the master
 -type config() :: 
     #{
-        id => id(),                             % Generated if not included
-        peer => id(),                           % See above
-        wait_timeout => integer(),              % Secs
+        id => id(),                                 % Generated if not included
+        peer => id(),                               % See above
+        wait_timeout => integer(),                  % Secs
         ready_timeout => integer(),
         backend => nkemdia:backend(),
         register => nklib:link(),
-        user_id => nkservice:user_id(),
-        user_session => nkservice:user_session(),
-        term() => term()                        % Plugin data
+        user_id => nkservice:user_id(),             % Informative only
+        user_session => nkservice:user_session(),   % Informative only
+        term() => term()                            % Plugin data
     }.
 
 
@@ -419,7 +419,7 @@ handle_call({link_to_slave, IdB, PidB}, _From, #state{id=IdA}=State) ->
     reply({ok, self()}, State3);
 
 handle_call({register, Link}, _From, State) ->
-    ?LLOG(info, "proc registered (~p)", [Link], State),
+    ?LLOG(info, "registered link (~p)", [Link], State),
     State2 = links_add(Link, State),
     reply({ok, self()}, State2);
 

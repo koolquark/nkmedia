@@ -68,10 +68,14 @@ session_event(SessId, Event, #{srv_id:=SrvId}=Session) ->
 
 call_event(CallId, Event, #{srv_id:=SrvId}=Call) ->
     Send = case Event of
-        {ringing, _} -> 
+        {ringing, _, Answer} when map_size(Answer) > 0 -> 
+            {ringing, #{answer=>Answer}};
+        {ringing, _, _Answer} ->
             {ringing, #{}};
-        {answer, _, Answer} ->
+        {answer, _, Answer} when map_size(Answer) > 0 ->
             {answer, #{answer=>Answer}};
+        {answer, _, _Answer} ->
+            {answer, #{}};
         {hangup, Reason} ->
             {Code, Txt} = SrvId:error_code(Reason),
             {hangup, #{code=>Code, reason=>Txt}};

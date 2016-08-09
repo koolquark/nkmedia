@@ -34,6 +34,7 @@
 syntax(<<"session">>, <<"start">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
+			id => binary,
 			type => atom,							%% p2p, proxy...
 			offer => offer(),
 			peer => binary,
@@ -88,9 +89,11 @@ syntax(<<"session">>, <<"info">>, Syntax, Defaults, Mandatory) ->
 syntax(<<"call">>, <<"start">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
+			id => binary,
 			callee => binary,
 			type => atom,
 			offer => offer(),
+			meta => any,
 			session_id => binary,
 			ring_time => {integer, 1, none},
 			events_body => any
@@ -101,7 +104,10 @@ syntax(<<"call">>, <<"start">>, Syntax, Defaults, Mandatory) ->
 
 syntax(<<"call">>, <<"ringing">>, Syntax, Defaults, Mandatory) ->
 	{
-		Syntax#{call_id => binary},
+		Syntax#{
+			call_id => binary,
+			answer => answer()
+		},
 		Defaults,
 		[call_id|Mandatory]
 	};

@@ -289,7 +289,8 @@ conn_stop(Reason, _NkPort, State) ->
 %% Requests
 %% ===================================================================
 
-send_req({invite, CallId, #{sdp:=SDP}, Link}, From, NkPort, State) ->
+send_req({invite, CallId, Offer, Link}, From, NkPort, State) ->
+    #{sdp:=SDP} = Offer,
     nklib_util:reply(From, ok),
     % ?LLOG(info, "ordered INVITE (~s)", [CallId], State),
     Result = #{
@@ -414,11 +415,12 @@ process_client_msg(register, Body, Msg, NkPort, State) ->
     ?LLOG(info, "received REGISTER (~s)", [User], State),
     nklib_proc:put(?MODULE, User),
     nklib_proc:put({?MODULE, user, User}),
+    {ok, State2} = handle(nkmedia_janus_registered, [User], State),
     Result = #{event=>registered, username=>User},
-    Resp = make_videocall_resp(Result, Msg, State),
-    #state{janus=Janus} = State,
-    Janus2 = Janus#{user=>User, session_id=>nklib_util:uuid_4122()},
-    send(Resp, NkPort, State#state{user=User, janus=Janus2});
+    Resp = make_videocall_resp(Result, Msg, State2),
+    #state{janus=Janus2} = State2,
+    Janus3 = Janus2#{user=>User, session_id=>nklib_util:uuid_4122()},
+    send(Resp, NkPort, State2#state{user=User, janus=Janus3});
 
 process_client_msg(call, Body, Msg, NkPort, #state{srv_id=SrvId}=State) ->
     CallId = nklib_util:uuid_4122(),

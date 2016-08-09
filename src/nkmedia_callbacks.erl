@@ -31,7 +31,7 @@
 -export([nkmedia_session_start/2, nkmedia_session_answer/3, 
 	     nkmedia_session_update/4, nkmedia_session_stop/2]).
 -export([nkmedia_call_init/2, nkmedia_call_terminate/2, 
-		 nkmedia_call_resolve/3, nkmedia_call_invite/4, nkmedia_call_cancel/3, 
+		 nkmedia_call_resolve/3, nkmedia_call_invite/5, nkmedia_call_cancel/3, 
 		 nkmedia_call_event/3, nkmedia_call_reg_event/4, nkmedia_session_reg_down/4,
 		 nkmedia_call_handle_call/3, nkmedia_call_handle_cast/2, 
 		 nkmedia_call_handle_info/2]).
@@ -243,7 +243,11 @@ nkmedia_call_terminate(_Reason, Call) ->
 	{ok, Call}.
 
 
-%% @doc Called when an outbound call is to be sent
+%% @doc Called when an call is created. The initial callee option is included,
+%% along with the current destionations. You may add new destinations.
+%% By default, it will look for types 'user' and 'session', adding 
+%% {nkmedia_api, {user|session}, pid()} destinations
+%% Then nkmedia_call_invite must send the real invitations
 -spec nkmedia_call_resolve(nkmedia_call:callee(), [nkmedia_call:dest_ext()], call()) ->
 	{ok, [nkmedia_call:dest_ext()], call()} | continue().
 
@@ -251,23 +255,27 @@ nkmedia_call_resolve(Callee, DestExts, Call) ->
 	nkmedia_api:nkmedia_call_resolve(Callee, DestExts, Call).
 
 
-%% @doc Called when an outbound call is to be sent
--spec nkmedia_call_invite(call_id(), nkmedia_call:dest(), nkmedia:offer(), call()) ->
+%% @doc Called for each defined destination to be invited
+%% The offer can be empty if it was not included in the call creation
+%% You must return a nklib:link(), and include it when calling
+%% nkmedia_call:ringing/3, answered/3 or rejected/3
+-spec nkmedia_call_invite(call_id(), nkmedia_call:dest(), 
+						  nkmedia:offer(), Meta::term(), call()) ->
 	{ok, nklib:link(), call()} | 
 	{retry, Secs::pos_integer(), call()} | 
 	{remove, call()} | 
 	continue().
 
-nkmedia_call_invite(CallId, Dest, Offer, Call) ->
-	nkmedia_api:nkmedia_call_invite(CallId, Dest, Offer, Call).
+nkmedia_call_invite(CallId, Dest, Offer, Meta, Call) ->
+	nkmedia_api:nkmedia_call_invite(CallId, Dest, Offer, Meta, Call).
 
 
-%% @doc Called when an outbound call is to be sent
+%% @doc Called when an outbound invite has been cancelled
 -spec nkmedia_call_cancel(call_id(), nklib:link(), call()) ->
 	{ok, call()} | continue().
 
 nkmedia_call_cancel(CallId, Link, Call) ->
-	nkmedia_api:nkmedia_api_call_cancel(CallId, Link, Call).
+	nkmedia_api:nkmedia_call_cancel(CallId, Link, Call).
 
 
 %% @doc Called when the status of the call changes
@@ -283,6 +291,7 @@ nkmedia_call_event(CallId, Event, Call) ->
 -spec nkmedia_call_reg_event(call_id(),	nklib:link(), nkmedia_call:event(), call()) ->
 	{ok, session()} | continue().
 
+% Automatic processing of calls linked to a session
 nkmedia_call_reg_event(_CallId, {nkmedia_session, SessId}, Event, Call) ->
 	case Event of
 		{answer, _Callee, Answer} ->

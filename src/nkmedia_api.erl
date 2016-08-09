@@ -25,7 +25,7 @@
 -export([cmd/4]).
 -export([api_server_reg_down/3, api_server_handle_cast/2]).
 -export([nkmedia_session_reg_event/4]).
--export([nkmedia_call_invite/4, nkmedia_call_resolve/3, 
+-export([nkmedia_call_invite/5, nkmedia_call_resolve/3, 
 	     nkmedia_call_cancel/3, nkmedia_call_reg_event/4]).
 
 -include_lib("nkservice/include/nkservice.hrl").
@@ -135,7 +135,8 @@ cmd(<<"call">>, <<"start">>, Req, State) ->
 
 cmd(<<"call">>, <<"ringing">>, #api_req{data=Data}, State) ->
 	#{call_id:=CallId} = Data,
-	case nkmedia_call:ringing(CallId, {nkmedia_api, self()}) of
+	Answer = maps:get(answer, Data, #{}),
+	case nkmedia_call:ringing(CallId, {nkmedia_api, self()}, Answer) of
 		ok ->
 			{ok, #{}, State};
 		{error, invite_not_found} ->
@@ -152,7 +153,18 @@ cmd(<<"call">>, <<"answered">>, #api_req{srv_id=SrvId, data=Data}, State) ->
 	Answer = maps:get(answer, Data, #{}),
 	case nkmedia_call:answered(CallId, {nkmedia_api, self()}, Answer) of
 		ok ->
-			update_call(SrvId, CallId, Data, State);
+			% We are the 'B' leg of the call, let's register with it
+			% and start events
+			{ok, _CallPid} = nkmedia_call:register(CallId, {nkmedia_api, self()}),
+			case maps:get(subscribe, Data, true) of
+				true ->
+					RegId = call_reg_id(SrvId, <<"*">>, CallId),
+					Body = maps:get(events_body, Data, #{}),
+					nkservice_api_server:register_events(self(), RegId, Body);
+				false -> 
+					ok
+			end,
+			{ok, #{}, State};
 		{error, invite_not_found} ->
 			{error, already_answered, State};
 		{error, call_not_found} ->
@@ -271,9 +283,18 @@ nkmedia_call_resolve(Dest, Acc, Call) ->
 
 
 %% @private
-nkmedia_call_invite(CallId, {nkmedia_api, {Type, Pid}}, Offer, Call) ->
-	Data = #{call_id=>CallId, offer=>Offer, type=>Type},
-	case nkservice_api_server:cmd(Pid, media, call, invite, Data) of
+%% Type would be user or session
+nkmedia_call_invite(CallId, {nkmedia_api, {Type, Pid}}, Offer, Meta, Call) ->
+	Data1 = #{call_id=>CallId, type=>Type},
+	Data2 = case is_map(Offer) andalso map_size(Offer) > 0 of
+		true -> Data1#{offer=>Offer};
+		false -> Data1
+	end,
+	Data3 = case is_map(Meta) andalso map_size(Meta) > 0 of
+		true -> Data2#{meta=>Meta};
+		false -> Data2
+	end,
+	case nkservice_api_server:cmd(Pid, media, call, invite, Data3) of
 		{ok, <<"ok">>, #{<<"retry">>:=Retry}} ->
 			case is_integer(Retry) andalso Retry>0 of
 				true -> {retry, Retry, Call};
@@ -288,15 +309,17 @@ nkmedia_call_invite(CallId, {nkmedia_api, {Type, Pid}}, Offer, Call) ->
 			{remove, Call}
 	end;
 
-nkmedia_call_invite(_CallId, _Dest, _Offer, Call) ->
+nkmedia_call_invite(_CallId, _Dest, _Offer, _Meta, Call) ->
 	{remove, Call}.
 
 
 %% @private
-nkmedia_call_cancel(CallId, {nkmedia_api, Pid}, Call) ->
-	{Code, Txt} = nkmedia_util:error(originator_cancel),
-	nkservice_api_server:cmd_async(Pid, media, call, hangup, 
-								   #{call_id=>CallId, code=>Code, reason=>Txt}),
+nkmedia_call_cancel(CallId, {nkmedia_api, Pid}, #{srv_id:=SrvId}=Call) ->
+	lager:error("CALL CANCELLED: ~p", [Pid]),
+	{Code, Text} = nkservice_util:error_code(SrvId, originator_cancel),
+	Body = #{code=>Code, reason=>Text},
+	RegId = call_reg_id(SrvId, hangup, CallId),
+	nkservice_events:send(RegId, Body, Pid),
 	{ok, Call};
 
 nkmedia_call_cancel(_CallId, _Link, Call) ->
@@ -351,22 +374,6 @@ api_server_handle_cast(_Msg, _State) ->
 
 
 %% @private
-%% We have a B leg to the call
-%% We monitor the call, and also capture hangup
-update_call(SrvId, CallId, Data, State) ->
-	{ok, _CallPid} = nkmedia_call:register(CallId, {nkmedia_api, self()}),
-	case maps:get(subscribe, Data, true) of
-		true ->
-			RegId = call_reg_id(SrvId, <<"*">>, CallId),
-			Body = maps:get(events_body, Data, #{}),
-			nkservice_api_server:register_events(self(), RegId, Body);
-		false -> 
-			ok
-	end,
-	{ok, #{}, State}.
-
-
-%% @private
 session_reg_id(SrvId, Type, SessId) ->
 	#reg_id{
 		srv_id = SrvId, 	
@@ -378,12 +385,12 @@ session_reg_id(SrvId, Type, SessId) ->
 
 
 %% @private
-call_reg_id(SrvId, Type, SessId) ->
+call_reg_id(SrvId, Type, CallId) ->
 	#reg_id{
 		srv_id = SrvId, 	
 		class = <<"media">>, 
 		subclass = <<"call">>,
 		type = nklib_util:to_binary(Type),
-		obj_id = SessId
+		obj_id = CallId
 	}.
 

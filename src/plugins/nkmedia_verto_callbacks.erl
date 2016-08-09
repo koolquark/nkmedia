@@ -31,7 +31,7 @@
          nkmedia_verto_dtmf/4, nkmedia_verto_terminate/2,
          nkmedia_verto_handle_call/3, nkmedia_verto_handle_cast/2,
          nkmedia_verto_handle_info/2]).
--export([nkmedia_call_resolve/3, nkmedia_call_invite/4, nkmedia_call_cancel/3,
+-export([nkmedia_call_resolve/3, nkmedia_call_invite/5, nkmedia_call_cancel/3,
          nkmedia_call_reg_event/4]).
 -export([nkmedia_session_reg_event/4]).
 
@@ -160,7 +160,7 @@ nkmedia_verto_rejected(_CallId, {nkmedia_session, SessId, _Pid}, Verto) ->
     nkmedia_session:stop(SessId, verto_rejected),
     {ok, Verto};
 
-nkmedia_verto_rejected(_CallId, {nkmedia_verto_call, CallId, _Pid}, Verto) ->
+nkmedia_verto_rejected(_CallId, {nkmedia_call, CallId, _Pid}, Verto) ->
     nkmedia_call:rejected(CallId, {nkmedia_verto, self()}),
     {ok, Verto};
 
@@ -177,7 +177,7 @@ nkmedia_verto_bye(_CallId, {nkmedia_session, SessId, _Pid}, Verto) ->
     nkmedia_session:stop(SessId, verto_bye),
     {ok, Verto};
 
-nkmedia_verto_bye(_CallId, {nkmedia_verto_call, CallId, _Pid}, Verto) ->
+nkmedia_verto_bye(_CallId, {nkmedia_call, CallId, _Pid}, Verto) ->
     nkmedia_call:hangup(CallId, verto_bye),
     {ok, Verto};
 
@@ -241,10 +241,10 @@ error_code(_) -> continue.
 
 
 %% @private
-%% If call has type 'nkmedia_verto' we will capture it
+%% If call has type 'verto' we will capture it
 nkmedia_call_resolve(Callee, Acc, Call) ->
-    case maps:get(type, Call, nkmedia_verto) of
-        nkmedia_verto ->
+    case maps:get(type, Call, verto) of
+        verto ->
             DestExts = [
                 #{dest=>{nkmedia_verto, Pid}}
                 || Pid <- nkmedia_verto:find_user(Callee)
@@ -257,14 +257,14 @@ nkmedia_call_resolve(Callee, Acc, Call) ->
 
 %% @private
 %% When a call is sento to {nkmedia_verto, pid()}, we capture it here
-%% We register with verto as {nkmedia_verto_call, CallId, PId},
+%% We register with verto as {nkmedia_call, CallId, PId},
 %% and with the call as {nkmedia_verto, Pid}
-nkmedia_call_invite(CallId, {nkmedia_verto, Pid}, Offer, Call) when is_pid(Pid) ->
-    Link = {nkmedia_verto_call, CallId, self()},
+nkmedia_call_invite(CallId, {nkmedia_verto, Pid}, Offer, _Meta, Call) when is_pid(Pid) ->
+    Link = {nkmedia_call, CallId, self()},
     ok = nkmedia_verto:invite(Pid, CallId, Offer, Link),
     {ok, {nkmedia_verto, Pid}, Call};
 
-nkmedia_call_invite(_CallId, _Dest, _Offer, _Call) ->
+nkmedia_call_invite(_CallId, _Dest, _Offer, _Meta, _Call) ->
     continue.
 
 

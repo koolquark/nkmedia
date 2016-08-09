@@ -208,12 +208,8 @@ listen(Publisher, Dest) ->
 
 
 %% @doc Called on login
-api_server_login(#{<<"user">>:=User, <<"pass">>:=_Pass}, _SessId, State) ->
-    nkservice_api_server:start_ping(self(), 60),
-    {true, User, State};
-
-api_server_login(_Data, _SessId, _State) ->
-    continue.
+api_server_get_user_pass(_User, State) ->
+    {true, State}.
 
 
 %% @doc
@@ -243,7 +239,7 @@ nkmedia_verto_invite(_SrvId, CallId, Offer, Verto) ->
     Base = #{
         offer => Offer,
         events_body => #{
-            call_id => CallId,
+            verto_call_id => CallId,
             verto_pid => pid2bin(self())
         }
     },
@@ -291,7 +287,7 @@ nkmedia_janus_invite(_SrvId, CallId, Offer, Janus) ->
     Base = #{
         offer => Offer,
         events_body => #{
-            call_id => CallId,
+            janus_call_id => CallId,
             janus_pid => pid2bin(self())
         }
     },
@@ -461,12 +457,12 @@ api_client_fun(#api_req{class = <<"core">>, cmd = <<"event">>, data = Data}, Use
     Body = maps:get(<<"body">>, Data, #{}),
     Sender = case Body of
         #{
-            <<"call_id">> := SCallId,
+            <<"verto_call_id">> := SCallId,
             <<"verto_pid">> := BinPid
         } ->
             {verto, SCallId, bin2pid(BinPid)};
         #{
-            <<"call_id">> := SCallId,
+            <<"janus_call_id">> := SCallId,
             <<"janus_pid">> := BinPid
         } ->
             {janus, SCallId,  bin2pid(BinPid)};
