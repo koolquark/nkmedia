@@ -46,7 +46,7 @@
 
 
 -define(URL1, "nkapic://127.0.0.1:9010").
--define(URL2, "nkapic://media2.netcomposer.io:9010").
+-define(URL2, "nkapic://c1.netc.io:9010").
 
 
 %% ===================================================================
@@ -208,8 +208,11 @@ listen(Publisher, Dest) ->
 
 
 %% @doc Called on login
-api_server_get_user_pass(_User, State) ->
-    {true, State}.
+api_server_login(#{<<"user">>:=User}, _SessId, State) ->
+    {true, User, State};
+
+api_server_login(_Data, _SessId, _State) ->
+    continue.
 
 
 %% @doc

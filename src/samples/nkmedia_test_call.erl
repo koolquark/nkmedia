@@ -154,8 +154,11 @@ call_cmd(C, Cmd, Data) ->
 
 
 %% @doc Called on login
-api_server_get_user_pass(_User, State) ->    
-    {true, State}.
+api_server_login(#{<<"user">>:=User}, _SessId, State) ->
+    {true, User, State};
+
+api_server_login(_Data, _SessId, _State) ->
+    continue.
     
 
 %% @doc
