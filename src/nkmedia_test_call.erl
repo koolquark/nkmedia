@@ -44,12 +44,14 @@
 %%    - Invites are captured in api_client_fund, ringing is sent
 %%    - We call Veto or Janus invite, and waits for answer, also managing bye
 %%    - Tested calling from Janus to several Vertos. CANCEL is captured in verto_callbacks
+%%    - For Verto incoming, need to implement nkmedia_verto_invite like here
 %%
-%% 3) 
+%% 3) Calling to SIP
+%%    - When Janus/Verto calls to a number starting with "s" is is understood
+%%      as a SIP destionation. Can be a registered user, with or without domain,
+%%      or a full SIP address
 %%
-%%
-%%
-%%
+%% 4) Incoming SIOP
 %%
 %%
 
@@ -173,7 +175,11 @@ api_subscribe_allow(_SrvId, _Class, _SubClass, _Type, State) ->
 %% nkmedia_verto callbacks
 %% ===================================================================
 
+nkmedia_verto_login(<<"test", _/binary>>=User, Pass, Verto) ->
+    nkmedia_test:nkmedia_verto_login(User, Pass, Verto);
+
 nkmedia_verto_login(Login, Pass, Verto) ->
+    lager:error("LOG: ~p", [Login]),
     case nkmedia_test:nkmedia_verto_login(Login, Pass, Verto) of
         {true, User, Verto2} ->
             Pid = connect(User, #{test_verto_server=>self()}),
@@ -196,7 +202,10 @@ nkmedia_verto_invite(_SrvId, CallId, Offer, #{test_api_server:=Ws}=Verto) ->
         {rejected, Reason} ->
             lager:notice("Verto invite rejected ~p", [Reason]),
             {rejected, Reason, Verto}
-    end.
+    end;
+
+nkmedia_verto_invite(_SrvId, _CallId, _Offer, _Verto) ->
+    continue.
 
 
 nkmedia_verto_answer(CallId, {test_call, CallId, WsPid}, Answer, Verto) ->
@@ -389,17 +398,19 @@ sip_register(Req, Call) ->
 %% ===================================================================
 
 start_call(CallId, Dest, WsPid, Offer, Events, Link) ->
+    {Type, Callee, ProxyType} = case Dest of
+        <<"v", Rest/binary>> -> {verto, Rest, webrtc};
+        <<"s", Rest/binary>> -> {sip, Rest, rtp};
+        _ -> {user, Dest, webrtc}
+    end,
     SessConfig = #{
         backend => nkmedia_janus, 
+        proxy_type => ProxyType,
         offer => Offer,
         register => Link
     },
     {ok, SessId, SessPid, #{offer:=Offer2}} = 
         nkmedia_session:start(test, proxy, SessConfig),
-    {Type, Callee} = case Dest of
-        <<"v", Rest/binary>> -> {verto, Rest};
-        _ -> {user, Dest}
-    end,
     CallConfig = #{
         id => CallId,
         type => Type,         
@@ -412,7 +423,7 @@ start_call(CallId, Dest, WsPid, Offer, Events, Link) ->
     % We start a call, link the ws session with the call, and subscribe to events
     case call_cmd(WsPid, start, CallConfig) of
         {ok, #{<<"call_id">>:=CallId}} -> 
-            {ok, {nkmedia_session, CallId, SessPid}};
+            {ok, {nkmedia_session, SessId, SessPid}};
         Other ->
             nkmedia_session:stop(SessId),
             nkservice_api_client:stop(WsPid),
@@ -465,8 +476,8 @@ api_client_fun(#api_req{class = <<"core">>, cmd = <<"event">>, data = Data}, Use
     {ok, #{}, UserData};
 
 api_client_fun(#api_req{cmd= <<"invite">>, data=Data}, UserData) ->
-    #{<<"call_id">>:=CallId, <<"meta">>:=Meta, <<"offer">>:=Offer} = Data,
-    lager:info("INVITE: ~p ~p", [Meta, UserData]),
+    #{<<"call_id">>:=CallId, <<"offer">>:=Offer} = Data,
+    lager:info("INVITE: ~p", [UserData]),
     Self = self(),
     spawn(
         fun() ->

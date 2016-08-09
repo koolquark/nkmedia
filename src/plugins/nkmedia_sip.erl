@@ -54,10 +54,16 @@
 
 %% @doc
 %% Launches an asynchronous invite, from a session or call
-%% To recognize events, Id must be {nkmedia_session|nkmedia_call, Id}
+%% To recognize events, 'Id' must be {nkmedia_session|nkmedia_call, Id}
+%%
+%% Stores in the current process 
+%% - nkmedia_sip_dialog_to_id
+%% - nkmedia_sip_id_to_dialog
+%% - nkmedia_sip_id_to_handle
+%%
 -spec send_invite(nkservice:id(), nklib:user_uri(), nkmedia:offer(),
                   id(), invite_opts()) ->
-	{ok, nklib:link()} | {error, term()}.
+	{ok, pid()} | {error, term()}.
 
 send_invite(Srv, Uri, #{sdp:=SDP}, Id, Opts) ->
     {ok, SrvId} = nkservice_srv:get_srv_id(Srv),
@@ -68,15 +74,15 @@ send_invite(Srv, Uri, #{sdp:=SDP}, Id, Opts) ->
             Self ! {Ref, self()};
         ({resp, Code, Resp, _Call}) when Code==180; Code==183 ->
             {ok, Body} = nksip_response:body(Resp),
-            _Answer = case nksip_sdp:is_sdp(Body) of
+            Answer = case nksip_sdp:is_sdp(Body) of
                 true -> #{sdp=>nksip_sdp:unparse(Body)};
                 false -> #{}
             end,
-            SrvId:nkmedia_sip_invite_ringing(Id);
+            SrvId:nkmedia_sip_invite_ringing(Id, Answer);
         ({resp, Code, _Resp, _Call}) when Code < 200 ->
             ok;
         ({resp, Code, _Resp, _Call}) when Code >= 300 ->
-            lager:notice("SIP reject code: ~p", [Code]),
+            lager:info("SIP reject code: ~p", [Code]),
             SrvId:nkmedia_sip_invite_rejected(Id);
         ({resp, _Code, Resp, _Call}) ->
             {ok, Dialog} = nksip_dialog:get_handle(Resp),

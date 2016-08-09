@@ -22,14 +22,15 @@
 -module(nkmedia_sip_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
+-export([plugin_deps/0, plugin_syntax/0, plugin_defaults/0, plugin_config/2, 
+         plugin_start/2, plugin_stop/2]).
 -export([error_code/1]).
 -export([nkmedia_sip_invite/5]).
--export([nkmedia_sip_invite_ringing/1, nkmedia_sip_invite_rejected/1, 
+-export([nkmedia_sip_invite_ringing/2, nkmedia_sip_invite_rejected/1, 
          nkmedia_sip_invite_answered/2]).
 -export([sip_get_user_pass/4, sip_authorize/3]).
--export([sip_invite/2, sip_reinvite/2, sip_cancel/3, sip_bye/2]).
--export([nkmedia_call_resolve/3, nkmedia_call_invite/4, nkmedia_call_cancel/3,
+-export([sip_register/2, sip_invite/2, sip_reinvite/2, sip_cancel/3, sip_bye/2]).
+-export([nkmedia_call_resolve/3, nkmedia_call_invite/5, nkmedia_call_cancel/3,
          nkmedia_call_reg_event/4]).
 -export([nkmedia_session_reg_event/4]).
 
@@ -43,6 +44,12 @@
 
 -type continue() :: continue | {continue, list()}.
 
+-record(sip_config, {
+    registrar :: boolean(),
+    domain :: binary(),
+    force_domain :: boolean(),
+    invite_not_registered :: boolean
+}).
 
 
 
@@ -53,6 +60,40 @@
 
 plugin_deps() ->
     [nkmedia, nksip].
+
+
+plugin_syntax() ->
+    #{
+        sip_registrar => boolean,
+        sip_domain => binary,
+        sip_registrar_force_domain => boolean,
+        sip_invite_not_registered => boolean
+    }.
+
+
+plugin_defaults() ->
+    #{
+        sip_registrar => true,
+        sip_domain => <<"nkmedia">>,
+        sip_registrar_force_domain => true,
+        sip_invite_not_registered => true
+    }.
+
+
+plugin_config(Config, _Service) ->
+    #{
+        sip_registrar := Registrar,
+        sip_domain := Domain,
+        sip_registrar_force_domain := Force,
+        sip_invite_not_registered := External
+    } = Config,
+    Config2 = #sip_config{
+        registrar = Registrar,
+        domain = Domain,
+        force_domain = Force,
+        invite_not_registered = External
+    },
+    {ok, Config, Config2}.
 
 
 plugin_start(Config, #{name:=Name}) ->
@@ -66,6 +107,8 @@ plugin_stop(Config, #{name:=Name}) ->
 
 
 
+
+
 %% ===================================================================
 %% Offering Callbacks
 %% ===================================================================
@@ -76,17 +119,39 @@ plugin_stop(Config, #{name:=Name}) ->
     {ok, nklib:link()} | {rejected, nkservice:error()} | continue().
 
 nkmedia_sip_invite(_SrvId, _AOR, _Offer, _Req, _Call) ->
+    case AOR of
+        {Scheme, User, _Domain} when Scheme==sip; Scheme==sips ->
+            Config1 = #{offer=>Offer, register=>{nkmedia_sip, in, self()}},
+
+
+
+
+
+ Config1 = #{offer=>Offer, register=>{nkmedia_sip, in, self()}},
+    % We register with the session as {nkmedia_sip, ...}, so:
+    % - we will detect the answer in nkmedia_sip_callbacks:nkmedia_session_reg_event
+    % - we stop the session if thip process stops
+    {offer, Offer2, Link2} = start_session(proxy, Config1),
+    {nkmedia_session, SessId, _} = Link2,
+    nkmedia_sip:register_incoming(Req, {nkmedia_session, SessId}),
+    % Since we are registering as {nkmedia_session, ..}, the second session
+    % will be linked with the first, and will send answer back
+    % We return {ok, Link} or {rejected, Reason}
+    % nkmedia_sip will store that Link
+    send_call(Dest, #{offer=>Offer2, peer=>SessId}).
+
+
     {rejected, <<"Not Implemented">>}.
 
 
 %% @doc Called when a SIP INVITE we are launching is ringing
--spec nkmedia_sip_invite_ringing(Id::term()) ->
+-spec nkmedia_sip_invite_ringing(Id::term(), nkmedia:answer()) ->
     ok.
 
-nkmedia_sip_invite_ringing({nkmedia_call, CallId}) ->
-    nkmedia_call:ringing(CallId, {nkmedia_sip, self()});
+nkmedia_sip_invite_ringing({nkmedia_call, CallId}, Answer) ->
+    nkmedia_call:ringing(CallId, {nkmedia_sip, self()}, Answer);
 
-nkmedia_sip_invite_ringing(_Id) ->
+nkmedia_sip_invite_ringing(_Id, _Answer) ->
     ok.
 
 
@@ -137,6 +202,34 @@ sip_get_user_pass(_User, _Realm, _Req, _Call) ->
 %% @private
 sip_authorize(_AuthList, _Req, _Call) ->
     ok.
+
+
+%% @private
+sip_register(Req, Call) ->
+    SrvId = nksip_call:srv_id(Call),
+    Config = nkservice_srv:get_item(SrvId, config_nkmedia_sip),
+    #sip_config{
+        registrar = Registrar,
+        domain = Domain,
+        force_domain = Force
+    } = Config,
+    case Registrar of
+        true ->
+            case Force of
+                true ->
+                    Req2 = nksip_registrar_util:force_domain(Req, Domain),
+                    {continue, [Req2, Call]};
+                false ->
+                    case nksip_request:meta(Req, to_domain) of
+                        {ok, Domain} ->
+                            {continue, [Req, Call]};
+                        _ ->
+                            {reply, forbidden}
+                    end
+            end;
+        false ->
+            {reply, forbidden}
+    end.
 
 
 %% @private
@@ -216,21 +309,27 @@ error_code(_) -> continue.
 
 %% @private
 nkmedia_call_resolve(Callee, Acc, #{srv_id:=SrvId}=Call) ->
-    case maps:get(type, Call, nkmedia_sip) of
-        nkmedia_sip ->
-            Uris1 = case nklib_parse:uris(Callee) of
-                error -> 
-                    [];
-                Parsed -> 
-                    [U || #uri{scheme=S}=U <- Parsed, S==sip orelse S==sips]
-            end,
-            Uris2 = case binary:split(Callee, <<"@">>) of
-                [User, Domain] ->
-                    nksip_registrar:find(SrvId, sip, User, Domain) ++
-                    nksip_registrar:find(SrvId, sips, User, Domain);
-                _ ->
+    case maps:get(type, Call, sip) of
+        sip ->
+            Config = nkservice_srv:get_item(SrvId, config_nkmedia_sip),
+            #sip_config{invite_not_registered=DoExt} = Config,
+            Uris1 = case DoExt of
+                true ->
+                    case nklib_parse:uris(Callee) of
+                        error -> 
+                            [];
+                        Parsed -> 
+                            [U || #uri{scheme=S}=U <- Parsed, S==sip orelse S==sips]
+                    end;
+                false ->
                     []
             end,
+            {User, Domain} = case binary:split(Callee, <<"@">>) of
+                [User0, Domain0] -> {User0, Domain0};
+                [User0] -> {User0, Config#sip_config.domain}
+            end,
+            Uris2 = nksip_registrar:find(SrvId, sip, User, Domain) ++
+                    nksip_registrar:find(SrvId, sips, User, Domain),
             DestExts = [#{dest=>{nkmedia_sip, U}} || U <- Uris1++Uris2],
             {continue, [Callee, Acc++DestExts, Call]};
         _ ->
@@ -239,16 +338,16 @@ nkmedia_call_resolve(Callee, Acc, #{srv_id:=SrvId}=Call) ->
 
 
 %% @private
-nkmedia_call_invite(CallId, {nkmedia_sip, Uri}, Offer, #{srv_id:=SrvId}=Call) ->
+nkmedia_call_invite(CallId, {nkmedia_sip, Uri}, Offer, _Meta, #{srv_id:=SrvId}=Call) ->
     case nkmedia_sip:send_invite(SrvId, Uri, Offer, {nkmedia_call, CallId}, []) of
-        {ok, _Handle, Pid} -> 
+        {ok, Pid} -> 
             {ok, {nkmedia_sip, Pid}, Call};
         {error, Error} ->
             lager:error("error sending sip: ~p", [Error]),
             {remove, Call}
     end;
 
-nkmedia_call_invite(_CallId, _Dest, _Offer, _Call) ->
+nkmedia_call_invite(_CallId, _Dest, _Offer, _Meta, _Call) ->
     continue.
 
 
@@ -318,8 +417,38 @@ nkmedia_session_reg_event(_SessId, _Link, _Event, _Session) ->
     continue.
 
 
+%% ===================================================================
+%% Internal
+%% ===================================================================
 
 
+get_invite_call(SrvId, Dest, Offer) ->
+    Config1 = #{offer=>Offer, register=>{nkmedia_sip, in, self()}},
+    case Dest of
+        <<"p2p:", Callee/binary>> ->
+            case nkmedia_session:start(SrvId, p2p, Config1) of
+                {ok, SessId, SessPid, #{}} ->
+                    {ok, {sip, Callee, Offer, SessId, SessPid}};
+                {error, Error} ->
+                    {error, Error}
+            end;
+        <<"verto:", Callee/binary>> ->
+            Config2 = Config1#{backend => nkmedia_janus},
+            case nkmedia_session:start(SrvId, proxy, Config2) of
+                {ok, SessId, SessPid, #{offer:=Offer2}} ->
+                    {ok, {verto, Callee, Offer2, SessId, SessPid}};
+                {error, Error} ->
+                    {error, Error}
+            end;
+        Callee ->
+            Config2 = Config1#{backend => nkmedia_janus},
+            case nkmedia_session:start(SrvId, proxy, Config2) of
+                {ok, SessId, SessPid, #{offer:=Offer2}} ->
+                    {ok, {user, Callee, Offer2, SessId, SessPid}};
+                {error, Error} ->
+                    {error, Error}
+            end
+    end.
 
 % %% @private
 % nkmedia_session_event(_SessId, {answer, Answer}, 

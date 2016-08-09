@@ -16,8 +16,8 @@
   * [nkmedia_janus](janus.md)
   * [nkmedia_fs](fs.md)
   * nkmedia_kms
-  * nkmedia_sip
-  * nkmedia_verto
+  * [nkmedia_sip](sip.md)
+  * [nkmedia_verto](verto.md)
 
 ## Cookbook
 * Peer to Peer calls

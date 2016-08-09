@@ -511,7 +511,7 @@ cancel_all(Except, #state{id=CallId, invites=Invs}=State) ->
                 Except ->
                     Acc;
                 _ ->
-                    ?LLOG(error, "sending CANCEL to ~p", [Link], State),
+                    ?LLOG(info, "sending CANCEL to ~p", [Link], State),
                     {ok, Acc2} = handle(nkmedia_call_cancel, [CallId, Link], Acc),
                     Acc2
             end
