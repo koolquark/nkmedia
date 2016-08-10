@@ -22,7 +22,7 @@
 -module(nkmedia_janus_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([plugin_deps/0, plugin_syntax/0, plugin_config/2,
+-export([plugin_deps/0, plugin_group/0, plugin_syntax/0, plugin_config/2,
          plugin_start/2, plugin_stop/2]).
 -export([error_code/1]).
 -export([nkmedia_janus_get_mediaserver/1]).
@@ -53,6 +53,10 @@
 
 plugin_deps() ->
     [nkmedia].
+
+
+plugin_group() ->
+    nkmedia_backends.
 
 
 plugin_syntax() ->

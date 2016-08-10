@@ -58,6 +58,7 @@ start() ->
     _CertDir = code:priv_dir(nkpacket),
     Spec = #{
         callback => ?MODULE,
+        plugins => [nkmedia_kms, nkmedia_fs, nkmedia_janus],
         web_server => "https:all:8081",
         web_server_path => "./www",
         api_server => "wss:all:9010",
@@ -95,9 +96,9 @@ restart() ->
 plugin_deps() ->
     [
         nkmedia_sip,  nksip_registrar, nksip_trace,
-        nkmedia_verto, nkmedia_fs, nkmedia_fs_verto_proxy,
-        nkmedia_janus_proto, nkmedia_janus_proxy, nkmedia_janus,
-        nkmedia_kms, nkmedia_kms_proxy,
+        nkmedia_verto, nkmedia_janus_proto,
+        nkmedia_fs, nkmedia_kms, nkmedia_janus,
+        nkmedia_fs_verto_proxy, nkmedia_janus_proxy, nkmedia_kms_proxy,
         nkservice_api_gelf
     ].
 

@@ -22,7 +22,8 @@
 -module(nkmedia_kms_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([plugin_deps/0, plugin_syntax/0, plugin_defaults/0, plugin_config/2,
+-export([plugin_deps/0, plugin_group/0, plugin_syntax/0, 
+         plugin_defaults/0, plugin_config/2,
          plugin_start/2, plugin_stop/2]).
 -export([nkmedia_kms_get_mediaserver/1]).
 -export([nkdocker_notify/2]).
@@ -47,6 +48,10 @@
 
 plugin_deps() ->
     [nkmedia].
+
+
+plugin_group() ->
+    nkmedia_backends.
 
 
 plugin_syntax() ->
