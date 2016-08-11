@@ -326,7 +326,7 @@ terminate(Reason, State) ->
             _ = do_stop(normal, State);
         _ ->
             ?LLOG(notice, "terminate: ~p", [Reason], State),
-            _ = do_stop(anormal, State)
+            _ = do_stop(anormal_termination, State)
     end,    {ok, State2} = handle(nkmedia_room_terminate, [Reason], State),
     #state{room=Room} = State2,
     lists:foreach(

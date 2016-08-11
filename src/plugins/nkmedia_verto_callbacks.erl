@@ -88,9 +88,6 @@ plugin_stop(Config, #{name:=Name}) ->
 
 
 
-%% ===================================================================
-%% Offering Callbacks
-%% ===================================================================
 
 -type call_id() :: nkmedia_verto:call_id().
 -type verto() :: nkmedia_verto:verto().
@@ -256,9 +253,10 @@ nkmedia_verto_handle_info(Msg, Verto) ->
 %% Implemented Callbacks
 %% ===================================================================
 
-%% @private
-error_code(verto_bye) -> {0, <<"Verto bye">>};
-error_code(verto_rejected) -> {0, <<"Verto rejected">>};
+
+%% @private Error Codes -> 2130 range
+error_code(verto_bye)       -> {2130, <<"Verto bye">>};
+error_code(verto_rejected)  -> {2131, <<"Verto rejected">>};
 error_code(_) -> continue.
 
 

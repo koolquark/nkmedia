@@ -26,6 +26,7 @@
          plugin_defaults/0, plugin_config/2,
          plugin_start/2, plugin_stop/2]).
 -export([nkmedia_kms_get_mediaserver/1]).
+-export([error_code/1]).
 -export([nkdocker_notify/2]).
 
 -include_lib("nkservice/include/nkservice.hrl").
@@ -117,11 +118,15 @@ nkmedia_kms_get_mediaserver(#{srv_id:=SrvId}) ->
 
 
 
-%% ===================================================================
-%% Implemented Callbacks - nkmedia_session
-%% ===================================================================
 
 
+%% ===================================================================
+%% Implemented Callbacks - error
+%% ===================================================================
+
+%% @private Error Codes -> 24XX range
+error_code(kms_error)             ->  {2400, <<"Kurento internal error">>};
+error_code(_)                     ->  continue.
 
 
 %% ===================================================================
@@ -150,8 +155,6 @@ nkdocker_notify(_MonId, _Op) ->
 % session(State, Session) ->
 %     Session#{nkmedia_kms:=State}.
 
-
--compile([export_all]).
 
 %% @private
 find_images(MonId) ->

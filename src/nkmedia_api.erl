@@ -108,6 +108,11 @@ cmd(<<"session">>, <<"info">>, #api_req{data=Data}, State) ->
 			{error, Error, State}
 	end;
 
+cmd(<<"session">>, <<"list">>, _Req, State) ->
+	Res = [#{session_id=>Id} || {Id, _Pid} <- nkmedia_session:get_all()],
+	{ok, Res, State};
+
+
 %% Registers the call session with the API session (to monitor DOWNs)
 %% as (nkmedia_call, CallId, CallPid)
 %% Registers the API session with the media session (as nkmedia_api, pid())
@@ -210,7 +215,7 @@ cmd(<<"room">>, <<"create">>, #api_req{srv_id=SrvId, data=Data}, State) ->
     end;
 
 cmd(<<"room">>, <<"destroy">>, #api_req{data=#{room_id:=Id}}, State) ->
-    case nkmedia_room:stop(Id, api_command) of
+    case nkmedia_room:stop(Id, user_stop) of
         ok ->
             {ok, #{}, State};
         {error, Error} ->

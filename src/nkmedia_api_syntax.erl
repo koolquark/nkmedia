@@ -86,6 +86,13 @@ syntax(<<"session">>, <<"info">>, Syntax, Defaults, Mandatory) ->
 		[session_id|Mandatory]
 	};
 
+syntax(<<"session">>, <<"list">>, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax,
+		Defaults,
+		Mandatory
+	};
+
 syntax(<<"call">>, <<"start">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{

@@ -130,14 +130,17 @@ get_client() ->
 
 %% Session
 
-stop_session(C, SessId) ->
+session_stop(C, SessId) ->
     sess_cmd(C, stop, SessId, #{}).
 
-info_session(C, SessId) ->
+session_info(C, SessId) ->
     sess_cmd(C, info, SessId, #{}).
 
-set_answer(C, SessId, Answer) ->
+session_answer(C, SessId, Answer) ->
     sess_cmd(C, set_answer, SessId, #{answer=>Answer}).
+
+session_list(C) ->
+    nkservice_api_client:cmd(C, media, session, list, #{}).
 
 sess_cmd(C, Cmd, SessId, Data) ->
     Data2 = Data#{session_id=>SessId},
@@ -277,7 +280,7 @@ nkmedia_verto_invite(_SrvId, _CallId, _Offer, _Verto) ->
 %% @private
 nkmedia_verto_answer(_CallId, {nkmedia_session, SessId, _Pid}, Answer, 
                      #{test_api_server:=Ws}=Verto) ->
-    {ok, _} = set_answer(Ws, SessId, Answer),
+    {ok, _} = session_answer(Ws, SessId, Answer),
     {ok, Verto};
 
 nkmedia_verto_answer(_CallId, _Link, _Answer, Verto) ->
@@ -288,7 +291,7 @@ nkmedia_verto_answer(_CallId, _Link, _Answer, Verto) ->
 nkmedia_verto_bye(_CallId, {test_session, SessId, WsPid}, Verto) ->
     #{test_api_server:=WsPid} = Verto,
     lager:info("Verto Session BYE for ~s (~p)", [SessId, WsPid]),
-    {ok, _} = stop_session(WsPid, SessId),
+    {ok, _} = session_stop(WsPid, SessId),
     {ok, Verto};
 
 nkmedia_verto_bye(_CallId, _Link, _Verto) ->
@@ -337,7 +340,7 @@ nkmedia_janus_invite(_SrvId, CallId, Offer, #{test_api_server:=Ws}=Janus) ->
 
 nkmedia_janus_answer(_CallId, {nkmedia_session, SessId, _Pid}, Answer, 
                      #{test_api_server:=Ws}=Janus) ->
-    {ok, _} = set_answer(Ws, SessId, Answer),
+    {ok, _} = session_answer(Ws, SessId, Answer),
     {ok, Janus};
 
 nkmedia_janus_answer(_CallId, _Link, _Answer, Janus) ->
@@ -347,7 +350,7 @@ nkmedia_janus_answer(_CallId, _Link, _Answer, Janus) ->
 %% @private BYE from Janus
 nkmedia_janus_bye(_CallId, {test_session, SessId, WsPid}, Janus) ->
     lager:notice("Janus Session BYE for ~s (~p)", [SessId, WsPid]),
-    {ok, _} = stop_session(WsPid, SessId),
+    {ok, _} = session_stop(WsPid, SessId),
     {ok, Janus};
 
 nkmedia_janus_bye(_CallId, _Link, _Janus) ->

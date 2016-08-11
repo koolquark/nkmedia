@@ -117,10 +117,12 @@ nkmedia_fs_get_mediaserver(SrvId) ->
 %% Implemented Callbacks - error
 %% ===================================================================
 
-error_code(fs_error)             ->  {100, <<"Freeswitch internal error">>};
-error_code(incompatible_fs_role) ->  {100, <<"Incompatible Freeswitch Role">>};
-error_code(fs_op_error)          ->  {100, <<"Error in Freeswitch operation">>};
-error_code(fs_channel_stop)      ->  {100, <<"FS Channel Stop">>};
+%% @private Error Codes -> 23XX range
+error_code(fs_error)             ->  {2300, <<"Freeswitch internal error">>};
+error_code(fs_op_error)          ->  {2301, <<"Error in Freeswitch operation">>};
+error_code(fs_channel_stop)      ->  {2302, <<"FS Channel Stop">>};
+
+error_code(incompatible_fs_role) ->  {2310, <<"Incompatible Freeswitch Role">>};
 error_code(_)                    ->  continue.
 
 

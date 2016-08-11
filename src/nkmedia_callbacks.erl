@@ -83,6 +83,44 @@ plugin_stop(Config, #{name:=Name}) ->
 
 
 
+%% ===================================================================
+%% Error Codes
+%% ===================================================================
+
+%% @doc NkMEDIA - 2XXX range
+-spec error_code(term()) ->
+	{integer(), binary()} | continue.
+
+
+error_code(no_mediaserver) 			-> 	{2001, <<"No mediaserver available">>};
+error_code(unknown_session_type) 	-> 	{2002, <<"Unknown session type">>};
+
+error_code(missing_offer) 			-> 	{2010, <<"Missing offer">>};
+error_code(duplicated_offer) 		-> 	{2011, <<"Duplicated offer">>};
+error_code(offer_not_set) 			-> 	{2012, <<"Offer not set">>};
+error_code(offer_already_set) 		-> 	{2013, <<"Offer already set">>};
+error_code(duplicated_answer) 		-> 	{2014, <<"Duplicated answer">>};
+error_code(answer_not_set) 			-> 	{2015, <<"Answer not set">>};
+error_code(answer_already_set) 		-> 	{2016, <<"Answer already set">>};
+
+error_code(call_not_found) 			->  {2020, <<"Call not found">>};
+error_code(call_rejected)			->  {2021, <<"Call rejected">>};
+error_code(no_destination) 			->  {2022, <<"No destination">>};
+error_code(no_answer) 				->  {2023, <<"No answer">>};
+error_code(already_answered) 		->  {2024, <<"Already answered">>};
+error_code(originator_cancel)		-> 	{2025, <<"Originator cancel">>};
+error_code(peer_hangup)				-> 	{2026, <<"Peer hangup">>};
+
+error_code(room_not_found)			->  {2030, <<"Room not found">>};
+error_code(room_already_exists)	    ->  {2031, <<"Room already exists">>};
+error_code(room_destroyed)          ->  {2032, <<"Room destroyed">>};
+error_code(no_participants)		    ->  {2033, <<"No remaining participants">>};
+error_code(unknown_publisher)	    ->  {2034, <<"Unknown publisher">>};
+error_code(invalid_publisher)       ->  {2035, <<"Invalid publisher">>};
+error_code(publisher_stopped)       ->  {2036, <<"Publisher stopped">>};
+
+% error_code(Code) when is_integer(Code) -> get_q850(Code);
+error_code(_) -> continue.
 
 
 
@@ -419,22 +457,6 @@ nkmedia_room_handle_cast(Msg, Room) ->
 nkmedia_room_handle_info(Msg, Room) ->
 	lager:warning("Module nkmedia_room received unexpected info: ~p", [Msg]),
 	{noreply, Room}.
-
-
-%% ===================================================================
-%% Error Codes
-%% ===================================================================
-
-%% @doc
--spec error_code(term()) ->
-	{integer(), binary()} | continue.
-
-error_code(Error) ->
-	case nkmedia_util:error(Error) of
-		not_found -> continue;
-		{Code, Txt} -> {?BASE_ERROR+Code, Txt}
-	end.
-
 
 
 %% ===================================================================

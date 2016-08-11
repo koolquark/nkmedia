@@ -82,8 +82,6 @@ plugin_stop(Config, #{name:=Name}) ->
 %% Offering Callbacks
 %% ===================================================================
 
-
-
 -type janus() :: nkmedia_janus_proto:janus().
 -type call_id() :: nkmedia_janus_proto:call_id().
 -type continue() :: continue | {continue, list()}.
@@ -215,9 +213,8 @@ nkmedia_janus_handle_info(Msg, Janus) ->
 %% ===================================================================
 
 
-%% @private
-error_code(janus_bye) -> {0, <<"Janus BYE">>};
-error_code(_) -> continue.
+%% @private Error Codes -> 2150 range
+error_code(_)               -> continue.
 
 
 %% @private

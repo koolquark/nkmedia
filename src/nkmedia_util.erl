@@ -21,7 +21,7 @@
 -module(nkmedia_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([error/1, get_q850/1, add_id/2, add_uuid/1]).
+-export([get_q850/1, add_id/2, add_uuid/1]).
 -export([kill/1]).
 -export([remove_sdp_data_channel/1]).
 -export_type([stop_reason/0, q850/0]).
@@ -56,44 +56,6 @@ add_id(Key, Config) ->
 			Id = nklib_util:uuid_4122(),
 			{Id, maps:put(Key, Id, Config)}
 	end.
-
-
-
-
-
-
--spec error(stop_reason()) ->
-	{integer(), binary()} | not_foubd. 
-
-error(no_mediaserver) 			-> 	{0, <<"No mediaserver available">>};
-error(unknown_session_type) 	-> 	{0, <<"Unknown session type">>};
-error(missing_offer) 			-> 	{0, <<"Missing offer">>};
-error(duplicated_offer) 		-> 	{0, <<"Duplicated offer">>};
-error(offer_not_set) 			-> 	{0, <<"Offer not set">>};
-error(offer_already_set) 		-> 	{0, <<"Offer already set">>};
-error(duplicated_answer) 		-> 	{0, <<"Duplicated answer">>};
-error(answer_not_set) 			-> 	{0, <<"Answer not set">>};
-error(answer_already_set) 		-> 	{0, <<"Answer already set">>};
-error(call_rejected)			->  {0, <<"Call rejected">>};
-error(no_answer) 				->  {0, <<"No answer">>};
-error(no_destination) 			->  {0, <<"No destination">>};
-error(originator_cancel)		-> 	{0, <<"Originator cancel">>};
-error(caller_hangup)			-> 	{0, <<"Caller hangup">>};
-error(callee_hangup)			-> 	{0, <<"Callee hangup">>};
-error(peer_hangup)				-> 	{0, <<"Peer hangup">>};
-error(unknown_linked_session) 	-> 	{0, <<"Unknown linked session">>};
-error(registered_down) 		    -> 	{0, <<"Registered process stop">>};
-error(room_not_found)			->  {0, <<"Room not found">>};
-error(room_already_exists)	    ->  {0, <<"Room already exists">>};
-error(room_destroyed)           ->  {0, <<"Room destroyed">>};
-error(call_not_found) 			->  {0, <<"Call not found">>};
-error(already_answered) 		->  {0, <<"Already answered">>};
-error(no_participants)		    ->  {0, <<"No participants">>};
-error(unknown_publisher)	    ->  {0, <<"Unknown publisher">>};
-error(Code) when is_integer(Code) -> get_q850(Code);
-error(_) -> not_found.
-
-
 
 
 %% @private

@@ -107,8 +107,6 @@ plugin_stop(Config, #{name:=Name}) ->
 
 
 
-
-
 %% ===================================================================
 %% Offering Callbacks
 %% ===================================================================
@@ -185,6 +183,19 @@ nkmedia_sip_invite_answered(_Id, _Answer) ->
     {error, not_implemented}.
 
     
+
+
+%% ===================================================================
+%% Implemented Callbacks - Error
+%% ===================================================================
+
+%% @private Error Codes -> 2110 range
+error_code(sip_bye)         -> {2110, <<"SIP Bye">>};
+error_code(sip_cancel)      -> {2111, <<"SIP Cancel">>};
+error_code(sip_no_sdp)      -> {2112, <<"SIP Missing SDP">>};
+error_code(sip_send_error)  -> {2113, <<"SIP Send Error">>};
+error_code(_) -> continue.
+
 
 
 
@@ -290,20 +301,6 @@ sip_bye(Req, _Call) ->
     end,
 	continue.
 
-
-%% ===================================================================
-%% Implemented Callbacks - Error
-%% ===================================================================
-
-% @private
-error_code({sip_code, Code}) ->
-    {1500, nklib_util:msg("SIP Code ~p", [Code])};
-
-error_code(sip_bye)         -> {1501, <<"SIP Bye">>};
-error_code(sip_cancel)      -> {1501, <<"SIP Cancel">>};
-error_code(sip_no_sdp)      -> {1501, <<"SIP Missing SDP">>};
-error_code(sip_send_error)  -> {1501, <<"SIP Send Error">>};
-error_code(_) -> continue.
 
 
 %% ===================================================================

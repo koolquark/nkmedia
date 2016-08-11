@@ -118,13 +118,11 @@ nkmedia_janus_get_mediaserver(SrvId) ->
 %% Implemented Callbacks - error
 %% ===================================================================
 
-error_code(janus_error)             ->  {200, <<"Janus error">>};
-error_code(janus_connection_error)  ->  {200, <<"Janus connection error">>};
-error_code(janus_op_down)           ->  {200, <<"Janus op process down">>};
-error_code(janus_bye)               ->  {200, <<"Janus bye">>};
-error_code(invalid_publisher)       ->  {200, <<"Invalid publisher">>};
-error_code(publisher_stopped)       ->  {200, <<"Publisher stopped">>};
-
+%% @private Error Codes -> 22XX range
+error_code(janus_error)             ->  {2200, <<"Janus error">>};
+error_code(janus_connection_error)  ->  {2201, <<"Janus connection error">>};
+error_code(janus_session_down)      ->  {2202, <<"Janus op process down">>};
+error_code(janus_bye)               ->  {2203, <<"Janus bye">>};
 error_code(_)                       ->  continue.
 
 
@@ -226,7 +224,7 @@ nkmedia_session_handle_call(_Msg, _From, _Session) ->
 nkmedia_session_handle_info({'DOWN', Ref, process, _Pid, _Reason}, Session) ->
     case state(Session) of
         #{janus_mon:=Ref} ->
-            nkmedia_session:stop(self(), janus_op_down),
+            nkmedia_session:stop(self(), janus_session_down),
             {noreply, Session};
         _ ->
             continue

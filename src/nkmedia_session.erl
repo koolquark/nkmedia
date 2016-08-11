@@ -548,7 +548,7 @@ terminate(Reason, State) ->
             _ = do_stop(normal, State);
         _ ->
             ?LLOG(notice, "terminate: ~p", [Reason], State),
-            _ = do_stop(anormal, State)
+            _ = do_stop(anormal_termination, State)
     end,
     {ok, _State2} = handle(nkmedia_session_terminate, [Reason], State).
 
