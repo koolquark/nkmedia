@@ -29,7 +29,7 @@
 
 -define(LLOG(Type, Txt, Args, Session),
     lager:Type("NkMEDIA FS Session ~s "++Txt, 
-               [maps:get(id, Session) | Args])).
+               [maps:get(session_id, Session) | Args])).
 
 
 -include("../../include/nkmedia.hrl").
@@ -189,7 +189,7 @@ start(Type, Session, State) ->
     {error, term(), state()} | continue().
 
 answer(Type, Answer, Session, #{fs_role:=offer}=State) ->
-    #{id:=SessId, offer:=#{sdp_type:=SdpType}} = Session,
+    #{session_id:=SessId, offer:=#{sdp_type:=SdpType}} = Session,
     Mod = fs_mod(SdpType),
     case Mod:answer_out(SessId, Answer) of
         ok ->
@@ -247,7 +247,7 @@ update(_Update, _Opts, _Type, _Session, _State) ->
 -spec stop(nkservice:error(), session(), state()) ->
     {ok, state()}.
 
-stop(_Reason, #{id:=SessId}, #{fs_id:=FsId}=State) ->
+stop(_Reason, #{session_id:=SessId}, #{fs_id:=FsId}=State) ->
     nkmedia_fs_cmd:hangup(FsId, SessId),
     {ok, State};
 
@@ -326,7 +326,7 @@ do_update(mcu, Session, State) ->
             {error, Error, State}
     end;
 
-do_update(bridge, #{id:=Id}=Session, State) ->
+do_update(bridge, #{session_id:=Id}=Session, State) ->
     nkmedia_session:unlink_session(self()),
     case Session of
         #{peer:=PeerId} ->
@@ -356,7 +356,7 @@ get_fs_answer(_Session, #{fs_role:=answer}=State) ->
 get_fs_answer(_Session, #{fs_role:=offer}=State) ->
     {error, incompatible_fs_role, State};
 
-get_fs_answer(#{id:=SessId, offer:=Offer}=Session,  #{fs_id:=FsId}=State) ->
+get_fs_answer(#{session_id:=SessId, offer:=Offer}=Session,  #{fs_id:=FsId}=State) ->
     case nkmedia_fs_verto:start_in(SessId, FsId, Offer) of
         {ok, SDP} ->
             wait_park(Session),
@@ -382,7 +382,7 @@ get_fs_offer(_Session, #{fs_role:=offer}=State) ->
 get_fs_offer(_Session, #{fs_role:=answer}=State) ->
     {error, incompatible_fs_role, State};
 
-get_fs_offer(#{id:=SessId}=Session, #{fs_id:=FsId}=State) ->
+get_fs_offer(#{session_id:=SessId}=Session, #{fs_id:=FsId}=State) ->
     Type = maps:get(proxy_type, Session, webrtc),
     Mod = fs_mod(Type),
     case Mod:start_out(SessId, FsId, #{}) of
@@ -421,7 +421,7 @@ get_mediaserver(#{srv_id:=SrvId}, State) ->
 
 
 %% @private
-fs_transfer(Dest, #{id:=SessId}=Session, #{fs_id:=FsId}) ->
+fs_transfer(Dest, #{session_id:=SessId}=Session, #{fs_id:=FsId}) ->
     ?LLOG(info, "sending transfer to ~s", [Dest], Session),
     case nkmedia_fs_cmd:transfer_inline(FsId, SessId, Dest) of
         ok ->
@@ -433,7 +433,7 @@ fs_transfer(Dest, #{id:=SessId}=Session, #{fs_id:=FsId}) ->
 
 
 %% @private
-fs_bridge(SessIdB, #{id:=SessIdA}=Session, #{fs_id:=FsId}) ->
+fs_bridge(SessIdB, #{session_id:=SessIdA}=Session, #{fs_id:=FsId}) ->
     case nkmedia_fs_cmd:set_var(FsId, SessIdA, "park_after_bridge", "true") of
         ok ->
             case nkmedia_fs_cmd:set_var(FsId, SessIdB, "park_after_bridge", "true") of

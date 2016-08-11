@@ -30,7 +30,7 @@
 -export([nkmedia_session_start/2, nkmedia_session_answer/3,
          nkmedia_session_update/4, nkmedia_session_stop/2, 
          nkmedia_session_handle_call/3, nkmedia_session_handle_info/2]).
--export([nkmedia_room_init/2, nkmedia_room_terminate/2, nkmedia_room_event/3,
+-export([nkmedia_room_init/2, nkmedia_room_terminate/2, nkmedia_room_tick/2,
          nkmedia_room_handle_cast/2]).
 -export([api_cmd/2, api_syntax/4]).
 -export([nkdocker_notify/2]).
@@ -276,37 +276,14 @@ nkmedia_room_terminate(Reason, Room) ->
 
 
 %% @private
-nkmedia_room_event(RoomId, Event, Room) ->
+nkmedia_room_tick(RoomId, Room) ->
     case state(Room) of
         error ->
             continue;
         State ->
-            {ok, State2} = nkmedia_janus_room:event(RoomId, Event, Room, State),
-            {continue, [RoomId, Event, update_state(State2, Room)]}
+            {ok, State2} = nkmedia_janus_room:nkmedia_room_tick(RoomId, Room, State),
+            {continue, [RoomId, update_state(State2, Room)]}
     end.
-
-
-% %% @private
-% nkmedia_room_reg_event(_RoomId, _RegId, _Event, Room) ->
-%     {ok, Room}.
-
-
-% %% @private
-% nkmedia_room_reg_down(_RoomId, _Link, _Reason, Session) ->
-%     {stop, registered_down, Session}.
-
-
-% %% @private
-% nkmedia_room_handle_call({nkmedia_janus, Msg}, From, Room) ->
-%     case nkmedia_janus_room:nkmedia_room_handle_call(Msg, From, Room, state(Room)) of
-%         {reply, Reply, State2} ->
-%             {reply, Reply, update_state(State2, Room)};
-%         {noreply, State2} ->
-%             {noreply, update_state(State2, Room)}
-%     end;
-
-% nkmedia_room_handle_call(_Msg, _From, _Room) ->
-%     continue.
 
 
 %% @private
@@ -317,12 +294,6 @@ nkmedia_room_handle_cast({nkmedia_janus, Msg}, Room) ->
 
 nkmedia_room_handle_cast(_Msg, _Room) ->
     continue.
-
-
-% %% @private
-% nkmedia_room_handle_info(Msg, Room) ->
-%     lager:warning("Module nkmedia_room received unexpected info: ~p", [Msg]),
-%     {noreply, Room}.
 
 
 

@@ -34,7 +34,7 @@
 syntax(<<"session">>, <<"start">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
-			id => binary,
+			session_id => binary,
 			type => atom,							%% p2p, proxy...
 			offer => offer(),
 			peer => binary,
@@ -89,7 +89,7 @@ syntax(<<"session">>, <<"info">>, Syntax, Defaults, Mandatory) ->
 syntax(<<"call">>, <<"start">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
-			id => binary,
+			call_id => binary,
 			callee => binary,
 			type => atom,
 			offer => offer(),

@@ -179,9 +179,6 @@ api_subscribe_allow(_SrvId, _Class, _SubClass, _Type, State) ->
 %% nkmedia_verto callbacks
 %% ===================================================================
 
-nkmedia_verto_login(<<"test", _/binary>>=User, Pass, Verto) ->
-    nkmedia_test:nkmedia_verto_login(User, Pass, Verto);
-
 nkmedia_verto_login(Login, Pass, Verto) ->
     lager:error("LOG: ~p", [Login]),
     case nkmedia_test:nkmedia_verto_login(Login, Pass, Verto) of
@@ -248,8 +245,10 @@ nkmedia_verto_bye(_CallId, _Link, _Verto) ->
 
 nkmedia_verto_terminate(_Reason, #{test_api_server:=Pid}=Verto) ->
     nkservice_api_client:stop(Pid),
-    {ok, Verto}.
+    {ok, Verto};
 
+nkmedia_verto_terminate(_Reason, Verto) ->
+    {ok, Verto}.
 
 
 %% ===================================================================
@@ -306,6 +305,9 @@ nkmedia_janus_bye(_CallId, _Link, _Verto) ->
 
 nkmedia_janus_terminate(_Reason, #{test_api_server:=Pid}=Janus) ->
     nkservice_api_client:stop(Pid),
+    {ok, Janus};
+
+nkmedia_janus_terminate(_Reason, Janus) ->
     {ok, Janus}.
 
 

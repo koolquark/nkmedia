@@ -60,6 +60,7 @@
 
 -type config() ::
     #{
+        call_id => id(),                    % Optional
         type => atom(),                     % Optional, used in resolvers
         offer => nkmedia:offer(),           % If included, will be sent to the callee
         session_id => nkmedia_session:id(), % If included, will link with session
@@ -73,7 +74,6 @@
 -type call() ::
     config() |
     #{
-        id => id(),
         srv_id => nkservice:id(),
         callee => callee(),
         callee_link => nklib:link()
@@ -111,7 +111,7 @@ start(Srv, Callee, Config) ->
     case nkservice_srv:get_srv_id(Srv) of
         {ok, SrvId} ->
             Config2 = Config#{callee=>Callee, srv_id=>SrvId},
-            {CallId, Config3} = nkmedia_util:add_uuid(Config2),
+            {CallId, Config3} = nkmedia_util:add_id(call_id, Config2),
             {ok, Pid} = gen_server:start(?MODULE, [Config3], []),
             {ok, CallId, Pid};
         not_found ->
@@ -225,7 +225,7 @@ get_call(CallId) ->
 -spec init(term()) ->
     {ok, tuple()}.
 
-init([#{srv_id:=SrvId, id:=CallId, callee:=Callee}=Call]) ->
+init([#{srv_id:=SrvId, call_id:=CallId, callee:=Callee}=Call]) ->
     nklib_proc:put(?MODULE, CallId),
     nklib_proc:put({?MODULE, CallId}),
     State1 = #state{

@@ -20,14 +20,14 @@
 
 %% @doc Tests for media functionality
 %% Things to test:
-%% - Register a Verto or a Janus (videocall)
+%% - Register a Verto or a Janus (videocall) (not using direct Verto connections here)
 %%   - Call e for Janus echo
 %%     Verto/Janus register with the session on start as {nkmedia_verto, CallId, Pid}
 %%     The session returns its Link, and it is registered with Janus/Verto
 %%     When the sessions answers, Verto/Janus get the answer from their callback
 %%     modules (nkmedia_session_reg_event). Same if it stops normally.
 %%     If the session is killed it is detected by both
-%%     If you hangup, the functions nkmedia_verto_bye (/janus) stops the session
+%%     If you hangup, nkmedia_verto_bye (or _janus_) stops the session
 %%     If Verto/Janus is killed, it is detected by the session
 %%   - fe, p, p2, m1, m2 work the same way
 %%   - start a listener with listen(Publisher, Num)
@@ -333,11 +333,11 @@ send_call(<<"fe">>, Base) ->
     start_session(echo, Config);
 
 send_call(<<"m1">>, Base) ->
-    Config = Base#{room=>"mcu1"},
+    Config = Base#{room_id=>"mcu1"},
     start_session(mcu, Config);
 
 send_call(<<"m2">>, Base) ->
-    Config = Base#{room=>"mcu2"},
+    Config = Base#{room_id=>"mcu2"},
     start_session(mcu, Config);
 
 send_call(<<"p">>, Base) ->
@@ -349,7 +349,7 @@ send_call(<<"p">>, Base) ->
     start_session(publish, Config);
 
 send_call(<<"p2">>, Base) ->
-    nkmedia_room:start(test, #{id=><<"sfu">>}),
+    nkmedia_room:start(test, #{room_id=><<"sfu">>}),
     Config = Base#{room_id=><<"sfu">>},
     start_session(publish, Config);
 
@@ -415,7 +415,7 @@ start_invite(Type, Config, Dest) ->
                     JanusLink = {nkmedia_janus, SessId, JanusPid},
                     {ok, _} = nkmedia_session:register(SessId, JanusLink),
                     {ok, SessLink};
-                {rtp, {nkmedia_sip, Uri, Opts}} ->
+                {rtp, {nkmedia_sip, Uri, Opts}} ->  
                     Id = {nkmedia_session, SessId},
                     {ok, SipPid} = 
                         nkmedia_sip:send_invite(test, Uri, Offer, Id, Opts),

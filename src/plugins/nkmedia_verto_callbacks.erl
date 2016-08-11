@@ -120,6 +120,7 @@ nkmedia_verto_login(_Login, _Pass, Verto) ->
     {rejected, nkservice:error(), verto()} | continue().
 
 nkmedia_verto_invite(SrvId, CallId, Offer, Verto) ->
+    lager:error("VERTO INVITE"),
     case start_session(SrvId, CallId, Offer) of
         {ok, {CallType, Callee, Offer2, SessId, SessPid}} ->
             Config = #{
@@ -177,6 +178,7 @@ nkmedia_verto_answer(_CallId, _Link, _Answer, Verto) ->
     {ok, verto()} | continue().
 
 nkmedia_verto_rejected(_CallId, {nkmedia_session, SessId, _Pid}, Verto) ->
+    lager:error("VERTO JECTED"),
     nkmedia_session:stop(SessId, verto_rejected),
     {ok, Verto};
 

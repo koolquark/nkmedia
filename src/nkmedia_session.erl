@@ -68,7 +68,7 @@
 %% If the slave has an answer, it will send it back to the master
 -type config() :: 
     #{
-        id => id(),                                 % Generated if not included
+        session_id => id(),                         % Generated if not included
         peer => id(),                               % See above
         wait_timeout => integer(),                  % Secs
         ready_timeout => integer(),
@@ -125,7 +125,7 @@ start(Srv, Type, Config) ->
     case nkservice_srv:get_srv_id(Srv) of
         {ok, SrvId} ->
             Config2 = Config#{type=>Type, srv_id=>SrvId},
-            {SessId, Config3} = nkmedia_util:add_uuid(Config2),
+            {SessId, Config3} = nkmedia_util:add_id(session_id, Config2),
             {ok, SessPid} = gen_server:start(?MODULE, [Config3], []),
             case gen_server:call(SessPid, do_start) of
                 {ok, Reply} ->
@@ -336,7 +336,7 @@ do_rm(Key, Session) ->
 -spec init(term()) ->
     {ok, #state{}} | {error, term()}.
 
-init([#{id:=Id, type:=Type, srv_id:=SrvId}=Session]) ->
+init([#{session_id:=Id, type:=Type, srv_id:=SrvId}=Session]) ->
     true = nklib_proc:reg({?MODULE, Id}),
     nklib_proc:put(?MODULE, Id),
     Session2 = maps:merge(#{type_ext=>#{}}, Session),

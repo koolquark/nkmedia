@@ -31,7 +31,7 @@
 
 -define(LLOG(Type, Txt, Args, Session),
     lager:Type("NkMEDIA JANUS Session ~s "++Txt, 
-               [maps:get(id, Session) | Args])).
+               [maps:get(session_id, Session) | Args])).
 
 -include("../../include/nkmedia.hrl").
 
@@ -39,7 +39,6 @@
 %% Types
 %% ===================================================================
 
--type id() :: nkmedia_session:id().
 -type session() :: nkmedia_session:session().
 -type continue() :: continue | {continue, list()}.
 
@@ -92,7 +91,7 @@
 %% ===================================================================
 
 
--spec init(id(), session(), state()) ->
+-spec init(nkmedia_session:id(), session(), state()) ->
     {ok, state()}.
 
 init(_Id, _Session, State) ->
@@ -165,9 +164,9 @@ start(proxy, _Session, State) ->
 
 start(publish, #{srv_id:=SrvId, offer:=#{sdp:=_}=Offer}=Session, State) ->
     try
-        Room = case maps:find(room_id, Session) of
-            {ok, Room0} -> 
-                nklib_util:to_binary(Room0);
+        RoomId = case maps:find(room_id, Session) of
+            {ok, RoomId0} -> 
+                nklib_util:to_binary(RoomId0);
             error -> 
                 RoomOpts1 = [
                     case maps:find(room_audio_codec, Session) of
@@ -189,19 +188,20 @@ start(publish, #{srv_id:=SrvId, offer:=#{sdp:=_}=Offer}=Session, State) ->
                     {error, Error} -> throw(Error)
                 end
         end,
-        State2 = case nkmedia_room:get_room(Room) of
+        State2 = case nkmedia_room:get_room(RoomId) of
             {ok, #{nkmedia_janus:=#{janus_id:=JanusId}}} ->
                 State#{janus_id=>JanusId};
             _ ->
+                lager:error("NOT FOUND: ~p", [RoomId]),
                 throw(room_not_found)
         end,
         case get_janus_op(Session, State2) of
             {ok, Pid, State3} ->
                 {Opts, State4} = get_opts(Session, State3),
-                case nkmedia_janus_op:publish(Pid, Room, Offer, Opts) of
+                case nkmedia_janus_op:publish(Pid, RoomId, Offer, Opts) of
                     {ok, #{sdp:=_}=Answer} ->
-                        Reply = #{answer=>Answer, room_id=>Room},
-                        ExtOps = #{answer=>Answer, type_ext=>#{room_id=>Room}},
+                        Reply = #{answer=>Answer, room_id=>RoomId},
+                        ExtOps = #{answer=>Answer, type_ext=>#{room_id=>RoomId}},
                         {ok, Reply, ExtOps, State4};
                     {error, Error2} ->
                         {error, Error2, State4}
@@ -276,9 +276,9 @@ answer(_Type, _Answer, _Session, _State) ->
     {ok, type(), map(), state()} |
     {error, term(), state()} | continue().
 
-update(media, Opts, Type, #{id:=SessId}, #{janus_pid:=Pid}=State)
+update(media, Opts, Type, #{session_id:=SessId}, #{janus_pid:=Pid}=State)
         when Type==echo; Type==proxy; Type==publish ->
-    {Opts2, State2} = get_opts(Opts#{id=>SessId}, State),
+    {Opts2, State2} = get_opts(Opts#{session_id=>SessId}, State),
     case nkmedia_janus_op:update(Pid, Opts2) of
         ok ->
             {ok, #{}, #{}, State2};
@@ -317,7 +317,7 @@ stop(_Reason, _Session, State) ->
 
 
 %% @private
-get_janus_op(#{id:=SessId}=Session, #{janus_id:=JanusId}=State) ->
+get_janus_op(#{session_id:=SessId}=Session, #{janus_id:=JanusId}=State) ->
     case nkmedia_janus_op:start(JanusId, SessId) of
         {ok, Pid} ->
             State2 = State#{janus_pid=>Pid, janus_mon=>monitor(process, Pid)},
@@ -355,7 +355,7 @@ get_mediaserver(#{srv_id:=SrvId}, State) ->
 
 
 %% @private
-get_opts(#{id:=SessId}=Session, State) ->
+get_opts(#{session_id:=SessId}=Session, State) ->
     Keys = [record, use_audio, use_video, use_data, bitrate, dtmf],
     Opts1 = maps:with(Keys, Session),
     Opts2 = case Session of

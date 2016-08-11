@@ -37,6 +37,7 @@
 		 nkmedia_call_handle_info/2]).
 -export([nkmedia_room_init/2, nkmedia_room_terminate/2, 
 		 nkmedia_room_event/3, nkmedia_room_reg_event/4, nkmedia_room_reg_down/4,
+		 nkmedia_room_tick/2,
 		 nkmedia_room_handle_call/3, nkmedia_room_handle_cast/2, 
 		 nkmedia_room_handle_info/2]).
 -export([error_code/1]).
@@ -357,6 +358,14 @@ nkmedia_room_init(_Id, _Room) ->
 	{ok, room()}.
 
 nkmedia_room_terminate(_Reason, Room) ->
+	{ok, Room}.
+
+
+%% @doc Called when the periodic tick fires
+-spec nkmedia_room_tick(room_id(), room()) ->
+	{ok, room()} | continue().
+
+nkmedia_room_tick(_RoomId, Room) ->
 	{ok, Room}.
 
 

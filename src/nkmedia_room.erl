@@ -24,7 +24,7 @@
 -behaviour(gen_server).
 
 -export([start/2, stop/1, stop/2, get_room/1, register/2, unregister/2, get_all/0]).
--export([update/2, restart_timer/0, find/1]).
+-export([update/2, find/1]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
 -export_type([id/0, room/0, event/0]).
@@ -36,8 +36,9 @@
 -include("nkmedia.hrl").
 -include_lib("nkservice/include/nkservice.hrl").
 
--define(TIMEOUT, 180000).
 
+-define(TICK_TIME, 180).    % Secs, must be GREATER than nkmedia_janus_engine check time
+    
 
 %% ===================================================================
 %% Types
@@ -49,6 +50,7 @@
 
 -type config() ::
     #{
+        room_id => id(),
         audio_codec => opus | isac32 | isac16 | pcmu | pcma,
         video_codec => vp8 | vp9 | h264,
         bitrate => integer(),
@@ -71,7 +73,6 @@
     config() |
     #{
         srv_id => nkservice:id(),
-        id => id(),
         publishers => #{session_id() => member_opts()},
         listeners => #{session_id() => member_opts()},
         links => nklib:links()
@@ -103,11 +104,12 @@
 
 
 %% @doc Creates a new room
+%% Use nkmedia_janus_op:list_rooms/1 to check rooms directly on Janus
 -spec start(nkservice:id(), config()) ->
     {ok, id(), pid()} | {error, term()}.
 
 start(Srv, Config) ->
-    {Id, Config2} = nkmedia_util:add_uuid(Config),
+    {Id, Config2} = nkmedia_util:add_id(room_id, Config),
     case find(Id) of
         {ok, _} ->
             {error, room_already_exists};
@@ -141,8 +143,7 @@ stop(Id) ->
     ok | {error, term()}.
 
 stop(Id, Reason) ->
-    Id2 = nklib_util:to_binary(Id),
-    do_cast(Id2, {stop, Reason}).
+    do_cast(Id, {stop, Reason}).
 
 
 %% @doc
@@ -150,8 +151,7 @@ stop(Id, Reason) ->
     {ok, room()} | {error, term()}.
 
 get_room(Id) ->
-    Id2 = nklib_util:to_binary(Id),
-    do_call(Id2, get_room).
+    do_call(Id, get_room).
 
 
 %% @private
@@ -187,12 +187,6 @@ get_all() ->
         {{Id, Class}, Pid}<- nklib_proc:values(?MODULE)].
 
 
-%% @private
-restart_timer() ->
-    gen_server:cast(self(), restart_timer).
-
-
-
 % ===================================================================
 %% gen_server behaviour
 %% ===================================================================
@@ -213,7 +207,7 @@ restart_timer() ->
 -spec init(term()) ->
     {ok, tuple()}.
 
-init([#{srv_id:=SrvId, id:=RoomId, class:=Class}=Room]) ->
+init([#{srv_id:=SrvId, room_id:=RoomId, class:=Class}=Room]) ->
     nklib_proc:put(?MODULE, {RoomId, Class}),
     nklib_proc:put({?MODULE, RoomId}),
     State1 = #state{
@@ -230,7 +224,8 @@ init([#{srv_id:=SrvId, id:=RoomId, class:=Class}=Room]) ->
             State1
     end,
     ?LLOG(notice, "started", [], State2),
-    {ok, event({started, Room}, State2)}.
+    State3 = restart_tick(State2),
+    {ok, event({started, Room}, State3)}.
 
 
 %% @private
@@ -270,9 +265,6 @@ handle_cast({unregister, Link}, State) ->
     ?LLOG(info, "proc unregistered (~p)", [Link], State),
     {noreply, links_remove(Link, State)};
 
-handle_cast(restart_timer, State) ->
-    {noreply, restart_timer(State)};
-
 handle_cast({stop, Reason}, State) ->
     ?LLOG(info, "external stop: ~p", [Reason], State),
     do_stop(Reason, State);
@@ -285,8 +277,9 @@ handle_cast(Msg, State) ->
 -spec handle_info(term(), #state{}) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
-handle_info(room_timeout, State) ->
-    {noreply, event(timeout, State)};
+handle_info(room_tick, #state{id=Id}=State) ->
+    {ok, State2} = handle(nkmedia_room_tick, [Id], State),
+    {noreply, restart_tick(State2)};
 
 handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, #state{id=Id}=State) ->
     case links_down(Ref, State) of
@@ -465,10 +458,10 @@ event(Event, #state{id=Id}=State) ->
     State3.
 
 
-restart_timer(#state{timer=Timer, room=Room}=State) ->
+restart_tick(#state{timer=Timer, room=Room}=State) ->
     nklib_util:cancel_timer(Timer),
-    Time = 1000 * maps:get(timeout, Room, ?TIMEOUT),
-    State#state{timer=erlang:send_after(Time, self(), room_timeout)}.
+    Time = 1000 * maps:get(timeout, Room, ?TICK_TIME),
+    State#state{timer=erlang:send_after(Time, self(), room_tick)}.
 
 
 %% @private

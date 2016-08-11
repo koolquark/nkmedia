@@ -100,7 +100,7 @@ cmd(<<"session">>, <<"info">>, #api_req{data=Data}, State) ->
 	#{session_id:=SessId} = Data,
 	case nkmedia_session:get_session(SessId) of
 		{ok, Session} ->
-			Keys = [id, peer, wait_timeout, ready_timeout, backend, 
+			Keys = [session_id, peer, wait_timeout, ready_timeout, backend, 
 			        user_id, user_session, type, type_ext, master_peer, slave_peer],
 			Data2 = maps:with(Keys, Session),
 			{ok, Data2, State};
@@ -376,7 +376,7 @@ api_server_handle_cast(_Msg, _State) ->
 %% @private
 session_reg_id(SrvId, Type, SessId) ->
 	#reg_id{
-		srv_id = SrvId, 	
+		srv_id = SrvId, 
 		class = <<"media">>, 
 		subclass = <<"session">>,
 		type = nklib_util:to_binary(Type),
@@ -393,4 +393,5 @@ call_reg_id(SrvId, Type, CallId) ->
 		type = nklib_util:to_binary(Type),
 		obj_id = CallId
 	}.
+
 

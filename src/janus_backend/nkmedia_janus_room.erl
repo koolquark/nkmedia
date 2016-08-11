@@ -26,12 +26,12 @@
 -module(nkmedia_janus_room).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([init/2, terminate/3, event/4, nkmedia_room_handle_cast/3]).
+-export([init/2, terminate/3, nkmedia_room_tick/3, nkmedia_room_handle_cast/3]).
 -export([janus_check/3, janus_event/2]).
 
 -define(LLOG(Type, Txt, Args, Room),
     lager:Type("NkMEDIA Room ~s (~p) "++Txt, 
-               [maps:get(id, Room), maps:get(class, Room) | Args])).
+               [maps:get(room_id, Room), maps:get(class, Room) | Args])).
 
 
 %% ===================================================================
@@ -86,15 +86,20 @@ janus_check(JanusId, RoomId, Data) ->
 init(Id, #{srv_id:=SrvId}=Config) ->
     case get_janus(SrvId, Config) of
         {ok, JanusId} ->
-            State = #{janus_id=>JanusId},
+            Audio = maps:get(audio_codec, Config,
+                        maps:get(room_audio_codec, Config, opus)),
+            Video = maps:get(video_codec, Config,
+                        maps:get(room_video_codec, Config, vp8)),
+            Bitrate = maps:get(bitrate, Config,
+                        maps:get(room_bitrate, Config, 0)),
             Create = #{        
-                audiocodec => maps:get(audio_codec, Config, opus),
-                videocodec => maps:get(video_codec, Config, vp8),
-                bitrate => maps:get(bitrate, Config, 0)
+                audiocodec => Audio,
+                videocodec => Video,
+                bitrate => Bitrate
             },
             case nkmedia_janus_op:create_room(JanusId, Id, Create) of
                 ok ->
-                    {ok, State};
+                    {ok, #{janus_id=>JanusId}};
                 {error, Error} ->
                     {error, Error}
             end;
@@ -107,7 +112,7 @@ init(Id, #{srv_id:=SrvId}=Config) ->
 -spec terminate(term(), state(), nkmedia_room:room()) ->
     ok | {error, term()}.
 
-terminate(_Reason, #{id:=Id}=Room, #{janus_id:=JanusId}=State) ->
+terminate(_Reason, #{room_id:=Id}=Room, #{janus_id:=JanusId}=State) ->
     case nkmedia_janus_op:destroy_room(JanusId, Id) of
         ok ->
             ?LLOG(info, "stopping, destroying room", [], Room);
@@ -118,23 +123,20 @@ terminate(_Reason, #{id:=Id}=Room, #{janus_id:=JanusId}=State) ->
 
 
 %% @private
-event(Id, timeout, Room, #{janus_id:=JanusId}=State) ->
+nkmedia_room_tick(Id, Room, #{janus_id:=JanusId}=State) ->
     #{publishers:=Publish} = Room,
     case map_size(Publish) of
         0 ->
             nkmedia_room:stop(self(), timeout);
         _ ->
-            case nkmedia_janus_engine:check_room(JanusId, Id) of
+           case nkmedia_janus_engine:check_room(JanusId, Id) of
                 {ok, _} ->      
-                    nkmedia_room:restart_timer();
+                    ok;
                 _ ->
-                    nkmedia_room:stop(self(), timeout),
-                    ?LLOG(warning, "room is not on engine", [], Room)
+                    ?LLOG(warning, "room is not on engine ~p ~p", [JanusId, Id], Room),
+                    nkmedia_room:stop(self(), timeout)
             end
     end,
-    {ok, State};
-
-event(_Id, _Event, _Room, State) ->
     {ok, State}.
 
 
