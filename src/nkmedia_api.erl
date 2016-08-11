@@ -141,6 +141,7 @@ cmd(<<"call">>, <<"start">>, Req, State) ->
 cmd(<<"call">>, <<"ringing">>, #api_req{data=Data}, State) ->
 	#{call_id:=CallId} = Data,
 	Answer = maps:get(answer, Data, #{}),
+	lager:error("CALL RINGING2: ~p", [CallId]),
 	case nkmedia_call:ringing(CallId, {nkmedia_api, self()}, Answer) of
 		ok ->
 			{ok, #{}, State};

@@ -112,7 +112,7 @@ plugin_stop(Config, #{name:=Name}) ->
 %% ===================================================================
 
 %% @doc Called when a new SIP invite arrives
--spec nkmedia_sip_invite(nkservice:id(), nksip:aor(), 
+-spec nkmedia_sip_invite(nkservice:id(), binary(),
                          nkmedia:offer(), nksip:request(), nksip:call()) ->
     {ok, nkmedia_sip:id()} | {rejected, nkservice:error()} | continue().
 
@@ -249,7 +249,6 @@ sip_invite(Req, Call) ->
     #sip_config{domain = DefDomain} = Config,
     {ok, AOR} = nksip_request:meta(aor, Req),
     {_Scheme, User, Domain} = AOR,
-    lager:error("AOR: ~p", [AOR]),
     Dest = case Domain of
         DefDomain -> User;
         _ -> <<User/binary, $@, Domain/binary>>
@@ -362,7 +361,6 @@ nkmedia_call_cancel(_CallId, _Link, _Call) ->
 
 
 nkmedia_call_reg_event(CallId, {nkmedia_sip, _Pid}, {hangup, _Reason}, _Call) ->
-    lager:error("SIP CALL BYE"),
     nkmedia_sip:send_bye({nkmedia_call, CallId}),
     continue;
 
@@ -450,46 +448,3 @@ start_session(SrvId, Dest, Offer) ->
                     {error, Error}
             end
     end.
-
-% %% @private
-% nkmedia_session_event(_SessId, {answer, Answer}, 
-%                       #{offer:=#{nkmedia_sip:={in, Handle, _Dialog}}}) ->
-%     #{sdp:=SDP1} = Answer,
-%     lager:info("SIP calling media available"),
-%     SDP2 = nksip_sdp:parse(SDP1),
-%     ok = nksip_request:reply({answer, SDP2}, Handle),
-%     continue;
-
-% nkmedia_session_event(_SessId, {hangup, _}, 
-%                       #{offer:=#{nkmedia_sip:={in, _Handle, Dialog}}}) ->
-%     spawn(fun() -> nksip_uac:bye(Dialog, []) end),
-%     continue;
-
-% nkmedia_session_event(SessId, {hangup, _}, 
-%                       #{answer:=#{nkmedia_sip:=out}}) ->
-%     nkmedia_sip:send_hangup(SessId),
-%     continue;
-
-% nkmedia_session_event(_SessId, _Event, _Session) ->
-%     continue.
-
-
-% %% @private
-% nkmedia_session_invite(SessId, {nkmedia_sip, Uri, Opts}, Offer, Session) ->
-%     #{srv_id:=SrvId} = Session,
-%     case Offer of
-%         #{sdp_type:=rtp, sdp:=SDP} ->
-%             ok = nkmedia_sip:send_invite(SrvId, SessId, Uri, Opts#{sdp=>SDP}),
-%             {async, #{nkmedia_sip=>out}, Session};
-%         _ ->
-%             {rejected, <<"Invalid SIP SDP">>, Session}
-%     end;
-
-% nkmedia_session_invite(_SessId, _Dest, _Offer, _Session) ->
-% 	continue.
-
-
-
-
-
-

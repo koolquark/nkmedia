@@ -263,11 +263,11 @@ sip_register(Req, Call) ->
 
 
 % Version that generates a Janus proxy before going on
-nkmedia_sip_invite(_SrvId, {sip, Dest, _}, Offer, Req, _Call) ->
+nkmedia_sip_invite(_SrvId, Dest, Offer, Req, _Call) ->
     Config1 = #{offer=>Offer, register=>{nkmedia_sip, in, self()}},
     % We register with the session as {nkmedia_sip, ...}, so:
     % - we will detect the answer in nkmedia_sip_callbacks:nkmedia_session_reg_event
-    % - we stop the session if thip process stops
+    % - we stop the session if session process stops
     {offer, Offer2, Link2} = start_session(proxy, Config1),
     {nkmedia_session, SessId, _} = Link2,
     nkmedia_sip:register_incoming(Req, {nkmedia_session, SessId}),
@@ -275,7 +275,12 @@ nkmedia_sip_invite(_SrvId, {sip, Dest, _}, Offer, Req, _Call) ->
     % will be linked with the first, and will send answer back
     % We return {ok, Link} or {rejected, Reason}
     % nkmedia_sip will store that Link
-    send_call(Dest, #{offer=>Offer2, peer=>SessId}).
+    case send_call(Dest, #{offer=>Offer2, peer=>SessId}) of
+        {ok, {nkmedia_session, SessId2, _SessPid2}} ->
+            {ok, {nkmedia_session, SessId2}};
+        {rejected, Rejected} ->
+            {rejected, Rejected}
+    end.
 
 
 % % Version that go directly to FS

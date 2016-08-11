@@ -119,6 +119,8 @@ error_code(unknown_publisher)	    ->  {2034, <<"Unknown publisher">>};
 error_code(invalid_publisher)       ->  {2035, <<"Invalid publisher">>};
 error_code(publisher_stopped)       ->  {2036, <<"Publisher stopped">>};
 
+error_code(call_error)       		->  {2040, <<"Call error">>};
+
 % error_code(Code) when is_integer(Code) -> get_q850(Code);
 error_code(_) -> continue.
 

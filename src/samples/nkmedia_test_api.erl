@@ -238,10 +238,9 @@ api_subscribe_allow(_SrvId, _Class, _SubClass, _Type, State) ->
 %% nkmedia_verto callbacks
 %% ===================================================================
 
+%% @private
 nkmedia_verto_login(Login, Pass, Verto) ->
     case nkmedia_test:nkmedia_verto_login(Login, Pass, Verto) of
-        {true, <<"verto-", _/binary>>=User, Verto2} ->
-            {true, User, Verto2};
         {true, User, Verto2} ->
             Pid = connect(User, #{test_verto_server=>self()}),
             {true, User, Verto2#{test_api_server=>Pid}};
@@ -338,6 +337,7 @@ nkmedia_janus_invite(_SrvId, CallId, Offer, #{test_api_server:=Ws}=Janus) ->
     end.
 
 
+%% @private
 nkmedia_janus_answer(_CallId, {nkmedia_session, SessId, _Pid}, Answer, 
                      #{test_api_server:=Ws}=Janus) ->
     {ok, _} = session_answer(Ws, SessId, Answer),
@@ -373,6 +373,7 @@ nkmedia_janus_terminate(_Reason, Janus) ->
 %% Internal
 %% ===================================================================
 
+%% @private
 send_call(<<"e">>, WsPid, Base) ->
     Config = Base#{
         type => echo,
@@ -462,6 +463,7 @@ start_session(WsPid, Data) when is_pid(WsPid) ->
 %     start_session(WsPid, Data).
 
 
+%% @private
 start_invite(WsPid, Num, Config) ->
     Dest = nkmedia_test:find_user(Num),
     {offer, Offer, SessLink} = start_session(WsPid, Config),
@@ -486,7 +488,7 @@ start_invite(WsPid, Num, Config) ->
     end.
 
 
-
+%% @private
 api_client_fun(#api_req{class = <<"core">>, cmd = <<"event">>, data = Data}, UserData) ->
     Class = maps:get(<<"class">>, Data),
     Sub = maps:get(<<"subclass">>, Data, <<"*">>),
