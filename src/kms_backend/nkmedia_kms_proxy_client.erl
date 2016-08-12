@@ -28,7 +28,7 @@
 -export([conn_init/1, conn_encode/2, conn_parse/3]).
 -export([conn_handle_call/4, conn_handle_cast/3, conn_handle_info/3]).
 
--include("nkmedia.hrl").
+-include("../../include/nkmedia.hrl").
 
 -define(LLOG(Type, Txt, Args, State),
     lager:Type("NkMEDIA KMS Proxy client (~s) "++Txt, [State#state.remote | Args])).
@@ -237,6 +237,17 @@ update(_Dir, #{<<"id">>:=Id, <<"result">>:=Result}, State) ->
     case maps:find(Id, AllTrans) of
         {ok, Trans} ->
             Trans2 = Trans#trans{result=Result},
+            print_trans(Trans2);
+        error ->
+            ?LLOG(warning, "Result for unkown Id!", [], State)
+    end,
+    State#state{trans=maps:remove(Id, AllTrans)};
+
+update(_Dir, #{<<"id">>:=Id, <<"error">>:=Error}, State) ->
+    #state{trans=AllTrans} = State,
+    case maps:find(Id, AllTrans) of
+        {ok, Trans} ->
+            Trans2 = Trans#trans{result=Error},
             print_trans(Trans2);
         error ->
             ?LLOG(warning, "Result for unkown Id!", [], State)

@@ -53,6 +53,7 @@ plugin_deps() ->
 
 plugin_syntax() ->
     nkpacket:register_protocol(kms, nkmedia_kms_proxy_server),
+    nkpacket:register_protocol(kmss, nkmedia_kms_proxy_server),
     #{
         kurento_proxy => fun parse_listen/3
     }.
@@ -169,7 +170,7 @@ parse_listen(_Key, [{[{_, _, _, _}|_], Opts}|_]=Multi, _Ctx) when is_map(Opts) -
     {ok, Multi};
 
 parse_listen(kurento_proxy, Url, _Ctx) ->
-    Opts = #{valid_schemes=>[kms], resolve_type=>listen},
+    Opts = #{valid_schemes=>[kms, kmss], resolve_type=>listen},
     case nkpacket:multi_resolve(Url, Opts) of
         {ok, List} -> {ok, List};
         _ -> error

@@ -24,7 +24,7 @@
 
 -export([start/1, start/2, stop/1, get_all/0]).
 -export([info/1, create/3, attach/3, message/5, detach/3, destroy/2]).
--export([keepalive/2, get_clients/1]).
+-export([keepalive/2, trickle/6, trickle_completed/3, get_clients/1]).
 
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_stop/3]).
@@ -156,6 +156,23 @@ destroy(Pid, SessId) ->
 
 keepalive(Pid, SessId) ->
     cast(Pid, {keepalive, SessId}).
+
+
+
+%% @doc Sends a trickle candidate to the server
+-spec trickle(pid(), id(), handle(), binary(), integer(), binary()) ->
+    ok.
+
+trickle(Pid, SessId, Handle, App, Index, Candidate) ->
+    cast(Pid, {trickle, SessId, Handle, App, Index, Candidate}).
+
+
+%% @doc Sends a trickle candidate to the server
+-spec trickle_completed(pid(), id(), handle()) ->
+    ok.
+
+trickle_completed(Pid, SessId, Handle) ->
+    cast(Pid, {trickle_completed, SessId, Handle}).
 
 
 %% @private
@@ -457,6 +474,26 @@ make_msg({message, Id, Handle, Body, Jsep}, TransId, State) ->
 make_msg({keepalive, Id}, TransId, State) ->
     Data = #{session_id=>Id},
     make_req(keepalive, TransId, Data, State);
+
+make_msg({trickle, Id, Handle, App, Index, Candidate}, TransId, State) ->
+    Data = #{
+        session_id => Id,
+        handle => Handle,
+        candidate => #{
+            sdpMid => App,
+            sdpMLinIndex => Index,
+            candidate => Candidate
+        }
+    },
+    make_req(trickle, TransId, Data, State);
+
+make_msg({trickle_completed, Id, Handle}, TransId, State) ->
+    Data = #{
+        session_id => Id,
+        handle => Handle,
+        candidate => #{completed=>true}
+    },
+    make_req(trickle, TransId, Data, State);
 
 make_msg(_Type, _TransId, _State) ->
     unknown_op.

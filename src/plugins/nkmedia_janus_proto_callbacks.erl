@@ -25,6 +25,7 @@
          plugin_start/2, plugin_stop/2]).
 -export([nkmedia_janus_init/2, nkmedia_janus_registered/2,
          nkmedia_janus_invite/4, nkmedia_janus_answer/4, nkmedia_janus_bye/3,
+         nkmedia_janus_candidate/4,
          nkmedia_janus_start/3, nkmedia_janus_terminate/2,
          nkmedia_janus_handle_call/3, nkmedia_janus_handle_cast/2,
          nkmedia_janus_handle_info/2]).
@@ -171,6 +172,16 @@ nkmedia_janus_start(SessId, Answer, Janus) ->
             lager:warning("Janus janus_start error: ~p", [Error]),
             {hangup, <<"MediaServer Error">>, Janus}
     end.
+
+
+%% @doc Called when the client sends an START for a PLAY
+-spec nkmedia_janus_candidate(App::binary(), Index::integer(), 
+                              Candidate::binary(), janus()) ->
+    {ok, janus()}.
+
+nkmedia_janus_candidate(_App, _Index, _Candidate, Janus) ->
+    lager:warning("Janus Proto unexpected ICE Candidate!"),
+    {ok, Janus}.
 
 
 %% @doc Called when the connection is stopped

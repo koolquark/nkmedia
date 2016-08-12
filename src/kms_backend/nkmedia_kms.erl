@@ -30,7 +30,7 @@
 %% Types
 %% ===================================================================
 
--type id() :: nkmedia_fs_engine:id().
+-type id() :: nkmedia_kms_engine:id().
 
 
 

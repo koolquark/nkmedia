@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([invite/4, answer/3, answer_async/3, hangup/2, hangup/3]).
--export([find_user/1, find_call_id/1, get_all/0]).
+-export([trickle/4, find_user/1, find_call_id/1, get_all/0]).
 -export([register_play/3]).
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_stop/3,
@@ -34,7 +34,7 @@
     lager:Type("NkMEDIA Janus Proto (~s) "++Txt, [State#state.user | Args])).
 
 -define(PRINT(Txt, Args, State), 
-        % print(Txt, Args, State),    % Uncomment this for detailed logs
+        print(Txt, Args, State),    % Uncomment this for detailed logs
         ok).
 
 
@@ -51,7 +51,9 @@
         remote => binary(),
         srv_id => nkservice:id(),
         sess_id => binary(),
-        user => binary()
+        user => binary(),
+        call_id => binary(),        % Last one registered
+        link => nklib:link()        % Last one registered
 	}.
 
 -type call_id() :: binary().
@@ -101,6 +103,11 @@ hangup(Pid, CallId) ->
 
 hangup(Pid, CallId, Reason) ->
     gen_server:cast(Pid, {hangup, CallId, Reason}).
+
+
+trickle(Pid, App, Index, Candidate) ->
+    gen_server:cast(Pid, {trickle, App, Index, Candidate}).
+
 
 
 %% @doc Gets the pids() for currently logged user
@@ -315,7 +322,7 @@ send_req({answer, CallId, #{sdp:=SDP}}, From, NkPort, State) ->
         event => accepted, 
         username => unknown
     },
-    Jsep = #{sdp=>SDP, type=>answer, trickle=>false},
+    Jsep = #{sdp=>SDP, type=>answer, trickle=>true},
     Req = make_videocall_req(Result, Jsep, State),
     nklib_util:reply(From, ok),
     send(Req, NkPort, State);
@@ -336,6 +343,21 @@ send_req({hangup, CallId, Reason}, From, NkPort, State) ->
     State2 = links_remove(CallId, State),
     send(Req, NkPort, State2);
 
+send_req({trickle, App, Index, Candidate}, From, NkPort, State) ->
+    #state{session_id=SessionId, handle=Handle} = State,
+    nklib_util:reply(From, ok),
+    Data = #{
+        % transaction => nklib_util:uid(),
+        session_id => SessionId,
+        handle => Handle,
+        candidate => #{
+            sdpMid => App,
+            sdpMLinIndex => Index,
+            candidate => Candidate
+        }
+    },
+    send(Data, NkPort, State);
+
 send_req(_Op, _From, _NkPort, _State) ->
     unknown_op.
 
@@ -345,6 +367,7 @@ send_req(_Op, _From, _NkPort, _State) ->
 process_client_req(create, Msg, NkPort, State) ->
 	Id = erlang:phash2(make_ref()),
 	Resp = make_resp(#{janus=>success, data=>#{id=>Id}}, Msg),
+    lager:error("SESSION ID IS ~p", [Id]),
 	send(Resp, NkPort, State#state{session_id=Id});
 
 process_client_req(attach, Msg, NkPort, #state{session_id=SessionId}=State) ->
@@ -404,8 +427,32 @@ process_client_req(keepalive, Msg, NkPort, #state{session_id=SessionId}=State) -
     Resp = make_resp(#{janus=>ack, session_id=>SessionId}, Msg),
     send(Resp, NkPort, State);
 
+process_client_req(trickle, Msg, NkPort, #state{session_id=SessionId}=State) ->
+    #{
+        <<"candidate">> := CandidateGroup, 
+        <<"session_id">> := SessionId, 
+        <<"handle_id">> := _Handle
+    } = Msg,
+    case CandidateGroup of
+        #{
+            <<"candidate">> := Candidate,
+            <<"sdpMLineIndex">> := Index,
+            <<"sdpMid">> := App
+        } ->
+            ok;
+        #{
+            <<"completed">> := true
+        } ->
+            App = <<>>,
+            Index = 0,
+            Candidate = <<>>
+    end,
+    {ok, State2} = handle(nkmedia_janus_candidate, [App, Index, Candidate], State),
+    Resp = make_resp(#{janus=>success, session_id=>SessionId}, Msg),
+    send(Resp, NkPort, State2);
+
 process_client_req(Cmd, _Msg, _NkPort, State) ->
-    ?LLOG(warning, "unexpected client REQ: ~s", [Cmd], State),
+    ?LLOG(warning, "unexpected client REQ: ~s\n~p", [Cmd, _Msg], State),
     {ok, State}.
 
 
@@ -680,9 +727,10 @@ handle(Fun, Args, State) ->
 
 
 %% @private
-links_add(CallId, Link, #state{links=Links}=State) ->
+links_add(CallId, Link, #state{links=Links, janus=Janus}=State) ->
+    Janus2 = Janus#{call_id=>CallId, link=>Link},
     Pid = nklib_links:get_pid(Link),
-    State#state{links=nklib_links:add(CallId, Link, Pid, Links)}.
+    State#state{links=nklib_links:add(CallId, Link, Pid, Links), janus=Janus2}.
 
 
 %% @private

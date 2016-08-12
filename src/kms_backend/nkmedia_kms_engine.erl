@@ -163,6 +163,7 @@ start_link(Config) ->
 
 -record(state, {
 	id :: id(),
+	srv_id :: nkservice:id(),
 	config :: config(),
 	status :: status(),
 	conn :: pid()
@@ -174,13 +175,13 @@ start_link(Config) ->
     {ok, tuple()} | {ok, tuple(), timeout()|hibernate} |
     {stop, term()} | ignore.
 
-init([#{name:=Id, srv_id:=SrvId}=Config]) ->
-	State = #state{id=Id, config=Config},
+init([#{srv_id:=SrvId, name:=Id}=Config]) ->
+	State = #state{id=Id, srv_id=SrvId, config=Config},
 	nklib_proc:put(?MODULE, {SrvId, Id}),
 	true = nklib_proc:reg({?MODULE, Id}, {connecting, undefined}),
 	self() ! connect,
 	?LLOG(info, "started (~p)", [self()], State),
-	{ok, update_status(ready, State)}.
+	{ok, State}.
 
 
 %% @private
@@ -225,7 +226,8 @@ handle_info(connect, #state{conn=Pid}=State) when is_pid(Pid) ->
 handle_info(connect, #state{id=Id, config=Config}=State) ->
 	State2 = update_status(connecting, State#state{conn=undefined}),
 	case nkmedia_kms_client:start(Id, Config) of
-		{ok, Pid, Info} ->
+		{ok, Pid} ->
+			{ok, Info} = nkmedia_kms_client:get_info(Pid),
 			print_info(Info, State),
 			monitor(process, Pid),
 			State3 = State2#state{conn = Pid},

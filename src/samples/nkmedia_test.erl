@@ -102,7 +102,8 @@ start() ->
         verto_proxy => "verto_proxy:all:8083",
         janus_listen => "janus:all:8989", 
         janus_proxy=> "janus_proxy:all:8990",
-        kurento_proxy => "kms:all:8433",
+        % kurento_proxy => "kms:all:8433",
+        kurento_proxy => "kms:all:8888",
         nksip_trace => {console, all},
         sip_listen => "sip:all:9012",
         log_level => debug
@@ -192,25 +193,32 @@ nkmedia_verto_login(Login, Pass, Verto) ->
     end.
 
 
-% @private Called when we receive INVITE from Verto
-% We register with the session as {nkmedia_verto, CallId, Pid}, and with the 
-% verto server as {nkmedia_session, SessId, Pid}.
-% Answer and Hangup of the session are detected in nkmedia_verto_callbacks
-% If verto hangups, it is detected in nkmedia_verto_bye in nkmedia_verto_callbacks
-% If verto dies, it is detected in the session because of the registration
-% If the sessions dies, it is detected in verto because of the registration
-nkmedia_verto_invite(_SrvId, CallId, Offer, Verto) ->
-    #{dest:=Dest} = Offer, 
-    Base = #{offer=>Offer, register=>{nkmedia_verto, CallId, self()}},
-    case send_call(Dest, Base) of
-        {ok, Link} ->
-            {ok, Link, Verto};
-        {answer, Answer, Link} ->
-            {answer, Answer, Link, Verto};
-        {rejected, Reason} ->
-            lager:notice("Verto invite rejected ~p", [Reason]),
-            {rejected, Reason, Verto}
-    end.
+nkmedia_verto_invite(_SrvId, _CallId, Offer, Verto) ->
+    {ok, Op} = nkmedia_kms_op:start(<<"nk_kms_aa38ayw_8888">>, <<>>),
+    {ok, Answer} = nkmedia_kms_op:echo(Op, Offer, #{}),
+    {answer, Answer, {nkmedia_kms_op, Op}, Verto}.
+
+
+
+% % @private Called when we receive INVITE from Verto
+% % We register with the session as {nkmedia_verto, CallId, Pid}, and with the 
+% % verto server as {nkmedia_session, SessId, Pid}.
+% % Answer and Hangup of the session are detected in nkmedia_verto_callbacks
+% % If verto hangups, it is detected in nkmedia_verto_bye in nkmedia_verto_callbacks
+% % If verto dies, it is detected in the session because of the registration
+% % If the sessions dies, it is detected in verto because of the registration
+% nkmedia_verto_invite(_SrvId, CallId, Offer, Verto) ->
+%     #{dest:=Dest} = Offer, 
+%     Base = #{offer=>Offer, register=>{nkmedia_verto, CallId, self()}},
+%     case send_call(Dest, Base) of
+%         {ok, Link} ->
+%             {ok, Link, Verto};
+%         {answer, Answer, Link} ->
+%             {answer, Answer, Link, Verto};
+%         {rejected, Reason} ->
+%             lager:notice("Verto invite rejected ~p", [Reason]),
+%             {rejected, Reason, Verto}
+%     end.
 
 
 
@@ -220,18 +228,31 @@ nkmedia_verto_invite(_SrvId, CallId, Offer, Verto) ->
 
 
 % @private Called when we receive INVITE from Janus
-nkmedia_janus_invite(_SrvId, CallId, Offer, Janus) ->
-    #{dest:=Dest} = Offer, 
-    Base = #{offer=>Offer, register=>{nkmedia_janus, CallId, self()}},
-    case send_call(Dest, Base) of
-        {ok, Link} ->
-            {ok, Link, Janus};
-        {answer, Answer, Link} ->
-            {answer, Answer, Link, Janus};
-        {rejected, Reason} ->
-            lager:notice("Janus invite rejected: ~p", [Reason]),
-            {rejected, Reason, Janus}
-    end.
+nkmedia_janus_invite(_SrvId, _CallId, Offer, Janus) ->
+    {ok, Op} = nkmedia_kms_op:start(<<"nk_kms_aa38ayw_8888">>, <<>>),
+    {ok, Answer} = nkmedia_kms_op:echo(Op, Offer, #{}),
+    {answer, Answer, {nkmedia_kms_op, Op}, Janus}.
+
+
+% % @private Called when we receive INVITE from Janus
+% nkmedia_janus_invite(_SrvId, CallId, Offer, Janus) ->
+%     #{dest:=Dest} = Offer, 
+%     Base = #{offer=>Offer, register=>{nkmedia_janus, CallId, self()}},
+%     case send_call(Dest, Base) of
+%         {ok, Link} ->
+%             {ok, Link, Janus};
+%         {answer, Answer, Link} ->
+%             {answer, Answer, Link, Janus};
+%         {rejected, Reason} ->
+%             lager:notice("Janus invite rejected: ~p", [Reason]),
+%             {rejected, Reason, Janus}
+%     end.
+
+nkmedia_janus_candidate(App, Index, Candidate, #{link:={nkmedia_kms_op, Pid}}=Janus) ->
+    lager:notice("Candidate from Janus"),
+    nkmedia_kms_op:candidate(Pid, App, Index, Candidate),
+    {ok, Janus}.
+
 
 
 

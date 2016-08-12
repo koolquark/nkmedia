@@ -26,10 +26,12 @@
 -export([build_run/0, build_run/1, remove_run/0, remove_run/1]).
 -export([run_name/1, defaults/1]).
 
--include("nkmedia.hrl").
+-include("../../include/nkmedia.hrl").
 
+
+%% Last is 6.5.0.20160530172436.trusty
 -define(KMS_COMP, <<"netcomposer">>).
--define(KMS_VSN, <<"6.5.0.20160530172436.trusty">>).
+-define(KMS_VSN, <<"6.5.0">>).
 -define(KMS_REL, <<"r01">>).
 
 
@@ -136,14 +138,14 @@ base_name(Config) ->
 
 
 %% @private
-base_dockerfile(Vsn) -> 
+base_dockerfile(_Vsn) -> 
 <<"
 FROM ubuntu:14.04
 RUN apt-get update && apt-get install -y wget vim nano telnet && \\
     echo \"deb http://ubuntu.kurento.org trusty kms6\" | tee /etc/apt/sources.list.d/kurento.list && \\
     wget -O - http://ubuntu.kurento.org/kurento.gpg.key | apt-key add - && \\
     apt-get update && \\
-    apt-get -y install kurento-media-server-6.0=", (nklib_util:to_binary(Vsn))/binary, " && \\
+    apt-get -y install kurento-media-server-6.0 && \\
     apt-get clean && rm -rf /var/lib/apt/lists/*
 ">>.
 
@@ -178,9 +180,10 @@ BASE=${NK_BASE-50020}
 perl -i -pe s/8888/$BASE/g /etc/kurento/kurento.conf.json
 
 # Remove ipv6 local loop until ipv6 is supported
-cat /etc/hosts | sed '/::1/d' | tee /etc/hosts > /dev/null
+#cat /etc/hosts | sed '/::1/d' | tee /etc/hosts > /dev/null
 
-exec /usr/bin/kurento-media-server \"$@\"
+#exec /usr/bin/kurento-media-server \"$@\"
+exec /usr/bin/kurento-media-server 2>&1
 ">>.
 
 

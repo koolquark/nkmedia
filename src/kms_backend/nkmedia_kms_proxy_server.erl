@@ -70,7 +70,8 @@ send_reply(Pid, Event) ->
 -spec transports(nklib:scheme()) ->
     [nkpacket:transport()].
 
-transports(_) -> [wss, ws].
+transports(kms) -> [ws];
+transports(kmss) -> [wss].
 
 -spec default_port(nkpacket:transport()) ->
     inet:port_number() | invalid.

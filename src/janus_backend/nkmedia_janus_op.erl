@@ -614,7 +614,7 @@ terminate(Reason, #state{from=From, status=Status}=State) ->
 do_echo(#{sdp:=SDP}, #state{opts=Opts}=State) ->
     {ok, Handle} = attach(echotest, State),
     Body = get_body(Opts),
-    Jsep = #{sdp=>SDP, type=>offer, trickle=>false},
+    Jsep = #{sdp=>SDP, type=>offer, trickle=>true},
     case message(Handle, Body, Jsep, State) of
         {ok, #{<<"result">>:=<<"ok">>}, #{<<"sdp">>:=SDP2}} ->
             State2 = State#state{handle_id=Handle},
