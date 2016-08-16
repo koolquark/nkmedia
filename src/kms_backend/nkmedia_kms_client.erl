@@ -510,13 +510,25 @@ process_server_event(#{<<"type">>:=<<"OnIceCandidate">>}=Params, _NkPort, State)
         <<"data">> := #{
             <<"source">> := _SrcId,
             <<"candidate">> := #{
-                <<"sdpMid">> := App,
-                <<"sdpMLineIndex">> := Index,
-                <<"candidate">> := Candidate
+                <<"sdpMid">> := MId,
+                <<"sdpMLineIndex">> := MIndex,
+                <<"candidate">> := ALine
             }
         }
     } = Params,
-    send_event({candidate, ObjId, App, Index, Candidate}, State),
+    Candidate = #candidate{m_id=MId, m_index=MIndex, a_line=ALine},
+    send_event({candidate, ObjId, Candidate}, State),
+    {ok, State};
+
+process_server_event(#{<<"type">>:=<<"OnIceGatheringDone">>}=Params, _NkPort, State) ->
+    #{
+        <<"object">> := ObjId,
+        <<"data">> := #{
+            <<"source">> := _SrcId
+        }
+    } = Params,
+    Candidate = #candidate{last=true},
+    send_event({candidate, ObjId, Candidate}, State),
     {ok, State};
 
 process_server_event(Params, _NkPort, State) ->
@@ -554,22 +566,6 @@ extract_op(TransId, #state{trans=AllTrans}=State) ->
         error ->
             not_found
     end.
-
-
-
-
-% %% @private
-% event(undefined, _ClientId, _SessId, _Handle, _Event, State) ->
-%     State;
-
-% event(CallBack, ClientId, SessId, Handle, Event, State) ->
-%     case catch CallBack:kms_event(ClientId, SessId, Handle, Event) of
-%         ok ->
-%             ok;
-%         _ ->
-%             ?LLOG(warning, "Error calling ~p:kms_event/4: ~p", [CallBack], Error)
-%     end,
-%     State.
 
 
 %% @private

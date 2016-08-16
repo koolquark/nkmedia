@@ -481,7 +481,7 @@ make_msg({trickle, Id, Handle, App, Index, Candidate}, TransId, State) ->
         handle => Handle,
         candidate => #{
             sdpMid => App,
-            sdpMLinIndex => Index,
+            sdpMLineIndex => Index,
             candidate => Candidate
         }
     },

@@ -229,9 +229,11 @@ nkmedia_verto_invite(_SrvId, _CallId, Offer, Verto) ->
 
 % @private Called when we receive INVITE from Janus
 nkmedia_janus_invite(_SrvId, _CallId, Offer, Janus) ->
-    {ok, Op} = nkmedia_kms_op:start(<<"nk_kms_aa38ayw_8888">>, <<>>),
-    {ok, Answer} = nkmedia_kms_op:echo(Op, Offer, #{}),
-    {answer, Answer, {nkmedia_kms_op, Op}, Janus}.
+    {ok, OpPid} = nkmedia_kms_op:start(<<"nk_kms_aa38ayw_8888">>, <<>>),
+    JanusCallback = {nkmedia_janus_proto, candidate, [self()]},
+    {ok, Answer} = nkmedia_kms_op:echo(OpPid, Offer, #{callback=>JanusCallback}),
+    timer:sleep(2000),
+    {answer, Answer, {nkmedia_kms_op, OpPid}, Janus}.
 
 
 % % @private Called when we receive INVITE from Janus
@@ -248,9 +250,9 @@ nkmedia_janus_invite(_SrvId, _CallId, Offer, Janus) ->
 %             {rejected, Reason, Janus}
 %     end.
 
-nkmedia_janus_candidate(App, Index, Candidate, #{link:={nkmedia_kms_op, Pid}}=Janus) ->
+nkmedia_janus_candidate(Candidate, #{link:={nkmedia_kms_op, Pid}}=Janus) ->
     lager:notice("Candidate from Janus"),
-    nkmedia_kms_op:candidate(Pid, App, Index, Candidate),
+    nkmedia_kms_op:candidate(Pid, Candidate),
     {ok, Janus}.
 
 

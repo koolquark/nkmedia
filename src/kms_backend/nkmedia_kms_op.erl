@@ -24,7 +24,7 @@
 -behaviour(gen_server).
 
 -export([start/2, stop/1, echo/3]).
--export([get_all/0, stop_all/0, kms_event/2, candidate/4]).
+-export([get_all/0, stop_all/0, kms_event/2, candidate/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
 
@@ -36,7 +36,7 @@
 -include("../../include/nkmedia.hrl").
 
 
--define(WAIT_TIMEOUT, 60).      % Secs
+-define(WAIT_TIMEOUT, 600).      % Secs
 -define(OP_TIMEOUT, 4*60*60).   
 
 
@@ -50,6 +50,10 @@
 -type status() ::
     wait | echo.
 
+-type opts() ::
+    #{
+        callback => {module(), atom(), list()}
+    }.
 
 
 %% ===================================================================
@@ -84,7 +88,7 @@ stop_all() ->
 
 %% @doc Starts an echo session.
 %% The SDP is returned.
--spec echo(pid()|kms_id(), nkmedia:offer(), map()) ->
+-spec echo(pid()|kms_id(), nkmedia:offer(), opts()) ->
     {ok, nkmedia:answer()} | {error, nkservice:error()}.
 
 echo(Id, Offer, Opts) ->
@@ -105,14 +109,14 @@ get_all() ->
 %% Internal
 %% ===================================================================
 
+%% Called from nkmedia_kms_client when an event is received from the server
 kms_event(Pid, Event) ->
-    % lager:error("Event: ~p", [Event]),
     gen_server:cast(Pid, {event, Event}).
 
 
 %% @private
-candidate(Pid, App, Index, Candidate) ->
-    do_cast(Pid, {candidate, App, Index, Candidate}).
+candidate(Pid, #candidate{}=Candidate) ->
+    do_cast(Pid, {candidate, Candidate}).
 
 
 
@@ -134,12 +138,10 @@ candidate(Pid, App, Index, Candidate) ->
     wait :: term(),
     from :: {pid(), term()},
     opts :: map(),
+    sdp :: binary(),
     endpoint :: binary() | undefined,
-    timer :: reference(),
-
-    pid
-
-
+    candidates :: map(),
+    timer :: reference()
 }).
 
 
@@ -160,9 +162,7 @@ init({KmsId, MediaSessId, CallerPid}) ->
                 pipeline = Pipe,
                 conn = Pid,
                 conn_mon = monitor(process, Pid),
-                user_mon = monitor(process, CallerPid),
-
-                pid = CallerPid
+                user_mon = monitor(process, CallerPid)
             },
             true = nklib_proc:reg({?MODULE, KmsSessId}),
             nklib_proc:put(?MODULE, {KmsSessId, MediaSessId}),
@@ -178,8 +178,8 @@ init({KmsId, MediaSessId, CallerPid}) ->
     {noreply, #state{}} | {reply, term(), #state{}} |
     {stop, Reason::term(), #state{}} | {stop, Reason::term(), Reply::term(), #state{}}.
 
-handle_call({echo, Offer, Opts}, _From, #state{status=wait}=State) -> 
-    do_echo(Offer, State#state{opts=Opts});
+handle_call({echo, Offer, Opts}, From, #state{status=wait}=State) -> 
+    do_echo(Offer, State#state{from=From, opts=Opts});
 
 handle_call(_Msg, _From, State) -> 
     reply({error, invalid_state}, State).
@@ -189,16 +189,17 @@ handle_call(_Msg, _From, State) ->
 -spec handle_cast(term(), #state{}) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
-handle_cast({candidate, _App, _Index, <<>>}, State) ->
+handle_cast({candidate, #candidate{last=true}}, State) ->
     lager:notice("Last client candidate"),
     noreply(State);
 
-handle_cast({candidate, App, Index, Candidate}, #state{endpoint=ObjId}=State)
+handle_cast({candidate, Candidate}, #state{endpoint=ObjId}=State)
         when is_binary(ObjId) ->
+    #candidate{m_id=MId, m_index=MIndex, a_line=ALine} = Candidate,
     Data = #{
-        sdpMid => App,
-        sdpMLineIndex => Index,
-        candidate => Candidate
+        sdpMid => MId,
+        sdpMLineIndex => MIndex,
+        candidate => ALine
     },
     lager:notice("Sending client candidate"),
     invoke(ObjId, addIceCandidate, #{candidate=>Data}, State),
@@ -259,7 +260,6 @@ code_change(_OldVsn, State, _Extra) ->
     ok.
 
 terminate(Reason, #state{from=From}=State) ->
-    io:format("\n\nSTOP\n"),
     ?LLOG(notice, "process stop: ~p", [Reason], State),
     destroy(State),
     nklib_util:reply(From, {error, process_down}),
@@ -277,11 +277,13 @@ do_echo(#{sdp:=SDP}, State) ->
         invoke(EndPoint, connect, #{sink=>EndPoint}, State),
         SDP2 = invoke(EndPoint, processOffer, #{offer=>SDP}, State),
         subscribe(EndPoint, 'OnIceCandidate', State),
+        subscribe(EndPoint, 'OnIceGatheringDone', State),
         invoke(EndPoint, gatherCandidates, #{}, State),
-        % io:format("SDP1\n~s\n\n", [SDP]),
-        % io:format("SDP2\n~s\n\n", [SDP2]),
+        io:format("SDP1\n~s\n\n", [SDP]),
+        io:format("SDP2\n~s\n\n", [SDP2]),
         % Store endpoint and wait for candidates
-        reply({ok, #{sdp=>SDP2}}, State#state{endpoint=EndPoint})
+        State2 = State#state{endpoint=EndPoint, candidates=#{}, sdp=SDP2},
+        noreply(wait(gather_candidates, State2))
     catch
         throw:Throw -> reply_stop(Throw, State)
     end.
@@ -293,11 +295,22 @@ do_echo(#{sdp:=SDP}, State) ->
 
 
 %% @private
-do_event({candidate, ObjId, App, Index, Candidate}, #state{endpoint=ObjId}=State) ->
-    #state{pid=Pid} = State,
-    lager:notice("Candidate from Kurento2"),
-    nkmedia_janus_proto:trickle(Pid, App, Index, Candidate),
+do_event({candidate, ObjId, #candidate{last=true}}, #state{endpoint=ObjId}=State) ->
+    #state{sdp=SDP, candidates=Candidates, from=From} = State,
+    SDP2 = nksip_sdp:unparse(nksip_sdp:add_candidates(SDP, Candidates)),
+    io:format("LINES: ~s\n", [SDP2]),
+    gen_server:reply(From, {ok, #{sdp=>SDP2}}),
     noreply(State);
+
+do_event({candidate, ObjId, Candidate}, #state{endpoint=ObjId}=State) ->
+    #candidate{m_id=MId, m_index=MIndex, a_line=ALine} = Candidate,
+    #state{candidates=Candidates1} = State,
+    CandLines1 = maps:get({MId, MIndex}, Candidates1, []),
+    CandLines2 = CandLines1 ++ [ALine],
+    Candidates2 = maps:put({MId, MIndex}, CandLines2, Candidates1),
+    All = maps:get(all, Candidates2, []),
+    Candidates3 = maps:put(all, [{MId, MIndex, ALine}|All], Candidates2),
+    noreply(State#state{candidates=Candidates3});
 
 do_event({candidate, _EndPoint, _App, _Index, _Candidate}, State) ->
     ?LLOG(warning, "ignoring Kurento candidate", [], State),
@@ -351,10 +364,10 @@ destroy(#state{pipeline=Pipe, conn=Pid}) ->
     nkmedia_kms_client:release(Pid, Pipe).
 
 
-%% @private
-% wait(Reason, State) ->
-%     State2 = status(wait, State),
-%     State2#state{wait=Reason}.
+% @private
+wait(Reason, State) ->
+    State2 = status(wait, State),
+    State2#state{wait=Reason}.
 
 
 %% @private

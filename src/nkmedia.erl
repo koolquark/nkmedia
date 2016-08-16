@@ -22,8 +22,11 @@
 
 -module(nkmedia).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export_type([offer/0, answer/0]).
+-export_type([offer/0, answer/0, candidate/0]).
 -export_type([engine_id/0, engine_config/0]).
+
+-include("nkmedia.hrl").
+
 
 %% ===================================================================
 %% Types
@@ -77,6 +80,9 @@
 		pass => binary(),				% Pass		
 		base => integer()				% Base Port
 	}.
+
+
+-type candidate() :: #candidate{}.
 
 
 

@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([invite/4, answer/3, answer_async/3, hangup/2, hangup/3]).
--export([trickle/4, find_user/1, find_call_id/1, get_all/0]).
+-export([candidate/2, find_user/1, find_call_id/1, get_all/0]).
 -export([register_play/3]).
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_stop/3,
@@ -41,6 +41,7 @@
 -define(OP_TIME, 15000).            % Maximum operation time
 -define(CALL_TIMEOUT, 30000).       % 
 
+-include("../../include/nkmedia.hrl").
 
 %% ===================================================================
 %% Types
@@ -105,9 +106,12 @@ hangup(Pid, CallId, Reason) ->
     gen_server:cast(Pid, {hangup, CallId, Reason}).
 
 
-trickle(Pid, App, Index, Candidate) ->
-    gen_server:cast(Pid, {trickle, App, Index, Candidate}).
+%% @doc Sends an SDP candidate from the other side
+-spec candidate(pid(), nkmedia:candidate()) ->
+    ok.
 
+candidate(Pid, #candidate{}=Candidate) ->
+    gen_server:cast(Pid, {candidate, Candidate}).
 
 
 %% @doc Gets the pids() for currently logged user
@@ -343,17 +347,19 @@ send_req({hangup, CallId, Reason}, From, NkPort, State) ->
     State2 = links_remove(CallId, State),
     send(Req, NkPort, State2);
 
-send_req({trickle, App, Index, Candidate}, From, NkPort, State) ->
+send_req({candidate, Candidate}, From, NkPort, State) ->
     #state{session_id=SessionId, handle=Handle} = State,
     nklib_util:reply(From, ok),
+    #candidate{m_id=MId, m_index=MIndex, a_line=ALine} = Candidate,
     Data = #{
-        % transaction => nklib_util:uid(),
+        transaction => nklib_util:uid(),
         session_id => SessionId,
-        handle => Handle,
+        handle_id => Handle,
+        janus => trickle,
         candidate => #{
-            sdpMid => App,
-            sdpMLinIndex => Index,
-            candidate => Candidate
+            sdpMid => MId,
+            sdpMLineIndex => MIndex,
+            candidate => ALine
         }
     },
     send(Data, NkPort, State);
@@ -367,7 +373,7 @@ send_req(_Op, _From, _NkPort, _State) ->
 process_client_req(create, Msg, NkPort, State) ->
 	Id = erlang:phash2(make_ref()),
 	Resp = make_resp(#{janus=>success, data=>#{id=>Id}}, Msg),
-    lager:error("SESSION ID IS ~p", [Id]),
+    % lager:error("SESSION ID IS ~p", [Id]),
 	send(Resp, NkPort, State#state{session_id=Id});
 
 process_client_req(attach, Msg, NkPort, #state{session_id=SessionId}=State) ->
@@ -433,22 +439,20 @@ process_client_req(trickle, Msg, NkPort, #state{session_id=SessionId}=State) ->
         <<"session_id">> := SessionId, 
         <<"handle_id">> := _Handle
     } = Msg,
-    case CandidateGroup of
+    Candidate = case CandidateGroup of
         #{
-            <<"candidate">> := Candidate,
-            <<"sdpMLineIndex">> := Index,
-            <<"sdpMid">> := App
+            <<"sdpMid">> := MId,
+            <<"sdpMLineIndex">> := MIndex,
+            <<"candidate">> := ALine
         } ->
-            ok;
+            #candidate{m_id=MId, m_index=MIndex, a_line=ALine};
         #{
             <<"completed">> := true
         } ->
-            App = <<>>,
-            Index = 0,
-            Candidate = <<>>
+            #candidate{last=true}
     end,
-    {ok, State2} = handle(nkmedia_janus_candidate, [App, Index, Candidate], State),
-    Resp = make_resp(#{janus=>success, session_id=>SessionId}, Msg),
+    {ok, State2} = handle(nkmedia_janus_candidate, [Candidate], State),
+    Resp = make_resp(#{janus=>ack, session_id=>SessionId}, Msg),
     send(Resp, NkPort, State2);
 
 process_client_req(Cmd, _Msg, _NkPort, State) ->
@@ -695,7 +699,6 @@ make_recordplay_resp2(Data, Jsep, Msg, #state{plugin=recordplay}=State) ->
 make_resp(Data, Msg) ->
     #{<<"transaction">>:=Trans} = Msg,
     Data#{transaction => Trans}.
-    %% @private
 
 
 %% @private
