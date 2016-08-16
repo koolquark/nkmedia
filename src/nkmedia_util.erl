@@ -21,7 +21,7 @@
 -module(nkmedia_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([get_q850/1, add_id/2, add_uuid/1]).
+-export([get_q850/1, add_id/2]).
 -export([kill/1]).
 -export([remove_sdp_data_channel/1]).
 -export_type([stop_reason/0, q850/0]).
@@ -39,19 +39,13 @@
 
 
 %% @private
-add_uuid(#{id:=Id}=Config) when is_binary(Id) ->
-    {Id, Config};
-
-add_uuid(Config) ->
-    Id = nklib_util:uuid_4122(),
-    {Id, Config#{id=>Id}}.
-
-
-%% @private
 add_id(Key, Config) ->
 	case maps:find(Key, Config) of
 		{ok, Id} when is_binary(Id) ->
 			{Id, Config};
+		{ok, Id} ->
+			Id2 = nklib_util:to_binary(Id),
+			{Id2, maps:put(Key, Id2, Config)};
 		_ ->
 			Id = nklib_util:uuid_4122(),
 			{Id, maps:put(Key, Id, Config)}
