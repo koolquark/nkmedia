@@ -258,7 +258,7 @@ nkmedia_room_init(Id, Room) ->
                     {error, Error}
             end;
         _ ->
-            continue
+            {ok, Room}
     end.
 
 
