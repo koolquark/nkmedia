@@ -23,10 +23,32 @@
 -module(nkmedia_events).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
+-export([send_event/5]).
 -export([session_event/3, call_event/3, room_event/3]).
 
 -include_lib("nkservice/include/nkservice.hrl").
 
+
+
+%% ===================================================================
+%% Public
+%% ===================================================================
+
+%% @doc Sends a room event
+-spec send_event(nkservice:id(), atom(), binary(), atom(), map()) ->
+    ok.
+
+send_event(SrvId, Class, Id, Type, Body)
+        when Class==session; Class==call; Class==room ->
+    lager:warning("MEDIA EVENT (~s:~s:~s): ~p", [Class, Type, Id, Body]),
+    RegId = #reg_id{
+        srv_id = SrvId,     
+        class = <<"media">>, 
+        subclass = nklib_util:to_binary(Class),
+        type = nklib_util:to_binary(Type),
+        obj_id = Id
+    },
+    nkservice_events:send(RegId, Body).
 
 
 %% ===================================================================
@@ -135,16 +157,4 @@ room_event(RoomId, Event, #{srv_id:=SrvId}=Room) ->
 %% ===================================================================
 
 
-
-%% @private
-send_event(SrvId, Class, Id, Type, Body) ->
-    lager:warning("MEDIA EVENT (~s:~s:~s): ~p", [Class, Type, Id, Body]),
-    RegId = #reg_id{
-        srv_id = SrvId,     
-        class = <<"media">>, 
-        subclass = nklib_util:to_binary(Class),
-        type = nklib_util:to_binary(Type),
-        obj_id = Id
-    },
-    nkservice_events:send(RegId, Body).
 

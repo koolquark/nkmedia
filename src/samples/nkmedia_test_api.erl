@@ -72,7 +72,6 @@ start() ->
         nksip_trace => {console, all},
         sip_listen => "sip:all:9012",
         log_level => debug,
-
         api_gelf_server => "c1.netc.io"
     },
     nkservice:start(test, Spec).
@@ -96,11 +95,14 @@ restart() ->
 
 plugin_deps() ->
     [
-        nkmedia_sip,  nksip_registrar, nksip_trace,
+        nkmedia_sip, nksip_registrar, nksip_trace,
         nkmedia_verto, nkmedia_janus_proto,
         nkmedia_fs, nkmedia_kms, nkmedia_janus,
-        nkmedia_fs_verto_proxy, nkmedia_janus_proxy, nkmedia_kms_proxy,
-        nkservice_api_gelf
+        nkmedia_fs_verto_proxy, 
+        nkmedia_janus_proxy, 
+        nkmedia_kms_proxy,
+        nkservice_api_gelf,
+        nkmedia_room_msglog
     ].
 
 
@@ -186,10 +188,14 @@ room_cmd(C, Cmd, Data) ->
 
 %% Events
 
-subscribe(SessId, WsPid, Body) ->
+subscribe(WsPid, SessId, Body) ->
     Data = #{class=>media, subclass=>session, obj_id=>SessId, body=>Body},
     nkservice_api_client:cmd(WsPid, core, event, subscribe, Data).
 
+
+subscribe_all(WsPid) ->
+    Data = #{class=>media},
+    nkservice_api_client:cmd(WsPid, core, event, subscribe, Data).
 
 
 %% Invite
@@ -205,6 +211,14 @@ listen(Publisher, Dest) ->
     WsPid = get_client(),
     start_invite(WsPid, Dest, Config).
 
+
+%% Msglog
+
+msglog_send(C, Room, Msg) ->
+    nkservice_api_client:cmd(C, media, room_msglog, send, #{room_id=>Room, msg=>Msg}).
+
+msglog_get(C, Room) ->
+    nkservice_api_client:cmd(C, media, room_msglog, get, #{room_id=>Room}).
 
  
 

@@ -24,7 +24,8 @@
 -behaviour(gen_server).
 
 -export([start/2, stop/1, stop/2, get_room/1, register/2, unregister/2, get_all/0]).
--export([update/2, find/1]).
+-export([restart_timer/1]).
+-export([update/2, find/1, do_call/2, do_call/3, do_cast/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
 -export_type([id/0, room/0, event/0]).
@@ -166,16 +167,24 @@ update(Id, Update) ->
 -spec register(id(), nklib:link()) ->     
     {ok, pid()} | {error, nkservice:error()}.
 
-register(CallId, Link) ->
-    do_call(CallId, {register, Link}).
+register(RoomId, Link) ->
+    do_call(RoomId, {register, Link}).
 
 
 %% @doc Registers a process with the call
 -spec unregister(id(), nklib:link()) ->
     ok | {error, nkservice:error()}.
 
-unregister(CallId, Link) ->
-    do_call(CallId, {unregister, Link}).
+unregister(RoomId, Link) ->
+    do_call(RoomId, {unregister, Link}).
+
+
+%% @doc Restart the tick timer
+-spec restart_timer(id()|room()) ->
+    ok | {error, term()}.
+
+restart_timer(RoomId) ->
+    do_cast(RoomId, restart_timer).
 
 
 %% @doc Gets all started rooms
@@ -265,6 +274,9 @@ handle_cast({unregister, Link}, State) ->
     ?LLOG(info, "proc unregistered (~p)", [Link], State),
     {noreply, links_remove(Link, State)};
 
+handle_cast(restart_timer, State) ->
+    {noreply, restart_tick(State)};
+
 handle_cast({stop, Reason}, State) ->
     ?LLOG(info, "external stop: ~p", [Reason], State),
     do_stop(Reason, State);
@@ -347,6 +359,9 @@ terminate(Reason, State) ->
 %% @private
 find(Pid) when is_pid(Pid) ->
     {ok, Pid};
+
+find(#{room_id:=RoomId}) ->
+    find(RoomId);
 
 find(Id) ->
     Id2 = nklib_util:to_binary(Id),
