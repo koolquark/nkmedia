@@ -25,7 +25,7 @@
 -export([send_msg/2, get_msgs/2]).
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
 -export([error_code/1]).
--export([nkmedia_room_init/2, nkmedia_room_handle_call/3, nkmedia_room_handle_cast/2]).
+-export([nkmedia_room_init/2, nkmedia_room_handle_call/3]).
 -export([api_cmd/2, api_syntax/4]).
 
 -include_lib("nkservice/include/nkservice.hrl").
@@ -40,7 +40,7 @@
 
 
 -type msg_id() ::
-    binary().
+    integer().
 
 
 -type msg() ::
@@ -53,6 +53,7 @@
 
 
 -record(state, {
+    pos = 1 :: integer(),
     msgs :: orddict:orddict()
 }).
 
@@ -66,13 +67,13 @@
 
 %% @doc Sends a message to the room
 -spec send_msg(nkmedia_room:id(), map()) ->
-    {ok, msg_id()} | {error, term()}.
+    {ok, msg()} | {error, term()}.
 
 send_msg(RoomId, Msg) when is_map(Msg) ->
-    {Id, Msg2} = nkmedia_util:add_id(msg_id, Msg),
-    case nkmedia_room:do_cast(RoomId, {?MODULE, send, Msg2}) of
-        ok ->
-            {ok, Id};
+    Msg2 = Msg#{timestamp=>nklib_util:l_timestamp()},
+    case nkmedia_room:do_call(RoomId, {?MODULE, send, Msg2}) of
+        {ok, MsgId} ->
+            {ok, Msg2#{msg_id=>MsgId}};
         {error, Error} ->
             {error, Error}
     end.
@@ -125,27 +126,24 @@ nkmedia_room_init(_RoomId, Room) ->
 
 
 %% @private
+nkmedia_room_handle_call({?MODULE, send, Msg}, _From, #{?MODULE:=State}=Room) ->
+    nkmedia_room:restart_timer(Room),
+    #state{pos=Pos, msgs=Msgs} = State,
+    Msg2 = Msg#{msg_id => Pos},
+    State2 = State#state{
+        pos = Pos+1, 
+        msgs = orddict:store(Pos, Msg2, Msgs)
+    },
+    {reply, {ok, Pos}, update(State2, Room)};
+
 nkmedia_room_handle_call({?MODULE, get, _Filters}, _From, 
                          #{?MODULE:=State}=Room) ->
     nkmedia_room:restart_timer(Room),
     #state{msgs=Msgs} = State,
-    Reply = [Msg || {_Time, Msg} <- orddict:to_list(Msgs)],
+    Reply = [Msg || {_Id, Msg} <- orddict:to_list(Msgs)],
     {reply, {ok, Reply}, Room};
 
 nkmedia_room_handle_call(_Msg, _From, _Room) ->
-    continue.
-
-
-%% @private
-nkmedia_room_handle_cast({?MODULE, send, Msg}, #{?MODULE:=State}=Room) ->
-    nkmedia_room:restart_timer(Room),
-    #state{msgs=Msgs} = State,
-    Now = nklib_util:l_timestamp(),
-    Msg2 = Msg#{timestamp=>Now},
-    State2 = State#state{msgs=orddict:store(Now, Msg2, Msgs)},
-    {noreply, update(State2, Room)};
-
-nkmedia_room_handle_cast(_Msg, _Room) ->
     continue.
 
 
@@ -154,7 +152,8 @@ nkmedia_room_handle_cast(_Msg, _Room) ->
 %% ===================================================================
 
 %% @private
-api_cmd(#api_req{class = <<"media">>, subclass = <<"room_msglog">>}=Req, State) ->
+api_cmd(#api_req{class = <<"media">>, subclass = <<"room">>, cmd=Cmd}=Req, State)
+        when Cmd == <<"msglog_send">>; Cmd == <<"msglog_get">> ->
     #api_req{cmd=Cmd} = Req,
     do_api_cmd(Cmd, Req, State);
 
@@ -163,8 +162,9 @@ api_cmd(_Req, _State) ->
 
 
 %% @private
-api_syntax(#api_req{class = <<"media">>, subclass = <<"room_msglog">>}=Req, 
-           Syntax, Defaults, Mandatory) ->
+api_syntax(#api_req{class = <<"media">>, subclass = <<"room">>, cmd=Cmd}=Req, 
+           Syntax, Defaults, Mandatory) 
+           when Cmd == <<"msglog_send">>; Cmd == <<"msglog_get">> ->
     #api_req{cmd=Cmd} = Req,
     {S2, D2, M2} = do_api_syntax(Cmd, Syntax, Defaults, Mandatory),
     {continue, [Req, S2, D2, M2]};
@@ -182,20 +182,19 @@ update(State, Room) ->
     Room#{?MODULE:=State}.
 
 
-do_api_cmd(<<"send">>, ApiReq, State) ->
+do_api_cmd(<<"msglog_send">>, ApiReq, State) ->
     #api_req{srv_id=SrvId, data=Data, user=User, session=SessId} = ApiReq,
     #{room_id:=RoomId, msg:=Msg} = Data,
     RoomMsg = Msg#{user=>User, session_id=>SessId},
     case send_msg(RoomId, RoomMsg) of
-        {ok, MsgId} ->
-            Body = #{type=>send, msg=>RoomMsg#{msg_id=>MsgId}},
-            nkmedia_events:send_event(SrvId, room, RoomId, msglog, Body),
+        {ok, #{msg_id:=MsgId}=SentMsg} ->
+            nkmedia_events:send_event(SrvId, room, RoomId, msglog_send, SentMsg),
             {ok, #{msg_id=>MsgId}, State};
         {error, Error} ->
             {error, Error, State}
     end;
 
-do_api_cmd(<<"get">>, #api_req{data=Data}, State) ->
+do_api_cmd(<<"msglog_get">>, #api_req{data=Data}, State) ->
     #{room_id:=RoomId} = Data,
     case get_msgs(RoomId, #{}) of
         {ok, List} ->
@@ -209,17 +208,17 @@ do_api_cmd(_Cmd, _ApiReq, State) ->
 
 
 %% @private
-do_api_syntax(<<"send">>, Syntax, Defaults, Mandatory) ->
+do_api_syntax(<<"msglog_send">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             room_id => binary,
             msg => map
         },
         Defaults,
-        [room_id|Mandatory]
+        [room_id, msg|Mandatory]
     };
 
-do_api_syntax(<<"get">>, Syntax, Defaults, Mandatory) ->
+do_api_syntax(<<"msglog_get">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             room_id => binary

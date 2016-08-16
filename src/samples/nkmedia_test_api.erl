@@ -215,10 +215,10 @@ listen(Publisher, Dest) ->
 %% Msglog
 
 msglog_send(C, Room, Msg) ->
-    nkservice_api_client:cmd(C, media, room_msglog, send, #{room_id=>Room, msg=>Msg}).
+    nkservice_api_client:cmd(C, media, room, msglog_send, #{room_id=>Room, msg=>Msg}).
 
 msglog_get(C, Room) ->
-    nkservice_api_client:cmd(C, media, room_msglog, get, #{room_id=>Room}).
+    nkservice_api_client:cmd(C, media, room, msglog_get, #{room_id=>Room}).
 
  
 

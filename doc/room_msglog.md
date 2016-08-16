@@ -4,7 +4,7 @@ MsgLog is a plugin for NkMEDIA rooms. Once activated for a service, all started 
 
 Each received message will also generate an event for the room.
 
-All commands use class `media`, sublcass `room_msglog`.
+All commands use class `media`, subclass `room`.
 
 ## Commands
 
@@ -26,8 +26,8 @@ The fields `room_id` and `msg` are mandatory.
 ```js
 {
 	class: "media",
-	subclass: "room_msglog",
-	cmd: "send",
+	subclass: "room",
+	cmd: "msglog_send",
 	data: {
 		room_id: "my_room_id",
 		msg: {
@@ -57,17 +57,14 @@ All users registered to receive room events with type 'msglog' (or all events, w
 	data: {
 		class: "media",
 		subclass: "room",
-		type: "msglog",
+		type: "msglog_send",
 		obj_id: "my_room_id",
 		body: #{
-			type: "send",
-			msg: {
-				msg_id: 1,
-				user: "user@domain",
-				session_id: "c881cb76-3a2f-7353-a5fa-38c9862f00d9",
-				timestmap: 1471359589983069,
-				key1: "val1"
-			}
+			msg_id: 1,
+			user: "user@domain",
+			session_id: "c881cb76-3a2f-7353-a5fa-38c9862f00d9",
+			timestmap: 1471359589983069,
+			key1: "val1"
 		}
 	}
 	tid: 100
