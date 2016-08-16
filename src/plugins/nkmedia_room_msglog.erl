@@ -188,7 +188,8 @@ do_api_cmd(<<"send">>, ApiReq, State) ->
     RoomMsg = Msg#{user=>User, session_id=>SessId},
     case send_msg(RoomId, RoomMsg) of
         {ok, MsgId} ->
-            nkmedia_events:send_event(SrvId, room, RoomId, msglog_send, RoomMsg),
+            Body = #{type=>send, msg=>RoomMsg#{msg_id=>MsgId}},
+            nkmedia_events:send_event(SrvId, room, RoomId, msglog, Body),
             {ok, #{msg_id=>MsgId}, State};
         {error, Error} ->
             {error, Error, State}
