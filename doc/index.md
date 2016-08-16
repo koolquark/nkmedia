@@ -18,6 +18,7 @@
   * nkmedia_kms
   * [nkmedia_sip](sip.md)
   * [nkmedia_verto](verto.md)
+  * [nkmedia_room_msglog](room_msglog.md)
 
 ## Cookbook
 * Peer to Peer calls
