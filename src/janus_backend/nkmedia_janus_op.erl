@@ -550,10 +550,9 @@ handle_cast({invite, {error, Error}}, #state{status=wait, wait=from_sip_invite}=
 handle_cast({candidate, Role, Candidate}, State) ->
     #state{janus_sess_id=SessId, handle_id=Handle1, handle_id2=Handle2, conn=Pid} =State,
     Handle = case Role of
-        caller -> Handle1;
-        callee -> Handle2
+        callee when is_integer(Handle2) -> Handle2;
+        _ -> Handle1
     end,
-    lager:warning("Candidate: ~p", [Role]),
     case nkmedia_janus_client:candidate(Pid, SessId, Handle, Candidate) of
         ok ->
             noreply(State);
