@@ -173,20 +173,42 @@ run_dockerfile(Config) ->
 
 
 run_start() ->
+    WebRTC = config_webrtc(),
 <<"
 #!/bin/bash
 set -e
 BASE=${NK_BASE-50020}
 perl -i -pe s/8888/$BASE/g /etc/kurento/kurento.conf.json
 
+STUN_IP=${NK_STUN_IP-\"83.211.9.232\"}
+STUN_PORT=${NK_STUN_PORT-3478}
+
+export CONF=\"/etc/kurento/modules/kurento\"
+
+cp $CONF/WebRtcEndpoint.conf.ini $CONF/WebRtcEndpoint.conf.ini.0
+cat > $CONF/WebRtcEndpoint.conf.ini <<EOF\n", WebRTC/binary, "\nEOF
+
 # Remove ipv6 local loop until ipv6 is supported
 #cat /etc/hosts | sed '/::1/d' | tee /etc/hosts > /dev/null
 
-#exec /usr/bin/kurento-media-server \"$@\"
 exec /usr/bin/kurento-media-server 2>&1
 ">>.
 
 
+config_webrtc() ->
+<<"
+; Only IP address are supported, not domain names for addresses
+; You have to find a valid stun server. You can check if it works
+; usin this tool:
+;   http://webrtc.github.io/samples/src/content/peerconnection/trickle-ice/
+stunServerAddress=$STUN_IP
+stunServerPort=$STUN_PORT
+
+; turnURL gives the necessary info to configure TURN for WebRTC.
+;    'address' must be an IP (not a domain).
+;    'transport' is optional (UDP by default).
+; turnURL=user:password@address:port(?transport=[udp|tcp|tls])
+">>.
 
 
 
