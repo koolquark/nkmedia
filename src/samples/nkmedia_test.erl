@@ -29,6 +29,8 @@
 %%     If the session is killed it is detected by both
 %%     If you hangup, nkmedia_verto_bye (or _janus_) stops the session
 %%     If Verto/Janus is killed, it is detected by the session
+%%     If the caller starts sending Trickle ICE requests (Janus client), they will be
+%%     capture in nkmedia_janus_candidate and sent to the session
 %%   - fe, p, p2, m1, m2 work the same way
 %%   - start a listener with listen(Publisher, Num)
 %%     This is the first operarion where we "call". We can reject the call, or accept it
@@ -36,6 +38,10 @@
 %%     then we register Verto/Janus with the session
 %%     When Verto/Janus answers, their nkmedia_..._answer functions (or rejected) 
 %%     sets the answer or stops the session (nkmedia_..._bye).
+%%     If the caller starts sending candidates, is like above
+%%     If the callee sends candidates, they again will be sent to the session, but
+%%     with role 'callee', so that they will be processed correctly at nkmedia_janus_op
+%%     and nkmedia_kms_op
 %%   - d to call other party directly
 %%   - j to call other party with Janus. Both parties are rgistered
 %%   - f to call with FS
@@ -92,6 +98,7 @@
 
 
 start() ->
+    CertBase = "/etc/letsencrypt/live/casa.carlosj.net/",
     Spec = #{
         callback => ?MODULE,
         web_server => "https:all:8081",
@@ -106,7 +113,11 @@ start() ->
         kurento_proxy => "kms:all:8888",
         nksip_trace => {console, all},
         sip_listen => "sip:all:9012",
-        log_level => debug
+        log_level => debug,
+
+        tls_certfile => CertBase ++ "cert.pem",
+        tls_keyfile => CertBase ++ "privkey.pem",
+        tls_cacertfile => CertBase ++ "fullchain.pem"
     },
     nkservice:start(test, Spec).
 
@@ -193,32 +204,32 @@ nkmedia_verto_login(Login, Pass, Verto) ->
     end.
 
 
-nkmedia_verto_invite(_SrvId, _CallId, Offer, Verto) ->
-    {ok, Op} = nkmedia_kms_op:start(<<"nk_kms_aa38ayw_8888">>, <<>>),
-    {ok, Answer} = nkmedia_kms_op:echo(Op, Offer, #{}),
-    {answer, Answer, {nkmedia_kms_op, Op}, Verto}.
+% nkmedia_verto_invite(_SrvId, _CallId, Offer, Verto) ->
+%     {ok, Op} = nkmedia_kms_op:start(<<"nk_kms_aa38ayw_8888">>, <<>>),
+%     Now = nklib_util:l_timestamp(),
+%     {ok, Answer} = nkmedia_kms_op:echo(Op, Offer, #{}),
+%     lager:error("TIME: ~p msec", [(nklib_util:l_timestamp() - Now) div 1000]),
+%     {answer, Answer, {nkmedia_kms_op, Op}, Verto}.
 
-
-
-% % @private Called when we receive INVITE from Verto
-% % We register with the session as {nkmedia_verto, CallId, Pid}, and with the 
-% % verto server as {nkmedia_session, SessId, Pid}.
-% % Answer and Hangup of the session are detected in nkmedia_verto_callbacks
-% % If verto hangups, it is detected in nkmedia_verto_bye in nkmedia_verto_callbacks
-% % If verto dies, it is detected in the session because of the registration
-% % If the sessions dies, it is detected in verto because of the registration
-% nkmedia_verto_invite(_SrvId, CallId, Offer, Verto) ->
-%     #{dest:=Dest} = Offer, 
-%     Base = #{offer=>Offer, register=>{nkmedia_verto, CallId, self()}},
-%     case send_call(Dest, Base) of
-%         {ok, Link} ->
-%             {ok, Link, Verto};
-%         {answer, Answer, Link} ->
-%             {answer, Answer, Link, Verto};
-%         {rejected, Reason} ->
-%             lager:notice("Verto invite rejected ~p", [Reason]),
-%             {rejected, Reason, Verto}
-%     end.
+% @private Called when we receive INVITE from Verto
+% We register with the session as {nkmedia_verto, CallId, Pid}, and with the 
+% verto server as {nkmedia_session, SessId, Pid}.
+% Answer and Hangup of the session are detected in nkmedia_verto_callbacks
+% If verto hangups, it is detected in nkmedia_verto_bye in nkmedia_verto_callbacks
+% If verto dies, it is detected in the session because of the registration
+% If the sessions dies, it is detected in verto because of the registration
+nkmedia_verto_invite(_SrvId, CallId, Offer, Verto) ->
+    #{dest:=Dest} = Offer, 
+    Base = #{offer=>Offer, register=>{nkmedia_verto, CallId, self()}},
+    case send_call(Dest, Base) of
+        {ok, Link} ->
+            {ok, Link, Verto};
+        {answer, Answer, Link} ->
+            {answer, Answer, Link, Verto};
+        {rejected, Reason} ->
+            lager:notice("Verto invite rejected ~p", [Reason]),
+            {rejected, Reason, Verto}
+    end.
 
 
 
@@ -227,35 +238,28 @@ nkmedia_verto_invite(_SrvId, _CallId, Offer, Verto) ->
 %% ===================================================================
 
 
-% @private Called when we receive INVITE from Janus
-nkmedia_janus_invite(_SrvId, _CallId, Offer, Janus) ->
-    {ok, OpPid} = nkmedia_kms_op:start(<<"nk_kms_aa38ayw_8888">>, <<>>),
-    JanusCallback = {nkmedia_janus_proto, candidate, [self()]},
-    {ok, Answer} = nkmedia_kms_op:echo(OpPid, Offer, #{callback=>JanusCallback}),
-    timer:sleep(2000),
-    {answer, Answer, {nkmedia_kms_op, OpPid}, Janus}.
-
-
 % % @private Called when we receive INVITE from Janus
-% nkmedia_janus_invite(_SrvId, CallId, Offer, Janus) ->
-%     #{dest:=Dest} = Offer, 
-%     Base = #{offer=>Offer, register=>{nkmedia_janus, CallId, self()}},
-%     case send_call(Dest, Base) of
-%         {ok, Link} ->
-%             {ok, Link, Janus};
-%         {answer, Answer, Link} ->
-%             {answer, Answer, Link, Janus};
-%         {rejected, Reason} ->
-%             lager:notice("Janus invite rejected: ~p", [Reason]),
-%             {rejected, Reason, Janus}
-%     end.
-
-nkmedia_janus_candidate(Candidate, #{link:={nkmedia_kms_op, Pid}}=Janus) ->
-    lager:notice("Candidate from Janus"),
-    nkmedia_kms_op:candidate(Pid, Candidate),
-    {ok, Janus}.
+% nkmedia_janus_invite(_SrvId, _CallId, Offer, Janus) ->
+%     {ok, OpPid} = nkmedia_kms_op:start(<<"nk_kms_aa38ayw_8888">>, <<>>),
+%     JanusCallback = {nkmedia_janus_proto, candidate, [self()]},
+%     {ok, Answer} = nkmedia_kms_op:echo(OpPid, Offer, #{callback=>JanusCallback}),
+%     timer:sleep(2000),
+%     {answer, Answer, {nkmedia_kms_op, OpPid}, Janus}.
 
 
+% @private Called when we receive INVITE from Janus
+nkmedia_janus_invite(_SrvId, CallId, Offer, Janus) ->
+    #{dest:=Dest} = Offer, 
+    Base = #{offer=>Offer, register=>{nkmedia_janus, CallId, self()}},
+    case send_call(Dest, Base) of
+        {ok, Link} ->
+            {ok, Link, Janus};
+        {answer, Answer, Link} ->
+            {answer, Answer, Link, Janus};
+        {rejected, Reason} ->
+            lager:notice("Janus invite rejected: ~p", [Reason]),
+            {rejected, Reason, Janus}
+    end.
 
 
 

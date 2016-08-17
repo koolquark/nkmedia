@@ -27,7 +27,8 @@
 
 -export([start/3, get_type/1, get_session/1, get_offer/1, get_answer/1]).
 -export([stop/1, stop/2, stop_all/0]).
--export([answer/2, answer_async/2, update/3, update_async/3, info/2]).
+-export([answer/2, answer_async/2, candidate/3]).
+-export([update/3, update_async/3, info/2]).
 -export([register/2, unregister/2, link_slave/2, unlink_session/1]).
 -export([get_all/0]).
 -export([get_call_data/1, ext_ops/2, do_add/3, do_rm/2]).
@@ -207,6 +208,15 @@ answer(SessId, Answer) ->
 
 answer_async(SessId, Answer) ->
     do_cast(SessId, {answer, Answer}).
+
+
+
+%% @doc Sends an ICE candidate
+-spec candidate(id(), caller|callee, nkmedia:candidate()) ->
+    ok | {error, term()}.
+
+candidate(SessId, Role, Candidate) ->
+    do_call(SessId, {candidate, Role, Candidate}).
 
 
 %% @doc Sets the session's current answer operation.
@@ -390,6 +400,9 @@ handle_call(get_type, _From, #state{type=Type, timer=Timer, session=Session}=Sta
 
 handle_call({answer, Answer}, From, State) ->
     do_set_answer(Answer, From, State);
+
+handle_call({candidate, Role, Candidate}, From, State) ->
+    do_set_candidate(Role, Candidate, From, State);
 
 handle_call({update, Update, Opts}, From, State) ->
     do_update(Update, Opts, From, State);
@@ -597,6 +610,16 @@ do_set_answer(Answer, From, #state{type=Type}=State) ->
                 _ ->
                     reply({error, invalid_answer}, From, State3)
             end;
+        {error, Error, State2} ->
+            reply({error, Error}, From, State2)
+    end.
+
+
+%% @private
+do_set_candidate(Role, Candidate, From, State) ->
+    case handle(nkmedia_session_candidate, [Role, Candidate], State) of
+        {ok, State2} ->
+            reply(ok, From, State2);
         {error, Error, State2} ->
             reply({error, Error}, From, State2)
     end.

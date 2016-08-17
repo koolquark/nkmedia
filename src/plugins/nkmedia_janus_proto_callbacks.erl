@@ -178,6 +178,12 @@ nkmedia_janus_start(SessId, Answer, Janus) ->
 -spec nkmedia_janus_candidate(nkmedia:candidate(), janus()) ->
     {ok, janus()}.
 
+nkmedia_janus_candidate(Candidate, #{link:={nkmedia_session, SessId, _Pid}}=Janus) ->
+    #{role:=Role} = Janus,
+    % If the session has two webrtc endpoint, we must tell the role (caller or callee)
+    ok = nkmedia_session:candidate(SessId, Role, Candidate),
+    {ok, Janus};
+
 nkmedia_janus_candidate(_Candidate, Janus) ->
     lager:warning("Janus Proto unexpected ICE Candidate!"),
     {ok, Janus}.

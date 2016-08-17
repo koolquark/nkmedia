@@ -33,7 +33,7 @@
 -export([listen/4, listen_switch/3, unlisten/1]).
 -export([from_sip/3, to_sip/3, to_sip_record/2]).
 -export([nkmedia_sip_register/2, nkmedia_sip_invite/2]).
--export([answer/2, update/2]).
+-export([answer/2, update/2, candidate/2, candidate/3]).
 -export([get_all/0, stop_all/0, janus_event/4]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
@@ -48,6 +48,9 @@
 -define(WAIT_TIMEOUT, 60).      % Secs
 -define(OP_TIMEOUT, 4*60*60).   
 -define(KEEPALIVE, 20).
+
+-define(DO_TRICKLE, true).
+
 
 %% ===================================================================
 %% Types
@@ -259,6 +262,22 @@ answer(Id, Answer) ->
 
 update(Id, Update) ->
     do_call(Id, {update, Update}).
+
+
+%% @doc Sends an ICE candidate to Janus
+-spec candidate(pid(), nkmedia:candidate()) ->
+    ok | {error, term()}.
+
+candidate(Id, Candidate) ->
+    candidate(Id, caller, Candidate).
+
+
+%% @doc Sends an ICE candidate to Janus, maybe as callee for a videocall
+-spec candidate(pid(), caller|callee, nkmedia:candidate()) ->
+    ok | {error, term()}.
+
+candidate(Id, Role, Candidate) ->
+    do_cast(Id, {candidate, Role, Candidate}).
 
 
 %% @private
@@ -528,6 +547,21 @@ handle_cast({invite, {error, Error}}, #state{status=wait, wait=from_sip_invite}=
     gen_server:reply(From, {error, Error}),
     {stop, normal, State#state{from=undefined}};
 
+handle_cast({candidate, Role, Candidate}, State) ->
+    #state{janus_sess_id=SessId, handle_id=Handle1, handle_id2=Handle2, conn=Pid} =State,
+    Handle = case Role of
+        caller -> Handle1;
+        callee -> Handle2
+    end,
+    lager:warning("Candidate: ~p", [Role]),
+    case nkmedia_janus_client:candidate(Pid, SessId, Handle, Candidate) of
+        ok ->
+            noreply(State);
+        {error, Error} ->
+            ?LLOG(notice, "sending candidate to Janus error: ~p", [Error], State),
+            {stop, normal, State}
+    end;
+
 handle_cast(stop, State) ->
     ?LLOG(info, "user stop", [], State),
     {stop, normal, State};
@@ -614,7 +648,7 @@ terminate(Reason, #state{from=From, status=Status}=State) ->
 do_echo(#{sdp:=SDP}, #state{opts=Opts}=State) ->
     {ok, Handle} = attach(echotest, State),
     Body = get_body(Opts),
-    Jsep = #{sdp=>SDP, type=>offer, trickle=>true},
+    Jsep = #{sdp=>SDP, type=>offer, trickle=>?DO_TRICKLE},
     case message(Handle, Body, Jsep, State) of
         {ok, #{<<"result">>:=<<"ok">>}, #{<<"sdp">>:=SDP2}} ->
             State2 = State#state{handle_id=Handle},
@@ -675,7 +709,7 @@ do_play(File, State) ->
 %% @private Caller answers
 do_play_answer(#{sdp:=SDP}, #state{handle_id=Handle} = State) ->
     Body = #{request=>start},
-    Jsep = #{sdp=>SDP, type=>answer, trickle=>false},
+    Jsep = #{sdp=>SDP, type=>answer, trickle=>?DO_TRICKLE},
     case message(Handle, Body, Jsep, State) of
         {ok, #{<<"result">>:=#{<<"status">>:=<<"playing">>}}, _} ->
             reply(ok, status(play, State));
@@ -723,7 +757,7 @@ do_videocall_2(SDP, State) ->
 do_videocall_3(SDP, State) ->
     #state{handle_id = Handle, handle_id2 = Handle2} = State,
     Body = #{request=>call, username=>nklib_util:to_binary(Handle2)},
-    Jsep = #{sdp=>SDP, type=>offer, trickle=>false},
+    Jsep = #{sdp=>SDP, type=>offer, trickle=>?DO_TRICKLE},
     case message(Handle, Body, Jsep, State) of
         {ok, #{<<"result">>:=#{<<"event">>:=<<"calling">>}}, _} ->
             noreply(wait(videocall_offer, State));
@@ -737,7 +771,7 @@ do_videocall_3(SDP, State) ->
 do_videocall_answer(#{sdp:=SDP}, From, State) ->
     #state{opts=Opts, handle_id2=Handle2} = State,
     Body = #{request=>accept},
-    Jsep = #{sdp=>SDP, type=>answer, trickle=>false},
+    Jsep = #{sdp=>SDP, type=>answer, trickle=>?DO_TRICKLE},
     case message(Handle2, Body, Jsep, State) of
         {ok, #{<<"result">>:=#{<<"event">>:=<<"accepted">>}}, _} ->
             Set1 = get_body(append_file(Opts, <<"b">>)),
@@ -873,7 +907,7 @@ do_publish_2(SDP_A, State) ->
         opts = Opts
     } = State,
     Body = get_body(Opts),
-    Jsep = #{sdp=>SDP_A, type=>offer, trickle=>false},
+    Jsep = #{sdp=>SDP_A, type=>offer, trickle=>?DO_TRICKLE},
     case message(Handle, Body#{request=>configure}, Jsep, State) of
         {ok, #{<<"configured">>:=<<"ok">>}, #{<<"sdp">>:=SDP_B}} ->
             User = maps:get(user, Opts, <<>>),
@@ -962,7 +996,7 @@ do_listen(Listen, #state{room=Room, nkmedia_id=SessId, opts=Opts}=State) ->
 do_listen_answer(#{sdp:=SDP}, State) ->
     #state{handle_id=Handle, room=Room} = State,
     Body = #{request=>start, room=>Room},
-    Jsep = #{sdp=>SDP, type=>answer, trickle=>false},
+    Jsep = #{sdp=>SDP, type=>answer, trickle=>?DO_TRICKLE},
     case message(Handle, Body, Jsep, State) of
         {ok, #{<<"started">>:=<<"ok">>}, _} ->
             reply(ok, status(listen, State));
@@ -1056,7 +1090,7 @@ do_from_sip(#state{sip_contact=Contact, offer=Offer}=State) ->
 do_from_sip_answer(#{sdp:=SDP}, From, State) ->
     #state{handle_id=Handle} = State,
     Body = #{request=>accept},
-    Jsep = #{sdp=>SDP, type=>answer, trickle=>false},
+    Jsep = #{sdp=>SDP, type=>answer, trickle=>?DO_TRICKLE},
     case message(Handle, Body, Jsep, State) of
         {ok, #{<<"result">>:=#{<<"event">>:=<<"accepted">>}}, _} ->
             noreply(wait(from_sip_invite, State#state{from=From}));
@@ -1095,7 +1129,7 @@ do_to_sip(#state{janus_sess_id=Id, handle_id=Handle, offer=#{sdp:=SDP}}=State) -
         request => call,
         uri => <<"sip:nkmedia_janus_op-", BinId/binary, "@nkmedia">>
     },
-    Jsep = #{sdp=>SDP2, type=>offer, trickle=>false},
+    Jsep = #{sdp=>SDP2, type=>offer, trickle=>?DO_TRICKLE},
     case message(Handle, Body, Jsep, State) of
         {ok, #{<<"result">>:=#{<<"event">>:=<<"calling">>}}, _} ->
             State2 = State#state{offer=undefined},

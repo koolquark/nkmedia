@@ -34,12 +34,14 @@
     lager:Type("NkMEDIA Janus Proto (~s) "++Txt, [State#state.user | Args])).
 
 -define(PRINT(Txt, Args, State), 
-        print(Txt, Args, State),    % Uncomment this for detailed logs
+        % print(Txt, Args, State),    % Uncomment this for detailed logs
         ok).
 
 
 -define(OP_TIME, 15000).            % Maximum operation time
 -define(CALL_TIMEOUT, 30000).       % 
+
+-define(DO_TRICKLE, true).
 
 -include("../../include/nkmedia.hrl").
 
@@ -54,6 +56,7 @@
         sess_id => binary(),
         user => binary(),
         call_id => binary(),        % Last one registered
+        role => caller | callee,
         link => nklib:link()        % Last one registered
 	}.
 
@@ -308,9 +311,9 @@ send_req({invite, CallId, Offer, Link}, From, NkPort, State) ->
         event => incomingcall, 
         username => unknown
     },
-    Jsep = #{sdp=>SDP, type=>offer, trickle=>false},
+    Jsep = #{sdp=>SDP, type=>offer, trickle=>?DO_TRICKLE},
     Req = make_videocall_req(Result, Jsep, State),
-    State2 = links_add(CallId, Link, State),
+    State2 = links_add(CallId, Link, callee, State),
     % Client will send us accept
     send(Req, NkPort, State2#state{call_id=CallId});
 
@@ -326,7 +329,7 @@ send_req({answer, CallId, #{sdp:=SDP}}, From, NkPort, State) ->
         event => accepted, 
         username => unknown
     },
-    Jsep = #{sdp=>SDP, type=>answer, trickle=>true},
+    Jsep = #{sdp=>SDP, type=>answer, trickle=>?DO_TRICKLE},
     Req = make_videocall_req(Result, Jsep, State),
     nklib_util:reply(From, ok),
     send(Req, NkPort, State);
@@ -488,7 +491,7 @@ process_client_msg(call, Body, Msg, NkPort, #state{srv_id=SrvId}=State) ->
             Link = undefined,
             hangup(self(), CallId, Reason)
     end,
-    State3 = links_add(CallId, Link, State2#state{call_id=CallId}),
+    State3 = links_add(CallId, Link, caller, State2#state{call_id=CallId}),
     Resp = make_videocall_resp(#{event=>calling}, Msg, State3),
     send(Resp, NkPort, State3);
 
@@ -558,7 +561,7 @@ process_client_msg(play, Body, Msg, NkPort, State) ->
             case erlang:phash2(CallId) of
                 Id ->
                     ?LLOG(info, "received PLAY (~s)", [CallId], State),
-                    State2 = links_add(CallId, {play, Pid}, State),
+                    State2 = links_add(CallId, {play, Pid}, caller, State),
                     Data = #{
                         recordplay => event,
                         result => #{id=>Id, status=>preparing}
@@ -730,8 +733,8 @@ handle(Fun, Args, State) ->
 
 
 %% @private
-links_add(CallId, Link, #state{links=Links, janus=Janus}=State) ->
-    Janus2 = Janus#{call_id=>CallId, link=>Link},
+links_add(CallId, Link, Role, #state{links=Links, janus=Janus}=State) ->
+    Janus2 = Janus#{call_id=>CallId, link=>Link, role=>Role},
     Pid = nklib_links:get_pid(Link),
     State#state{links=nklib_links:add(CallId, Link, Pid, Links), janus=Janus2}.
 

@@ -28,7 +28,7 @@
 		 nkmedia_session_event/3, nkmedia_session_reg_event/4,
 		 nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2, 
 		 nkmedia_session_handle_info/2]).
--export([nkmedia_session_start/2, nkmedia_session_answer/3, 
+-export([nkmedia_session_start/2, nkmedia_session_answer/3, nkmedia_session_candidate/3,
 	     nkmedia_session_update/4, nkmedia_session_stop/2]).
 -export([nkmedia_call_init/2, nkmedia_call_terminate/2, 
 		 nkmedia_call_resolve/3, nkmedia_call_invite/5, nkmedia_call_cancel/3, 
@@ -167,6 +167,14 @@ nkmedia_session_start(_Type, Session) ->
 
 nkmedia_session_answer(Type, Answer, Session) ->
 	{ok, #{}, #{answer=>Answer}, Session}.
+
+
+%% @private
+-spec nkmedia_session_candidate(caller|callee, nkmedia:candidate(), session()) ->
+	ok | {error, term(), session()} | continue().
+
+nkmedia_session_candidate(_Role, _Candidate, Session) ->
+	{error, not_implemented, Session}.
 
 
 %% @private
