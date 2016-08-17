@@ -296,21 +296,26 @@ do_echo(#{sdp:=SDP}, State) ->
 
 %% @private
 do_event({candidate, ObjId, #candidate{last=true}}, #state{endpoint=ObjId}=State) ->
+    %% The event OnIceGatheringDone has been fired
     #state{sdp=SDP, candidates=Candidates, from=From} = State,
     SDP2 = nksip_sdp:unparse(nksip_sdp:add_candidates(SDP, Candidates)),
-    io:format("LINES: ~s\n", [SDP2]),
     gen_server:reply(From, {ok, #{sdp=>SDP2}}),
+
+    % % Instead of this, we can avoid all the ice collection (not sending the
+    % % subscription to OnIceCandidate) and when it is done and this function
+    % % us called, do the following (but this does not work for the Janus client)
+    % SDP2 = invoke(ObjId, getLocalSessionDescriptor, #{}, State),
+    % gen_server:reply(From, {ok, #{sdp=>SDP2}}),
     noreply(State);
 
 do_event({candidate, ObjId, Candidate}, #state{endpoint=ObjId}=State) ->
+    %% The event OnIceCandidate has been fired
     #candidate{m_id=MId, m_index=MIndex, a_line=ALine} = Candidate,
     #state{candidates=Candidates1} = State,
     CandLines1 = maps:get({MId, MIndex}, Candidates1, []),
     CandLines2 = CandLines1 ++ [ALine],
     Candidates2 = maps:put({MId, MIndex}, CandLines2, Candidates1),
-    All = maps:get(all, Candidates2, []),
-    Candidates3 = maps:put(all, [{MId, MIndex, ALine}|All], Candidates2),
-    noreply(State#state{candidates=Candidates3});
+    noreply(State#state{candidates=Candidates2});
 
 do_event({candidate, _EndPoint, _App, _Index, _Candidate}, State) ->
     ?LLOG(warning, "ignoring Kurento candidate", [], State),

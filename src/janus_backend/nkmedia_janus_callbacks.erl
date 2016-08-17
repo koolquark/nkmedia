@@ -67,7 +67,7 @@ plugin_syntax() ->
 
 plugin_config(Config, _Service) ->
     Cache = case Config of
-        #{janus_docker_image:=FsConfig} -> FsConfig;
+        #{janus_docker_image:=JanusConfig} -> JanusConfig;
         _ -> nkmedia_janus_build:defaults(#{})
     end,
     {ok, Config, Cache}.
@@ -105,8 +105,8 @@ plugin_stop(Config, #{name:=Name}) ->
 
 nkmedia_janus_get_mediaserver(SrvId) ->
     case nkmedia_janus_engine:get_all(SrvId) of
-        [{FsId, _}|_] ->
-            {ok, FsId};
+        [{JanusId, _}|_] ->
+            {ok, JanusId};
         [] ->
             {error, no_mediaserver}
     end.
@@ -281,7 +281,7 @@ nkmedia_room_init(Id, Room) ->
 nkmedia_room_terminate(Reason, Room) ->
     case state(Room) of
         error ->
-            continue;
+            {ok, Room};
         State ->
             {ok, State2} = nkmedia_janus_room:terminate(Reason, Room, State),
             {ok, update_state(State2, Room)}

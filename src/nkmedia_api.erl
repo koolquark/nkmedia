@@ -87,6 +87,7 @@ cmd(<<"session">>, <<"set_answer">>, #api_req{data=Data}, State) ->
 			{error, Error, State}
 	end;
 
+%% Not tested!
 cmd(<<"session">>, <<"set_candidate">>, #api_req{data=Data}, State) ->
 	#{
 		session_id := SessId, 
@@ -103,6 +104,7 @@ cmd(<<"session">>, <<"set_candidate">>, #api_req{data=Data}, State) ->
 			{error, Error, State}
 	end;
 
+%% Not tested!
 cmd(<<"session">>, <<"set_candidate_end">>, #api_req{data=Data}, State) ->
 	#{session_id := SessId, role := Role} = Data,
 	Candidate = #candidate{last=true},

@@ -364,6 +364,10 @@ send_call(<<"fe">>, Base) ->
     Config = Base#{backend => nkmedia_fs},
     start_session(echo, Config);
 
+send_call(<<"ke">>, Base) ->
+    Config = Base#{backend => nkmedia_kms},
+    start_session(echo, Config);
+
 send_call(<<"m1">>, Base) ->
     Config = Base#{room_id=>"mcu1"},
     start_session(mcu, Config);
