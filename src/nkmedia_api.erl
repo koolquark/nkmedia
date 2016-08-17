@@ -87,6 +87,32 @@ cmd(<<"session">>, <<"set_answer">>, #api_req{data=Data}, State) ->
 			{error, Error, State}
 	end;
 
+cmd(<<"session">>, <<"set_candidate">>, #api_req{data=Data}, State) ->
+	#{
+		session_id := SessId, 
+		role := Role, 
+		sdpMid := Id, 
+		sdpLineIndex := Index, 
+		candidate := ALine
+	} = Data,
+	Candidate = #candidate{m_id=Id, m_index=Index, a_line=ALine},
+	case nkmedia_session:candidate(SessId, Role, Candidate) of
+		ok ->
+			{ok, #{}, State};
+		{error, Error} ->
+			{error, Error, State}
+	end;
+
+cmd(<<"session">>, <<"set_candidate_end">>, #api_req{data=Data}, State) ->
+	#{session_id := SessId, role := Role} = Data,
+	Candidate = #candidate{last=true},
+	case nkmedia_session:candidate(SessId, Role, Candidate) of
+		ok ->
+			{ok, #{}, State};
+		{error, Error} ->
+			{error, Error, State}
+	end;
+
 cmd(<<"session">>, <<"update">>, #api_req{data=Data}, State) ->
 	#{session_id:=SessId, update_type:=Type} = Data,
 	case nkmedia_session:update(SessId, Type, Data) of

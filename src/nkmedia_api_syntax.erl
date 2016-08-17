@@ -69,6 +69,29 @@ syntax(<<"session">>, <<"set_answer">>, Syntax, Defaults, Mandatory) ->
 		[session_id, answer|Mandatory]
 	};
 
+syntax(<<"session">>, <<"set_candidate">>, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{
+			session_id => binary,
+			role => {enum, [caller, callee]},
+			sdpMid => binary,
+			sdpMLineIndex => integer,
+			candidate => binary
+		},
+		Defaults#{role=>caller},
+		[session_id, sdpMid, sdpMLineIndex, candidate|Mandatory]
+	};
+
+syntax(<<"session">>, <<"set_candidate_end">>, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{
+			session_id => binary,
+			role => {enum, [caller, callee]}
+		},
+		Defaults#{role=>caller},
+		[session_id|Mandatory]
+	};
+
 syntax(<<"session">>, <<"update">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
