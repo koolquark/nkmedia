@@ -30,9 +30,11 @@
 
 
 %% Last is 6.5.0.20160530172436.trusty
+%% r02 uses last 14.04 with correct libssl1.0.2
+
 -define(KMS_COMP, <<"netcomposer">>).
 -define(KMS_VSN, <<"6.5.0">>).
--define(KMS_REL, <<"r01">>).
+-define(KMS_REL, <<"r02">>).
 
 
 
@@ -146,6 +148,7 @@ RUN apt-get update && apt-get install -y wget vim nano telnet && \\
     wget -O - http://ubuntu.kurento.org/kurento.gpg.key | apt-key add - && \\
     apt-get update && \\
     apt-get -y install kurento-media-server-6.0 && \\
+    apt-get -y upgrade && \\
     apt-get clean && rm -rf /var/lib/apt/lists/*
 ">>.
 

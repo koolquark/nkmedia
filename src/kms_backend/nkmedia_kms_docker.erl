@@ -55,12 +55,16 @@ start(Service) ->
             nklib_util:to_binary(SrvId), "_",
             nklib_util:to_binary(BasePort)
         ]),
+        {_, [{StunIp, StunPort}|_]} = nkpacket_stun:get_stun_servers(),
+        lager:error("Stun IP is ~p", [StunIp]),
         _LogDir = <<(nkmedia_app:get(log_dir))/binary, $/, Name/binary>>,
         _RecDir = filename:join(nkmedia_app:get(record_dir), <<"tmp">>),
         Env = [
             {"NK_KMS_IP", KmsIp},                
             {"NK_BASE", nklib_util:to_binary(BasePort)},
             {"NK_SRV_ID", nklib_util:to_binary(SrvId)},
+            {"NK_STUN_IP", nklib_util:to_host(StunIp)},
+            {"NK_STUN_PORT", StunPort},
             {"GST_DEBUG", "Kurento*:5"}
 
         ],

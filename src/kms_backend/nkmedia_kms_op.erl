@@ -140,6 +140,7 @@ candidate(Pid, #candidate{}=Candidate) ->
     opts :: map(),
     sdp :: binary(),
     endpoint :: binary() | undefined,
+    start :: nklib_util:l_timestamp(),
     candidates :: map(),
     timer :: reference()
 }).
@@ -282,7 +283,12 @@ do_echo(#{sdp:=SDP}, State) ->
         io:format("SDP1\n~s\n\n", [SDP]),
         io:format("SDP2\n~s\n\n", [SDP2]),
         % Store endpoint and wait for candidates
-        State2 = State#state{endpoint=EndPoint, candidates=#{}, sdp=SDP2},
+        State2 = State#state{
+            endpoint = EndPoint, 
+            candidates = #{}, 
+            sdp = SDP2,
+            start = nklib_util:l_timestamp()
+        },
         noreply(wait(gather_candidates, State2))
     catch
         throw:Throw -> reply_stop(Throw, State)
@@ -297,7 +303,9 @@ do_echo(#{sdp:=SDP}, State) ->
 %% @private
 do_event({candidate, ObjId, #candidate{last=true}}, #state{endpoint=ObjId}=State) ->
     %% The event OnIceGatheringDone has been fired
-    #state{sdp=SDP, candidates=Candidates, from=From} = State,
+    #state{sdp=SDP, candidates=Candidates, from=From, start=Start} = State,
+    Time = (nklib_util:l_timestamp() - Start) div 1000,
+    ?LLOG(notice, "end capturing Kurento candidates (~p msecs)", [Time], State),
     SDP2 = nksip_sdp:unparse(nksip_sdp:add_candidates(SDP, Candidates)),
     gen_server:reply(From, {ok, #{sdp=>SDP2}}),
 
@@ -306,7 +314,7 @@ do_event({candidate, ObjId, #candidate{last=true}}, #state{endpoint=ObjId}=State
     % % us called, do the following (but this does not work for the Janus client)
     % SDP2 = invoke(ObjId, getLocalSessionDescriptor, #{}, State),
     % gen_server:reply(From, {ok, #{sdp=>SDP2}}),
-    noreply(State);
+    noreply(status(echo, State));
 
 do_event({candidate, ObjId, Candidate}, #state{endpoint=ObjId}=State) ->
     %% The event OnIceCandidate has been fired

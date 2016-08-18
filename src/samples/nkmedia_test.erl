@@ -98,8 +98,7 @@
 
 
 start() ->
-    CertBase = "/etc/letsencrypt/live/casa.carlosj.net/",
-    Spec = #{
+    Spec1 = #{
         callback => ?MODULE,
         web_server => "https:all:8081",
         web_server_path => "./www",
@@ -113,13 +112,21 @@ start() ->
         kurento_proxy => "kms:all:8888",
         nksip_trace => {console, all},
         sip_listen => "sip:all:9012",
-        log_level => debug,
-
-        tls_certfile => CertBase ++ "cert.pem",
-        tls_keyfile => CertBase ++ "privkey.pem",
-        tls_cacertfile => CertBase ++ "fullchain.pem"
+        log_level => debug
     },
-    nkservice:start(test, Spec).
+    % export NKMEDIA_CERTS="/etc/letsencrypt/live/casa.carlosj.net"
+    Spec2 = case os:getenv("NKMEDIA_CERTS") of
+        false ->
+            Spec1;
+        Dir ->
+            Spec1#{
+                tls_certfile => filename:join(Dir, "cert.pem"),
+                tls_keyfile => filename:join(Dir, "privkey.pem"),
+                tls_cacertfile => filename:join(Dir, "fullchain.pem")
+            }
+    end,
+    lager:error("SPEC: ~p", [Spec2]),
+    nkservice:start(test, Spec2).
 
 
 stop() ->
