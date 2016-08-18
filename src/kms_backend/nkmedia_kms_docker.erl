@@ -47,7 +47,7 @@ start(Service) ->
             not_found -> throw(unknown_service)
         end,
         Config = nkservice_srv:get_item(SrvId, config_nkmedia_kms),
-        BasePort = 8888, % crypto:rand_uniform(32768, 65535),
+        BasePort = crypto:rand_uniform(32768, 65535),
         Image = nkmedia_kms_build:run_name(Config),
         KmsIp = nklib_util:to_host(nkmedia_app:get(docker_ip)),
         Name = list_to_binary([
@@ -56,7 +56,6 @@ start(Service) ->
             nklib_util:to_binary(BasePort)
         ]),
         {_, [{StunIp, StunPort}|_]} = nkpacket_stun:get_stun_servers(),
-        lager:error("Stun IP is ~p", [StunIp]),
         _LogDir = <<(nkmedia_app:get(log_dir))/binary, $/, Name/binary>>,
         _RecDir = filename:join(nkmedia_app:get(record_dir), <<"tmp">>),
         Env = [
@@ -85,6 +84,7 @@ start(Service) ->
             {error, Error1} -> throw(Error1)
         end,
         nkdocker:rm(DockerPid, Name),
+                lager:error("START: ~p, ~p", [Image, DockerOpts]),
         case nkdocker:create(DockerPid, Image, DockerOpts) of
             {ok, _} -> ok;
             {error, Error2} -> throw(Error2)
@@ -92,8 +92,10 @@ start(Service) ->
         lager:info("NkMEDIA KMS Docker: starting instance ~s", [Name]),
         case nkdocker:start(DockerPid, Name) of
             ok ->
+                lager:error("STARTED"),
                 {ok, Name};
             {error, Error3} ->
+                lager:error("NOT STARTED"),
                 {error, Error3}
         end
     catch
@@ -131,7 +133,7 @@ stop_all() ->
         {ok, DockerPid} ->
             {ok, List} = nkdocker:ps(DockerPid),
             lists:foreach(
-                fun(#{<<"Names">>:=[<<"/", Name/binary>>]}) ->
+                fun(#{<<"Names">>:=[<<"/", Name/binary>>|_]}) ->
                     case Name of
                         <<"nk_kms_", _/binary>> ->
                             lager:info("Stopping ~s", [Name]),
@@ -213,13 +215,14 @@ notify(_MonId, stats, Name, Stats) ->
 %% ===================================================================
 
 %% @private
-connect_kms(MonId, #{name:=Name}=Config) ->
+connect_kms(_MonId, #{name:=Name}=Config) ->
     spawn(
         fun() -> 
             % timer:sleep(2000),
             case nkmedia_kms_engine:connect(Config) of
                 {ok, _Pid} -> 
-                    ok = nkdocker_monitor:start_stats(MonId, Name);
+                    % ok = nkdocker_monitor:start_stats(MonId, Name);
+                    ok;
                 {error, {already_started, _Pid}} ->
                     ok;
                 {error, Error} -> 

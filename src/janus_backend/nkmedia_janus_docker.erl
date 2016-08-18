@@ -54,7 +54,7 @@ start(Service) ->
         Pass = nklib_util:luid(),
         Image = nkmedia_janus_build:run_name(Config),
         JanusIp  = nklib_util:to_host(nkmedia_app:get(docker_ip)),
-            Name = list_to_binary([
+        Name = list_to_binary([
             "nk_janus_", 
             nklib_util:to_binary(SrvId), "_",
             nklib_util:to_binary(BasePort)

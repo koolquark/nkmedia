@@ -56,8 +56,7 @@
 
 
 start() ->
-    _CertDir = code:priv_dir(nkpacket),
-    Spec = #{
+    Spec1 = #{
         callback => ?MODULE,
         plugins => [nkmedia_janus, nkmedia_fs, nkmedia_kms],
         web_server => "https:all:8081",
@@ -74,7 +73,18 @@ start() ->
         log_level => debug,
         api_gelf_server => "c1.netc.io"
     },
-    nkservice:start(test, Spec).
+    % export NKMEDIA_CERTS="/etc/letsencrypt/live/casa.carlosj.net"
+    Spec2 = case os:getenv("NKMEDIA_CERTS") of
+        false ->
+            Spec1;
+        Dir ->
+            Spec1#{
+                tls_certfile => filename:join(Dir, "cert.pem"),
+                tls_keyfile => filename:join(Dir, "privkey.pem"),
+                tls_cacertfile => filename:join(Dir, "fullchain.pem")
+            }
+    end,
+    nkservice:start(test, Spec2).
 
 
 stop() ->
@@ -400,6 +410,13 @@ send_call(<<"fe">>, WsPid, Base) ->
     Config = Base#{
         type => echo,
         backend => nkmedia_fs
+    },
+    start_session(WsPid, Config);
+
+send_call(<<"ke">>, WsPid, Base) ->
+    Config = Base#{
+        type => echo,
+        backend => nkmedia_kms
     },
     start_session(WsPid, Config);
 

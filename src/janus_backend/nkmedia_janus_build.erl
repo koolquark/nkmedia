@@ -82,6 +82,7 @@ build_run() ->
 %% @doc Builds run image (netcomposer/nk_janus:v1.6.5-r01)
 %% Environment variables:
 build_run(Config) ->
+    remove_run(Config),
     Name = run_name(Config),
     Tar = nkdocker_util:make_tar([
         {"Dockerfile", run_dockerfile(Config)},

@@ -125,7 +125,6 @@ start() ->
                 tls_cacertfile => filename:join(Dir, "fullchain.pem")
             }
     end,
-    lager:error("SPEC: ~p", [Spec2]),
     nkservice:start(test, Spec2).
 
 

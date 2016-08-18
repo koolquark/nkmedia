@@ -49,7 +49,7 @@
 -define(OP_TIMEOUT, 4*60*60).   
 -define(KEEPALIVE, 20).
 
--define(DO_TRICKLE, true).
+-define(DO_TRICKLE, false).     % With true, Verto clients don't work
 
 
 %% ===================================================================

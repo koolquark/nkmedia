@@ -24,7 +24,7 @@
 -behaviour(gen_server).
 
 -export([start/2, stop/1, echo/3]).
--export([get_all/0, stop_all/0, kms_event/2, candidate/2]).
+-export([get_all/0, stop_all/0, kms_event/2, candidate/3]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
 
@@ -38,6 +38,8 @@
 
 -define(WAIT_TIMEOUT, 600).      % Secs
 -define(OP_TIMEOUT, 4*60*60).   
+
+-define(MAX_ICE_TIME, 100).
 
 
 %% ===================================================================
@@ -93,7 +95,7 @@ stop_all() ->
 
 echo(Id, Offer, Opts) ->
     OfferOpts = maps:with([use_audio, use_video, use_data], Offer),
-    do_call(Id, {echo, Offer, maps:merge(OfferOpts, Opts)}).
+    do_call(Id, {echo, Offer, maps:merge(OfferOpts, Opts#{ice_wait_all=>false})}).
 
 
 %% @private
@@ -115,7 +117,7 @@ kms_event(Pid, Event) ->
 
 
 %% @private
-candidate(Pid, #candidate{}=Candidate) ->
+candidate(Pid, _Type, #candidate{}=Candidate) ->
     do_cast(Pid, {candidate, Candidate}).
 
 
@@ -140,8 +142,8 @@ candidate(Pid, #candidate{}=Candidate) ->
     opts :: map(),
     sdp :: binary(),
     endpoint :: binary() | undefined,
-    start :: nklib_util:l_timestamp(),
-    candidates :: map(),
+    ice_start :: nklib_util:l_timestamp(),
+    candidates :: map() | undefined,
     timer :: reference()
 }).
 
@@ -230,6 +232,15 @@ handle_info({timeout, _, status_timeout}, State) ->
     ?LLOG(info, "status timeout", [], State),
     {stop, normal, State};
 
+handle_info({timeout, _, ice_timeout}, State) ->
+    ?LLOG(info, "ice timeout", [], State),
+    case end_ice(State) of
+        {ok, State2} ->
+            noreply(status(echo, State2));
+        ignore ->
+            noreply(State)
+    end;
+
 handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{conn_mon=Ref}=State) ->
     ?LLOG(notice, "client monitor stop: ~p", [Reason], State),
     {stop, normal, State};
@@ -272,22 +283,28 @@ terminate(Reason, #state{from=From}=State) ->
 %% ===================================================================
 
 %% @doc
-do_echo(#{sdp:=SDP}, State) ->
+do_echo(#{sdp:=SDP}, #state{opts=Opts}=State) ->
     try
         EndPoint = create_webrtc(State),
         invoke(EndPoint, connect, #{sink=>EndPoint}, State),
         SDP2 = invoke(EndPoint, processOffer, #{offer=>SDP}, State),
-        subscribe(EndPoint, 'OnIceCandidate', State),
-        subscribe(EndPoint, 'OnIceGatheringDone', State),
-        invoke(EndPoint, gatherCandidates, #{}, State),
         io:format("SDP1\n~s\n\n", [SDP]),
         io:format("SDP2\n~s\n\n", [SDP2]),
         % Store endpoint and wait for candidates
+        case maps:get(ice_wait_all, Opts, false) of
+            true ->
+                ok;
+            false ->
+                subscribe(EndPoint, 'OnIceCandidate', State),
+                erlang:start_timer(?MAX_ICE_TIME, self(), ice_timeout)
+        end,
+        subscribe(EndPoint, 'OnIceGatheringDone', State),
+        invoke(EndPoint, gatherCandidates, #{}, State),
         State2 = State#state{
             endpoint = EndPoint, 
             candidates = #{}, 
             sdp = SDP2,
-            start = nklib_util:l_timestamp()
+            ice_start = nklib_util:l_timestamp()
         },
         noreply(wait(gather_candidates, State2))
     catch
@@ -302,23 +319,17 @@ do_echo(#{sdp:=SDP}, State) ->
 
 %% @private
 do_event({candidate, ObjId, #candidate{last=true}}, #state{endpoint=ObjId}=State) ->
-    %% The event OnIceGatheringDone has been fired
-    #state{sdp=SDP, candidates=Candidates, from=From, start=Start} = State,
-    Time = (nklib_util:l_timestamp() - Start) div 1000,
-    ?LLOG(notice, "end capturing Kurento candidates (~p msecs)", [Time], State),
-    SDP2 = nksip_sdp:unparse(nksip_sdp:add_candidates(SDP, Candidates)),
-    gen_server:reply(From, {ok, #{sdp=>SDP2}}),
-
-    % % Instead of this, we can avoid all the ice collection (not sending the
-    % % subscription to OnIceCandidate) and when it is done and this function
-    % % us called, do the following (but this does not work for the Janus client)
-    % SDP2 = invoke(ObjId, getLocalSessionDescriptor, #{}, State),
-    % gen_server:reply(From, {ok, #{sdp=>SDP2}}),
-    noreply(status(echo, State));
+    case end_ice(State) of
+        {ok, State2} ->
+            noreply(status(echo, State2));
+        ignore ->
+            {noreply, State}
+    end;
 
 do_event({candidate, ObjId, Candidate}, #state{endpoint=ObjId}=State) ->
     %% The event OnIceCandidate has been fired
     #candidate{m_id=MId, m_index=MIndex, a_line=ALine} = Candidate,
+    lager:info("Candidate ~s: ~s", [MId, ALine]),
     #state{candidates=Candidates1} = State,
     CandLines1 = maps:get({MId, MIndex}, Candidates1, []),
     CandLines2 = CandLines1 ++ [ALine],
@@ -333,6 +344,28 @@ do_event(Event, State) ->
     ?LLOG(warning, "unrecognized event: ~p", [Event], State),
     noreply(State).
 
+
+%% @private
+end_ice(#state{candidates=Candidates}=State) when is_map(Candidates) ->
+    #state{endpoint=ObjId, sdp=SDP, ice_start=Start, opts=Opts, from=From} = State,
+    WaitAll = maps:get(ice_wait_all, Opts, false),
+    Time = (nklib_util:l_timestamp() - Start) div 1000,
+    ?LLOG(notice, "end capturing Kurento candidates (~p msecs, wait_all:~p)", 
+          [Time, WaitAll], State),
+    SDP2 = case WaitAll of
+        true ->
+            lager:error("KURENTO GENERATED"),
+            invoke(ObjId, getLocalSessionDescriptor, #{}, State);
+        false ->
+            lager:error("ADDING ~p CANDIDATES", [maps:size(Candidates)]),
+            nksip_sdp:unparse(nksip_sdp:add_candidates(SDP, Candidates))
+    end,
+    io:format("SDPbis\n~s\n", [SDP2]),
+    nklib_util:reply(From, {ok, #{sdp=>SDP2}}),
+    {ok, State#state{candidates=undefined}};
+
+end_ice(_State) ->
+    ignore.
 
 
 
@@ -451,3 +484,6 @@ do_cast(SessId, Msg) ->
         {ok, Pid} -> gen_server:cast(Pid, Msg);
         not_found -> {error, session_not_found}
     end.
+
+
+
