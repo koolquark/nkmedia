@@ -95,7 +95,11 @@ stop_all() ->
 
 echo(Id, Offer, Opts) ->
     OfferOpts = maps:with([use_audio, use_video, use_data], Offer),
-    do_call(Id, {echo, Offer, maps:merge(OfferOpts, Opts#{ice_wait_all=>false})}).
+    Opts2 = Opts#{
+        ice_wait_all => false,
+        ice_use_local => false
+    },
+    do_call(Id, {echo, Offer, maps:merge(OfferOpts, Opts2)}).
 
 
 %% @private
@@ -291,15 +295,15 @@ do_echo(#{sdp:=SDP}, #state{opts=Opts}=State) ->
         io:format("SDP1\n~s\n\n", [SDP]),
         io:format("SDP2\n~s\n\n", [SDP2]),
         % Store endpoint and wait for candidates
+        subscribe(EndPoint, 'OnIceCandidate', State),
+        subscribe(EndPoint, 'OnIceGatheringDone', State),
+        invoke(EndPoint, gatherCandidates, #{}, State),
         case maps:get(ice_wait_all, Opts, false) of
             true ->
                 ok;
             false ->
-                subscribe(EndPoint, 'OnIceCandidate', State),
                 erlang:start_timer(?MAX_ICE_TIME, self(), ice_timeout)
         end,
-        subscribe(EndPoint, 'OnIceGatheringDone', State),
-        invoke(EndPoint, gatherCandidates, #{}, State),
         State2 = State#state{
             endpoint = EndPoint, 
             candidates = #{}, 
@@ -329,12 +333,18 @@ do_event({candidate, ObjId, #candidate{last=true}}, #state{endpoint=ObjId}=State
 do_event({candidate, ObjId, Candidate}, #state{endpoint=ObjId}=State) ->
     %% The event OnIceCandidate has been fired
     #candidate{m_id=MId, m_index=MIndex, a_line=ALine} = Candidate,
-    lager:info("Candidate ~s: ~s", [MId, ALine]),
     #state{candidates=Candidates1} = State,
-    CandLines1 = maps:get({MId, MIndex}, Candidates1, []),
-    CandLines2 = CandLines1 ++ [ALine],
-    Candidates2 = maps:put({MId, MIndex}, CandLines2, Candidates1),
-    noreply(State#state{candidates=Candidates2});
+    case is_map(Candidates1) of
+        true ->
+            lager:info("Candidate ~s: ~s", [MId, ALine]),
+            CandLines1 = maps:get({MId, MIndex}, Candidates1, []),
+            CandLines2 = CandLines1 ++ [ALine],
+            Candidates2 = maps:put({MId, MIndex}, CandLines2, Candidates1),
+            noreply(State#state{candidates=Candidates2});
+        false ->
+            ?LLOG(notice, "ignoring LATE Kurento candidate", [], State),
+            noreply(State)
+    end;
 
 do_event({candidate, _EndPoint, _App, _Index, _Candidate}, State) ->
     ?LLOG(warning, "ignoring Kurento candidate", [], State),
@@ -349,15 +359,16 @@ do_event(Event, State) ->
 end_ice(#state{candidates=Candidates}=State) when is_map(Candidates) ->
     #state{endpoint=ObjId, sdp=SDP, ice_start=Start, opts=Opts, from=From} = State,
     WaitAll = maps:get(ice_wait_all, Opts, false),
+    UseLocal = maps:get(ice_use_local, Opts, false),
     Time = (nklib_util:l_timestamp() - Start) div 1000,
-    ?LLOG(notice, "end capturing Kurento candidates (~p msecs, wait_all:~p)", 
-          [Time, WaitAll], State),
-    SDP2 = case WaitAll of
+    ?LLOG(notice, "end capturing Kurento candidates "
+          "(~p msecs, wait_all:~p, use_local:~p)", 
+          [Time, WaitAll, UseLocal], State),
+    SDP2 = case UseLocal of
         true ->
-            lager:error("KURENTO GENERATED"),
             invoke(ObjId, getLocalSessionDescriptor, #{}, State);
         false ->
-            lager:error("ADDING ~p CANDIDATES", [maps:size(Candidates)]),
+            lager:error("ADDING ~p, ~p", [maps:size(Candidates), Candidates]),
             nksip_sdp:unparse(nksip_sdp:add_candidates(SDP, Candidates))
     end,
     io:format("SDPbis\n~s\n", [SDP2]),
