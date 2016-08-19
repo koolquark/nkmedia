@@ -151,7 +151,7 @@ plugin_deps() ->
         nkmedia_verto, nkmedia_fs, nkmedia_fs_verto_proxy,
         nkmedia_janus_proto, nkmedia_janus_proxy, nkmedia_janus,
         nkmedia_kms, nkmedia_kms_proxy,
-        api_gelf_server
+        nkservice_api_gelf
     ].
 
 
