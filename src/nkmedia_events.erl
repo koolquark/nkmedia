@@ -40,7 +40,7 @@
 
 send_event(SrvId, Class, Id, Type, Body)
         when Class==session; Class==call; Class==room ->
-    lager:warning("MEDIA EVENT (~s:~s:~s): ~p", [Class, Type, Id, Body]),
+    lager:info("MEDIA EVENT (~s:~s:~s): ~p", [Class, Type, Id, Body]),
     RegId = #reg_id{
         srv_id = SrvId,     
         class = <<"media">>, 

@@ -173,7 +173,7 @@ init({KmsId, MediaSessId, CallerPid}) ->
             },
             true = nklib_proc:reg({?MODULE, KmsSessId}),
             nklib_proc:put(?MODULE, {KmsSessId, MediaSessId}),
-            ?LLOG(notice, "started (~p)", [self()], State),
+            ?LLOG(info, "started (~p)", [self()], State),
             {ok, status(wait, State)};
         {error, Error} ->
             {stop, Error}
@@ -197,6 +197,7 @@ handle_call(_Msg, _From, State) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
 handle_cast({candidate, #candidate{last=true}}, State) ->
+    ?LLOG(notice, "sending last client candidate to Kurento", [], State),
     lager:notice("Last client candidate"),
     noreply(State);
 
@@ -208,7 +209,7 @@ handle_cast({candidate, Candidate}, #state{endpoint=ObjId}=State)
         sdpMLineIndex => MIndex,
         candidate => ALine
     },
-    lager:notice("Sending client candidate"),
+    ?LLOG(info, "sending client candidate to Kurento", [], State),
     invoke(ObjId, addIceCandidate, #{candidate=>Data}, State),
     noreply(State);
 
@@ -276,7 +277,7 @@ code_change(_OldVsn, State, _Extra) ->
     ok.
 
 terminate(Reason, #state{from=From}=State) ->
-    ?LLOG(notice, "process stop: ~p", [Reason], State),
+    ?LLOG(info, "process stop: ~p", [Reason], State),
     destroy(State),
     nklib_util:reply(From, {error, process_down}),
     ok.
@@ -323,6 +324,7 @@ do_echo(#{sdp:=SDP}, #state{opts=Opts}=State) ->
 
 %% @private
 do_event({candidate, ObjId, #candidate{last=true}}, #state{endpoint=ObjId}=State) ->
+    ?LLOG(notice, "last candidate received from Kurento", [], State),
     case end_ice(State) of
         {ok, State2} ->
             noreply(status(echo, State2));
@@ -366,9 +368,10 @@ end_ice(#state{candidates=Candidates}=State) when is_map(Candidates) ->
           [Time, WaitAll, UseLocal], State),
     SDP2 = case UseLocal of
         true ->
+            ?LLOG(notice, "getting local SDP from Kurento", [], State),
             invoke(ObjId, getLocalSessionDescriptor, #{}, State);
         false ->
-            lager:error("ADDING ~p, ~p", [maps:size(Candidates), Candidates]),
+            ?LLOG(notice, "add current candidates to SDP", [], State),
             nksip_sdp:unparse(nksip_sdp:add_candidates(SDP, Candidates))
     end,
     io:format("SDPbis\n~s\n", [SDP2]),
