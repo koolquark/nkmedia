@@ -71,7 +71,7 @@ start() ->
         nksip_trace => {console, all},
         sip_listen => "sip:all:9012",
         log_level => debug,
-        api_gelf_server => "c1.netc.io"
+        api_gelf_server => "c2.netc.io"
     },
     % export NKMEDIA_CERTS="/etc/letsencrypt/live/casa.carlosj.net"
     Spec2 = case os:getenv("NKMEDIA_CERTS") of

@@ -108,10 +108,11 @@ start() ->
         verto_proxy => "verto_proxy:all:8083",
         janus_listen => "janus:all:8989", 
         janus_proxy=> "janus_proxy:all:8990",
-        % kurento_proxy => "kms:all:8433",
-        kurento_proxy => "kms:all:8888",
+        kurento_proxy => "kmss:all:8433",
+        % kurento_proxy => "kms:all:8888",
         nksip_trace => {console, all},
         sip_listen => "sip:all:9012",
+        api_gelf_server => "c2.netc.io",
         log_level => debug
     },
     % export NKMEDIA_CERTS="/etc/letsencrypt/live/casa.carlosj.net"
@@ -149,7 +150,8 @@ plugin_deps() ->
         nkmedia_sip,  nksip_registrar, nksip_trace,
         nkmedia_verto, nkmedia_fs, nkmedia_fs_verto_proxy,
         nkmedia_janus_proto, nkmedia_janus_proxy, nkmedia_janus,
-        nkmedia_kms, nkmedia_kms_proxy
+        nkmedia_kms, nkmedia_kms_proxy,
+        api_gelf_server
     ].
 
 
