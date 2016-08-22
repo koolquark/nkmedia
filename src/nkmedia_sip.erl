@@ -54,7 +54,8 @@ start() ->
         class => nkmedia_sip,
         plugins => [nkmedia_sip, nksip, nksip_trace, nksip_uac_auto_auth],
         nksip_trace => {console, all},
-        sip_listen => <<"sip:all:", (nklib_util:to_binary(Port))/binary>>
+        sip_listen => <<"sip:all:", (nklib_util:to_binary(Port))/binary>>,
+        sip_dialog_timeout => 6*60*60  % 6 hours
     },
     {ok, bnulhwa} = nkservice:start(nkmedia_sip, Opts),
     case Dummy of
