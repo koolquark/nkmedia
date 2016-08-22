@@ -287,6 +287,11 @@ do_send(Msg, NkPort, State) ->
 
 %% @private
 % print_trans(_Class, _Trans) -> ok.
+print_trans(#trans{params=#{<<"value">>:=#{<<"type">>:=<<"OnIceCandidate">>}}}) ->
+    ok;
+
+print_trans(#trans{params=#{<<"operationParams">>:=#{<<"candidate">>:=_}}}) ->
+    ok;
 
 print_trans(#trans{dir=Dir, method=Req, params=Params, result=Result}) ->
     T1 = case Dir of

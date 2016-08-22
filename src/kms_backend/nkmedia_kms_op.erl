@@ -198,7 +198,6 @@ handle_call(_Msg, _From, State) ->
 
 handle_cast({candidate, #candidate{last=true}}, State) ->
     ?LLOG(notice, "sending last client candidate to Kurento", [], State),
-    lager:notice("Last client candidate"),
     noreply(State);
 
 handle_cast({candidate, Candidate}, #state{endpoint=ObjId}=State)
