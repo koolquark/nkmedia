@@ -83,8 +83,8 @@
         kms_id => nkmedia_kms_engine:id(),
         kms_client => pid(),
         endpoint => binary(),
-        source => binary(),
-        sinks => [binary()],
+        source => self|{SessId::nkmedia_session:id(), EP::binary()},
+        sinks => [self|{SessId::nkmedia_session:id(), EP::binary()}],
         record_pos => integer()
     }.
 
@@ -234,36 +234,40 @@ candidate(Candidate, Session, State) ->
     {error, term(), state()} | continue().
 
 update(park, #{}, _Type, _Session, State) ->
-    {ok, State2} = disconnect(State),
+    State2 = disconnect_all(State),
     {ok, #{}, #{}, State2};
 
 update(echo, #{}, _Type, _Session, State) ->
     {ok, State2} = echo(State),
     {ok, #{}, #{}, State2};
 
-update(connect, #{peer_id:=Peer}, _Type, Session, #{endpoint:=EP}=State) ->
-    case nkmedia_session:do_call(Peer, {nkmedia_kms, {connect, EP}}) of
-        {ok, PeerEP} ->
-            {ok, #{}, #{}, State#{source=>PeerEP}};
-        {error, Error} ->
-            {error, Error, State}
-    end;
-
-update(bridge, #{peer_id:=Peer}, Type, #{session_id:=Peer}=Session, State) ->
+update(connect, #{peer_id:=Peer}, Type, #{session_id:=Peer}=Session, State) ->
     update(echo, #{}, Type, Session, State);
 
-update(bridge, #{peer_id:=Peer}, _Type, Session, #{endpoint:=EP}=State) ->
-    case nkmedia_session:do_call(Peer, {nkmedia_kms, {bridge, EP}}) of
+update(connect, #{peer_id:=Peer}, _Type, Session, #{endpoint:=EP}=State) ->
+    #{session_id:=SessId} = Session,
+    case nkmedia_session:do_call(Peer, {nkmedia_kms, {connect, SessId, EP}}) of
         {ok, PeerEP} ->
-            case connect(PeerEP, State) of
-                {ok, State2} ->
-                    {ok, #{}, #{}, State2};
-                {error, Error, State2} ->
-                    {error, Error, State2}
-            end;
+            {ok, #{}, #{}, updated_source(Peer, PeerEP, State)};
         {error, Error} ->
             {error, Error, State}
     end;
+
+% update(bridge, #{peer_id:=Peer}, Type, #{session_id:=Peer}=Session, State) ->
+%     update(echo, #{}, Type, Session, State);
+
+% update(bridge, #{peer_id:=Peer}, _Type, Session, #{endpoint:=EP}=State) ->
+%     case nkmedia_session:do_call(Peer, {nkmedia_kms, {bridge, EP}}) of
+%         {ok, PeerEP} ->
+%             case connect(PeerEP, State) of
+%                 {ok, State2} ->
+%                     {ok, #{}, #{}, State2};
+%                 {error, Error, State2} ->
+%                     {error, Error, State2}
+%             end;
+%         {error, Error} ->
+%             {error, Error, State}
+%     end;
 
 update(get, _Opts, _Type, _Session, State) ->
     print_info(State),
@@ -283,8 +287,8 @@ stop(_Reason, _Session, State) ->
 
 
 %% @private
-nkmedia_session_handle_call({connect, PeerEP}, _From, _Session, State) ->
-    case connect(PeerEP, State) of
+nkmedia_session_handle_call({connect, Peer, PeerEP}, _From, _Session, State) ->
+    case connect(Peer, PeerEP, State) of
         {ok, #{endpoint:=EP}=State2} ->
             {reply, {ok, EP}, State2};
         {error, Error, State2} ->
@@ -292,15 +296,15 @@ nkmedia_session_handle_call({connect, PeerEP}, _From, _Session, State) ->
     end;
 
 nkmedia_session_handle_call(get_endpoint, _From, _Session, #{endpoint:=EP}=State) ->
-    {reply, {ok, EP}, State};
+    {reply, {ok, EP}, State}.
 
-nkmedia_session_handle_call({bridge, PeerEP}, _From, _Session, State) ->
-    case connect(PeerEP, State) of
-        {ok, #{endpoint:=EP}=State2} ->
-            {reply, {ok, EP}, State2};
-        {error, Error, State2} ->
-            {reply, {error, Error}, State2}
-    end.
+% nkmedia_session_handle_call({bridge, PeerEP}, _From, _Session, State) ->
+%     case connect(PeerEP, State) of
+%         {ok, #{endpoint:=EP}=State2} ->
+%             {reply, {ok, EP}, State2};
+%         {error, Error, State2} ->
+%             {reply, {error, Error}, State2}
+%     end.
  
 
 
@@ -311,6 +315,7 @@ nkmedia_session_handle_call({bridge, PeerEP}, _From, _Session, State) ->
 %% ===================================================================
 
 
+%% @private
 create_webrtc(SDP, #{session_id:=SessId}=Session, State) ->
     case get_mediaserver(Session, State) of
         {ok, #{kms_id:=KmsId}=State2} ->
@@ -329,6 +334,64 @@ create_webrtc(SDP, #{session_id:=SessId}=Session, State) ->
             {error, Error}
     end.
 
+
+%% @private
+echo(#{endpoint:=EP}=State) ->
+    case invoke(connect, #{sink=>EP}, State) of
+        ok ->
+            Sinks = maps:get(sinks, State, []),
+            {ok, State#{source=>self, sinks=>lists:usort([self|Sinks])}};
+        {error, Error, State2} ->
+            {error, Error, State2}
+    end.
+
+
+%% @private
+connect(Peer, PeerEP, State) ->
+    case invoke(connect, #{sink=>PeerEP}, State) of
+        ok -> 
+            Sinks = maps:get(sinks, State, []),
+            {ok, State#{sinks=>lists:usort([{Peer, PeerEP}|Sinks])}};
+        {error, Error} -> 
+            {error, Error, State}
+    end.
+
+
+%% @private
+disconnect(PeerEP, State) ->
+    case invoke(disconnect, #{sink=>PeerEP}, State) of
+        ok -> 
+            Sinks1 = maps:get(sinks, State, []),
+            Sinks2 = lists:keydelete(PeerEP, 2, Sinks1),
+            {ok, State#{sinks=>Sinks2}};
+        {error, Error} -> 
+            {error, Error, State}
+    end.
+
+
+%% @private
+disconnect_all(#{endpoint:=EP}=State) ->
+    case maps:get(source, State, undefined) of
+        self ->
+            invoke(disconnect, #{sink=>EP}, State);
+        {Peer, PeerEP} ->
+            nkmedia_session:do_call(Peer, {nkmedia, {disconnect, PeerEP}});
+        undefined ->
+            ok
+    end,
+    lists:foldl(
+        fun
+            (self, Acc) -> 
+                Acc;
+            ({_, PeerEP}, Acc) -> 
+                case disconnect(PeerEP, Acc) of
+                    {ok, Acc2} -> Acc2;
+                    {error, _, Acc2} -> Acc2
+                end
+        end,
+        State,
+        maps:get(sinks, State, [])),
+    State#{source=>undefined, sinks=>[]}.
 
 
 
@@ -352,48 +415,21 @@ invoke(ObjId, Op, Params, #{kms_client:=Pid}) ->
     end.
 
 
-%% @private
-connect(PeerEP, State) ->
-    case invoke(connect, #{sink=>PeerEP}, State) of
-        ok -> 
-            Sinks = maps:get(sinks, State, []),
-            {ok, State#{sinks=>[PeerEP|Sinks]}};
-        {error, Error} -> 
-            {error, Error, State}
-    end.
+%% @private Called when we now our source changed
+%% If we were connected to ourselves, that sink must be deleted
+updated_source(Peer, SourceEP, State) ->
+    Sinks1 = maps:get(sinks, State, []),
+    Sinks2 = Sinks1 -- [self],
+    State#{source=>{Peer, SourceEP}, sinks=>Sinks2}.
 
 
-%% @private
-disconnect(#{peer_ep:=PeerEP}=State) ->
-    lager:error("Disconnecting ~s", [PeerEP]),
-    case invoke(disconnect, #{sink=>PeerEP}, State) of
-        ok -> 
-            Sinks = maps:get(sinks, State, []),
-            {ok, State#{sinks=>Sinks--[PeerEP]}};
-        {error, Error} -> 
-            {error, Error, State}
-    end;
-
-disconnect(State) ->
-    {ok, State}.
-
-
-%% @private
-echo(#{endpoint:=EP}=State) ->
-    case connect(EP, State) of
-        {ok, State2} ->
-            {ok, State2#{source=>EP}};
-        {error, Error, State2} ->
-            {error, Error, State2}
-    end.
 
 
 %% @private
 print_info(#{endpoint:=EP}=State) ->
     io:format("\nEP: ~s\n", [get_id(EP)]),
-    io:format("\nMy source: ~s\n", [get_id(maps:get(source, State, <<>>))]),
-    io:format("My sinks: ~s\n\n", 
-              [nklib_util:bjoin([get_id(Id) || Id<-maps:get(sinks, State, [])])]),
+    io:format("\nMy source: ~p\n", [maps:get(source, State, undefined)]),
+    io:format("My sinks: ~p\n\n", [maps:get(sinks, State, [])]),
     io:format("Sources:\n"),
     {ok, Sources} = invoke(getSourceConnections, #{}, State),
     lists:foreach(
