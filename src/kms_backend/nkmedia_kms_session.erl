@@ -27,6 +27,7 @@
 
 -export([kms_event/3]).
 -export([init/3, terminate/3, start/3, answer/4, candidate/3, update/5, stop/3]).
+-export([nkmedia_session_handle_call/4]).
 
 -export_type([config/0, type/0, opts/0, update/0]).
 
@@ -81,6 +82,9 @@
     #{
         kms_id => nkmedia_kms_engine:id(),
         kms_client => pid(),
+        endpoint => binary(),
+        source => binary(),
+        sinks => [binary()],
         record_pos => integer()
     }.
 
@@ -156,133 +160,27 @@ terminate(_Reason, _Session, State) ->
     {ok, type(), map(), none|nkmedia:offer(), none|nkmedia:answer(), state()} |
     {error, term(), state()} | continue().
 
-start(echo, #{offer:=#{sdp:=SDP}}=Session, State) ->
+start(park, #{offer:=#{sdp:=SDP}}=Session, State) ->
     case create_webrtc(SDP, Session, State) of
-        {ok, Answer, #{endpoint:=EP}=State2} ->
-            null = invoke(EP, connect, #{sink=>EP}, State2),
+        {ok, Answer, State2} ->
             Reply = ExtOps = #{answer=>Answer},
             {ok, Reply, ExtOps, State2};
         {error, Error} ->
             {error, Error, State}
     end;
 
+start(echo, #{offer:=#{sdp:=SDP}}=Session, State) ->
+    case create_webrtc(SDP, Session, State) of
+        {ok, Answer, State2} ->
+            {ok, State3} = echo(State2),
+            Reply = ExtOps = #{answer=>Answer},
+            {ok, Reply, ExtOps, State3};
+        {error, Error} ->
+            {error, Error, State}
+    end;
+
 start(echo, _Session, State) ->
     {error, missing_offer, State};
-
-% start(proxy, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
-%     case get_kms_op(Session, State) of
-%         {ok, Pid, State2} ->
-%             OfferType = maps:get(sdp_type, Offer, webrtc),
-%             OutType = maps:get(proxy_type, Session, webrtc),
-%             Fun = case {OfferType, OutType} of
-%                 {webrtc, webrtc} -> videocall;
-%                 {webrtc, rtp} -> to_sip;
-%                 {rtp, webrtc} -> from_sip;
-%                 {rtp, rtp} -> error
-%             end,
-%             case Fun of
-%                 error ->
-%                     {error, invalid_parameters, State};
-%                 _ ->
-%                     {Opts, State3} = get_opts(Session, State2),
-%                     case nkmedia_kms_op:Fun(Pid, Offer, Opts) of
-%                         {ok, Offer2} ->
-%                             State4 = State3#{kms_op=>answer},
-%                             Offer3 = maps:merge(Offer, Offer2),
-%                             Reply = ExtOps = #{offer=>Offer3},
-%                             {ok, Reply, ExtOps, State4};
-%                         {error, Error} ->
-%                             {error, Error, State3}
-%                     end
-%             end;
-%         {error, Error, State2} ->
-%             {error, Error, State2}
-%     end;
-
-% start(proxy, _Session, State) ->
-%     {error, missing_offer, State};
-
-% start(publish, #{srv_id:=SrvId, offer:=#{sdp:=_}=Offer}=Session, State) ->
-%     try
-%         RoomId = case maps:find(room_id, Session) of
-%             {ok, RoomId0} -> 
-%                 nklib_util:to_binary(RoomId0);
-%             error -> 
-%                 RoomOpts1 = [
-%                     case maps:find(room_audio_codec, Session) of
-%                         {ok, AC} -> {audio_codec, AC};
-%                         error -> []
-%                     end,
-%                     case maps:find(room_video_codec, Session) of
-%                         {ok, VC} -> {video_codec, VC};
-%                         error -> []
-%                     end,
-%                     case maps:find(room_bitrate, Session) of
-%                         {ok, BR} -> {bitrate, BR};
-%                         error -> []
-%                     end
-%                 ],
-%                 RoomOpts2 = maps:from_list(lists:flatten(RoomOpts1)),
-%                 case nkmedia_room:start(SrvId, RoomOpts2) of
-%                     {ok, Room0, _} -> Room0;
-%                     {error, Error} -> throw(Error)
-%                 end
-%         end,
-%         State2 = case nkmedia_room:get_room(RoomId) of
-%             {ok, #{nkmedia_kms:=#{kms_id:=KmsId}}} ->
-%                 State#{kms_id=>KmsId};
-%             _ ->
-%                 lager:error("NOT FOUND: ~p", [RoomId]),
-%                 throw(room_not_found)
-%         end,
-%         case get_kms_op(Session, State2) of
-%             {ok, Pid, State3} ->
-%                 {Opts, State4} = get_opts(Session, State3),
-%                 case nkmedia_kms_op:publish(Pid, RoomId, Offer, Opts) of
-%                     {ok, #{sdp:=_}=Answer} ->
-%                         Reply = #{answer=>Answer, room_id=>RoomId},
-%                         ExtOps = #{answer=>Answer, type_ext=>#{room_id=>RoomId}},
-%                         {ok, Reply, ExtOps, State4};
-%                     {error, Error2} ->
-%                         {error, Error2, State4}
-%                 end;
-%             {error, Error3, State3} ->
-%                 {error, Error3, State3}
-%         end
-%     catch
-%         throw:Throw -> {error, Throw, State}
-%     end;
-
-% start(publish, _Session, State) ->
-%     {error, missing_offer, State};
-
-% start(listen, #{publisher_id:=Publisher}=Session, State) ->
-%     case nkmedia_session:do_call(Publisher, nkmedia_kms_get_room) of
-%         {ok, _SrvId, Room} ->
-%             case get_kms_op(Session, State) of
-%                 {ok, Pid, State2} ->
-%                     {Opts, State3} = get_opts(Session, State2),
-%                     case nkmedia_kms_op:listen(Pid, Room, Publisher, Opts) of
-%                         {ok, Offer} ->
-%                             State4 = State3#{kms_op=>answer},
-%                             Reply = #{offer=>Offer, room_id=>Room},
-%                             ExtOps = #{
-%                                 offer => Offer, 
-%                                 type_ext => #{room_id=>Room, publisher_id=>Publisher}
-%                             },
-%                             {ok, Reply, ExtOps, State4};
-%                         {error, Error} ->
-%                             {error, Error, State3}
-%                     end;
-%                 {error, Error, State2} ->
-%                     {error, Error, State2}
-%             end;
-%         _ ->
-%             {error, unknown_publisher, State}
-%     end;
-
-% start(listen, _Session, State) ->
-%     {error, missing_parameters, State};
 
 start(_Type, _Session, _State) ->
     continue.
@@ -319,7 +217,7 @@ candidate(#candidate{last=true}, Session, _State) ->
     ?LLOG(info, "sending last client candidate to Kurento", [], Session),
     ok;
 
-candidate(Candidate, Session, #{endpoint:=EP}=State) ->
+candidate(Candidate, Session, State) ->
     #candidate{m_id=MId, m_index=MIndex, a_line=ALine} = Candidate,
     Data = #{
         sdpMid => MId,
@@ -327,12 +225,7 @@ candidate(Candidate, Session, #{endpoint:=EP}=State) ->
         candidate => ALine
     },
     ?LLOG(info, "sending client candidate to Kurento", [], Session),
-    invoke(EP, addIceCandidate, #{candidate=>Data}, State),
-    ok;
-
-candidate(_Candidate, Session, _State) ->
-    ?LLOG(warning, "ignoring client candidate", [], Session),
-    {error, unexpected_candidate}.
+    ok = invoke(addIceCandidate, #{candidate=>Data}, State).
 
 
 %% @private
@@ -340,26 +233,42 @@ candidate(_Candidate, Session, _State) ->
     {ok, type(), map(), state()} |
     {error, term(), state()} | continue().
 
-% update(media, Opts, Type, #{session_id:=SessId}, #{kms_pid:=Pid}=State)
-%         when Type==echo; Type==proxy; Type==publish ->
-%     {Opts2, State2} = get_opts(Opts#{session_id=>SessId}, State),
-%     case nkmedia_kms_op:update(Pid, Opts2) of
-%         ok ->
-%             {ok, #{}, #{}, State2};
-%         {error, Error} ->
-%             {error, Error, State2}
-%     end;
+update(park, #{}, _Type, _Session, State) ->
+    {ok, State2} = disconnect(State),
+    {ok, #{}, #{}, State2};
 
-% update(listen_switch, #{publisher_id:=Publisher}, listen, Session, 
-%        #{kms_pid:=Pid}=State) ->
-%     #{type_ext:=Ext} = Session,
-%     case nkmedia_kms_op:listen_switch(Pid, Publisher, #{}) of
-%         ok ->
-%             ExtOps = #{type_ext=>Ext#{publisher_id:=Publisher}},
-%             {ok, #{}, ExtOps, State};
-%         {error, Error} ->
-%             {error, Error, State}
-%     end;
+update(echo, #{}, _Type, _Session, State) ->
+    {ok, State2} = echo(State),
+    {ok, #{}, #{}, State2};
+
+update(connect, #{peer_id:=Peer}, _Type, Session, #{endpoint:=EP}=State) ->
+    case nkmedia_session:do_call(Peer, {nkmedia_kms, {connect, EP}}) of
+        {ok, PeerEP} ->
+            {ok, #{}, #{}, State#{source=>PeerEP}};
+        {error, Error} ->
+            {error, Error, State}
+    end;
+
+update(bridge, #{peer_id:=Peer}, Type, #{session_id:=Peer}=Session, State) ->
+    update(echo, #{}, Type, Session, State);
+
+update(bridge, #{peer_id:=Peer}, _Type, Session, #{endpoint:=EP}=State) ->
+    case nkmedia_session:do_call(Peer, {nkmedia_kms, {bridge, EP}}) of
+        {ok, PeerEP} ->
+            case connect(PeerEP, State) of
+                {ok, State2} ->
+                    {ok, #{}, #{}, State2};
+                {error, Error, State2} ->
+                    {error, Error, State2}
+            end;
+        {error, Error} ->
+            {error, Error, State}
+    end;
+
+update(get, _Opts, _Type, _Session, State) ->
+    print_info(State),
+    {ok, #{}, #{}, State};
+
 
 update(_Update, _Opts, _Type, _Session, _State) ->
     continue.
@@ -371,6 +280,28 @@ update(_Update, _Opts, _Type, _Session, _State) ->
 
 stop(_Reason, _Session, State) ->
     {ok, State}.
+
+
+%% @private
+nkmedia_session_handle_call({connect, PeerEP}, _From, _Session, State) ->
+    case connect(PeerEP, State) of
+        {ok, #{endpoint:=EP}=State2} ->
+            {reply, {ok, EP}, State2};
+        {error, Error, State2} ->
+            {reply, {error, Error}, State2}
+    end;
+
+nkmedia_session_handle_call(get_endpoint, _From, _Session, #{endpoint:=EP}=State) ->
+    {reply, {ok, EP}, State};
+
+nkmedia_session_handle_call({bridge, PeerEP}, _From, _Session, State) ->
+    case connect(PeerEP, State) of
+        {ok, #{endpoint:=EP}=State2} ->
+            {reply, {ok, EP}, State2};
+        {error, Error, State2} ->
+            {reply, {error, Error}, State2}
+    end.
+ 
 
 
 
@@ -387,16 +318,147 @@ create_webrtc(SDP, #{session_id:=SessId}=Session, State) ->
             subscribe(EP, 'OnIceComponentStateChanged', State2),
             subscribe(EP, 'OnIceCandidate', State2),
             subscribe(EP, 'OnIceGatheringDone', State2),
-            SDP2 = invoke(EP, processOffer, #{offer=>SDP}, State2),
+            {ok, SDP2} = invoke(EP, processOffer, #{offer=>SDP}, State2),
             % timer:sleep(200),
             % io:format("SDP1\n~s\n\n", [SDP]),
             % io:format("SDP2\n~s\n\n", [SDP2]),
             % Store endpoint and wait for candidates
-            null = invoke(EP, gatherCandidates, #{}, State2),
+            ok = invoke(EP, gatherCandidates, #{}, State2),
             {ok, #{sdp=>SDP2, trickle_ice=>true}, State2#{endpoint=>EP}};
         {error, Error} ->
             {error, Error}
     end.
+
+
+
+
+%% @private
+subscribe(ObjId, Type, #{kms_client:=Pid}) ->
+    {ok, SubsId} = nkmedia_kms_client:subscribe(Pid, ObjId, Type),
+    SubsId.
+
+
+%% @private
+invoke(Op, Params, #{endpoint:=EP}=State) ->
+    invoke(EP, Op, Params, State).
+
+
+%% @private
+invoke(ObjId, Op, Params, #{kms_client:=Pid}) ->
+    case nkmedia_kms_client:invoke(Pid, ObjId, Op, Params) of
+        {ok, null} -> ok;
+        {ok, Other} -> {ok, Other};
+        {error, Error} -> {error, Error}
+    end.
+
+
+%% @private
+connect(PeerEP, State) ->
+    case invoke(connect, #{sink=>PeerEP}, State) of
+        ok -> 
+            Sinks = maps:get(sinks, State, []),
+            {ok, State#{sinks=>[PeerEP|Sinks]}};
+        {error, Error} -> 
+            {error, Error, State}
+    end.
+
+
+%% @private
+disconnect(#{peer_ep:=PeerEP}=State) ->
+    lager:error("Disconnecting ~s", [PeerEP]),
+    case invoke(disconnect, #{sink=>PeerEP}, State) of
+        ok -> 
+            Sinks = maps:get(sinks, State, []),
+            {ok, State#{sinks=>Sinks--[PeerEP]}};
+        {error, Error} -> 
+            {error, Error, State}
+    end;
+
+disconnect(State) ->
+    {ok, State}.
+
+
+%% @private
+echo(#{endpoint:=EP}=State) ->
+    case connect(EP, State) of
+        {ok, State2} ->
+            {ok, State2#{source=>EP}};
+        {error, Error, State2} ->
+            {error, Error, State2}
+    end.
+
+
+%% @private
+print_info(#{endpoint:=EP}=State) ->
+    io:format("\nEP: ~s\n", [get_id(EP)]),
+    io:format("\nMy source: ~s\n", [get_id(maps:get(source, State, <<>>))]),
+    io:format("My sinks: ~s\n\n", 
+              [nklib_util:bjoin([get_id(Id) || Id<-maps:get(sinks, State, [])])]),
+    io:format("Sources:\n"),
+    {ok, Sources} = invoke(getSourceConnections, #{}, State),
+    lists:foreach(
+        fun(#{<<"type">>:=Type, <<"source">>:=Source, <<"sink">>:=Sink}) ->
+            io:format("~s: ~s -> ~s\n", [Type, get_id(Source), get_id(Sink)])
+        end,
+        Sources),
+    io:format("\nSinks:\n"),
+    {ok, Sinks} = invoke(getSinkConnections, #{}, State),
+    lists:foreach(
+        fun(#{<<"type">>:=Type, <<"source">>:=Source, <<"sink">>:=Sink}) ->
+            io:format("~s: ~s -> ~s\n", [Type, get_id(Source), get_id(Sink)])
+        end,
+        Sinks),
+
+    {ok, MediaState} = invoke(getMediaState, #{}, State),
+    io:format("\nMediaState: ~p\n", [MediaState]),
+    {ok, ConnectionState} = invoke(getConnectionState, #{}, State),
+    io:format("Connectiontate: ~p\n", [ConnectionState]),
+
+    {ok, MinVideoRecvBandwidth} = invoke(getMinVideoRecvBandwidth, #{}, State),
+    io:format("\nMinVideoRecvBandwidth: ~p\n", [MinVideoRecvBandwidth]),
+    {ok, MinVideoSendBandwidth} = invoke(getMinVideoSendBandwidth, #{}, State),
+    io:format("MinVideoSendBandwidth: ~p\n", [MinVideoSendBandwidth]),
+    {ok, MaxVideoRecvBandwidth} = invoke(getMaxVideoRecvBandwidth, #{}, State),
+    io:format("\nMaxVideoRecvBandwidth: ~p\n", [MaxVideoRecvBandwidth]),
+    {ok, MaxVideoSendBandwidth} = invoke(getMaxVideoSendBandwidth, #{}, State),
+    io:format("MaxVideoSendBandwidth: ~p\n", [MaxVideoSendBandwidth]),
+    
+    {ok, MaxAudioRecvBandwidth} = invoke(getMaxAudioRecvBandwidth, #{}, State),
+    io:format("\nMaxAudioRecvBandwidth: ~p\n", [MaxAudioRecvBandwidth]),
+    
+    {ok, MinOutputBitrate} = invoke(getMinOutputBitrate, #{}, State),
+    io:format("\nMinOutputBitrate: ~p\n", [MinOutputBitrate]),
+    {ok, MaxOutputBitrate} = invoke(getMaxOutputBitrate, #{}, State),
+    io:format("MaxOutputBitrate: ~p\n", [MaxOutputBitrate]),
+
+
+    {ok, RembParams} = invoke(getRembParams, #{}, State),
+    io:format("\nRembParams: ~p\n", [RembParams]),
+
+
+    
+
+
+
+    {ok, IsMediaFlowingIn1} = invoke(isMediaFlowingIn, #{mediaType=>'AUDIO'}, State),
+    io:format("\nIsMediaFlowingIn AUDIO: ~p\n", [IsMediaFlowingIn1]),
+    {ok, IsMediaFlowingOut1} = invoke(isMediaFlowingOut, #{mediaType=>'AUDIO'}, State),
+    io:format("IsMediaFlowingOut AUDIO: ~p\n", [IsMediaFlowingOut1]),
+    {ok, IsMediaFlowingIn2} = invoke(isMediaFlowingIn, #{mediaType=>'VIDEO'}, State),
+    io:format("\nIsMediaFlowingIn VIDEO: ~p\n", [IsMediaFlowingIn2]),
+    {ok, IsMediaFlowingOut2} = invoke(isMediaFlowingOut, #{mediaType=>'VIDEO'}, State),
+    io:format("IsMediaFlowingOut VIDEO: ~p\n", [IsMediaFlowingOut2]),
+    
+    % Convert with dot -Tpdf gstreamer.dot -o 1.pdf
+    % {ok, GstreamerDot} = invoke(getGstreamerDot, #{}, State),
+    % file:write_file("/tmp/gstreamer.dot", GstreamerDot),
+
+
+    ok.
+
+
+
+
 
 
 
@@ -418,19 +480,12 @@ get_mediaserver(#{srv_id:=SrvId}, State) ->
     end.
 
 
-
-
-
 %% @private
-subscribe(ObjId, Type, #{kms_client:=Pid}) ->
-    {ok, SubsId} = nkmedia_kms_client:subscribe(Pid, ObjId, Type),
-    SubsId.
-
-
-%% @private
-invoke(ObjId, Op, Params, #{kms_client:=Pid}) ->
-    {ok, Res} = nkmedia_kms_client:invoke(Pid, ObjId, Op, Params),
-    Res.
+get_id(Ep) ->
+    case binary:split(Ep, <<"/">>) of
+        [_, Id] -> Id;
+        _ -> Ep
+    end.
 
 
 

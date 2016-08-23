@@ -276,7 +276,7 @@ answer(_Type, _Answer, _Session, _State) ->
     ok | {error, term()}.
 
 candidate(Candidate, Session, #{janus_pid:=Pid}) ->
-    ?LLOG(notice, "Client candidate to server: ~p", [Candidate], Session),
+    ?LLOG(info, "Client candidate to server: ~p", [Candidate], Session),
     nkmedia_janus_op:candidate(Pid, Candidate).
 
 

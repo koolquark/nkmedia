@@ -217,37 +217,17 @@ nkmedia_session_stop(Reason, Session) ->
 
 
 %% @private
-nkmedia_session_handle_call(nkmedia_kms_get_room, _From, Session) ->
-    Reply = case Session of
-        #{srv_id:=SrvId, type:=publish, type_ext:=#{room_id:=Room}} ->
-            {ok, SrvId, Room};
-        _ ->
-            {error, invalid_state}
-    end,
-    {reply, Reply, Session};
+nkmedia_session_handle_call({nkmedia_kms, Msg}, From, Session) ->
+    State = state(Session),
+    {reply, Reply, State2} = 
+        nkmedia_kms_session:nkmedia_session_handle_call(Msg, From, Session, State),
+    {reply, Reply, update_state(State2, Session)};
 
 nkmedia_session_handle_call(_Msg, _From, _Session) ->
     continue.
 
 
-%% @private The kms_op process is down
-nkmedia_session_handle_info({'DOWN', Ref, process, _Pid, _Reason}, Session) ->
-    case state(Session) of
-        #{kms_mon:=Ref} ->
-            nkmedia_session:stop(self(), kms_session_down),
-            {noreply, Session};
-        _ ->
-            continue
-    end;
-
-nkmedia_session_handle_info({nkmedia_kms, Info}, Session) ->
-    case nkmedia_kms_session:info(Info, Session, state(Session)) of
-        ok ->
-            {noreply, Session};
-        {ok, State2} ->
-            {noreply, update_state(State2, Session)}
-    end;
-
+%% @private
 nkmedia_session_handle_info(_Msg, _Session) ->
     continue.
 
