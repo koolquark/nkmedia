@@ -27,7 +27,7 @@
 -export([error_code/1]).
 -export([nkmedia_janus_get_mediaserver/1]).
 -export([nkmedia_session_init/2, nkmedia_session_terminate/2]).
--export([nkmedia_session_start/2, nkmedia_session_answer/3, nkmedia_session_candidate/3,
+-export([nkmedia_session_start/2, nkmedia_session_answer/3, nkmedia_session_candidate/2,
          nkmedia_session_update/4, nkmedia_session_stop/2, 
          nkmedia_session_handle_call/3, nkmedia_session_handle_info/2]).
 -export([nkmedia_room_init/2, nkmedia_room_terminate/2, nkmedia_room_tick/2,
@@ -182,16 +182,12 @@ nkmedia_session_answer(Type, Answer, Session) ->
 
 
 %% @private
-nkmedia_session_candidate(Role, Candidate, Session) ->
+nkmedia_session_candidate(Candidate, Session) ->
     case maps:get(backend, Session, nkmedia_janus) of
         nkmedia_janus ->
             State = state(Session),
-            case nkmedia_janus_session:candidate(Role, Candidate, Session, State) of
-                ok ->
-                    {ok, Session};
-                {error, Error} ->
-                    {error, Error, Session}
-            end;
+            nkmedia_janus_session:candidate(Candidate, Session, State),
+            {ok, Session};
         _ ->
             continue
     end.

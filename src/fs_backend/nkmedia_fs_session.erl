@@ -137,8 +137,11 @@ terminate(_Reason, _Session, State) ->
     {ok, type_ext(), map(), none|nkmedia:offer(), none|nkmedia:answer(), state()} |
     {error, term(), state()} | continue().
 
-start(Type, #{offer:=#{sdp:=_}}=Session, State) ->
+start(Type, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
+    Trickle = maps:get(trickle_ice, Offer, false),
     case is_supported(Type) of
+        true when Trickle == true ->
+            wait_trickle_ice;
         true ->  
             case get_fs_answer(Session, State) of
                 {ok, Answer, State2}  ->
@@ -362,7 +365,7 @@ get_fs_answer(#{session_id:=SessId, offer:=Offer}=Session,  #{fs_id:=FsId}=State
             wait_park(Session),
             {ok, #{sdp=>SDP}, State#{fs_role=>answer}};
         {error, Error} ->
-            ?LLOG(warning, "error calling start_in: ~p", [Error], State),
+            ?LLOG(warning, "error calling start_in: ~p", [Error], Session),
             {error, fs_error, State}
     end;
 

@@ -29,17 +29,16 @@
          handle_cast/2, handle_info/2]).
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkMEDIA KMS OP ~s (~s ~s) "++Txt, 
-               [State#state.nkmedia_id, State#state.kms_sess_id, State#state.status 
+    lager:Type("NkMEDIA KMS OP ~s (~s) "++Txt, 
+               [State#state.nkmedia_id, State#state.status 
                 | Args])).
 
--include("../../include/nkmedia.hrl").
-
+-include_lib("nksip/include/nksip.hrl").
 
 -define(WAIT_TIMEOUT, 600).      % Secs
 -define(OP_TIMEOUT, 4*60*60).   
 
--define(MAX_ICE_TIME, 100).
+-define(MAX_ICE_TIME, 500).
 
 
 %% ===================================================================
@@ -88,6 +87,7 @@ stop_all() ->
     lists:foreach(fun({_Id, Pid}) -> stop(Pid) end, get_all()).
 
 
+
 %% @doc Starts an echo session.
 %% The SDP is returned.
 -spec echo(pid()|kms_id(), nkmedia:offer(), opts()) ->
@@ -104,10 +104,10 @@ echo(Id, Offer, Opts) ->
 
 %% @private
 -spec get_all() ->
-    [{KmsSessId::term(), nkmedia:session_id(), pid()}].
+    [{nkmedia:session_id(), pid()}].
 
 get_all() ->
-    [{KmsId, SId, Pid} || {{KmsId, SId}, Pid}<- nklib_proc:values(?MODULE)].
+    nklib_proc:values(?MODULE).
 
 
 
@@ -156,23 +156,28 @@ candidate(Pid, _Type, #candidate{}=Candidate) ->
 -spec init(term()) ->
     {ok, tuple()}.
 
-init({KmsId, MediaSessId, CallerPid}) ->
+init({KmsId, SessId, CallerPid}) ->
     case nkmedia_kms_client:start(KmsId) of
         {ok, Pid} ->
             ok = nkmedia_kms_client:register(Pid, ?MODULE, kms_event, [self()]),
-            {ok, Pipe, KmsSessId} = 
-                nkmedia_kms_client:create(Pid, <<"MediaPipeline">>, #{}, #{}),
+            % {ok, Pipe, KmsSessId} = 
+            %     nkmedia_kms_client:create(Pid, <<"MediaPipeline">>, #{}, #{}),
+            Pipe = <<"ffe0b3bf-665c-4873-9fbd-8c75d391457e_kurento.MediaPipeline">>,
+            KmsSessId = <<"889871df-6a39-4d85-9538-9451af9f7e49">>,
+            lager:error("\nPipe: ~s\nSess: ~s", [Pipe, KmsSessId]),
+
+
             State = #state{
                 kms_id = KmsId, 
-                nkmedia_id = MediaSessId,
+                nkmedia_id = SessId,
                 kms_sess_id = KmsSessId,
                 pipeline = Pipe,
                 conn = Pid,
                 conn_mon = monitor(process, Pid),
                 user_mon = monitor(process, CallerPid)
             },
-            true = nklib_proc:reg({?MODULE, KmsSessId}),
-            nklib_proc:put(?MODULE, {KmsSessId, MediaSessId}),
+            true = nklib_proc:reg({?MODULE, SessId}),
+            nklib_proc:put(?MODULE, SessId),
             ?LLOG(info, "started (~p)", [self()], State),
             {ok, status(wait, State)};
         {error, Error} ->
@@ -286,34 +291,79 @@ terminate(Reason, #state{from=From}=State) ->
 %% Echo
 %% ===================================================================
 
+
+% : create Endpoint->set ICE candidate event->process SDP->Wait 200ms->Add ICE candidates->Gather candidates
+
+% %% @doc
+% do_echo(#{sdp:=SDP}, #state{opts=Opts}=State) ->
+%     try
+%         EndPoint = create_webrtc(State),
+%         invoke(EndPoint, connect, #{sink=>EndPoint}, State),
+%         SDP2 = invoke(EndPoint, processOffer, #{offer=>SDP}, State),
+%         io:format("SDP1\n~s\n\n", [SDP]),
+%         io:format("SDP2\n~s\n\n", [SDP2]),
+%         % Store endpoint and wait for candidates
+%         subscribe(EndPoint, 'OnIceCandidate', State),
+%         subscribe(EndPoint, 'OnIceGatheringDone', State),
+%         invoke(EndPoint, gatherCandidates, #{}, State),
+%         case maps:get(ice_wait_all, Opts, false) of
+%             true ->
+%                 ok;
+%             false ->
+%                 erlang:start_timer(?MAX_ICE_TIME, self(), ice_timeout)
+%         end,
+%         State2 = State#state{
+%             endpoint = EndPoint, 
+%             candidates = #{}, 
+%             sdp = SDP2,
+%             ice_start = nklib_util:l_timestamp()
+%         },
+%         noreply(wait(gather_candidates, State2))
+%     catch
+%         throw:Throw -> reply_stop(Throw, State)
+%     end.
+
+
 %% @doc
-do_echo(#{sdp:=SDP}, #state{opts=Opts}=State) ->
+do_echo(#{sdp:=SDP}, State) ->
     try
-        EndPoint = create_webrtc(State),
-        invoke(EndPoint, connect, #{sink=>EndPoint}, State),
-        SDP2 = invoke(EndPoint, processOffer, #{offer=>SDP}, State),
-        io:format("SDP1\n~s\n\n", [SDP]),
-        io:format("SDP2\n~s\n\n", [SDP2]),
-        % Store endpoint and wait for candidates
-        subscribe(EndPoint, 'OnIceCandidate', State),
-        subscribe(EndPoint, 'OnIceGatheringDone', State),
-        invoke(EndPoint, gatherCandidates, #{}, State),
-        case maps:get(ice_wait_all, Opts, false) of
-            true ->
-                ok;
-            false ->
-                erlang:start_timer(?MAX_ICE_TIME, self(), ice_timeout)
-        end,
-        State2 = State#state{
-            endpoint = EndPoint, 
-            candidates = #{}, 
-            sdp = SDP2,
-            ice_start = nklib_util:l_timestamp()
-        },
-        noreply(wait(gather_candidates, State2))
+        State2 = start_webrtc(SDP, State),
+        % invoke(EndPoint, connect, #{sink=>EndPoint}, State),
+        noreply(wait(echo, State2))
     catch
         throw:Throw -> reply_stop(Throw, State)
     end.
+
+
+
+
+%% @private
+start_webrtc(SDP, #state{opts=Opts}=State) ->
+    EndPoint = create_webrtc(State),
+    subscribe(EndPoint, 'OnIceComponentStateChanged', State),
+    subscribe(EndPoint, 'OnIceCandidate', State),
+    subscribe(EndPoint, 'OnIceGatheringDone', State),
+    SDP2 = invoke(EndPoint, processOffer, #{offer=>SDP}, State),
+    timer:sleep(200),
+    io:format("SDP1\n~s\n\n", [SDP]),
+    io:format("SDP2\n~s\n\n", [SDP2]),
+    % Store endpoint and wait for candidates
+    invoke(EndPoint, gatherCandidates, #{}, State),
+    case maps:get(ice_wait_all, Opts, false) of
+        true ->
+            ok;
+        false ->
+            erlang:start_timer(?MAX_ICE_TIME, self(), ice_timeout)
+    end,
+    State#state{
+        endpoint = EndPoint, 
+        candidates = #{}, 
+        sdp = SDP2,
+        ice_start = nklib_util:l_timestamp()
+    }.
+
+
+
 
 
 %% ===================================================================
@@ -337,7 +387,7 @@ do_event({candidate, ObjId, Candidate}, #state{endpoint=ObjId}=State) ->
     #state{candidates=Candidates1} = State,
     case is_map(Candidates1) of
         true ->
-            lager:info("Candidate ~s: ~s", [MId, ALine]),
+            lager:debug("Candidate ~s: ~s", [MId, ALine]),
             CandLines1 = maps:get({MId, MIndex}, Candidates1, []),
             CandLines2 = CandLines1 ++ [ALine],
             Candidates2 = maps:put({MId, MIndex}, CandLines2, Candidates1),
@@ -349,6 +399,29 @@ do_event({candidate, ObjId, Candidate}, #state{endpoint=ObjId}=State) ->
 
 do_event({candidate, _EndPoint, _App, _Index, _Candidate}, State) ->
     ?LLOG(warning, "ignoring Kurento candidate", [], State),
+    noreply(State);
+
+do_event({ice_state, EndPoint, IceState, Stream, Component}, 
+          #state{endpoint=EndPoint}=State) ->
+    Level = case IceState of
+        <<"GATHERING">> -> info;
+        <<"CONNECTING">> -> info;
+        <<"CONNECTED">> -> notice;
+        <<"READY">> -> notice;
+        <<"FAILED">> -> warning
+    end,
+    case Level of
+        info ->
+            ?LLOG(info, "ICE state: ~s (~p:~p)", [IceState, Stream, Component], State);
+        notice ->
+            ?LLOG(notice, "ICE state: ~s (~p:~p)", [IceState, Stream, Component], State);
+        warning ->
+            ?LLOG(warning, "ICE state: ~s (~p:~p)", [IceState, Stream, Component], State)
+    end,
+    noreply(State);
+
+do_event({ice_state, _EndPoint, _IceState, _Stream, _Component}, State) ->
+    ?LLOG(warning, "ignoring Kurento ICE STATE", [], State),
     noreply(State);
 
 do_event(Event, State) ->
@@ -375,7 +448,22 @@ end_ice(#state{candidates=Candidates}=State) when is_map(Candidates) ->
     end,
     io:format("SDPbis\n~s\n", [SDP2]),
     nklib_util:reply(From, {ok, #{sdp=>SDP2}}),
-    {ok, State#state{candidates=undefined}};
+    State2 = State#state{candidates=undefined},
+    case State2 of
+        #state{status=wait, wait=echo} ->
+            spawn(
+                fun() ->
+                    timer:sleep(5000),
+                    invoke(ObjId, connect, #{sink=>ObjId}, State),
+                    timer:sleep(5000),
+                    D = invoke(ObjId, disconnect, #{sink=>ObjId, mediaType=>'AUDIO'}, State),
+                    lager:error("DIS: ~p", [D]),
+                    timer:sleep(5000),
+                    C = invoke(ObjId, connect, #{sink=>ObjId, mediaType=>'AUDIO'}, State),
+                    lager:error("CONN: ~p", [C])
+                end),
+            {ok, status(echo, State2)}
+    end;
 
 end_ice(_State) ->
     ignore.

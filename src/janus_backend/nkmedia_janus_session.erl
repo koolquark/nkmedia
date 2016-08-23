@@ -25,7 +25,7 @@
 -module(nkmedia_janus_session).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([init/3, terminate/3, start/3, answer/4, candidate/4, update/5, stop/3]).
+-export([init/3, terminate/3, start/3, answer/4, candidate/3, update/5, stop/3]).
 
 -export_type([config/0, type/0, opts/0, update/0]).
 
@@ -272,11 +272,12 @@ answer(_Type, _Answer, _Session, _State) ->
 
 
 %% @private
--spec candidate(caller|callee, nkmedia:candidate(), session(), state()) ->
+-spec candidate(nkmedia:candidate(), session(), state()) ->
     ok | {error, term()}.
 
-candidate(Role, Candidate, _Session, #{janus_pid:=Pid}) ->
-    nkmedia_janus_op:candidate(Pid, Role, Candidate).
+candidate(Candidate, Session, #{janus_pid:=Pid}) ->
+    ?LLOG(notice, "Client candidate to server: ~p", [Candidate], Session),
+    nkmedia_janus_op:candidate(Pid, Candidate).
 
 
 %% @private

@@ -50,12 +50,6 @@
 %% ===================================================================
 
 
--record(candidate, {
-	m_id :: binary(),
-	m_index :: integer(),
-	a_line :: binary(),
-	last = false :: boolean()
-}).
 
 
 -endif.

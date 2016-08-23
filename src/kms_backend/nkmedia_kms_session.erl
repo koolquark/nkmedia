@@ -25,7 +25,8 @@
 -module(nkmedia_kms_session).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([init/3, terminate/3, start/3, answer/4, candidate/4, update/5, stop/3]).
+-export([kms_event/3]).
+-export([init/3, terminate/3, start/3, answer/4, candidate/3, update/5, stop/3]).
 
 -export_type([config/0, type/0, opts/0, update/0]).
 
@@ -33,7 +34,10 @@
     lager:Type("NkMEDIA KMS Session ~s "++Txt, 
                [maps:get(session_id, Session) | Args])).
 
--include("../../include/nkmedia.hrl").
+-include_lib("nksip/include/nksip.hrl").
+
+-define(MAX_ICE_TIME, 100).
+
 
 %% ===================================================================
 %% Types
@@ -76,12 +80,53 @@
 -type state() ::
     #{
         kms_id => nkmedia_kms_engine:id(),
-        kms_pid => pid(),
-        kms_mon => reference(),
-        kms_op => answer,
-        record_pos => integer(),
-        room_id => binary()
+        kms_client => pid(),
+        record_pos => integer()
     }.
+
+
+%% ===================================================================
+%% External
+%% ===================================================================
+
+kms_event(_SessId, <<"OnIceComponentStateChanged">>, Data) ->
+    #{
+        <<"source">> := _SrcId,
+        <<"state">> := IceState,
+        <<"streamId">> := StreamId,
+        <<"componentId">> := CompId
+    } = Data,
+    {Level, Msg} = case IceState of
+        <<"GATHERING">> -> {info, gathering};
+        <<"CONNECTING">> -> {info, connecting};
+        <<"CONNECTED">> -> {notice, connected};
+        <<"READY">> -> {notice, ready};
+        <<"FAILED">> -> {warning, failed}
+    end,
+    Txt = io_lib:format("ICE State (~p:~p): ~s", [StreamId, CompId, Msg]),
+    case Level of
+        info ->    lager:info("~s", [Txt]);
+        notice ->  lager:notice("~s", [Txt]);
+        warning -> lager:warning("~s", [Txt])
+    end;
+
+kms_event(SessId, <<"OnIceCandidate">>, Data) ->
+    #{
+        <<"source">> := _SrcId,
+        <<"candidate">> := #{
+            <<"sdpMid">> := MId,
+            <<"sdpMLineIndex">> := MIndex,
+            <<"candidate">> := ALine
+        }
+    } = Data,
+    Candidate = #candidate{m_id=MId, m_index=MIndex, a_line=ALine},
+    nkmedia_session:server_candidate(SessId, Candidate);
+
+kms_event(SessId, <<"OnIceGatheringDone">>, _Data) ->
+    nkmedia_session:server_candidate(SessId, #candidate{last=true});
+
+kms_event(_SessId, Type, Data) ->
+    lager:warning("NkMEDIA KMS Session: unexpected event ~s: ~p", [Type, Data]).
 
 
 
@@ -111,19 +156,14 @@ terminate(_Reason, _Session, State) ->
     {ok, type(), map(), none|nkmedia:offer(), none|nkmedia:answer(), state()} |
     {error, term(), state()} | continue().
 
-start(echo, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
-    case get_kms_op(Session, State) of
-        {ok, Pid, State2} ->
-            {Opts, State3} = get_opts(Session, State2),
-            case nkmedia_kms_op:echo(Pid, Offer, Opts) of
-                {ok, #{sdp:=_}=Answer} ->
-                    Reply = ExtOps = #{answer=>Answer},
-                    {ok, Reply, ExtOps, State3};
-                {error, Error} ->
-                    {error, Error, State3}
-            end;
-        {error, Error, State2} ->
-            {error, Error, State2}
+start(echo, #{offer:=#{sdp:=SDP}}=Session, State) ->
+    case create_webrtc(SDP, Session, State) of
+        {ok, Answer, #{endpoint:=EP}=State2} ->
+            null = invoke(EP, connect, #{sink=>EP}, State2),
+            Reply = ExtOps = #{answer=>Answer},
+            {ok, Reply, ExtOps, State2};
+        {error, Error} ->
+            {error, Error, State}
     end;
 
 start(echo, _Session, State) ->
@@ -272,11 +312,27 @@ answer(_Type, _Answer, _Session, _State) ->
 
 
 %% @private
--spec candidate(caller|callee, nkmedia:candidate(), session(), state()) ->
+-spec candidate(nkmedia:candidate(), session(), state()) ->
     ok | {error, term()}.
 
-candidate(Role, Candidate, _Session, #{kms_pid:=Pid}) ->
-    nkmedia_kms_op:candidate(Pid, Role, Candidate).
+candidate(#candidate{last=true}, Session, _State) ->
+    ?LLOG(info, "sending last client candidate to Kurento", [], Session),
+    ok;
+
+candidate(Candidate, Session, #{endpoint:=EP}=State) ->
+    #candidate{m_id=MId, m_index=MIndex, a_line=ALine} = Candidate,
+    Data = #{
+        sdpMid => MId,
+        sdpMLineIndex => MIndex,
+        candidate => ALine
+    },
+    ?LLOG(info, "sending client candidate to Kurento", [], Session),
+    invoke(EP, addIceCandidate, #{candidate=>Data}, State),
+    ok;
+
+candidate(_Candidate, Session, _State) ->
+    ?LLOG(warning, "ignoring client candidate", [], Session),
+    {error, unexpected_candidate}.
 
 
 %% @private
@@ -324,25 +380,24 @@ stop(_Reason, _Session, State) ->
 %% ===================================================================
 
 
-%% @private
-get_kms_op(#{session_id:=SessId}=Session, #{kms_id:=KmsId}=State) ->
-    case nkmedia_kms_op:start(KmsId, SessId) of
-        {ok, Pid} ->
-            State2 = State#{kms_pid=>Pid, kms_mon=>monitor(process, Pid)},
-            {ok, Pid, State2};
-        {error, Error} ->
-            ?LLOG(warning, "kms connection start error: ~p", [Error], Session),
-            {error, kms_connection_error, State}
-    end;
-
-get_kms_op(Session, State) ->
+create_webrtc(SDP, #{session_id:=SessId}=Session, State) ->
     case get_mediaserver(Session, State) of
-        {ok, State2} ->
-            get_kms_op(Session, State2);
+        {ok, #{kms_id:=KmsId}=State2} ->
+            {ok, EP} = nkmedia_kms_engine:create(KmsId, 'WebRtcEndpoint', SessId),
+            subscribe(EP, 'OnIceComponentStateChanged', State2),
+            subscribe(EP, 'OnIceCandidate', State2),
+            subscribe(EP, 'OnIceGatheringDone', State2),
+            SDP2 = invoke(EP, processOffer, #{offer=>SDP}, State2),
+            % timer:sleep(200),
+            % io:format("SDP1\n~s\n\n", [SDP]),
+            % io:format("SDP2\n~s\n\n", [SDP2]),
+            % Store endpoint and wait for candidates
+            null = invoke(EP, gatherCandidates, #{}, State2),
+            {ok, #{sdp=>SDP2, trickle_ice=>true}, State2#{endpoint=>EP}};
         {error, Error} ->
-            ?LLOG(warning, "get_mediaserver error: ~p", [Error], Session),
-            {error, no_mediaserver, State}
+            {error, Error}
     end.
+
 
 
 
@@ -355,30 +410,48 @@ get_mediaserver(_Session, #{kms_id:=_}=State) ->
 
 get_mediaserver(#{srv_id:=SrvId}, State) ->
     case SrvId:nkmedia_kms_get_mediaserver(SrvId) of
-        {ok, Id} ->
-            {ok, State#{kms_id=>Id}};
+        {ok, KmsId} ->
+            {ok, Pid} = nkmedia_kms_engine:get_client(KmsId),
+            {ok, State#{kms_id=>KmsId, kms_client=>Pid}};
         {error, Error} ->
             {error, Error}
     end.
 
 
+
+
+
 %% @private
-get_opts(#{session_id:=SessId}=Session, State) ->
-    Keys = [record, use_audio, use_video, use_data, bitrate, dtmf],
-    Opts1 = maps:with(Keys, Session),
-    Opts2 = case Session of
-        #{user_id:=UserId} -> Opts1#{user=>UserId};
-        _ -> Opts1
-    end,
-    case Session of
-        #{record:=true} ->
-            Pos = maps:get(record_pos, State, 0),
-            Name = io_lib:format("~s_p~4..0w", [SessId, Pos]),
-            File = filename:join(<<"/tmp/record">>, list_to_binary(Name)),
-            {Opts2#{filename => File}, State#{record_pos=>Pos+1}};
-        _ ->
-            {Opts2, State}
-    end.
+subscribe(ObjId, Type, #{kms_client:=Pid}) ->
+    {ok, SubsId} = nkmedia_kms_client:subscribe(Pid, ObjId, Type),
+    SubsId.
+
+
+%% @private
+invoke(ObjId, Op, Params, #{kms_client:=Pid}) ->
+    {ok, Res} = nkmedia_kms_client:invoke(Pid, ObjId, Op, Params),
+    Res.
+
+
+
+% %% @private
+% get_opts(#{session_id:=SessId}=Session, State) ->
+%     Keys = [record, use_audio, use_video, use_data, bitrate, dtmf],
+%     Opts1 = maps:with(Keys, Session),
+%     Opts2 = case Session of
+%         #{user_id:=UserId} -> Opts1#{user=>UserId};
+%         _ -> Opts1
+%     end,
+%     case Session of
+%         #{record:=true} ->
+%             Pos = maps:get(record_pos, State, 0),
+%             Name = io_lib:format("~s_p~4..0w", [SessId, Pos]),
+%             File = filename:join(<<"/tmp/record">>, list_to_binary(Name)),
+%             {Opts2#{filename => File}, State#{record_pos=>Pos+1}};
+%         _ ->
+%             {Opts2, State}
+%     end.
+
 
 
 

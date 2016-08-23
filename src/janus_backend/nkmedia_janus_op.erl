@@ -33,7 +33,7 @@
 -export([listen/4, listen_switch/3, unlisten/1]).
 -export([from_sip/3, to_sip/3, to_sip_record/2]).
 -export([nkmedia_sip_register/2, nkmedia_sip_invite/2]).
--export([answer/2, update/2, candidate/2, candidate/3]).
+-export([answer/2, update/2, candidate/2]).
 -export([get_all/0, stop_all/0, janus_event/4]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
@@ -42,8 +42,7 @@
     lager:Type("NkMEDIA Janus OP ~s (~p ~p) "++Txt, 
                [State#state.nkmedia_id, State#state.janus_sess_id, State#state.status | Args])).
 
--include("../../include/nkmedia.hrl").
-
+-include_lib("nksip/include/nksip.hrl").
 
 -define(WAIT_TIMEOUT, 60).      % Secs
 -define(OP_TIMEOUT, 4*60*60).   
@@ -264,20 +263,13 @@ update(Id, Update) ->
     do_call(Id, {update, Update}).
 
 
+
 %% @doc Sends an ICE candidate to Janus
 -spec candidate(pid(), nkmedia:candidate()) ->
     ok | {error, term()}.
 
 candidate(Id, Candidate) ->
-    candidate(Id, caller, Candidate).
-
-
-%% @doc Sends an ICE candidate to Janus, maybe as callee for a videocall
--spec candidate(pid(), caller|callee, nkmedia:candidate()) ->
-    ok | {error, term()}.
-
-candidate(Id, Role, Candidate) ->
-    do_cast(Id, {candidate, Role, Candidate}).
+    do_cast(Id, {candidate, Candidate}).
 
 
 %% @private
@@ -547,10 +539,10 @@ handle_cast({invite, {error, Error}}, #state{status=wait, wait=from_sip_invite}=
     gen_server:reply(From, {error, Error}),
     {stop, normal, State#state{from=undefined}};
 
-handle_cast({candidate, Role, Candidate}, State) ->
+handle_cast({candidate, Candidate}, State) ->
     #state{janus_sess_id=SessId, handle_id=Handle1, handle_id2=Handle2, conn=Pid} =State,
-    Handle = case Role of
-        callee when is_integer(Handle2) -> Handle2;
+    Handle = case Candidate of
+        #candidate{meta={role, callee}} when is_integer(Handle2) -> Handle2;
         _ -> Handle1
     end,
     case nkmedia_janus_client:candidate(Pid, SessId, Handle, Candidate) of

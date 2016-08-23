@@ -43,7 +43,7 @@
 
 -define(DO_TRICKLE, true).
 
--include("../../include/nkmedia.hrl").
+-include_lib("nksip/include/nksip.hrl").
 
 %% ===================================================================
 %% Types
@@ -480,8 +480,10 @@ process_client_msg(call, Body, Msg, NkPort, #state{srv_id=SrvId}=State) ->
     CallId = nklib_util:uuid_4122(),
     ?LLOG(info, "received CALL (~s)", [CallId], State),
     #{<<"username">>:=Dest} = Body,
-    #{<<"jsep">>:=#{<<"sdp">>:=SDP}} = Msg,
+    #{<<"jsep">>:=#{<<"sdp">>:=SDP}=_JSep} = Msg,
     Offer = #{dest=>Dest, sdp=>SDP, sdp_type=>webrtc},
+    % io:format("SDP: ~s\n", [SDP]),
+    % lager:notice("JSEP: ~p", [Msg#{<<"jsep">>=>maps:remove(<<"sdp">>, JSep)}]),
     case handle(nkmedia_janus_invite, [SrvId, CallId, Offer], State) of
         {ok, Link, State2} ->
             ok;

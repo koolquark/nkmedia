@@ -29,7 +29,7 @@
 	     nkmedia_call_cancel/3, nkmedia_call_reg_event/4]).
 
 -include_lib("nkservice/include/nkservice.hrl").
--include("nkmedia.hrl").
+-include_lib("nksip/include/nksip.hrl").
 
 
 %% ===================================================================
@@ -96,8 +96,8 @@ cmd(<<"session">>, <<"set_candidate">>, #api_req{data=Data}, State) ->
 		sdpLineIndex := Index, 
 		candidate := ALine
 	} = Data,
-	Candidate = #candidate{m_id=Id, m_index=Index, a_line=ALine},
-	case nkmedia_session:candidate(SessId, Role, Candidate) of
+	Candidate = #candidate{m_id=Id, m_index=Index, a_line=ALine, meta={role, Role}},
+	case nkmedia_session:client_candidate(SessId, Candidate) of
 		ok ->
 			{ok, #{}, State};
 		{error, Error} ->
@@ -107,8 +107,8 @@ cmd(<<"session">>, <<"set_candidate">>, #api_req{data=Data}, State) ->
 %% Not tested!
 cmd(<<"session">>, <<"set_candidate_end">>, #api_req{data=Data}, State) ->
 	#{session_id := SessId, role := Role} = Data,
-	Candidate = #candidate{last=true},
-	case nkmedia_session:candidate(SessId, Role, Candidate) of
+	Candidate = #candidate{last=true, meta={role, Role}},
+	case nkmedia_session:client_candidate(SessId, Candidate) of
 		ok ->
 			{ok, #{}, State};
 		{error, Error} ->

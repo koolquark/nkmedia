@@ -27,12 +27,12 @@
 
 -export([start/3, get_type/1, get_session/1, get_offer/1, get_answer/1]).
 -export([stop/1, stop/2, stop_all/0]).
--export([answer/2, answer_async/2, candidate/3]).
+-export([answer/2, answer_async/2, client_candidate/2, server_candidate/2]).
 -export([update/3, update_async/3, info/2]).
 -export([register/2, unregister/2, link_slave/2, unlink_session/1]).
 -export([get_all/0]).
 -export([get_call_data/1, ext_ops/2, do_add/3, do_rm/2]).
--export([find/1, do_cast/2, do_call/2, do_call/3]).
+-export([find/1, do_cast/2, do_call/2, do_call/3, do_info/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
 -export_type([id/0, config/0, session/0, event/0, type_ext/0, ext_ops/0]).
@@ -44,8 +44,10 @@
 -include("nkmedia.hrl").
 -include_lib("nklib/include/nklib.hrl").
 -include_lib("nkservice/include/nkservice.hrl").
+-include_lib("nksip/include/nksip.hrl").
 
-
+-define(MAX_ICE_TIME, 200).
+-define(MAX_CALL_TIME, 5000).
 
 %% ===================================================================
 %% Types
@@ -71,6 +73,7 @@
     #{
         session_id => id(),                         % Generated if not included
         peer => id(),                               % See above
+        trickle_ice => boolean(),                   % Default false (candidates in SDP)
         wait_timeout => integer(),                  % Secs
         ready_timeout => integer(),
         backend => nkemdia:backend(),
@@ -98,6 +101,7 @@
 -type event() ::
     {answer, nkmedia:answer()}          |   % Answer SDP is available
     {updated_type, atom(), map()}       |
+    {candidate, nkmedia:candidate()}    |
     {info, binary()}                    |   % User info
     {stop, nkservice:error()}           |   % Session is about to hangup
     {linked_down, id(), caller|callee, Reason::term()}.
@@ -128,7 +132,7 @@ start(Srv, Type, Config) ->
             Config2 = Config#{type=>Type, srv_id=>SrvId},
             {SessId, Config3} = nkmedia_util:add_id(session_id, Config2),
             {ok, SessPid} = gen_server:start(?MODULE, [Config3], []),
-            case gen_server:call(SessPid, do_start) of
+            case gen_server:call(SessPid, do_start, ?MAX_CALL_TIME) of
                 {ok, Reply} ->
                     {ok, SessId, SessPid, Reply};
                 {error, Error} ->
@@ -152,7 +156,7 @@ get_session(SessId) ->
     {ok, nkmedia:offer()} | {error, nkservice:error()}.
 
 get_offer(SessId) ->
-    do_call(SessId, get_offer).
+    do_call(SessId, get_offer, ?MAX_CALL_TIME).
 
 
 %% @doc Get current session answer
@@ -160,7 +164,7 @@ get_offer(SessId) ->
     {ok, nkmedia:answer()} | {error, nkservice:error()}.
 
 get_answer(SessId) ->
-    do_call(SessId, get_answer).
+    do_call(SessId, get_answer, ?MAX_CALL_TIME).
 
 
 %% @doc Get current type, type_ext and remaining time to timeout
@@ -211,12 +215,21 @@ answer_async(SessId, Answer) ->
 
 
 
-%% @doc Sends an ICE candidate
--spec candidate(id(), caller|callee, nkmedia:candidate()) ->
+%% @doc Sends a client ICE candidate to the backend
+-spec client_candidate(id(), nkmedia:candidate()) ->
     ok | {error, term()}.
 
-candidate(SessId, Role, Candidate) ->
-    do_call(SessId, {candidate, Role, Candidate}).
+client_candidate(SessId, Candidate) ->
+    do_cast(SessId, {client_candidate, Candidate}).
+
+
+%% @doc Sends a client ICE candidate to the backend
+-spec server_candidate(id(), nkmedia:candidate()) ->
+    ok | {error, term()}.
+
+server_candidate(SessId, Candidate) ->
+    do_cast(SessId, {server_candidate, Candidate}).
+
 
 
 %% @doc Sets the session's current answer operation.
@@ -338,6 +351,10 @@ do_rm(Key, Session) ->
     stop_sent = false :: boolean(),
     hibernate = false :: boolean(),
     links :: nklib_links:links(),
+    % from :: {pid(), term()},
+    ice_start :: nklib_util:l_timestamp(),
+    client_candidates = trickle :: trickle | last | [nkmedia:candidate()],
+    server_candidates = [] :: [nkmedia:candidate()],
     session :: session()
 }).
 
@@ -383,8 +400,18 @@ init([#{session_id:=Id, type:=Type, srv_id:=SrvId}=Session]) ->
     {noreply, #state{}} | {reply, term(), #state{}} |
     {stop, Reason::term(), #state{}} | {stop, Reason::term(), Reply::term(), #state{}}.
 
-handle_call(do_start, From, State) ->
-    do_start(From, State);
+handle_call(do_start, _From, #state{session=Session}=State) ->
+    State2 = add_to_session(start_time, nklib_util:l_timestamp(), State),
+    case do_start(State2) of
+        {ok, Reply, State3} ->
+            reply({ok, Reply}, State3);
+        {error, Error, State3} ->
+            reply({error, Error}, State3);
+        {wait_trickle_ice, State3} ->
+            Time = maps:get(max_ice_time, Session, ?MAX_ICE_TIME),
+            erlang:start_timer(Time, self(), client_ice_timeout),
+            reply({ok, #{}}, State3#state{client_candidates=[]})
+    end;
 
 handle_call(get_session, _From, #state{session=Session}=State) ->
     reply({ok, Session}, State);
@@ -400,9 +427,6 @@ handle_call(get_type, _From, #state{type=Type, timer=Timer, session=Session}=Sta
 
 handle_call({answer, Answer}, From, State) ->
     do_set_answer(Answer, From, State);
-
-handle_call({candidate, Role, Candidate}, From, State) ->
-    do_set_candidate(Role, Candidate, From, State);
 
 handle_call({update, Update, Opts}, From, State) ->
     do_update(Update, Opts, From, State);
@@ -443,6 +467,12 @@ handle_call(Msg, From, State) ->
 %% @private
 -spec handle_cast(term(), #state{}) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
+
+handle_cast({client_candidate, Candidate}, State) ->
+    noreply(do_client_candidate(Candidate, State));
+
+handle_cast({server_candidate, Candidate}, State) ->
+    noreply(do_server_candidate(Candidate, State));
 
 handle_cast({answer, Answer}, State) ->
     do_set_answer(Answer, undefined, State);
@@ -517,8 +547,16 @@ handle_cast(Msg, State) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
 handle_info({timeout, _, session_timeout}, State) ->
-    ?LLOG(info, "operation timeout", [], State),
+    ?LLOG(notice, "operation timeout", [], State),
     do_stop(session_timeout, State);
+
+handle_info({timeout, _, client_ice_timeout}, State) ->
+    ?LLOG(info, "Client ICE timeout", [], State),
+    noreply(do_client_candidate(#candidate{last=true}, State));
+
+handle_info({timeout, _, server_ice_timeout}, State) ->
+    ?LLOG(info, "Server ICE timeout", [], State),
+    noreply(do_server_candidate(#candidate{last=true}, State));
 
 handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, #state{id=Id}=State) ->
     case links_down(Ref, State) of
@@ -573,7 +611,7 @@ terminate(Reason, State) ->
 %% ===================================================================
 
 %% @private
-do_start(From, #state{type=Type}=State) ->
+do_start(#state{type=Type}=State) ->
     case handle(nkmedia_session_start, [Type], State) of
         {ok, Reply, ExtOps, State2} ->
             State3 = update_ext_ops_offer(ExtOps, State2),
@@ -584,14 +622,14 @@ do_start(From, #state{type=Type}=State) ->
                     State5 = update_ext_ops(ExtOps, State4),
                     State6 = restart_timer(State5),
                     ?LLOG(info, "started ok", [], State6),
-                    reply({ok, Reply}, From, State6);
+                    {ok, Reply, State6};
                 _ ->
-                    stop(self(), missing_offer),
-                    reply({error, misssing_offer}, From, State4)
+                    {error, misssing_offer, State}
             end;
+        {wait_trickle_ice, State2} ->
+            {wait_trickle_ice, State2};
         {error, Error, State2} ->
-            stop(self(), Error),
-            reply({error, Error}, From, State2)
+            {error, Error, State2}
     end.
 
 
@@ -616,16 +654,6 @@ do_set_answer(Answer, From, #state{type=Type}=State) ->
 
 
 %% @private
-do_set_candidate(Role, Candidate, From, State) ->
-    case handle(nkmedia_session_candidate, [Role, Candidate], State) of
-        {ok, State2} ->
-            reply(ok, From, State2);
-        {error, Error, State2} ->
-            reply({error, Error}, From, State2)
-    end.
-
-
-%% @private
 do_update(Update, Opts, From, #state{type=Type, has_answer=true}=State) ->
     case handle(nkmedia_session_update, [Update, Opts, Type], State) of
         {ok, Reply, ExtOps, State2} ->
@@ -639,6 +667,70 @@ do_update(_Update, _Opts, From, State) ->
     reply({error, answer_not_set}, From, State).
 
 
+%% @private
+do_client_candidate(Candidate, #state{client_candidates=trickle}=State) ->
+    {ok, State2} = handle(nkmedia_session_candidate, [Candidate], State),
+    State2;
+
+do_client_candidate(Candidate, #state{client_candidates=last}=State) ->
+    case Candidate of
+        #candidate{last=true} -> ok;
+        _ -> ?LLOG(notice, "ignoring late client candidate", [], State)
+    end,
+    State;
+
+do_client_candidate(#candidate{last=true}, State) ->
+    #state{client_candidates=Candidates, session=Session} = State,
+    #{offer:=#{sdp:=SDP}=Offer, start_time:=Start} = Session,
+    SDP2 = nksip_sdp:add_candidates(SDP, Candidates),
+    Offer2 = Offer#{sdp=>nksip_sdp:unparse(SDP2), trickle_ice=>false},
+    State2 = add_to_session(offer, Offer2, State#state{client_candidates=last}),
+    case do_start(State2) of
+        {ok, _Reply, State3} ->
+            Time = (nklib_util:l_timestamp() - Start) div 1000,
+            ?LLOG(notice, "Client setup time: ~pmsecs", [Time], State),
+            ok;
+        {error, Error, State3} ->
+            stop(self(), Error);
+        {wait_trickle_ice, State3} ->
+            ?LLOG(error, "backend sent wait_trickle_ice twice", 
+                  [], State3),
+            stop(self(), backend_error)
+    end,
+    State3;
+
+do_client_candidate(Candidate, #state{client_candidates=Candidates}=State) ->
+    Candidates2 = [Candidate|Candidates],
+    State#state{client_candidates=Candidates2}.
+
+
+%% @private
+do_server_candidate(Candidate, #state{server_candidates=trickle}=State) ->
+    event({candidate, Candidate}, State);
+
+do_server_candidate(Candidate, #state{client_candidates=last}=State) ->
+    case Candidate of
+        #candidate{last=true} -> ok;
+        _ -> ?LLOG(notice, "ignoring late server candidate", [], State)
+    end,
+    State;
+
+do_server_candidate(#candidate{last=true}, #state{has_answer=true}=State) ->
+    #state{server_candidates=Candidates, session=Session} = State,
+    #{answer:=#{sdp:=SDP}=Answer} = Session,
+    SDP2 = nksip_sdp:add_candidates(SDP, Candidates),
+    Answer2 = Answer#{sdp=>nksip_sdp:unparse(SDP2), trickle_ice=>false},
+    State2 = add_to_session(answer, Answer2, State#state{client_candidates=last}),
+    event({answer, Answer2}, State2);
+
+do_server_candidate(Candidate, #state{has_answer=true}=State) ->
+    #state{server_candidates=Candidates} = State,
+    Candidates2 = [Candidate|Candidates],
+    State#state{server_candidates=Candidates2};
+
+do_server_candidate(_Candidate, State) ->
+    ?LLOG(warning, "backend sent unexpected ICE candidate", [], State),
+    State.
 
 
 %% ===================================================================
@@ -662,8 +754,18 @@ update_ext_ops_answer(#{answer:=Answer}, #state{session=Session}=State) ->
     State2 = add_to_session(answer, NewAnswer, State),
     case NewAnswer of
         #{sdp:=_} ->
-            ?LLOG(info, "answer set", [], State2),
-            event({answer, Answer}, State2#state{has_answer=true});
+            AnsTrickle = maps:get(trickle_ice, NewAnswer, false),
+            ClientTrickle = maps:get(trickle_ice, Session, false),
+            case ClientTrickle==false andalso AnsTrickle==true of
+                true ->
+                    Time = maps:get(max_ice_time, Session, ?MAX_ICE_TIME),
+                    erlang:start_timer(Time, self(), server_ice_timeout),
+                    ?LLOG(info, "waiting for server Trickle ICE", [], State),
+                    State2#state{server_candidates=[], has_answer=true};
+                false ->
+                    ?LLOG(info, "answer set", [], State2),
+                    event({answer, Answer}, State2#state{has_answer=true})
+            end;
         _ ->
             State2
     end;
@@ -805,6 +907,14 @@ do_call(SessId, Msg, Timeout) ->
 do_cast(SessId, Msg) ->
     case find(SessId) of
         {ok, Pid} -> gen_server:cast(Pid, Msg);
+        not_found -> {error, session_not_found}
+    end.
+
+
+%% @private
+do_info(SessId, Msg) ->
+    case find(SessId) of
+        {ok, Pid} -> Pid ! Msg;
         not_found -> {error, session_not_found}
     end.
 

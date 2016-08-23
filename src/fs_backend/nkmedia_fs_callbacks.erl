@@ -157,6 +157,8 @@ nkmedia_session_start(Type, Session) ->
                 {error, Error, State2} ->
                     Session2 = nkmedia_session:do_add(backend, nkmedia_fs, Session),
                     {error, Error, update_state(State2, Session2)};
+                wait_trickle_ice ->
+                    {wait_trickle_ice, Session};
                 continue ->
                     continue
             end;

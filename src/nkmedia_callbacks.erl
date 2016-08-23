@@ -28,7 +28,7 @@
 		 nkmedia_session_event/3, nkmedia_session_reg_event/4,
 		 nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2, 
 		 nkmedia_session_handle_info/2]).
--export([nkmedia_session_start/2, nkmedia_session_answer/3, nkmedia_session_candidate/3,
+-export([nkmedia_session_start/2, nkmedia_session_answer/3, nkmedia_session_candidate/2,
 	     nkmedia_session_update/4, nkmedia_session_stop/2]).
 -export([nkmedia_call_init/2, nkmedia_call_terminate/2, 
 		 nkmedia_call_resolve/3, nkmedia_call_invite/5, nkmedia_call_cancel/3, 
@@ -94,6 +94,7 @@ plugin_stop(Config, #{name:=Name}) ->
 
 error_code(no_mediaserver) 			-> 	{2001, <<"No mediaserver available">>};
 error_code(unknown_session_type) 	-> 	{2002, <<"Unknown session type">>};
+error_code(backed_error) 			-> 	{2003, <<"Backend error">>};
 
 error_code(missing_offer) 			-> 	{2010, <<"Missing offer">>};
 error_code(duplicated_offer) 		-> 	{2011, <<"Duplicated offer">>};
@@ -151,7 +152,8 @@ nkmedia_session_terminate(_Reason, Session) ->
 
 -spec nkmedia_session_start(nkmedia_session:type(), session()) ->
 	{ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
-	{error, nkservice:error(), session()} | continue().
+	{error, nkservice:error(), session()} | 
+	{wait_trickle_ice, session()} | continue().
 
 nkmedia_session_start(p2p, Session) ->
 	{ok, #{}, #{}, Session};
@@ -170,11 +172,11 @@ nkmedia_session_answer(Type, Answer, Session) ->
 
 
 %% @private
--spec nkmedia_session_candidate(caller|callee, nkmedia:candidate(), session()) ->
-	ok | {error, term(), session()} | continue().
+-spec nkmedia_session_candidate(nkmedia:candidate(), session()) ->
+	{ok, session()} | continue().
 
-nkmedia_session_candidate(_Role, _Candidate, Session) ->
-	{error, not_implemented, Session}.
+nkmedia_session_candidate(_Candidate, Session) ->
+	{ok, Session}.
 
 
 %% @private

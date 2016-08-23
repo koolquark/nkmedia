@@ -26,6 +26,7 @@
 -export_type([engine_id/0, engine_config/0]).
 
 -include("nkmedia.hrl").
+-include_lib("nksip/include/nksip.hrl").
 
 
 %% ===================================================================
@@ -37,6 +38,7 @@
 	#{
 		sdp => binary(),
 		sdp_type => rtp | webrtc,
+		trickle_ice => boolean(),	% Default false, all candidates must be in SDP
 		dest => binary(),
         caller_name => binary(),
         caller_id => binary(),
@@ -57,6 +59,7 @@
 	#{
 		sdp => binary(),
 		sdp_type => rtp | webrtc,
+		trickle_ice => boolean(),	% Default false, all candidates must be in SDP
         use_audio => boolean(),
         use_video => boolean(),
         use_screen => boolean(),

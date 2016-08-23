@@ -31,7 +31,7 @@
 -export([conn_handle_call/4, conn_handle_cast/3, conn_handle_info/3]).
 -export([print/3]).
 
--include("../../include/nkmedia.hrl").
+-include_lib("nksip/include/nksip.hrl").
 
 -define(LLOG(Type, Txt, Args, State),
     lager:Type("NkMEDIA Janus Client (~p) "++Txt, [self()|Args])).

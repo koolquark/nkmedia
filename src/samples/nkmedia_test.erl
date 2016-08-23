@@ -257,7 +257,7 @@ nkmedia_verto_invite(_SrvId, CallId, Offer, Verto) ->
 % @private Called when we receive INVITE from Janus
 nkmedia_janus_invite(_SrvId, CallId, Offer, Janus) ->
     #{dest:=Dest} = Offer, 
-    Base = #{offer=>Offer, register=>{nkmedia_janus, CallId, self()}},
+    Base = #{offer=>Offer#{trickle_ice=>true}, register=>{nkmedia_janus, CallId, self()}},
     case send_call(Dest, Base) of
         {ok, Link} ->
             {ok, Link, Janus};
@@ -485,8 +485,8 @@ start_session(Type, Config) ->
         {ok, SessId, SessPid, #{offer:=Offer}} ->
             {offer, Offer, {nkmedia_session, SessId, SessPid}};
         {ok, SessId, SessPid, #{}} ->
-            Offer = maps:get(offer, Config),
-            {offer, Offer, {nkmedia_session, SessId, SessPid}};
+            % Offer = maps:get(offer, Config),
+            {ok, {nkmedia_session, SessId, SessPid}};
         {error, Error} ->
             {rejected, Error}
     end.

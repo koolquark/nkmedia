@@ -84,7 +84,6 @@ start(Service) ->
             {error, Error1} -> throw(Error1)
         end,
         nkdocker:rm(DockerPid, Name),
-                lager:error("START: ~p, ~p", [Image, DockerOpts]),
         case nkdocker:create(DockerPid, Image, DockerOpts) of
             {ok, _} -> ok;
             {error, Error2} -> throw(Error2)
@@ -92,10 +91,8 @@ start(Service) ->
         lager:info("NkMEDIA KMS Docker: starting instance ~s", [Name]),
         case nkdocker:start(DockerPid, Name) of
             ok ->
-                lager:error("STARTED"),
                 {ok, Name};
             {error, Error3} ->
-                lager:error("NOT STARTED"),
                 {error, Error3}
         end
     catch

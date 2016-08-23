@@ -34,7 +34,7 @@
          nkmedia_call_reg_event/4]).
 -export([nkmedia_session_reg_event/4]).
 
-
+-include_lib("nksip/include/nksip.hrl").
 
 -define(JANUS_WS_TIMEOUT, 60*60*1000).
 
@@ -181,7 +181,8 @@ nkmedia_janus_start(SessId, Answer, Janus) ->
 nkmedia_janus_candidate(Candidate, #{link:={nkmedia_session, SessId, _Pid}}=Janus) ->
     #{role:=Role} = Janus,
     % If the session has two webrtc endpoint, we must tell the role (caller or callee)
-    ok = nkmedia_session:candidate(SessId, Role, Candidate),
+    Candidate2 = Candidate#candidate{meta={role, Role}},
+    ok = nkmedia_session:client_candidate(SessId, Candidate2),
     {ok, Janus};
 
 nkmedia_janus_candidate(_Candidate, Janus) ->
