@@ -29,7 +29,7 @@
 -export([nkmedia_session_init/2, nkmedia_session_terminate/2]).
 -export([nkmedia_session_start/2, nkmedia_session_answer/3, nkmedia_session_candidate/2,
          nkmedia_session_update/4, nkmedia_session_stop/2, 
-         nkmedia_session_handle_call/3, nkmedia_session_handle_info/2]).
+         nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2]).
 -export([nkmedia_room_init/2, nkmedia_room_terminate/2, nkmedia_room_tick/2,
          nkmedia_room_handle_cast/2]).
 -export([api_cmd/2, api_syntax/4]).
@@ -118,11 +118,13 @@ nkmedia_kms_get_mediaserver(SrvId) ->
 
 %% @private Error Codes -> 24XX range
 error_code(kms_error)             ->  {2400, <<"Kurento internal error">>};
-error_code(kms_connection_error)  ->  {2401, <<"Kurento connection error">>};
-error_code(kms_session_down)      ->  {2402, <<"Kurento op process down">>};
-error_code(kms_bye)               ->  {2403, <<"Kurento bye">>};
-error_code(_)                     ->  continue.
+error_code({kms_error, Code, Txt})->  
+    {2401, io_lib:format("Kurento error (~p): ~s", [Code, Txt])};
 
+error_code(kms_connection_error)  ->  {2410, <<"Kurento connection error">>};
+error_code(kms_session_down)      ->  {2411, <<"Kurento op process down">>};
+error_code(kms_bye)               ->  {2412, <<"Kurento bye">>};
+error_code(_) -> continue.
 
 
 %% ===================================================================
@@ -228,8 +230,15 @@ nkmedia_session_handle_call(_Msg, _From, _Session) ->
 
 
 %% @private
-nkmedia_session_handle_info(_Msg, _Session) ->
+nkmedia_session_handle_cast({nkmedia_kms, Msg}, Session) ->
+    State = state(Session),
+    {noreply, State2} = 
+        nkmedia_kms_session:nkmedia_session_handle_cast(Msg, Session, State),
+    {noreply, update_state(State2, Session)};
+
+nkmedia_session_handle_cast(_Msg, _Session) ->
     continue.
+
 
 
 %% ===================================================================

@@ -180,7 +180,7 @@ nkmedia_session_candidate(_Candidate, Session) ->
 
 
 %% @private
--spec nkmedia_session_update(nkmedia_session:update(), map(),
+-spec nkmedia_session_update(nkmedia_session:update(), Opts::map(),
 					         nkmedia_session:type(), session()) ->
 	{ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
 	{error, term(), session()} | continue().

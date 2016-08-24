@@ -24,7 +24,7 @@
 -behaviour(gen_server).
 
 -export([connect/1, stop/1, find/1]).
--export([create/3]).
+-export([get_pipeline/1]).
 -export([stats/2, get_config/1, get_client/1, get_all/0, get_all/1, stop_all/0]).
 -export([start_link/1, init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
@@ -94,15 +94,11 @@ stop(Name) ->
 
 
 %% @doc Creates media pipelines and media elements
--spec create(id(), atom(), nkmedia_session:id()) ->
-    {ok, ObjId::binary()} | {error, term()}.
+-spec get_pipeline(id()) ->
+    {ok, Pipeline::binary(), KmsClient::pid()} | {error, term()}.
 
-create(Pid, Type, SessionId) ->
-    do_call(Pid, {create, Type, SessionId}).
-
-
-
-
+get_pipeline(Id) ->
+    do_call(Id, get_pipeline).
 
 
 %% @private
@@ -232,18 +228,8 @@ handle_call(get_config, _From, #state{config=Config}=State) ->
 handle_call(_, _From, #state{status=Status}=State) when Status /= ready ->
 	{reply, {error, not_ready}, State};
 
-handle_call({create, Type, SessId}, _From, State) ->
-	#state{conn=Pid, pipeline=Pipeline} = State,
-	Params = #{mediaPipeline=>Pipeline},
-	Properties = #{pkey1 => pval1},
-	case nkmedia_kms_client:create(Pid, Type, Params, Properties) of
-		{ok, ObjId} ->
-			invoke(ObjId, addTag, #{key=>nkmedia, value=>SessId}, State),
-			invoke(ObjId, setSendTagsInEvents, #{sendTagsInEvents=>true}, State),
-			{reply, {ok, ObjId}, State};
-		{error, Error} ->
-			{reply, {error, Error}, State}
-	end;
+handle_call(get_pipeline, _From, #state{conn=Pid, pipeline=Pipeline}=State) ->
+	{reply, {ok, Pipeline, Pid}, State};
 
 handle_call(Msg, _From, State) ->
     lager:error("Module ~p received unexpected call ~p", [?MODULE, Msg]),
@@ -282,7 +268,7 @@ handle_info(connect, #state{id=Id, config=Config}=State) ->
 			{ok, Info} = nkmedia_kms_client:manager(Pid, getInfo),
 			print_info(Info, State3),
 			monitor(process, Pid),
-			State4 = get_pipeline(State3),
+			State4 = do_get_pipeline(State3),
 			{noreply, update_status(ready, State4)};
 		{error, Error} ->
 			?LLOG(warning, "could not connect: ~p", [Error], State2),
@@ -321,27 +307,24 @@ terminate(Reason, State) ->
 %% ===================================================================
 
 %% @private
-get_pipeline(#state{conn=Pid, pipeline=undefined}=State) ->
+do_get_pipeline(#state{conn=Pid, pipeline=undefined}=State) ->
 	{ok, Pipeline} = nkmedia_kms_client:create(Pid, 'MediaPipeline', #{}, #{}),
 	{ok, _} = nkmedia_kms_client:subscribe(Pid, Pipeline, 'Error'),
+	Params2 = #{latencyStats=>true},
+	{ok, null} = nkmedia_kms_client:invoke(Pid, Pipeline, setLatencyStats, Params2),
 	?LLOG(info, "created Pipeline ~s", [Pipeline], State),
 	State#state{pipeline=Pipeline};
 
-get_pipeline(#state{conn=Pid, pipeline=Pipeline}=State) ->
+do_get_pipeline(#state{conn=Pid, pipeline=Pipeline}=State) ->
 	{ok, Pipelines} = nkmedia_kms_client:manager(Pid, getPipelines),
 	case lists:member(Pipeline, Pipelines) of
 		true ->
 			State;
 		false ->
 			?LLOG(warning, "Pipeline ~s is no longer valid!", [Pipeline], State),
-			get_pipeline(State#state{pipeline=undefined})
+			do_get_pipeline(State#state{pipeline=undefined})
 	end.
 
-
-%% @private
-invoke(ObjId, Cmd, Params, #state{conn=Pid}) ->
-	{ok, Res} = nkmedia_kms_client:invoke(Pid, ObjId, Cmd, Params),
-	Res.
 
 %% @private
 update_status(Status, #state{status=Status}=State) ->

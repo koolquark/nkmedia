@@ -372,7 +372,7 @@ send_call(<<"fe">>, Base) ->
     start_session(echo, Config);
 
 send_call(<<"ke">>, Base) ->
-    Config = Base#{backend => nkmedia_kms},
+    Config = Base#{backend => nkmedia_kms, use_data=>false},
     start_session(echo, Config);
 
 send_call(<<"m1">>, Base) ->

@@ -40,7 +40,7 @@
 %% Types
 %% ===================================================================
 
--type id() :: nkmedia_session:id().
+-type session_id() :: nkmedia_session:id().
 -type session() :: nkmedia_session:session().
 -type continue() :: continue | {continue, list()}.
 
@@ -59,7 +59,7 @@
     bridge  |
     call.
 
--type type_ext() :: {type(), map()}.
+-type ext_opts() :: nkmedia_session:ext_opts().
 
 
 -type opts() ::  
@@ -73,7 +73,7 @@
 
 
 -type fs_event() ::
-    parked | {hangup, term()} | {bridge, id()} | {mcu, map()} | stop.
+    parked | {hangup, term()} | {bridge, session_id()} | {mcu, map()} | stop.
 
 
 -type state() ::
@@ -89,7 +89,7 @@
 
 
 %% @private Called from nkmedia_fs_engine and nkmedia_fs_verto
--spec fs_event(id(), nkmedia_fs:id(), fs_event()) ->
+-spec fs_event(session_id(), nkmedia_fs:id(), fs_event()) ->
     ok.
 
 fs_event(SessId, FsId, Event) ->
@@ -117,7 +117,7 @@ send_bridge(Remote, Local) ->
 %% ===================================================================
 
 
--spec init(id(), session(), state()) ->
+-spec init(session_id(), session(), state()) ->
     {ok, state()}.
 
 init(_Id, _Session, State) ->
@@ -134,8 +134,8 @@ terminate(_Reason, _Session, State) ->
 
 %% @private
 -spec start(type(), nkmedia:session(), state()) ->
-    {ok, type_ext(), map(), none|nkmedia:offer(), none|nkmedia:answer(), state()} |
-    {error, term(), state()} | continue().
+    {ok, Reply::map(), ext_opts(), state()} |
+    {error, nkservice:error(), state()} | continue().
 
 start(Type, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
     Trickle = maps:get(trickle_ice, Offer, false),
@@ -188,8 +188,8 @@ start(Type, Session, State) ->
 
 %% @private
 -spec answer(type(), nkmedia:answer(), session(), state()) ->
-    {ok, map(), nkmedia:answer(), state()} |
-    {error, term(), state()} | continue().
+    {ok, Reply::map(), ext_opts(), state()} |
+    {error, nkservice:error(), state()} | continue().
 
 answer(Type, Answer, Session, #{fs_role:=offer}=State) ->
     #{session_id:=SessId, offer:=#{sdp_type:=SdpType}} = Session,
@@ -225,9 +225,9 @@ answer(_Type, _Answer, _Session, _State) ->
 
 
 %% @private
--spec update(update(), map(), type(), nkmedia:session(), state()) ->
-    {ok, type_ext(), map(), state()} |
-    {error, term(), state()} | continue().
+-spec update(update(), Opts::map(), type(), nkmedia:session(), state()) ->
+    {ok, Reply::map(), ext_opts(), state()} |
+    {error, nkservice:error(), state()} | continue().
 
 update(session_type, #{session_type:=Type}=Opts, _OldTytpe, Session, #{fs_id:=_}=State) ->
     do_update(Type, maps:merge(Session, Opts), State);

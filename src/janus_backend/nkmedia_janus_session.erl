@@ -57,6 +57,7 @@
     listen   |
     play.
 
+-type ext_opts() :: nkmedia_session:ext_opts().
 
 -type opts() ::
     nkmedia_session:session() |
@@ -108,8 +109,8 @@ terminate(_Reason, _Session, State) ->
 
 %% @private
 -spec start(type(), nkmedia:session(), state()) ->
-    {ok, type(), map(), none|nkmedia:offer(), none|nkmedia:answer(), state()} |
-    {error, term(), state()} | continue().
+    {ok, Reply::map(), ext_opts(), state()} |
+    {error, nkservice:error(), state()} | continue().
 
 start(echo, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
     case get_janus_op(Session, State) of
@@ -250,8 +251,8 @@ start(_Type, _Session, _State) ->
 
 %% @private
 -spec answer(type(), nkmedia:answer(), session(), state()) ->
-    {ok, map(), nkmedia:answer(), state()} |
-    {error, term(), state()} | continue().
+    {ok, Reply::map(), ext_opts(), state()} |
+    {error, nkservice:error(), state()} | continue().
 
 answer(Type, Answer, _Session, #{janus_op:=answer}=State)
         when Type==proxy; Type==listen ->
@@ -281,9 +282,9 @@ candidate(Candidate, Session, #{janus_pid:=Pid}) ->
 
 
 %% @private
--spec update(update(), map(), type(), nkmedia:session(), state()) ->
-    {ok, type(), map(), state()} |
-    {error, term(), state()} | continue().
+-spec update(update(), Opts::map(), type(), nkmedia:session(), state()) ->
+    {ok, Reply::map(), ext_opts(), state()} |
+    {error, nkservice:error(), state()} | continue().
 
 update(media, Opts, Type, #{session_id:=SessId}, #{janus_pid:=Pid}=State)
         when Type==echo; Type==proxy; Type==publish ->
