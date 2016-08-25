@@ -25,7 +25,7 @@
 
 -export([start/2, stop/1, stop/2, get_room/1, register/2, unregister/2, get_all/0]).
 -export([restart_timer/1]).
--export([update/2, find/1, do_call/2, do_call/3, do_cast/2]).
+-export([update/2, update_async/2, find/1, do_call/2, do_call/3, do_cast/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
 -export_type([id/0, room/0, event/0]).
@@ -64,7 +64,7 @@
     #{
         user => binary(),
         pid => pid(),
-        peer => binary()
+        peer_id => binary()
     }.
 
 
@@ -91,10 +91,10 @@
 
 
 -type update() ::
-    {started_publisher, nkmedia_session:id(), member_opts()} |
-    {stopped_publisher, nkmedia_session:id(), member_opts()} |
-    {started_listener, nkmedia_session:id(), member_opts()} |
-    {stopped_listener, nkmedia_session:id(), member_opts()}.
+    {started_publisher, session_id(), member_opts()} |
+    {stopped_publisher, session_id(), member_opts()} |
+    {started_listener, session_id(), member_opts()} |
+    {stopped_listener, session_id(), member_opts()}.
 
  
 
@@ -117,7 +117,8 @@ start(Srv, Config) ->
         not_found ->
             case nkservice_srv:get_srv_id(Srv) of
                 {ok, SrvId} ->
-                    Config3 = Config2#{srv_id=>SrvId},
+                    Class = maps:get(class, Config, sfu),
+                    Config3 = Config2#{srv_id=>SrvId, class=>Class},
                     case SrvId:nkmedia_room_init(Id, Config3) of
                         {ok, Config4} ->
                             {ok, Pid} = gen_server:start(?MODULE, [Config4], []),
@@ -161,6 +162,14 @@ get_room(Id) ->
 
 update(Id, Update) ->
     do_call(Id, {update, Update}).
+
+
+%% @private
+-spec update_async(id(), update()) ->
+    ok | {error, term()}.
+
+update_async(Id, Update) ->
+    do_cast(Id, {update, Update}).
 
 
 %% @doc Registers a process with the call
@@ -270,6 +279,15 @@ handle_call(Msg, From, State) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
 %% @private
+handle_cast({update, Update}, State) ->
+    case do_update(Update, State) of
+        {ok, State2} ->
+            ok;
+        {error, Error, State2} ->
+            ?LLOG(notice, "error in update: ~p", [Error], State)
+    end,
+    {noreply, State2};
+
 handle_cast({unregister, Link}, State) ->
     ?LLOG(info, "proc unregistered (~p)", [Link], State),
     {noreply, links_remove(Link, State)};
@@ -296,10 +314,10 @@ handle_info(room_tick, #state{id=Id}=State) ->
 handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, #state{id=Id}=State) ->
     case links_down(Ref, State) of
         {ok, SessId, publisher, State2} ->
-            {ok, State3} = do_update({stopped_publisher, SessId}, State2),
+            {ok, State3} = do_update({stopped_publisher, SessId, #{}}, State2),
             {noreply, State3};
         {ok, SessId, listener, State2} ->
-            {ok, State3} = do_update({stopped_listener, SessId}, State2),
+            {ok, State3} = do_update({stopped_listener, SessId, #{}}, State2),
             {noreply, State3};
         {ok, Link, reg, State2} ->
             case handle(nkmedia_room_reg_down, [Id, Link, Reason], State2) of
@@ -407,14 +425,14 @@ do_update({started_publisher, SessId, Opts}, #state{room=Room}=State) ->
     State3 = links_add(SessId, publisher, Pid, State2),
     {ok, event({started_publisher, SessId, MemberOpts}, State3)};
 
-do_update({stopped_publisher, SessId},  #state{room=Room}=State) ->
+do_update({stopped_publisher, SessId, _Opts},  #state{room=Room}=State) ->
     Publish1 = maps:get(publishers, Room, #{}),
     MemberOpts = maps:get(SessId, Publish1, #{}),
     Publish2 = maps:remove(SessId, Publish1),
     State2 = update_room(publishers, Publish2, State),
     State3 = links_remove(SessId, State2),
     Listen = maps:get(listeners, Room, #{}),
-    ToStop = [LId || {LId, #{peer:=PId}} <- maps:to_list(Listen), PId==SessId],
+    ToStop = [LId || {LId, #{peer_id:=PId}} <- maps:to_list(Listen), PId==SessId],
     lists:foreach(
         fun(LId) -> nkmedia_session:stop(LId, publisher_stopped) end,
         ToStop),
@@ -423,8 +441,8 @@ do_update({stopped_publisher, SessId},  #state{room=Room}=State) ->
 do_update({started_listener, SessId, Opts}, #state{room=Room}=State) ->
     UserId = maps:get(user, Opts, <<>>),
     Pid = maps:get(pid, Opts, none),
-    Peer = maps:get(peer, Opts, <<>>),
-    MemberOpts = #{user=>UserId, peer=>Peer},
+    Peer = maps:get(peer_id, Opts, <<>>),
+    MemberOpts = #{user=>UserId, peer_id=>Peer},
     Listen1 = maps:get(listeners, Room, #{}),
     Listen2 = maps:put(SessId, MemberOpts, Listen1),
     State2 = update_room(listeners, Listen2, State),
@@ -432,7 +450,7 @@ do_update({started_listener, SessId, Opts}, #state{room=Room}=State) ->
     State3 = links_add(SessId, listener, Pid, State2),
     {ok, event({started_listener, SessId, MemberOpts}, State3)};
 
-do_update({stopped_listener, SessId}, #state{room=Room}=State) ->
+do_update({stopped_listener, SessId, _Opts}, #state{room=Room}=State) ->
     Listen1 = maps:get(listeners, Room, #{}),
     MemberOpts = maps:get(SessId, Listen1, #{}),
     Listen2 = maps:remove(SessId, Listen1),

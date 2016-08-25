@@ -128,7 +128,7 @@ cmd(<<"session">>, <<"info">>, #api_req{data=Data}, State) ->
 	#{session_id:=SessId} = Data,
 	case nkmedia_session:get_session(SessId) of
 		{ok, Session} ->
-			Keys = [session_id, peer, wait_timeout, ready_timeout, backend, 
+			Keys = [session_id, peer_id, wait_timeout, ready_timeout, backend, 
 			        user_id, user_session, type, type_ext, master_peer, slave_peer],
 			Data2 = maps:with(Keys, Session),
 			{ok, Data2, State};

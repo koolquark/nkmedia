@@ -134,8 +134,8 @@ room_event(RoomId, Event, #{srv_id:=SrvId}=Room) ->
         	{stopped_publisher, #{session_id=>Publisher, user=>User}};
         {started_listener, Listener, Opts} ->
             User = maps:get(user, Opts, <<>>),
-            Peer = maps:get(peer, Opts, <<>>),
-        	{started_listener, #{session_id=>Listener, peer=>Peer, user=>User}};
+            Peer = maps:get(peer_id, Opts, <<>>),
+        	{started_listener, #{session_id=>Listener, peer_id=>Peer, user=>User}};
         {stopped_listener, Listener, Opts} ->
             User = maps:get(user, Opts, <<>>),
         	{stopped_listener, #{session_id=>Listener, user=>User}};

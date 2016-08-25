@@ -618,10 +618,10 @@ terminate(Reason, #state{from=From, status=Status}=State) ->
     case Status of
         publisher ->
             #state{room=Room, nkmedia_id=SessId} = State,
-            nkmedia_janus_room:janus_event(Room, {stopped_publisher, SessId});
+            nkmedia_janus_room:janus_event(Room, {stopped_publisher, SessId, #{}});
         listener ->
             #state{room=Room, nkmedia_id=SessId} = State,
-            nkmedia_janus_room:janus_event(Room, {stopped_listener, SessId});
+            nkmedia_janus_room:janus_event(Room, {stopped_listener, SessId, #{}});
         _ ->
             ok
     end,
@@ -966,7 +966,7 @@ do_listen(Listen, #state{room=Room, nkmedia_id=SessId, opts=Opts}=State) ->
             JanusEvent = {
                 started_listener, 
                 SessId, 
-                #{user=>User, pid=>self(), peer=>Listen}
+                #{user=>User, pid=>self(), peer_id=>Listen}
             },
             case nkmedia_janus_room:janus_event(Room, JanusEvent) of 
                 {ok, Pid} ->
@@ -1012,7 +1012,7 @@ do_listen_switch(Listen, State) ->
             JanusEvent = {
                 started_listener, 
                 SessId, 
-                #{user=>User, pid=>self(), peer=>Listen}
+                #{user=>User, pid=>self(), peer_id=>Listen}
             },
             {ok, _} = nkmedia_janus_room:janus_event(Room, JanusEvent),
             reply(ok, State);

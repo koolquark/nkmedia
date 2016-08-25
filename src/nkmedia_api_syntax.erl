@@ -37,7 +37,7 @@ syntax(<<"session">>, <<"start">>, Syntax, Defaults, Mandatory) ->
 			session_id => binary,
 			type => atom,							%% p2p, proxy...
 			offer => offer(),
-			peer => binary,
+			peer_id => binary,
 			subscribe => boolean,
 			events_body => any,
 			wait_timeout => {integer, 1, none},

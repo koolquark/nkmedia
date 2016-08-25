@@ -95,7 +95,7 @@ stop(Name) ->
 
 %% @doc Creates media pipelines and media elements
 -spec get_pipeline(id()) ->
-    {ok, Pipeline::binary(), KmsClient::pid()} | {error, term()}.
+    {ok, Pipeline::binary()} | {error, term()}.
 
 get_pipeline(Id) ->
     do_call(Id, get_pipeline).
@@ -228,8 +228,8 @@ handle_call(get_config, _From, #state{config=Config}=State) ->
 handle_call(_, _From, #state{status=Status}=State) when Status /= ready ->
 	{reply, {error, not_ready}, State};
 
-handle_call(get_pipeline, _From, #state{conn=Pid, pipeline=Pipeline}=State) ->
-	{reply, {ok, Pipeline, Pid}, State};
+handle_call(get_pipeline, _From, #state{pipeline=Pipeline}=State) ->
+	{reply, {ok, Pipeline}, State};
 
 handle_call(Msg, _From, State) ->
     lager:error("Module ~p received unexpected call ~p", [?MODULE, Msg]),

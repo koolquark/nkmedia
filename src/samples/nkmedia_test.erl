@@ -168,7 +168,8 @@ update_media(SessId, Media) ->
 listen(Publisher, Dest) ->
     Config = #{
         publisher_id => Publisher, 
-        use_video => true
+        use_video => true,
+        backend => nkmedia_kms
     },
     start_invite(listen, Config, Dest).
 
@@ -186,7 +187,7 @@ mcu_layout(SessId, Layout) ->
 
 
 fs_call(SessId, Dest) ->
-    Config = #{peer=>SessId, park_after_bridge=>true},
+    Config = #{peer_id=>SessId, park_after_bridge=>true},
     case start_invite(call, Config, Dest) of
         {ok, _SessLinkB} ->
             ok;
@@ -309,7 +310,7 @@ nkmedia_sip_invite(_SrvId, Dest, Offer, Req, _Call) ->
     % will be linked with the first, and will send answer back
     % We return {ok, Link} or {rejected, Reason}
     % nkmedia_sip will store that Link
-    case send_call(Dest, #{offer=>Offer2, peer=>SessId}) of
+    case send_call(Dest, #{offer=>Offer2, peer_id=>SessId}) of
         {ok, {nkmedia_session, SessId2, _SessPid2}} ->
             {ok, {nkmedia_session, SessId2}};
         {rejected, Rejected} ->
@@ -375,6 +376,10 @@ send_call(<<"ke">>, Base) ->
     Config = Base#{backend => nkmedia_kms, use_data=>false},
     start_session(echo, Config);
 
+send_call(<<"kp">>, Base) ->
+    Config = Base#{backend => nkmedia_kms},
+    start_session(park, Config);
+
 send_call(<<"m1">>, Base) ->
     Config = Base#{room_id=>"mcu1"},
     start_session(mcu, Config);
@@ -392,9 +397,18 @@ send_call(<<"p">>, Base) ->
     start_session(publish, Config);
 
 send_call(<<"p2">>, Base) ->
-    nkmedia_room:start(test, #{room_id=><<"sfu">>}),
-    Config = Base#{room_id=><<"sfu">>},
+    nkmedia_room:start(test, #{room_id=>sfu, backend=>nkmedia_janus}),
+    Config = Base#{room_id=>sfu},
     start_session(publish, Config);
+
+send_call(<<"p3">>, Base) ->
+    nkmedia_room:start(test, #{room_id=>sfu, backend=>nkmedia_kms}),
+    Config = Base#{room_id=>sfu1, backend=>nkmedia_kms},
+    start_session(publish, Config);
+
+send_call(<<"l3">>, Base) ->
+    Config = Base#{backend=>nkmedia_kms, publisher_id=><<"6337fbc8-3ae8-6185-138e-38c9862f00d9_">>},
+    start_session(listen, Config);
 
 send_call(<<"d", Num/binary>>, Base) ->
     % We share the same session, with both caller and callee registered to it
@@ -405,15 +419,37 @@ send_call(<<"j", Num/binary>> , Base) ->
 
 send_call(<<"f", Num/binary>>, Base) ->
     ConfigA = Base#{
-        park_after_bridge => true
+        park_after_bridge => true,
+        backend => nkmedia_fs
     },
     case start_session(park, ConfigA) of
         {ok, SessLinkA} ->
             {nkmedia_session, SessIdA, _} = SessLinkA,
-            ConfigB = #{peer=>SessIdA, park_after_bridge=>false},
+            ConfigB = #{peer_id=>SessIdA, park_after_bridge=>false},
             spawn(
                 fun() -> 
                     case start_invite(call, ConfigB, Num) of
+                        {ok, _} -> 
+                            ok;
+                        {rejected, Error} ->
+                            lager:notice("Error in start_invite: ~p", [Error]),
+                            nkmedia_session:stop(SessIdA)
+                    end
+                end),
+            {ok, SessLinkA};
+        {error, Error} ->
+            {rejected, Error}
+    end;
+
+send_call(<<"k", Num/binary>>, Base) ->
+    ConfigA = Base#{backend=>nkmedia_kms},
+    case start_session(park, ConfigA) of
+        {ok, SessLinkA} ->
+            {nkmedia_session, SessIdA, _} = SessLinkA,
+            ConfigB = #{peer_id=>SessIdA, backend=>nkmedia_kms},
+            spawn(
+                fun() -> 
+                    case start_invite(bridge, ConfigB, Num) of
                         {ok, _} -> 
                             ok;
                         {rejected, Error} ->
@@ -438,8 +474,10 @@ start_invite(Type, Config, Dest) ->
         {rtp, _} -> Config#{proxy_type=>rtp};
         _ -> Config
     end,
-    case start_session(Type, Config2) of
+    case start_session(Type, Config2#{trickle_ice=>false}) of
         {offer, Offer, SessLink} ->
+            lager:error("OFFER: ~p", [Offer]),
+
             {nkmedia_session, SessId, _} = SessLink,
             case User of 
                 {webrtc, {nkmedia_verto, VertoPid}} ->

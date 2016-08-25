@@ -204,7 +204,7 @@ answer(Type, Answer, Session, #{fs_role:=offer}=State) ->
                     % When we set the answer event, it will be captured
                     % in nkmedia_fs_callbacks
                     #{master_peer:=Peer} = Session,
-                    {ok, #{}, #{answer=>Answer, type_ext=>#{peer=>Peer}}, State};
+                    {ok, #{}, #{answer=>Answer, type_ext=>#{peer_id=>Peer}}, State};
                 _ ->
                     case do_update(Type, Session, State) of
                         {ok, Reply, ExtOps, State2} ->
@@ -281,7 +281,7 @@ handle_cast({bridge, PeerId}, Session, State) ->
     ?LLOG(notice, "received remote ~s bridge request", [PeerId], Session),
     case fs_bridge(PeerId, Session, State) of
         ok ->
-            Ops = #{type=>bridge, type_ext=>#{peer=>PeerId}},
+            Ops = #{type=>bridge, type_ext=>#{peer_id=>PeerId}},
             nkmedia_session:ext_ops(self(), Ops),
             {ok, State};
         {error, Error} ->
@@ -332,9 +332,9 @@ do_update(mcu, Session, State) ->
 do_update(bridge, #{session_id:=Id}=Session, State) ->
     nkmedia_session:unlink_session(self()),
     case Session of
-        #{peer:=PeerId} ->
+        #{peer_id:=PeerId} ->
             send_bridge(PeerId, Id),
-            ExtOps = #{type=>bridge, type_ext=>#{peer=>PeerId}},
+            ExtOps = #{type=>bridge, type_ext=>#{peer_id=>PeerId}},
             {ok, #{}, ExtOps, State};
         _ ->
             continue
@@ -469,17 +469,17 @@ do_fs_event(parked, _Type, Session, _State) ->
 
 do_fs_event({bridge, PeerId}, Type, Session, _State) when Type==bridge; Type==call ->
     case Session of
-        #{type_ext:=#{peer:=PeerId}} ->
+        #{type_ext:=#{peer_id:=PeerId}} ->
             ok;
         #{type_ext:=Ext} ->
             ?LLOG(warning, "received bridge for different peer ~s: ~p!", 
                   [PeerId, Ext], Session)
     end,
-    nkmedia_session:ext_ops(self(), #{type=>bridge, type_ext=>#{peer=>PeerId}});
+    nkmedia_session:ext_ops(self(), #{type=>bridge, type_ext=>#{peer_id=>PeerId}});
 
 do_fs_event({bridge, PeerId}, Type, Session, _State) ->
     ?LLOG(warning, "received bridge in ~p state", [Type], Session),
-    nkmedia_session:ext_ops(self(), #{type=>bridge, type_ext=>#{peer=>PeerId}});
+    nkmedia_session:ext_ops(self(), #{type=>bridge, type_ext=>#{peer_id=>PeerId}});
 
 do_fs_event({mcu, McuInfo}, mcu, Session, State) ->
     ?LLOG(info, "FS MCU Info: ~p", [McuInfo], Session),

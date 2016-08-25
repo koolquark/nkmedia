@@ -186,7 +186,7 @@ nkmedia_janus_candidate(Candidate, #{link:={nkmedia_session, SessId, _Pid}}=Janu
     {ok, Janus};
 
 nkmedia_janus_candidate(_Candidate, Janus) ->
-    lager:warning("Janus Proto unexpected ICE Candidate!"),
+    lager:info("Janus Proto ignoring ICE Candidate (no session)"),
     {ok, Janus}.
 
 

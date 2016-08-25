@@ -28,8 +28,9 @@
 		 nkmedia_session_event/3, nkmedia_session_reg_event/4,
 		 nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2, 
 		 nkmedia_session_handle_info/2]).
--export([nkmedia_session_start/2, nkmedia_session_answer/3, nkmedia_session_candidate/2,
+-export([nkmedia_session_start/3, nkmedia_session_answer/4, nkmedia_session_candidate/2,
 	     nkmedia_session_update/4, nkmedia_session_stop/2]).
+-export([nkmedia_session_client_trickle_ready/2, nkmedia_session_server_trickle_ready/2]).
 -export([nkmedia_call_init/2, nkmedia_call_terminate/2, 
 		 nkmedia_call_resolve/3, nkmedia_call_invite/5, nkmedia_call_cancel/3, 
 		 nkmedia_call_event/3, nkmedia_call_reg_event/4, nkmedia_session_reg_down/4,
@@ -56,6 +57,7 @@
 %% Types
 %% ===================================================================
 
+-type from() :: {pid(), term()}.
 -type continue() :: continue | {continue, list()}.
 
 
@@ -93,8 +95,9 @@ plugin_stop(Config, #{name:=Name}) ->
 
 
 error_code(no_mediaserver) 			-> 	{2001, <<"No mediaserver available">>};
-error_code(unknown_session_type) 	-> 	{2002, <<"Unknown session type">>};
-error_code(backed_error) 			-> 	{2003, <<"Backend error">>};
+error_code(different_mediaserver) 	-> 	{2002, <<"Different mediaserver">>};
+error_code(unknown_session_type) 	-> 	{2003, <<"Unknown session type">>};
+error_code(backed_error) 			-> 	{2004, <<"Backend error">>};
 
 error_code(missing_offer) 			-> 	{2010, <<"Missing offer">>};
 error_code(duplicated_offer) 		-> 	{2011, <<"Duplicated offer">>};
@@ -121,6 +124,13 @@ error_code(invalid_publisher)       ->  {2035, <<"Invalid publisher">>};
 error_code(publisher_stopped)       ->  {2036, <<"Publisher stopped">>};
 
 error_code(call_error)       		->  {2040, <<"Call error">>};
+
+error_code(no_active_recorder) 		->  {2050, <<"No active recorder">>};
+error_code(record_start_error) 		->  {2051, <<"Record start error">>};
+
+error_code(no_active_player) 		->  {2060, <<"No active player">>};
+error_code(player_start_error) 		->  {2061, <<"Player start error">>};
+
 
 % error_code(Code) when is_integer(Code) -> get_q850(Code);
 error_code(_) -> continue.
@@ -150,25 +160,44 @@ nkmedia_session_terminate(_Reason, Session) ->
 	{ok, Session}.
 
 
--spec nkmedia_session_start(nkmedia_session:type(), session()) ->
-	{ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
-	{error, nkservice:error(), session()} | 
-	{wait_trickle_ice, session()} | continue().
 
-nkmedia_session_start(p2p, Session) ->
-	{ok, #{}, #{}, Session};
 
-nkmedia_session_start(_Type, Session) ->
+%% @doc Called when a new session has started
+%% - If the server receives and offer
+
+
+-spec nkmedia_session_start(nkmedia_session:type(), from(), session()) ->
+	{reply, Reply::term(), nkmedia_session:ext_ops(), session()} |
+	{noreply, nkmedia_session:ext_ops(), session()} |
+	{error, nkservice:error(), session()} | continue().
+
+nkmedia_session_start(p2p, _From, Session) ->
+	{reply, {ok, #{}}, #{}, Session};
+
+nkmedia_session_start(_Type, _From, Session) ->
 	{error, unknown_session_type, Session}.
 
 
 %% @private
--spec nkmedia_session_answer(nkmedia_session:type(), nkmedia:answer(), session()) ->
-	{ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
+-spec nkmedia_session_answer(nkmedia_session:type(), nkmedia:answer(), 
+						     from(), session()) ->
+	{reply, Reply::term(), nkmedia_session:ext_ops(), session()} |
+	{noreply, nkmedia_session:ext_ops(), session()} |
 	{error, term(), session()} | continue().
 
-nkmedia_session_answer(Type, Answer, Session) ->
-	{ok, #{}, #{answer=>Answer}, Session}.
+nkmedia_session_answer(Type, Answer, From, Session) ->
+	{reply, {ok, #{}}, #{answer=>Answer}, Session}.
+
+
+%% @private
+-spec nkmedia_session_update(nkmedia_session:update(), Opts::map(),
+					         from(), session()) ->
+	{reply, Reply::map(), nkmedia_session:ext_ops(), session()} |
+	{noreply, nkmedia_session:ext_ops(), session()} |
+	{error, term(), session()} | continue().
+
+nkmedia_session_update(_Update, _Opts, _From, Session) ->
+	{error, invalid_operation, Session}.
 
 
 %% @private
@@ -180,13 +209,19 @@ nkmedia_session_candidate(_Candidate, Session) ->
 
 
 %% @private
--spec nkmedia_session_update(nkmedia_session:update(), Opts::map(),
-					         nkmedia_session:type(), session()) ->
-	{ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
-	{error, term(), session()} | continue().
+-spec nkmedia_session_client_trickle_ready([nkmedia:candidate()], session()) ->
+	{noreply, nkmedia_session:ext_ops(), session()}.
 
-nkmedia_session_update(_Update, _Opts, _Type, Session) ->
-	{error, invalid_operation, Session}.
+nkmedia_session_client_trickle_ready(_Candidates, Session) ->
+	{noreply, Session}.
+
+
+%% @private
+-spec nkmedia_session_server_trickle_ready([nkmedia:candidate()], session()) ->
+	{noreply, nkmedia_session:ext_ops(), session()}.
+
+nkmedia_session_server_trickle_ready(_Candidates, Session) ->
+	{noreply, Session}.
 
 
 %% @private%% @doc Called when the status of the session changes

@@ -170,6 +170,7 @@ start(publish, #{srv_id:=SrvId, offer:=#{sdp:=_}=Offer}=Session, State) ->
                 nklib_util:to_binary(RoomId0);
             error -> 
                 RoomOpts1 = [
+                    {backend, nkmedia_janus},
                     case maps:find(room_audio_codec, Session) of
                         {ok, AC} -> {audio_codec, AC};
                         error -> []
@@ -193,7 +194,6 @@ start(publish, #{srv_id:=SrvId, offer:=#{sdp:=_}=Offer}=Session, State) ->
             {ok, #{nkmedia_janus:=#{janus_id:=JanusId}}} ->
                 State#{janus_id=>JanusId};
             _ ->
-                lager:error("NOT FOUND: ~p", [RoomId]),
                 throw(room_not_found)
         end,
         case get_janus_op(Session, State2) of
@@ -243,7 +243,7 @@ start(listen, #{publisher_id:=Publisher}=Session, State) ->
     end;
 
 start(listen, _Session, State) ->
-    {error, missing_parameters, State};
+    {error, {missing_field, publisher_id}, State};
 
 start(_Type, _Session, _State) ->
     continue.

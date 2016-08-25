@@ -53,6 +53,8 @@
 %% Types
 %% ===================================================================
 
+-type id() :: nkmedia_kms_engine:id().
+
 -type session_id() :: integer().
 
 -type event() ::
@@ -67,7 +69,7 @@
 
 %% @doc Starts a new verto session to Kurento
 %% You must then use connect/1 or reconnect/2.
--spec start(nkmedia_kms_engine:id(), nkmedia_kms:config()) ->
+-spec start(id(), nkmedia_kms:config()) ->
     {ok, SessId::binary(), pid()} | {error, term()}.
 
 start(KurentoId, #{host:=Host, base:=Base}) ->
@@ -84,7 +86,7 @@ start(KurentoId, #{host:=Host, base:=Base}) ->
 
 
 %% @doc Starts a new verto session to FS
--spec start(nkmedia_kms_engine:id()) ->
+-spec start(id()) ->
     {ok, pid()} | {error, term()}.
 
 start(KurentoId) ->
@@ -101,7 +103,7 @@ start(KurentoId) ->
     ok.
 
 stop(Pid) ->
-    do_cast(Pid, stop).
+    gen_server:cast(Pid, stop).
 
 
 %% @doc 
@@ -113,14 +115,15 @@ stop_all() ->
 
 
 %% @doc Connects to get a new session
--spec connect(pid()) ->
+-spec connect(id()|pid()) ->
     {ok, ServerId::binary(), session_id()}.
 
 connect(Pid) ->
     do_call(Pid, connect).
 
+
 %% @doc Tries to reconnect to an old session (does not seem to work)
--spec reconnect(pid(), session_id()) ->
+-spec reconnect(id()|pid(), session_id()) ->
     ok | {error, term()}.
 
 reconnect(Pid, SessId) ->
@@ -129,7 +132,7 @@ reconnect(Pid, SessId) ->
 
 %% @doc Gets info from Kurento
 %% For example getInfo, getName, getSessions, getPipelines
--spec manager(pid(), atom()) ->
+-spec manager(id()|pid(), atom()) ->
     {ok, map()} | {error, term()}.
 
 manager(Pid, Cmd) ->
@@ -137,7 +140,7 @@ manager(Pid, Cmd) ->
 
 
 %% @doc Registers with this process
--spec register(pid(), module(), atom(), list()) ->
+-spec register(id()|pid(), module(), atom(), list()) ->
     {ok, pid()} | {error, term()}.
 
 register(Pid, Module, Fun, Args) ->
@@ -145,7 +148,7 @@ register(Pid, Module, Fun, Args) ->
 
 
 %% @doc Creates media pipelines and media elements
--spec create(pid(), binary(), map(), map()) ->
+-spec create(id()|pid(), binary(), map(), map()) ->
     {ok, ObjId::binary()} | {error, term()}.
 
 create(Pid, Type, Params, Properties) ->
@@ -153,7 +156,7 @@ create(Pid, Type, Params, Properties) ->
 
 
 %% @doc
--spec invoke(pid(), binary(), map(), map()) ->
+-spec invoke(id()|pid(), binary(), map(), map()) ->
     {ok, map()|null} | {error, term()}.
 
 invoke(Pid, ObjId, Operation, Params) ->
@@ -161,7 +164,7 @@ invoke(Pid, ObjId, Operation, Params) ->
 
 
 %% @doc
--spec release(pid(), binary()) ->
+-spec release(id()|pid(), binary()) ->
     ok | {error, term()}.
 
 release(Pid, ObjId) ->
@@ -169,7 +172,7 @@ release(Pid, ObjId) ->
 
 
 %% @doc
--spec subscribe(pid(), binary(), binary()) ->
+-spec subscribe(id()|pid(), binary(), binary()) ->
     {ok, SubsId::binary()} | {error, term()}.
 
 subscribe(Pid, ObjId, Type) ->
@@ -177,7 +180,7 @@ subscribe(Pid, ObjId, Type) ->
 
 
 %% @doc
--spec unsubscribe(pid(), binary(), binary()) ->
+-spec unsubscribe(id()|pid(), binary(), binary()) ->
     ok | {error, term()}.
 
 unsubscribe(Pid, ObjId, SubsId) ->
@@ -186,20 +189,10 @@ unsubscribe(Pid, ObjId, SubsId) ->
 
 %% @private
 -spec get_all() ->
-    [{session_id(), pid()}].
+    [{id(), pid()}].
 
 get_all() ->
     nklib_proc:values(?MODULE).
-
-
-%% @private
-do_call(Pid, Msg) ->
-    nkservice_util:call(Pid, Msg, ?CALL_TIMEOUT).
-
-
-%% @private
-do_cast(Pid, Msg) ->
-    gen_server:cast(Pid, Msg).
 
 
 
@@ -249,7 +242,7 @@ conn_init(NkPort) ->
         pos = 0
     },
     ?LLOG(info, "new session (~p)", [self()], State),
-    nklib_proc:put(?MODULE),
+    nklib_proc:put(?MODULE, KurentoId),
     % gen_server:cast(self(), get_info),
     self() ! send_ping,
     {ok, State}.
@@ -311,7 +304,7 @@ conn_parse({text, Data}, NkPort, #state{sess_id=SessId}=State) ->
                         #{<<"tags">>:=[
                             #{<<"key">>:=<<"nkmedia">>, <<"value">>:=NkSessId}
                         ]} ->
-                            nkmedia_kms_session:kms_event(NkSessId, Type, EvData);
+                            nkmedia_kms_session_lib:kms_event(NkSessId, Type, EvData);
                         #{<<"tags">>:=[Tag]} ->
                             ?LLOG(warning, "unexpected tags: ~s", 
                                   [nklib_json:encode_pretty(Tag)], State);
@@ -563,82 +556,41 @@ process_server_req(Request, Params, _NkPort, State) ->
     {ok, State}.
 
 
-%% @private
-%% @private
-% process_server_event(ObjId, Type, Data, SessId, State) ->
-%     nkmedia_kms_session:kms_event(SessId, ObjId, Type, Data)
-
-
-
-
-%     #{<<"data">>:=#{<<"tags">>:=<<"key">>:=<<"nkmedia">>
-
-
-%     Type, <<"OnIceComponentStateChanged">>}=Params, 
-%                      _NkPort, State) ->
-%     #{
-%         <<"object">> := ObjId,
-%         <<"data">> := #{
-%             <<"source">> := _SrcId,
-%             <<"state">> := IceState,
-%             <<"streamId">> := StreamId,
-%             <<"componentId">> := ComponentId
-%         }
-%     } = Params,
-%     send_event({ice_state, ObjId, IceState, StreamId, ComponentId}, State),
-%     {ok, State};
-
-
-% process_server_event(#{<<"type">>:=<<"OnIceComponentStateChanged">>}=Params, 
-%                      _NkPort, State) ->
-%     #{
-%         <<"object">> := ObjId,
-%         <<"data">> := #{
-%             <<"source">> := _SrcId,
-%             <<"state">> := IceState,
-%             <<"streamId">> := StreamId,
-%             <<"componentId">> := ComponentId
-%         }
-%     } = Params,
-%     send_event({ice_state, ObjId, IceState, StreamId, ComponentId}, State),
-%     {ok, State};
-
-% process_server_event(#{<<"type">>:=<<"OnIceCandidate">>}=Params, _NkPort, State) ->
-%     #{
-%         <<"object">> := ObjId,
-%         <<"data">> := #{
-%             <<"source">> := _SrcId,
-%             <<"candidate">> := #{
-%                 <<"sdpMid">> := MId,
-%                 <<"sdpMLineIndex">> := MIndex,
-%                 <<"candidate">> := ALine
-%             }
-%         }
-%     } = Params,
-%     Candidate = #candidate{m_id=MId, m_index=MIndex, a_line=ALine},
-%     send_event({candidate, ObjId, Candidate}, State),
-%     {ok, State};
-
-% process_server_event(#{<<"type">>:=<<"OnIceGatheringDone">>}=Params, _NkPort, State) ->
-%     #{
-%         <<"object">> := ObjId,
-%         <<"data">> := #{
-%             <<"source">> := _SrcId
-%         }
-%     } = Params,
-%     Candidate = #candidate{last=true},
-%     send_event({candidate, ObjId, Candidate}, State),
-%     {ok, State};
-
-% process_server_event(Params, _NkPort, State) ->
-%     ?LLOG(warning, "unexpected server event: ~s", [nklib_json:encode_pretty(Params)], State),
-%     {ok, State}.
-   
-
 
 %% ===================================================================
 %% Util
 %% ===================================================================
+
+%% @private
+do_call(Id, Msg) ->
+    case do_find(Id) of
+        {ok, Pid} ->
+            nkservice_util:call(Pid, Msg, ?CALL_TIMEOUT);
+        not_found ->
+            {error, no_mediaserver}
+    end.
+
+
+% %% @private
+% do_cast(Id, Msg) ->
+%     case do_find(Id) of
+%         {ok, Pid} ->
+%             gen_server:cast(Pid, Msg);
+%         not_found ->
+%             {error, no_mediaserver}
+%     end.
+
+
+%% @private
+do_find(Pid) when is_pid(Pid) ->
+    {ok, Pid};
+
+do_find(Id) ->
+    case nkmedia_kms_engine:get_client(Id) of
+        {ok, Pid} -> {ok, Pid};
+        _ -> not_found
+    end.
+
 
 %% @private
 insert_op(Op, From, #state{trans=AllTrans, pos=Pos}=State) ->

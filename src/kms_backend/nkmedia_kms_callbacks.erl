@@ -118,9 +118,7 @@ nkmedia_kms_get_mediaserver(SrvId) ->
 
 %% @private Error Codes -> 24XX range
 error_code(kms_error)             ->  {2400, <<"Kurento internal error">>};
-error_code({kms_error, Code, Txt})->  
-    {2401, io_lib:format("Kurento error (~p): ~s", [Code, Txt])};
-
+error_code({kms_error, Code, Txt})->  {2401, {"Kurento error (~p): ~s", [Code, Txt]}};
 error_code(kms_connection_error)  ->  {2410, <<"Kurento connection error">>};
 error_code(kms_session_down)      ->  {2411, <<"Kurento op process down">>};
 error_code(kms_bye)               ->  {2412, <<"Kurento bye">>};
@@ -145,14 +143,17 @@ nkmedia_session_terminate(Reason, Session) ->
 
 
 %% @private
-nkmedia_session_start(Type, Session) ->
+nkmedia_session_start(Type, From, Session) ->
     case maps:get(backend, Session, nkmedia_kms) of
         nkmedia_kms ->
             State = state(Session),
-            case nkmedia_kms_session:start(Type, Session, State) of
-                {ok, Reply, ExtOps, State2} ->
+            case nkmedia_kms_session:start(Type, From, Session, State) of
+                {reply, Reply, ExtOps, State2} ->
                     Session2 = nkmedia_session:do_add(backend, nkmedia_kms, Session),
-                    {ok, Reply, ExtOps, update_state(State2, Session2)};
+                    {reply, Reply, ExtOps, update_state(State2, Session2)};
+                {noreply, ExtOps, State2} ->
+                    Session2 = nkmedia_session:do_add(backend, nkmedia_kms, Session),
+                    {noreply, ExtOps, update_state(State2, Session2)};
                 {error, Error, State2} ->
                     Session2 = nkmedia_session:do_add(backend, nkmedia_kms, Session),
                     {error, Error, update_state(State2, Session2)};
@@ -165,13 +166,36 @@ nkmedia_session_start(Type, Session) ->
 
 
 %% @private
-nkmedia_session_answer(Type, Answer, Session) ->
-    case maps:get(backend, Session, nkmedia_kms) of
-        nkmedia_kms ->
+nkmedia_session_answer(Type, Answer, From, Session) ->
+    case maps:find(backend, Session) of
+        {ok, nkmedia_kms} ->
             State = state(Session),
-            case nkmedia_kms_session:answer(Type, Answer, Session, State) of
-                {ok, Reply, ExtOps, State2} ->
+            case nkmedia_kms_session:answer(Type, Answer, From, Session, State) of
+                {reply, Reply, ExtOps, State2} ->
+                    {reply, Reply, ExtOps, update_state(State2, Session)};
+                {noreply, ExtOps, State2} ->
+                    {noreply, ExtOps, update_state(State2, Session)};
+                {error, Error, State2} ->
+                    {error, Error, update_state(State2, Session)};
+                continue ->
+                    continue
+            end;
+        _ ->
+            continue
+    end.
+
+
+
+%% @private
+nkmedia_session_update(Update, Opts, From, Session) ->
+    case maps:find(backend, Session) of
+        {ok, nkmedia_kms} ->
+            State = state(Session),
+            case nkmedia_kms_session:update(Update, Opts, From, Session, State) of
+                {reply, Reply, ExtOps, State2} ->
                     {ok, Reply, ExtOps, update_state(State2, Session)};
+                {noreply, Reply, ExtOps, State2} ->
+                    {noreply, Reply, ExtOps, update_state(State2, Session)};
                 {error, Error, State2} ->
                     {error, Error, update_state(State2, Session)};
                 continue ->
@@ -184,8 +208,8 @@ nkmedia_session_answer(Type, Answer, Session) ->
 
 %% @private
 nkmedia_session_candidate(Candidate, Session) ->
-    case maps:get(backend, Session, nkmedia_kms) of
-        nkmedia_kms ->
+    case maps:find(backend, Session) of
+        {ok, nkmedia_kms} ->
             State = state(Session),
             nkmedia_kms_session:candidate(Candidate, Session, State),
             {ok, Session};
@@ -195,18 +219,16 @@ nkmedia_session_candidate(Candidate, Session) ->
 
 
 %% @private
-nkmedia_session_update(Update, Opts, Type, Session) ->
-    case maps:get(backend, Session, nkmedia_kms) of
-        nkmedia_kms ->
+nkmedia_session_server_trickle_ready(Candidates, Session) ->
+    case maps:find(backend, Session) of
+        {ok, nkmedia_kms} ->
             State = state(Session),
-            case nkmedia_kms_session:update(Update, Opts, Type, Session, State) of
-                {ok, Reply, ExtOps, State2} ->
-                    {ok, Reply, ExtOps, update_state(State2, Session)};
-                {error, Error, State2} ->
-                    {error, Error, update_state(State2, Session)};
-                continue ->
-                    continue
-            end;
+            {noreply, Reply, ExtOps, State2} = 
+                nkmedia_kms_session:server_trickle_ready(Candidate, Session, State),
+            {noreply, Reply, ExtOps, update_state(State2, Session)};
+
+
+            {ok, Session};
         _ ->
             continue
     end.
@@ -221,9 +243,10 @@ nkmedia_session_stop(Reason, Session) ->
 %% @private
 nkmedia_session_handle_call({nkmedia_kms, Msg}, From, Session) ->
     State = state(Session),
-    {reply, Reply, State2} = 
-        nkmedia_kms_session:nkmedia_session_handle_call(Msg, From, Session, State),
-    {reply, Reply, update_state(State2, Session)};
+    case nkmedia_kms_session:nkmedia_session_handle_call(Msg, From, Session, State) of 
+        {reply, Reply, State2} ->
+            {reply, Reply, update_state(State2, Session)}
+    end;
 
 nkmedia_session_handle_call(_Msg, _From, _Session) ->
     continue.
@@ -232,9 +255,10 @@ nkmedia_session_handle_call(_Msg, _From, _Session) ->
 %% @private
 nkmedia_session_handle_cast({nkmedia_kms, Msg}, Session) ->
     State = state(Session),
-    {noreply, State2} = 
-        nkmedia_kms_session:nkmedia_session_handle_cast(Msg, Session, State),
-    {noreply, update_state(State2, Session)};
+    case nkmedia_kms_session:nkmedia_session_handle_cast(Msg, Session, State) of
+        {noreply, State2} ->
+            {noreply, update_state(State2, Session)}
+    end;
 
 nkmedia_session_handle_cast(_Msg, _Session) ->
     continue.
@@ -246,59 +270,55 @@ nkmedia_session_handle_cast(_Msg, _Session) ->
 %% ===================================================================
 
 %% @private
-nkmedia_room_init(_Id, Room) ->
-    {ok, Room}.
-    % Class = maps:get(class, Room, sfu),
-    % Backend = maps:get(backend, Room, nkmedia_kms),
-    % case {Class, Backend} of
-    %     {sfu, nkmedia_kms} ->
-    %         case nkmedia_kms_room:init(Id, Room) of
-    %             {ok, State} ->
-    %                 Room2 = Room#{
-    %                     class => sfu,
-    %                     backend => nkmedia_kms,
-    %                     nkmedia_kms => State,
-    %                     publishers => #{},
-    %                     listeners => #{}
-    %                 },
-    %                 {ok, Room2};
-    %             {error, Error} ->
-    %                 {error, Error}
-    %         end;
-    %     _ ->
-    %         {ok, Room}
-    % end.
+nkmedia_room_init(Id, Room) ->
+    Class = maps:get(class, Room, sfu),
+    case maps:get(backend, Room, nkmedia_kms) of
+        nkmedia_kms when Class==sfu; Class==mcu ->
+            case nkmedia_kms_room:init(Id, Room) of
+                {ok, State} ->
+                    Room2 = Room#{
+                        class => Class,
+                        backend => nkmedia_kms,
+                        nkmedia_kms => State,
+                        publishers => #{},
+                        listeners => #{}
+                    },
+                    {ok, Room2};
+                {error, Error} ->
+                    {error, Error}
+            end;
+        _ ->
+            {ok, Room}
+    end.
 
 
 %% @private
-nkmedia_room_terminate(_Reason, Room) ->
-    {ok, Room}.
-    % case state(Room) of
-    %     error ->
-    %         {ok, Room};
-    %     State ->
-    %         {ok, State2} = nkmedia_kms_room:terminate(Reason, Room, State),
-    %         {ok, update_state(State2, Room)}
-    % end.
+nkmedia_room_terminate(Reason, Room) ->
+    case state(Room) of
+        error ->
+            {ok, Room};
+        State ->
+            {ok, State2} = nkmedia_kms_room:terminate(Reason, Room, State),
+            {ok, update_state(State2, Room)}
+    end.
 
 
 %% @private
-nkmedia_room_tick(_RoomId, _Room) ->
-    continue.
-    % case state(Room) of
-    %     error ->
-    %         continue;
-    %     State ->
-    %         {ok, State2} = nkmedia_kms_room:nkmedia_room_tick(RoomId, Room, State),
-    %         {continue, [RoomId, update_state(State2, Room)]}
-    % end.
+nkmedia_room_tick(RoomId, Room) ->
+    case state(Room) of
+        error ->
+            continue;
+        State ->
+            {ok, State2} = nkmedia_kms_room:nkmedia_room_tick(RoomId, Room, State),
+            {continue, [RoomId, update_state(State2, Room)]}
+    end.
 
 
-%% @private
-% nkmedia_room_handle_cast({nkmedia_kms, Msg}, Room) ->
-%     {noreply, State2} = 
-%         nkmedia_kms_room:nkmedia_room_handle_cast(Msg, Room, state(Room)),
-%     {noreply, update_state(State2, Room)};
+% @private
+nkmedia_room_handle_cast({nkmedia_kms, Msg}, Room) ->
+    {noreply, State2} = 
+        nkmedia_kms_room:nkmedia_room_handle_cast(Msg, Room, state(Room)),
+    {noreply, update_state(State2, Room)};
 
 nkmedia_room_handle_cast(_Msg, _Room) ->
     continue.

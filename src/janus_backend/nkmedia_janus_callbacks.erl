@@ -252,9 +252,8 @@ nkmedia_session_handle_info(_Msg, _Session) ->
 %% @private
 nkmedia_room_init(Id, Room) ->
     Class = maps:get(class, Room, sfu),
-    Backend = maps:get(backend, Room, nkmedia_janus),
-    case {Class, Backend} of
-        {sfu, nkmedia_janus} ->
+    case maps:get(backend, Room, nkmedia_janus) of
+        nkmedia_janus when Class==sfu ->
             case nkmedia_janus_room:init(Id, Room) of
                 {ok, State} ->
                     Room2 = Room#{
