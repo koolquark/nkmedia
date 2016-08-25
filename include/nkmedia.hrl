@@ -43,6 +43,10 @@
 -define(FS_DEF_BASE, 50000).
 -define(JANUS_DEF_BASE, 50010).
 
+-define(SESSION(Session, Map), maps:merge(Session, Map)).
+-define(SESSION_RM(Key, Session), maps:remove(Key, Session)).
+
+
 
 
 %% ===================================================================

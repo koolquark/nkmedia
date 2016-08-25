@@ -25,18 +25,19 @@
 -module(nkmedia_kms_session).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([init/3, terminate/3, start/3, answer/4, candidate/3, update/5, stop/3]).
--export([nkmedia_session_handle_call/4, nkmedia_session_handle_cast/3]).
+-export([start/3, answer/4, candidate/2, update/4, stop/2]).
+-export([handle_call/3, handle_cast/2]).
 -import(nkmedia_kms_session_lib, [invoke/3]).
 
 
--export_type([config/0, type/0, opts/0, update/0]).
+-export_type([session/0, type/0, opts/0, update/0]).
 
 -define(LLOG(Type, Txt, Args, Session),
     lager:Type("NkMEDIA KMS Session ~s "++Txt, 
                [maps:get(session_id, Session) | Args])).
 
 -include_lib("nksip/include/nksip.hrl").
+-include("../../include/nkmedia.hrl").
 
 
 
@@ -45,14 +46,25 @@
 %% ===================================================================
 
 -type session_id() :: nkmedia_session:id().
--type session() :: nkmedia_session:session().
+-type from() :: {pid(), term()}.
 -type endpoint() :: binary().
 -type continue() :: continue | {continue, list()}.
 
 
--type config() :: 
-    nkmedia_session:config() |
+-type session() :: 
+    nkmedia_session:session() |
     #{
+        nkmedia_kms_id => nkmedia_kms_engine:id(),
+        nkmedia_kms_pipeline => binary(),
+        nkmedia_kms_endpoint => endpoint(),
+        nkmedia_kms_endpoint_type => webtrc | rtp,
+        nkmedia_kms_recorder => endpoint(),
+        nkmedia_kms_player => endpoint(),
+        nkmedia_kms_bridged_to => session_id(),
+        nkmedia_kms_publish_to => nkmedia_room:id(),
+        nkmedia_kms_listen_to => nkmedia_room:id(),
+        nkmedia_kms_record_pos => integer(),
+        nkmedia_kms_player_loops => boolean() | integer()
     }.
 
 
@@ -65,7 +77,7 @@
     play     |
     connect.
 
--type ext_opts() :: nkmedia_session:ext_opts().
+-type ext_ops() :: nkmedia_session:ext_ops().
 
 -type opts() ::
     nkmedia_session:session() |
@@ -82,19 +94,6 @@
     nkmedia_session:update().
 
 
--type state() ::
-    #{
-        kms_id => nkmedia_kms_engine:id(),
-        pipeline => binary(),
-        endpoint => endpoint(),
-        endpoint_type => webtrc | rtp,
-        bridged_to => session_id(),
-        publish_to => nkmedia_room:id(),
-        listen_to => nkmedia_room:id(),
-        record_pos => integer(),
-        player_loops => boolean() | integer()
-    }.
-
 
 
 
@@ -104,39 +103,26 @@
 %% ===================================================================
 
 
--spec init(session_id(), session(), state()) ->
-    {ok, state()}.
-
-init(_Id, _Session, State) ->
-    {ok, State}.
-
-
-%% @doc Called when the session stops
--spec terminate(Reason::term(), session(), state()) ->
-    {ok, state()}.
-
-terminate(_Reason, _Session, State) ->
-    {ok, State}.
-
-
 %% @private
--spec start(type(), session(), state()) ->
-    {ok, Reply::map(), ext_opts(), state()} |
-    {error, nkservice:error(), state()} | continue().
+-spec start(type(), from(), session()) ->
+    {reply, Reply::term(), ext_ops(), session()} |
+    {noreply, ext_ops(), session()} |
+    {error, nkservice:error(), session()} | continue().
 
-start(Type, Session, State) -> 
+start(Type, _From, Session) -> 
     case is_supported(Type) of
         true ->
-            case get_pipeline(Type, Session, State) of
-                {ok, Session2, State2} ->
-                    case Session2 of
+            Session2 = ?SESSION(Session, #{backend=>nkmedia_kms}),
+            case get_pipeline(Type, Session2) of
+                {ok, Session3} ->
+                    case Session3 of
                         #{offer:=#{sdp:=_}=Offer} ->
-                            do_start_offeree(Type, Offer, Session2, State2);
+                            do_start_offeree(Type, Offer, Session3);
                         _ ->
-                            do_start_offerer(Type, Session2, State2)
+                            do_start_offerer(Type, Session3)
                     end;
                 {error, Error} ->
-                    {error, Error, State}
+                    {error, Error, Session2}
             end;
         false ->
             continue
@@ -144,169 +130,172 @@ start(Type, Session, State) ->
 
 
 %% @private
--spec answer(type(), nkmedia:answer(), session(), state()) ->
-    {ok, Reply::map(), ext_opts(), state()} |
-    {error, nkservice:error(), state()} | continue().
+-spec answer(type(), nkmedia:answer(), from(), session()) ->
+    {reply, Reply::term(), ext_ops(), session()} |
+    {noreply, ext_ops(), session()} |
+    {error, term(), session()} | continue().
 
-answer(Type, Answer, Session, State) ->
-    case nkmedia_kms_session_lib:set_answer(Answer, State) of
+answer(Type, Answer, _From, Session) ->
+    case nkmedia_kms_session_lib:set_answer(Answer, Session) of
         ok ->
-            case do_start_setup(Type, Session, State) of
-                {ok, Reply, ExtOpts, State2} ->
+            case do_start_setup(Type, Session) of
+                {ok, Reply, ExtOpts, Session2} ->
                     Reply2 = Reply#{answer=>Answer},
                     ExtOpts2 = ExtOpts#{answer=>Answer},
-                    {ok, Reply2, ExtOpts2, State2};
-                {error, Error, State2} ->
-                    {error, Error, State2}
+                    {reply, {ok, Reply2}, ExtOpts2, Session2};
+                {error, Error, Session2} ->
+                    {error, Error, Session2}
             end;
         {error, Error} ->
-            {error, Error, State}
+            {error, Error, Session}
     end.
 
 %% @private
--spec candidate(nkmedia:candidate(), session(), state()) ->
+-spec candidate(nkmedia:candidate(), session()) ->
     ok | {error, nkservice:error()}.
 
-candidate(#candidate{last=true}, Session, _State) ->
+candidate(#candidate{last=true}, Session) ->
     ?LLOG(info, "sending last client candidate to Kurento", [], Session),
     ok;
 
-candidate(Candidate, Session, State) ->
+candidate(Candidate, Session) ->
     ?LLOG(info, "sending client candidate to Kurento", [], Session),
-    nkmedia_kms_session_lib:add_ice_candidate(Candidate, State).
+    nkmedia_kms_session_lib:add_ice_candidate(Candidate, Session).
 
 
 %% @private
--spec update(update(), Opts::map(), type(), nkmedia:session(), state()) ->
-    {ok, Reply::map(), ext_opts(), state()} |
-    {error, nkservice:error(), state()} | continue().
+-spec update(update(), Opts::map(), from(), session()) ->
+    {reply, Reply::map(), ext_ops(), session()} |
+    {noreply, ext_ops(), session()} |
+    {error, term(), session()} | continue().
 
-update(session_type, #{session_type:=Type}=Opts, _OldType, Session, State) ->
-    do_type(Type, maps:merge(Session, Opts), State);
 
-update(connect, Opts, _Type, Session, State) ->
-    do_type(connect, maps:merge(Session, Opts), State);
+update(session_type, #{session_type:=Type}=Opts, _From, Session) ->
+    do_type(Type, maps:merge(Session, Opts));
+
+update(connect, Opts, _From, Session) ->
+    do_type(connect, maps:merge(Session, Opts));
    
-update(media, Opts, _Type, Session, State) ->
-    case nkmedia_kms_session_lib:update_media(Opts, State) of
+update(media, Opts, _From, Session) ->
+    case nkmedia_kms_session_lib:update_media(Opts, Session) of
         ok ->
-            case start_record(Opts, Session, State) of
-                {ok, State2} ->
-                    {ok, #{}, #{}, State2};
+            case start_record(Opts, Session) of
+                {ok, Session2} ->
+                    {reply, {ok, #{}}, #{}, Session2};
                 {error, Error} ->
-                    {error, Error, State}
+                    {error, Error, Session}
             end;
         {error, Error} ->
-            {error, Error, State}
+            {error, Error, Session}
     end;
 
-update(recorder, #{operation:=Op}, _Type, Session, State) ->
-    case nkmedia_kms_session_lib:recorder_op(Op, State) of
-        {ok, State2} ->
-            {ok, #{}, #{}, State2};
+update(recorder, #{operation:=Op}, From, Session) ->
+    case nkmedia_kms_session_lib:recorder_op(Op, Session) of
+        {ok, Session2} ->
+            {reply, {ok, #{}}, #{}, Session2};
         {error, Error} ->
-            {error, Error, State}
+            {error, Error, Session}
     end;
 
-update(recorder, _Opts, _Type, _Session, State) ->
-    {error, {missing_parameter, operation}, State};
+update(recorder, _Opts, _From, Session) ->
+    {error, {missing_parameter, operation}, Session};
 
-update(player, #{operation:=Op}=Opts, _Type, Session, State) ->
-    case nkmedia_kms_session_lib:player_op(Op, State) of
-        {ok, Reply, State2} ->
-            {ok, Reply, #{}, State2};
-        {ok, State2} ->
-            {ok, #{}, #{}, State2};
+update(player, #{operation:=Op}=Opts, _From, Session) ->
+    case nkmedia_kms_session_lib:player_op(Op, Session) of
+        {ok, Reply, Session2} ->
+            {reply, {ok, Reply}, #{}, Session2};
+        {ok, Session2} ->
+            {reply, {ok, #{}}, #{}, Session2};
         {error, Error} ->
-            {error, Error, State}
+            {error, Error, Session}
     end;
 
-update(get_stats, Opts, _Type, Session, State) ->
+update(get_stats, Opts, From, Session) ->
     Type1 = maps:get(media_type, Opts, <<"VIDEO">>),
     Type2 = nklib_util:to_upper(Type1),
-    case nkmedia_kms_session_lib:get_stats(Type2, State) of
+    case nkmedia_kms_session_lib:get_stats(Type2, Session) of
         {ok, Stats} ->
-            {ok, #{stats=>Stats}, #{}, State};
+            {reply, {ok, #{stats=>Stats}}, #{}, Session};
         {error, Error} ->
-            {error, Error, State}
+            {error, Error, Session}
     end;
 
-update(print_info, _Opts, _Type, #{session_id:=SessId}, State) ->
-    nkmedia_kms_session_lib:print_info(SessId, State),
-    {ok, #{}, #{}, State};
+update(print_info, _Opts, From, #{session_id:=SessId}=Session) ->
+    nkmedia_kms_session_lib:print_info(SessId, Session),
+    {reply, {ok, #{}}, #{}, Session};
 
-update(_Update, _Opts, _Type, _Session, _State) ->
+update(_Update, _Opts, _From, _Session) ->
     continue.
 
 
 %% @private
--spec stop(nkservice:error(), session(), state()) ->
-    {ok, state()}.
+-spec stop(nkservice:error(), session()) ->
+    {ok, session()}.
 
-stop(_Reason, Session, State) ->
-    State2 = reset_all(Session, State),
-    nkmedia_kms_session_lib:stop_endpoint(State2),
-    {ok, State2}.
+stop(_Reason, Session) ->
+    Session2 = reset_all(Session),
+    nkmedia_kms_session_lib:stop_endpoint(Session2),
+    {ok, Session2}.
 
 
 %% @private
-nkmedia_session_handle_call(get_endpoint, _From, _Session, #{endpoint:=EP}=State) ->
-    {reply, {ok, EP}, State};
+handle_call(get_endpoint, _From, #{nkmedia_kms_endpoint:=EP}=Session) ->
+    {reply, {ok, EP}, Session};
 
-nkmedia_session_handle_call({bridge, PeerSessId, PeerEP, Medias}, 
-                             _From, _Session, #{endpoint:=EP}=State) ->
-    case nkmedia_kms_session_lib:connect(PeerEP, Medias, State) of
+handle_call({bridge, PeerSessId, PeerEP, Medias}, 
+             _From, #{nkmedia_kms_endpoint:=EP}=Session) ->
+    case nkmedia_kms_session_lib:connect(PeerEP, Medias, Session) of
         ok ->
             ExtOp = #{type=>bridge, type_ext=>#{peer_id=>PeerSessId}},
             nkmedia_session:ext_ops(self(), ExtOp),
-            {reply, {ok, EP}, State#{bridged_to=>PeerSessId}};
+            {reply, {ok, EP}, ?SESSION(Session, #{bridged_to=>PeerSessId})};
         {error, Error} ->
-            {reply, {error, Error}, State}
+            {reply, {error, Error}, Session}
     end;
 
-nkmedia_session_handle_call(get_room, _From, _Session, #{publish_to:=RoomId}=State) ->
-    {reply, {ok, RoomId}, State};
+handle_call(get_room, _From, #{publish_to:=RoomId}=Session) ->
+    {reply, {ok, RoomId}, Session};
 
-nkmedia_session_handle_call(get_room, _From, _Session, State) ->
-    {reply, {error, not_publishing}, State}.
+handle_call(get_room, _From, Session) ->
+    {reply, {error, not_publishing}, Session}.
 
  
 %% @private
-nkmedia_session_handle_cast({bridge_stop, PeerId}, Session, State) ->
-    case State of
-        #{bridged_to:=PeerId} ->
-            State2 = reset_all(Session, maps:remove(bridged_to, State)),
+handle_cast({bridge_stop, PeerId}, Session) ->
+    case Session of
+        #{nkmedia_kms_bridged_to:=PeerId} ->
+            Session2 = ?SESSION_RM(nkmedia_kms_bridged_to, Session),
+            Session3 = reset_all(Session2),
             nkmedia_session:ext_ops(self(), #{type=>park}),
-            {noreply, State2};
+            {noreply, Session3};
         _ ->
-            ?LLOG(notice, "ignoring bridge stop: ~p", [State], Session),
-            {noreply, State}
+            ?LLOG(notice, "ignoring bridge stop", [], Session),
+            {noreply, Session}
     end;
 
-nkmedia_session_handle_cast({end_of_stream, Player}, _Session, #{player:=Player}=State) ->
-    case State of
-        #{player_loops:=true} ->
-            nkmedia_kms_session_lib:player_op(resume, State),
-            {noreply, State};
-        #{player_loops:=Loops} when is_integer(Loops), Loops > 1 ->
-            nkmedia_kms_session_lib:player_op(resume, State),
-            {noreply, State#{player_loops:=Loops-1}};
+handle_cast({end_of_stream, Player}, #{nkmedia_kms_player:=Player}=Session) ->
+    case Session of
+        #{nkmedia_kms_player_loops:=true} ->
+            nkmedia_kms_session_lib:player_op(resume, Session),
+            {noreply, Session};
+        #{nkmedia_kms_player_loops:=Loops} when is_integer(Loops), Loops > 1 ->
+            nkmedia_kms_session_lib:player_op(resume, Session),
+            {noreply, ?SESSION(Session, #{nkmedia_kms_player_loops=>Loops-1})};
         _ ->
             % Launch player stop event
-            {noreply, State}
+            {noreply, Session}
     end;
 
-nkmedia_session_handle_cast({end_of_stream, _Player}, _Session, State) ->
-    {noreply, State};
+handle_cast({end_of_stream, _Player}, Session) ->
+    {noreply, Session};
 
-nkmedia_session_handle_cast({kms_error, <<"INVALID_URI">>, _, _}, _Session, 
-                             #{player:=_}=State) ->
+handle_cast({kms_error, <<"INVALID_URI">>, _, _}, #{nkmedia_kms_player:=_}=Session) ->
     nkmedia_session:stop(self(), invalid_uri),
-    {noreply, State};
+    {noreply, Session};
 
-nkmedia_session_handle_cast({kms_error, Error, Code, Type}, Session, State) ->
+handle_cast({kms_error, Error, Code, Type}, Session) ->
     ?LLOG(notice, "Unexpected KMS error: ~s (~p, ~s)", [Error, Code, Type], Session),
-    {noreply, State}.
+    {noreply, Session}.
 
 
 
@@ -327,112 +316,111 @@ is_supported(_) -> false.
 
 
 %% @private
--spec do_start_offeree(type(), nkmedia:offer(), session(), state()) ->
-    {ok, Reply::map(), ext_opts(), state()} |
-    {error, nkservice:error(), state()}.
+-spec do_start_offeree(type(), nkmedia:offer(), session()) ->
+    {ok, Reply::map(), ext_ops(), session()} |
+    {error, nkservice:error(), session()}.
 
-do_start_offeree(Type, Offer, Session, State) ->
-    case get_endpoint_offeree(Offer, Session, State) of
-        {ok, Answer, State2} ->
-            case do_start_setup(Type, Session, State2) of
-                {ok, Reply, ExtOpts, State3} ->
+do_start_offeree(Type, Offer, Session) ->
+    case get_endpoint_offeree(Offer, Session) of
+        {ok, Answer, Session2} ->
+            case do_start_setup(Type, Session2) of
+                {ok, Reply, ExtOpts, Session3} ->
                     Reply2 = Reply#{answer=>Answer},
                     ExtOps2 = ExtOpts#{answer=>Answer},
-                    {ok, Reply2, ExtOps2, State3};
-                {error, Error, State3} ->
-                    {error, Error, State3}
+                    {reply, Reply2, ExtOps2, Session3};
+                {error, Error, Session3} ->
+                    {error, Error, Session3}
             end;
         {error, Error} ->
-            {error, Error, State}
+            {error, Error, Session}
     end.
 
 
 %% @private
--spec do_start_offerer(type(), session(), state()) ->
-    {ok, Reply::map(), ext_opts(), state()} |
-    {error, nkservice:error(), state()}.
+-spec do_start_offerer(type(), session()) ->
+    {ok, Reply::map(), ext_ops(), session()} |
+    {error, nkservice:error(), session()}.
 
-do_start_offerer(Type, Session, State) ->
-    case get_endpoint_offerer(Session, State) of
-        {ok, Offer, State2} ->
-            {ok, #{offer=>Offer}, #{offer=>Offer}, State2};
+do_start_offerer(Type, Session) ->
+    case get_endpoint_offerer(Session) of
+        {ok, Offer, Session2} ->
+            {ok, #{offer=>Offer}, #{offer=>Offer}, Session2};
         {error, Error} ->
-            {error, Error, State}
+            {error, Error, Session}
     end.
 
 
 %% @private
--spec do_start_setup(type(), session(), state()) ->
-    {ok, Reply::map(), ext_opts(), state()} |
-    {error, nkservice:error(), state()}.
+-spec do_start_setup(type(), session()) ->
+    {ok, Reply::map(), ext_ops(), session()} |
+    {error, nkservice:error(), session()}.
 
-do_start_setup(Type, Session, State) ->
-    case do_type(Type, Session, State) of
-        {ok, Reply, ExtOpts, State2} ->
-            case start_record(Session, Session, State2) of
-                {ok, State3} ->
-                    {ok, Reply, ExtOpts, State3};
+do_start_setup(Type, Session) ->
+    case do_type(Type, Session) of
+        {ok, Reply, ExtOpts, Session2} ->
+            case start_record(Session2, Session2) of
+                {ok, Session3} ->
+                    {ok, Reply, ExtOpts, Session3};
                 {error, Error} ->
-                    {error, Error, State}
+                    {error, Error, Session2}
             end;
-        {error, Error, State2} ->
-            {error, Error, State2}
+        {error, Error, Session2} ->
+            {error, Error, Session2}
     end.
 
 
 %% @private
--spec do_type(update(), nkmedia:session(), state()) ->
-    {ok, Reply::map(), ext_opts(), state()} |
-    {error, nkservice:error(), state()} | continue().
+-spec do_type(update(), session()) ->
+    {ok, Reply::map(), ext_ops(), session()} |
+    {error, nkservice:error(), session()} | continue().
 
-do_type(park, Session, State) ->
-    State2 = reset_all(Session, State),
-    {ok, #{}, #{type=>park}, State2};
+do_type(park, Session) ->
+    Session2 = reset_all(Session),
+    {ok, #{}, #{type=>park}, Session2};
 
-do_type(echo, #{session_id:=SessId}=Session, State) ->
-    State2 = reset_all(Session, State),
-    case connect_peer(SessId, Session, State2) of
+do_type(echo, #{session_id:=SessId}=Session) ->
+    Session2 = reset_all(Session),
+    case connect_peer(SessId, Session2) of
         ok ->
-            {ok, #{}, #{type=>echo}, State2};
+            {ok, #{}, #{type=>echo}, Session2};
         {error, Error} ->
-            {error, Error, State2}
+            {error, Error, Session2}
     end;
 
-do_type(bridge, #{peer_id:=PeerId}=Session, State) ->
-    #{session_id:=SessId} = Session,
-    #{endpoint:=EP} = State,
+do_type(bridge, #{peer_id:=PeerId}=Session) ->
+    #{session_id:=SessId, nkmedia_kms_endpoint:=EP} = Session,
     %% Select all medias except if "use_XXX=false"
     Medias = nkmedia_kms_session_lib:get_create_medias(Session),
-    State2 = reset_all(Session, State),
+    Session2 = reset_all(Session),
     case session_call(PeerId, {bridge, SessId, EP, Medias}) of
         {ok, PeerEP} ->
-            ok = nkmedia_kms_session_lib:connect(PeerEP, Medias, State2),
-            State3 = State#{bridged_to=>PeerId},
-            {ok, #{}, #{type=>bridge, type_ext=>#{peer_id=>PeerId}}, State3};
+            ok = nkmedia_kms_session_lib:connect(PeerEP, Medias, Session2),
+            Session3 = ?SESSION(Session2, #{nkmedia_kms_bridged_to=>PeerId}),
+            {ok, #{}, #{type=>bridge, type_ext=>#{peer_id=>PeerId}}, Session3};
         {error, Error} ->
-            {error, Error, State2}
+            {error, Error, Session2}
     end;
 
-do_type(publish, #{session_id:=SessId}=Session, State) ->
-    State2 = reset_all(Session, State),
-    case get_room(publish, Session, State) of
+do_type(publish, #{session_id:=SessId}=Session) ->
+    Session2 = reset_all(Session),
+    case get_room(publish, Session) of
         {ok, RoomId} ->
             Update = {started_publisher, SessId, #{pid=>self()}},
             %% TODO: Link with room
             {ok, _RoomPid} = nkmedia_room:update(RoomId, Update),
             Reply = #{room_id=>RoomId},
             ExtOps = #{type=>publish, type_ext=>#{room_id=>RoomId}},
-            State3 = State2#{publish_to=>RoomId},
-            {ok, Reply, ExtOps, State3};
+            Session3 = ?SESSION(Session2, #{nkmedia_kms_publish_to=>RoomId}),
+            {ok, Reply, ExtOps, Session3};
         {error, Error} ->
-            {error, Error, State2}
+            {error, Error, Session2}
     end;
 
-do_type(listen, #{publisher_id:=PeerId, session_id:=SessId}=Session, State) ->
-    State2 = reset_all(Session, State),
-    case get_room(listen, Session, State) of
+do_type(listen, #{publisher_id:=PeerId, session_id:=SessId}=Session) ->
+    Session2 = reset_all(Session),
+    case get_room(listen, Session) of
         {ok, RoomId} ->
-            case connect_peer(PeerId, Session, State) of
+            case connect_peer(PeerId, Session) of
                 ok -> 
                     Update = {started_listener, SessId, #{peer_id=>PeerId, pid=>self()}},
                     %% TODO: Link with room
@@ -442,182 +430,182 @@ do_type(listen, #{publisher_id:=PeerId, session_id:=SessId}=Session, State) ->
                         type => listen, 
                         type_ext => #{room_id=>RoomId, publisher_id=>PeerId}
                     },
-                    State3 = State2#{listen_to=>RoomId},
-                    {ok, Reply, ExtOps, State3};
+                    Session3 = ?SESSION(Session2, #{nkmedia_kms_listen_to=>RoomId}),
+                    {ok, Reply, ExtOps, Session3};
                 {error, Error} ->
-                    {error, Error, State2}
+                    {error, Error, Session2}
             end;
         {error, Error} ->
-            {error, Error, State2}
+            {error, Error, Session2}
     end;
 
-do_type(listen, _Session, State) ->
-    {error, {missing_field, publisher_id}, State};
+do_type(listen, Session) ->
+    {error, {missing_field, publisher_id}, Session};
 
-do_type(connect, #{peer_id:=PeerId}=Session, State) ->
-    case connect_peer(PeerId, Session, State) of
+do_type(connect, #{peer_id:=PeerId}=Session) ->
+    case connect_peer(PeerId, Session) of
         ok ->
-            {ok, #{}, #{}, State};
+            {ok, #{}, #{}, Session};
         {error, Error} ->
-            {error, Error, State}
+            {error, Error, Session}
     end;
 
-do_type(play, #{player_uri:=Uri, session_id:=SessId}=Session, State) ->
-    State2 = reset_all(Session, State),
-    case nkmedia_kms_session_lib:create_player(SessId, Uri, Session, State2) of
-        {ok, State3} ->
+do_type(play, #{player_uri:=Uri}=Session) ->
+    Session2 = reset_all(Session),
+    case nkmedia_kms_session_lib:create_player(Uri, Session2) of
+        {ok, Session3} ->
             Loops = maps:get(player_loops, Session, false),
             ExtOpts = #{
                 type=>play, 
                 type_ext => #{player_uri=>Uri, player_loops=>Loops}
             },
-            State4 = State3#{player_loops=>Loops},
-            {ok, #{}, ExtOpts, State4};
+            Session4 = ?SESSION(Session3, #{nkmedia_kms_player_loops=>Loops}),
+            {ok, #{}, ExtOpts, Session4};
         {error, Error} ->
-            {error, Error, State2}
+            {error, Error, Session2}
     end;
 
-% do_type(play, Session, State) ->
-%     {error, {missing_field, player_uri}, State};
+% do_type(play, Session, Session) ->
+%     {error, {missing_field, player_uri}, Session};
 
-do_type(play, Session, State) ->
+do_type(play, Session) ->
     % Uri = <<"file:///tmp/1.webm">>,
     Uri = <<"http://files.kurento.org/video/format/sintel.webm">>,
-    do_type(play, Session#{player_uri=>Uri, player_loops=>2}, State);
+    do_type(play, Session#{player_uri=>Uri, player_loops=>2});
 
-do_type(_Op, _Session, State) ->
-    {error, invalid_operation, State}.
+do_type(_Op, Session) ->
+    {error, invalid_operation, Session}.
 
 
 %% @private 
 %% If we are starting a publisher or listener with an already started room
 %% we must connect to the same pipeline
--spec get_pipeline(type(), session(), state()) ->
-    {ok, session(), state()} | {error, term()}.
+-spec get_pipeline(type(), session()) ->
+    {ok, session()} | {error, term()}.
 
-get_pipeline(publish, #{room_id:=RoomId}=Session, State) ->
-    get_pipeline_from_room(RoomId, Session, State);
+get_pipeline(publish, #{room_id:=RoomId}=Session) ->
+    get_pipeline_from_room(RoomId, Session);
 
-get_pipeline(listen, #{publisher_id:=PeerId}=Session, State) ->
+get_pipeline(listen, #{publisher_id:=PeerId}=Session) ->
     case get_peer_room(PeerId) of
         {ok, RoomId} ->
-            Session2 = Session#{room_id=>RoomId},
-            get_pipeline_from_room(RoomId, Session2, State);
+            Session2 = ?SESSION(Session, #{room_id=>RoomId}),
+            get_pipeline_from_room(RoomId, Session2);
         _ ->
-            get_pipeline(normal, Session, State)
+            get_pipeline(normal, Session)
     end;
 
-get_pipeline(_Type, #{srv_id:=SrvId}=Session, State) ->
-    case nkmedia_kms_session_lib:get_mediaserver(SrvId, State) of
-        {ok, State2} -> 
-            {ok, Session, State2};
+get_pipeline(_Type, Session) ->
+    case nkmedia_kms_session_lib:get_mediaserver(Session) of
+        {ok, Session2} -> 
+            {ok, Session2};
         {error, Error} -> 
             {error, Error}
     end.
 
 
 %% @private
-get_pipeline_from_room(RoomId, Session, State) ->
+get_pipeline_from_room(RoomId, Session) ->
     case nkmedia_room:get_room(RoomId) of
         {ok, #{nkmedia_kms:=#{kms_id:=KmsId}}} -> 
             ?LLOG(notice, "getting engine from ROOM: ~s", [KmsId], Session),
-            State2 = State#{kms_id=>KmsId},
-            case nkmedia_kms_session_lib:get_pipeline(State2) of
-                {ok, State3} -> 
-                    {ok, Session, State3};
+            Session2 = ?SESSION(Session, #{nkmedia_kms_id=>KmsId}),
+            case nkmedia_kms_session_lib:get_pipeline(Session2) of
+                {ok, Session3} -> 
+                    {ok, Session3};
                 {error, Error} ->
                     {error, Error}
             end;
         _ ->
-            get_pipeline(normal, Session, State)
+            get_pipeline(normal, Session)
     end.
 
 
 %% @private
--spec get_endpoint_offeree(nkmedia:offer(), session(), state()) ->
-    {ok, nkmedia:answer(), state()} | {error, nkservice:error()}.
+-spec get_endpoint_offeree(nkmedia:offer(), session()) ->
+    {ok, nkmedia:answer(), session()} | {error, nkservice:error()}.
 
-get_endpoint_offeree(#{sdp_type:=rtp}=Offer, #{session_id:=SessId}, State) ->
-    nkmedia_kms_session_lib:create_rtp(SessId, Offer, State);
+get_endpoint_offeree(#{sdp_type:=rtp}=Offer, Session) ->
+    nkmedia_kms_session_lib:create_rtp(Offer, Session);
 
-get_endpoint_offeree(Offer, #{session_id:=SessId}, State) ->
-    nkmedia_kms_session_lib:create_webrtc(SessId, Offer, State).
-
-
-%% @private
--spec get_endpoint_offerer(session(), state()) ->
-    {ok, nkmedia:answer(), state()} | {error, nkservice:error()}.
-
-get_endpoint_offerer(#{session_id:=SessId, sdp_type:=rtp}, State) ->
-    nkmedia_kms_session_lib:create_rtp(SessId, #{}, State);
-
-get_endpoint_offerer(#{session_id:=SessId}, State) ->
-    nkmedia_kms_session_lib:create_webrtc(SessId, #{}, State).
+get_endpoint_offeree(Offer, Session) ->
+    nkmedia_kms_session_lib:create_webrtc(Offer, Session).
 
 
 %% @private
--spec start_record(map(), session(), state()) ->
-    {ok, state()} | {error, term()}.
+-spec get_endpoint_offerer(session()) ->
+    {ok, nkmedia:answer(), session()} | {error, nkservice:error()}.
 
-start_record(#{record:=true}=Opts, #{session_id:=SessId}, State) ->
-    nkmedia_kms_session_lib:create_recorder(SessId, Opts, State);
+get_endpoint_offerer(#{sdp_type:=rtp}=Session) ->
+    nkmedia_kms_session_lib:create_rtp(#{}, Session);
 
-start_record(#{record:=false}, _Session, State) ->
-    case nkmedia_kms_session_lib:recorder_op(stop, State) of
-        {ok, State2} -> {ok, State2};
-        _ -> {ok, State}
+get_endpoint_offerer(Session) ->
+    nkmedia_kms_session_lib:create_webrtc(#{}, Session).
+
+
+%% @private
+-spec start_record(map(), session()) ->
+    {ok, session()} | {error, term()}.
+
+start_record(#{record:=true}=Opts, #{session_id:=SessId}=Session) ->
+    nkmedia_kms_session_lib:create_recorder(SessId, Opts, Session);
+
+start_record(#{record:=false},  Session) ->
+    case nkmedia_kms_session_lib:recorder_op(stop, Session) of
+        {ok, Session2} -> {ok, Session2};
+        _ -> {ok, Session}
     end;
 
-start_record(_Opts, _Session, State) ->
-    {ok, State}.
+start_record(_Opts, Session) ->
+    {ok, Session}.
 
 
 %% @private
--spec reset_all(session(), state()) ->
-    {ok, state()} | {error, term()}.
+-spec reset_all(session()) ->
+    {ok, session()} | {error, term()}.
 
-reset_all(#{session_id:=SessId}, State) ->
-    case nkmedia_kms_session_lib:player_op(stop, State) of
-        {ok, State2} -> ok;
-        _ -> State2 = State
+reset_all(#{session_id:=SessId}=Session) ->
+    case nkmedia_kms_session_lib:player_op(stop, Session) of
+        {ok, Session2} -> ok;
+        _ -> Session2 = Session
     end,
-    case nkmedia_kms_session_lib:recorder_op(stop, State2) of
-        {ok, State3} -> State3;
-        _ -> State3 = State2
+    case nkmedia_kms_session_lib:recorder_op(stop, Session2) of
+        {ok, Session3} -> Session3;
+        _ -> Session3 = Session2
     end,
-    nkmedia_kms_session_lib:disconnect_all(State3),
-    case State3 of
-        #{bridged_to:=PeerId} ->
+    nkmedia_kms_session_lib:disconnect_all(Session3),
+    case Session3 of
+        #{nkmedia_kms_bridged_to:=PeerId} ->
             session_cast(PeerId, {bridge_stop, SessId}),
-            State4 = maps:remove(bridged_to, State3);
+            Session4 = ?SESSION_RM(nkmedia_kms_bridged_to, Session3);
         _ ->
-            State4 = State3
+            Session4 = Session3
     end,
-    case State4 of
-        #{publish_to:=RoomId} ->
+    case Session4 of
+        #{nkmedia_kms_publish_to:=RoomId} ->
             Update = {stopped_publisher, SessId, #{}},
             nkmedia_room:update_async(RoomId, Update),
-            State5 = maps:remove(publish_to, State4);
-        #{listen_to:=RoomId} ->
+            Session5 = ?SESSION_RM(nkmedia_kms_publish_to, Session4);
+        #{nkmedia_kms_listen_to:=RoomId} ->
             Update = {stopped_listener, SessId, #{}},
             nkmedia_room:update_async(RoomId, Update),
-            State5 = maps:remove(listen_to, State4);
+            Session5 = ?SESSION_RM(nkmedia_kms_listen_to, Session4);
         _ ->
-            State5 = State4
+            Session5 = Session4
     end,
-    State5.
+    Session5.
 
 
 %% @private
 %% Connect a remote session to us as sink
 %% All medias will be included, except if "use_XXX=false" in Session
--spec connect_peer(session_id(), session(), state()) ->
+-spec connect_peer(session_id(), session()) ->
     ok | {error, nkservice:error()}.
 
-connect_peer(PeerId, Session, State) ->
-    case get_peer_endpoint(PeerId, Session, State) of
+connect_peer(PeerId, Session) ->
+    case get_peer_endpoint(PeerId, Session) of
         {ok, PeerEP} ->
-            nkmedia_kms_session_lib:connect(PeerEP, Session, State);
+            nkmedia_kms_session_lib:connect(PeerEP, Session);
         {error, Error} ->
             {error, Error}
     end.
@@ -625,10 +613,10 @@ connect_peer(PeerId, Session, State) ->
 
 
 %% @private
--spec get_room(publish|listen, session(), state()) ->
+-spec get_room(publish|listen, session()) ->
     {ok, nkmedia_room:id()} | {error, term()}.
 
-get_room(Type, #{srv_id:=SrvId}=Session, #{kms_id:=KmsId}) ->
+get_room(Type, #{srv_id:=SrvId, nkmedia_kms_id:=KmsId}=Session) ->
     case get_room_id(Type, Session) of
         {ok, RoomId} ->
             lager:error("ROOM ID IS: ~p", [RoomId]),
@@ -683,12 +671,12 @@ get_room_id(Type, Session) ->
 
 
 %% @private
--spec get_peer_endpoint(session_id(), session(), state()) ->
+-spec get_peer_endpoint(session_id(), session()) ->
     {ok, endpoint()} | {error, nkservice:error()}.
 
-get_peer_endpoint(SessId, #{session_id:=SessId}, #{endpoint:=EP}) ->
+get_peer_endpoint(SessId, #{session_id:=SessId, nkmedia_kms_endpoint:=EP}) ->
     {ok, EP};
-get_peer_endpoint(SessId, _Session, _State) ->
+get_peer_endpoint(SessId, _Session) ->
     case session_call(SessId, get_endpoint) of
         {ok, EP} -> {ok, EP};
         {error, Error} -> {error, Error}

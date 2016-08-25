@@ -552,3 +552,23 @@ find_user(User) ->
             end
     end.
 
+
+
+speed(N) ->
+    Start = nklib_util:l_timestamp(),
+    speed(#{c=>3, d=>4}, N),
+    Stop = nklib_util:l_timestamp(),
+    Time = (Stop - Start) / 1000000,
+    N / Time.
+
+
+
+
+speed(_Acc, 0) ->
+    ok;
+speed(Acc, Pos) ->
+    #{a:=1, b:=2, c:=3, d:=4} = maps:merge(Acc, #{a=>1, b=>2}),
+    speed(Acc, Pos-1).
+
+
+
