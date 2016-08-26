@@ -167,12 +167,12 @@ nkmedia_session_terminate(_Reason, Session) ->
 
 
 -spec nkmedia_session_start(nkmedia_session:type(), from(), session()) ->
-	{reply, Reply::term(), nkmedia_session:ext_ops(), session()} |
-	{noreply, nkmedia_session:ext_ops(), session()} |
+	{ok, Reply::term(), nkmedia_session:ext_ops(), session()} |
+	{ok, nkmedia_session:ext_ops(), session()} |
 	{error, nkservice:error(), session()} | continue().
 
 nkmedia_session_start(p2p, _From, Session) ->
-	{reply, {ok, #{}}, #{}, Session};
+	{ok, {ok, #{}}, #{}, Session};
 
 nkmedia_session_start(_Type, _From, Session) ->
 	{error, unknown_session_type, Session}.
@@ -181,19 +181,19 @@ nkmedia_session_start(_Type, _From, Session) ->
 %% @private
 -spec nkmedia_session_answer(nkmedia_session:type(), nkmedia:answer(), 
 						     from(), session()) ->
-	{reply, Reply::term(), nkmedia_session:ext_ops(), session()} |
-	{noreply, nkmedia_session:ext_ops(), session()} |
+	{ok, Reply::term(), nkmedia_session:ext_ops(), session()} |
+	{ok, nkmedia_session:ext_ops(), session()} |
 	{error, term(), session()} | continue().
 
 nkmedia_session_answer(Type, Answer, From, Session) ->
-	{reply, {ok, #{}}, #{answer=>Answer}, Session}.
+	{ok, {ok, #{}}, #{answer=>Answer}, Session}.
 
 
 %% @private
 -spec nkmedia_session_update(nkmedia_session:update(), Opts::map(),
 					         from(), session()) ->
-	{reply, Reply::map(), nkmedia_session:ext_ops(), session()} |
-	{noreply, nkmedia_session:ext_ops(), session()} |
+	{ok, Reply::term(), nkmedia_session:ext_ops(), session()} |
+	{ok, nkmedia_session:ext_ops(), session()} |
 	{error, term(), session()} | continue().
 
 nkmedia_session_update(_Update, _Opts, _From, Session) ->
@@ -210,18 +210,18 @@ nkmedia_session_candidate(_Candidate, Session) ->
 
 %% @private
 -spec nkmedia_session_client_trickle_ready([nkmedia:candidate()], session()) ->
-	{noreply, nkmedia_session:ext_ops(), session()}.
+	{ok, nkmedia_session:ext_ops(), session()}.
 
 nkmedia_session_client_trickle_ready(_Candidates, Session) ->
-	{noreply, Session}.
+	{ok, Session}.
 
 
 %% @private
 -spec nkmedia_session_server_trickle_ready([nkmedia:candidate()], session()) ->
-	{noreply, nkmedia_session:ext_ops(), session()}.
+	{ok, nkmedia_session:ext_ops(), session()}.
 
 nkmedia_session_server_trickle_ready(_Candidates, Session) ->
-	{noreply, Session}.
+	{ok, Session}.
 
 
 %% @private%% @doc Called when the status of the session changes

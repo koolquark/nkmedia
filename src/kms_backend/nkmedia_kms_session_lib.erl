@@ -23,24 +23,31 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([kms_event/3]).
--export([get_mediaserver/1, get_pipeline/1, stop_endpoint/1]).
--export([create_webrtc/2, create_rtp/2]).
+-export([get_mediaserver/1, get_pipeline/1, release_all/1]).
+-export([create_proxy/1, create_webrtc/2, create_rtp/2]).
 -export([add_ice_candidate/2, set_answer/2]).
 -export([create_recorder/2, recorder_op/2]).
 -export([create_player/3, player_op/2]).
 -export([update_media/2, get_stats/2]).
--export([connect/3, disconnect_all/1, release/1]).
--export([get_create_medias/1]).
--export([invoke/3, invoke/4]).
+-export([connect_from/3, connect_to_proxy/2, park/1]).
 -export([print_info/2]).
 
--define(LLOG(Type, Txt, Args, SessId),
-    lager:Type("NkMEDIA KMS Session ~s "++Txt, [SessId| Args])).
+-define(LLOG(Type, Txt, Args, Session),
+    lager:Type("NkMEDIA KMS Session ~s "++Txt, 
+                [
+                    case is_map(Session) of 
+                        true -> maps:get(session_id, Session); 
+                        false -> Session 
+                    end
+                    | Args
+                ])).
 
 -include_lib("nksip/include/nksip.hrl").
 -include("../../include/nkmedia.hrl").
 
 -define(MAX_ICE_TIME, 100).
+
+-define(ALL_MEDIAS, [<<"AUDIO">>, <<"VIDEO">>, <<"DATA">>]).
 
 
 %% ===================================================================
@@ -51,10 +58,8 @@
 -type session() :: nkmedia_kms_session:session().
 -type endpoint() :: binary().
 
-
-
 % AUDIO, VIDEO, DATA
--type media_type() :: nkmedia_kms_session:binary(). 
+-type media_type() :: binary(). 
 
 
 
@@ -113,7 +118,7 @@ get_mediaserver(#{nkmedia_kms_id:=_}=Session) ->
 get_mediaserver(#{srv_id:=SrvId}=Session) ->
     case SrvId:nkmedia_kms_get_mediaserver(SrvId) of
         {ok, KmsId} ->
-            get_pipeline(?SESSION(Session, #{nkmedia_kms_id=>KmsId}));
+            get_pipeline(?SESSION(#{nkmedia_kms_id=>KmsId}, Session));
         {error, Error} ->
             {error, Error}
     end.
@@ -126,18 +131,59 @@ get_mediaserver(#{srv_id:=SrvId}=Session) ->
 get_pipeline(#{nkmedia_kms_id:=KmsId}=Session) ->
     case nkmedia_kms_engine:get_pipeline(KmsId) of
         {ok, Pipeline} ->
-            {ok, ?SESSION(Session, #{nkmedia_kms_pipeline=>Pipeline})};
+            {ok, ?SESSION(#{nkmedia_kms_pipeline=>Pipeline}, Session)};
         {error, Error} ->
             {error, Error}
     end.
 
 
 %% @private
--spec stop_endpoint(session()) ->
+-spec release_all(session()) ->
     ok.
 
-stop_endpoint(Session) ->
-    release(Session).
+release_all(Session) ->
+    case Session of
+        #{nkmedia_kms_recorder:=Recorder} -> 
+            release(Recorder, Session);
+        _ -> 
+            ok
+    end,
+    case Session of
+        #{nkmedia_kms_player:=Player} -> 
+            release(Player, Session);
+        _ -> 
+            ok
+    end,
+    case Session of
+        #{nkmedia_kms_proxy:=Proxy} -> 
+            release(Proxy, Session);
+        _ -> 
+            ok
+    end,
+    case Session of
+        #{nkmedia_kms_endpoint:=EP} -> 
+            release(EP, Session);
+        _ -> 
+            ok
+    end,
+    ok.
+
+
+%% @private
+%% The proxy is used for outbound media, to be able to "mute" them
+%% Important for "publisher"
+%% Also, the recorder always follows what I am sending to the proxy
+-spec create_proxy(session()) ->
+    {ok, session()} | {error, nkservice:error()}.
+
+create_proxy(#{nkmedia_kms_id:=KmsId, nkmedia_kms_pipeline:=Pipeline}=Session) ->
+    Params = #{mediaPipeline=>Pipeline},
+    case nkmedia_kms_client:create(KmsId, 'PassThrough', Params, #{}) of
+        {ok, ObjId} ->
+            {ok, ?SESSION(#{nkmedia_kms_proxy=>ObjId}, Session)};
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 %% @private
@@ -147,28 +193,28 @@ stop_endpoint(Session) ->
 create_webrtc(Offer, Session) ->
     case create_endpoint('WebRtcEndpoint', #{}, Session) of
         {ok, EP} ->
-            Upd = #{nkmedia_kms_endpoint=>EP, nkmedia_kms_endpoint_type=>webrtc},
-            Session2 = ?SESSION(Session, Upd),
-            subscribe('Error', Session2),
-            subscribe('OnIceComponentStateChanged', Session2),
-            subscribe('OnIceCandidate', Session2),
-            subscribe('OnIceGatheringDone', Session2),
-            subscribe('NewCandidatePairSelected', Session2),
-            subscribe('MediaStateChanged', Session2),
-            subscribe('MediaFlowInStateChange', Session2),
-            subscribe('MediaFlowOutStateChange', Session2),
-            subscribe('ConnectionStateChanged', Session2),
-            subscribe('ElementConnected', Session2),
-            subscribe('ElementDisconnected', Session2),
-            subscribe('MediaSessionStarted', Session2),
-            subscribe('MediaSessionTerminated', Session2),
+            Update = #{nkmedia_kms_endpoint=>EP, nkmedia_kms_endpoint_type=>webrtc},
+            Session2 = ?SESSION(Update, Session),
+            subscribe(EP, 'Error', Session2),
+            subscribe(EP, 'OnIceComponentStateChanged', Session2),
+            subscribe(EP, 'OnIceCandidate', Session2),
+            subscribe(EP, 'OnIceGatheringDone', Session2),
+            subscribe(EP, 'NewCandidatePairSelected', Session2),
+            subscribe(EP, 'MediaStateChanged', Session2),
+            subscribe(EP, 'MediaFlowInStateChange', Session2),
+            subscribe(EP, 'MediaFlowOutStateChange', Session2),
+            subscribe(EP, 'ConnectionStateChanged', Session2),
+            subscribe(EP, 'ElementConnected', Session2),
+            subscribe(EP, 'ElementDisconnected', Session2),
+            subscribe(EP, 'MediaSessionStarted', Session2),
+            subscribe(EP, 'MediaSessionTerminated', Session2),
             case Offer of
                 #{sdp:=SDP} ->
-                    {ok, SDP2} = invoke(processOffer, #{offer=>SDP}, Session2);
+                    {ok, SDP2} = invoke(EP, processOffer, #{offer=>SDP}, Session2);
                 _ ->
-                    {ok, SDP2} = invoke(generateOffer, #{}, Session2)
+                    {ok, SDP2} = invoke(EP, generateOffer, #{}, Session2)
             end,
-            ok = invoke(gatherCandidates, #{}, Session2),
+            ok = invoke(EP, gatherCandidates, #{}, Session2),
             {ok, Offer#{sdp=>SDP2, trickle_ice=>true, sdp_type=>webrtc}, Session2};
         {error, Error} ->
            {error, Error}
@@ -182,22 +228,22 @@ create_webrtc(Offer, Session) ->
 create_rtp(Offer, Session) ->
     case create_endpoint('RtpEndpoint', #{}, Session) of
         {ok, EP} ->
-            Upd = #{nkmedia_kms_endpoint=>EP, nkmedia_kms_endpoint_type=>rtp},
-            Session2 = ?SESSION(Session, Upd),
-            subscribe('Error', Session2),
-            subscribe('MediaStateChanged', Session2),
-            subscribe('MediaFlowInStateChange', Session2),
-            subscribe('MediaFlowOutStateChange', Session2),
-            subscribe('ConnectionStateChanged', Session2),
-            subscribe('ElementConnected', Session2),
-            subscribe('ElementDisconnected', Session2),
-            subscribe('MediaSessionStarted', Session2),
-            subscribe('MediaSessionTerminated', Session2),
+            Update = #{nkmedia_kms_endpoint=>EP, nkmedia_kms_endpoint_type=>rtp},
+            Session2 = ?SESSION(Update, Session),
+            subscribe(EP, 'Error', Session2),
+            subscribe(EP, 'MediaStateChanged', Session2),
+            subscribe(EP, 'MediaFlowInStateChange', Session2),
+            subscribe(EP, 'MediaFlowOutStateChange', Session2),
+            subscribe(EP, 'ConnectionStateChanged', Session2),
+            subscribe(EP, 'ElementConnected', Session2),
+            subscribe(EP, 'ElementDisconnected', Session2),
+            subscribe(EP, 'MediaSessionStarted', Session2),
+            subscribe(EP, 'MediaSessionTerminated', Session2),
             case Offer of
                 #{offer:=#{sdp:=SDP}} ->
-                    {ok, SDP2} = invoke(processOffer, #{offer=>SDP}, Session2);
+                    {ok, SDP2} = invoke(EP, processOffer, #{offer=>SDP}, Session2);
                 _ ->
-                    {ok, SDP2} = invoke(generateOffer, #{}, Session2)
+                    {ok, SDP2} = invoke(EP, generateOffer, #{}, Session2)
             end,
             {ok, Offer#{sdp=>SDP2, sdp_type=>rtp}, Session2};
         {error, Error} ->
@@ -209,22 +255,22 @@ create_rtp(Offer, Session) ->
 -spec set_answer(nkmedia:answer(), session()) ->
     ok | {error, nkservice:error()}.
 
-set_answer(#{sdp:=SDP}, Session) ->
-    invoke(processAnswer, #{offer=>SDP}, Session).
+set_answer(#{sdp:=SDP}, #{nkmedia_kms_endpoint:=EP}=Session) ->
+    invoke(EP, processAnswer, #{offer=>SDP}, Session).
 
 
 %% @private
 -spec add_ice_candidate(nkmedia:candidate(), session()) ->
     ok | {error, nkservice:error()}.
 
-add_ice_candidate(Candidate, Session) ->
+add_ice_candidate(Candidate, #{nkmedia_kms_endpoint:=EP}=Session) ->
     #candidate{m_id=MId, m_index=MIndex, a_line=ALine} = Candidate,
     Data = #{
         sdpMid => MId,
         sdpMLineIndex => MIndex,
         candidate => ALine
     },
-    ok = invoke(addIceCandidate, #{candidate=>Data}, Session).
+    ok = invoke(EP, addIceCandidate, #{candidate=>Data}, Session).
 
 
 
@@ -240,33 +286,23 @@ create_recorder(Opts, #{nkmedia_kms_recorder:=_}=Session) ->
     {ok, Session2} = recorder_op(stop, Session),
     create_recorder(Opts, ?SESSION_RM(nkmedia_kms_recorder, Session2));
 
-create_recorder(Opts, #{nkmedia_kms_endpoint:=EP}=Session) ->
-    Medias = lists:flatten([
-        case maps:get(use_audio, Opts, true) of
-            true -> <<"AUDIO">>;
-            _ -> []
-        end,
-        case maps:get(use_video, Opts, true) of
-            true -> <<"VIDEO">>;
-            _ -> []
-        end
-    ]),
+create_recorder(Opts, #{nkmedia_kms_proxy:=Proxy}=Session) ->
     {Uri, Session2} = case maps:find(uri, Opts) of
         {ok, Uri0} -> {Uri0, Session};
         error -> make_record_uri(Session)
     end,
     Profile = maps:get(mediaProfile, Opts, <<"WEBM">>),
     Params = #{uri=>nklib_util:to_binary(Uri), mediaProfile=>Profile},
-    lager:notice("Started recording: ~p", [Params]),
+    ?LLOG(notice, "started recording: ~p", [Params], Session),
     case create_endpoint('RecorderEndpoint', Params, Session2) of
         {ok, ObjId} ->
             subscribe(ObjId, 'Error', Session2),
             subscribe(ObjId, 'Paused', Session2),
             subscribe(ObjId, 'Stopped', Session2),
             subscribe(ObjId, 'Recording', Session2),
-            ok = do_connect(EP, ObjId, Medias, Session2),
+            ok = do_connect(Proxy, ObjId, all, Session2),
             ok = invoke(ObjId, record, #{}, Session2),
-            {ok, ?SESSION(Session2, #{nkmedia_kms_recorder=>ObjId})};
+            {ok, ?SESSION(#{nkmedia_kms_recorder=>ObjId}, Session2)};
         {error, Error} ->
            {error, Error}
     end.
@@ -280,7 +316,7 @@ make_record_uri(#{session_id:=SessId}=Session) ->
     Pos = maps:get(nkmedia_kms_record_pos, Session, 0),
     Name = io_lib:format("~s_p~4..0w.webm", [SessId, Pos]),
     File = filename:join(<<"/tmp/record">>, list_to_binary(Name)),
-    {<<"file://", File/binary>>, ?SESSION(Session, #{record_pos=>Pos+1})}.
+    {<<"file://", File/binary>>, ?SESSION(#{nkmedia_kms_record_pos=>Pos+1}, Session)}.
 
 
 %% @private
@@ -312,11 +348,11 @@ recorder_op(_, _Session) ->
 -spec create_player(binary(), map(), session()) ->
     {ok, session()} | {error, nkservice:error(), session()}.
 
-create_player(Uri, Opts, #{player:=_}=Session) ->
+create_player(Uri, Opts, #{nkmedia_kms_player:=_}=Session) ->
     {ok, Session2} = player_op(stop, Session),
     create_player(Uri, Opts, ?SESSION_RM(nkmedia_kms_player, Session2));
 
-create_player(Uri, Opts, #{endpoint:=EP}=Session) ->
+create_player(Uri, Opts, Session) ->
     Medias = lists:flatten([
         case maps:get(use_audio, Opts, true) of
             true -> <<"AUDIO">>;
@@ -332,9 +368,13 @@ create_player(Uri, Opts, #{endpoint:=EP}=Session) ->
         {ok, ObjId} ->
             subscribe(ObjId, 'Error', Session),
             subscribe(ObjId, 'EndOfStream', Session),
-            ok = do_connect(ObjId, EP, Medias, Session),
-            ok = invoke(ObjId, play, #{}, Session),
-            {ok, ?SESSION(Session, #{nkmedia_kms_player=>ObjId})};
+            case connect_from(ObjId, Medias, Session) of
+                {ok, Session2} ->
+                    ok = invoke(ObjId, play, #{}, Session2),
+                    {ok, ?SESSION(#{nkmedia_kms_player=>ObjId}, Session2)};
+                {error, Error} ->
+                    {error, Error}
+            end;
         {error, Error} ->
            {error, Error, Session}
     end.
@@ -355,7 +395,7 @@ player_op(resume, #{nkmedia_kms_player:=PlayerEP}=Session) ->
 player_op(stop, #{nkmedia_kms_player:=PlayerEP}=Session) ->
     invoke(PlayerEP, stop, #{}, Session),
     release(PlayerEP, Session),
-    {ok, maps:remove(nkmedia_kms_player, Session)};
+    {ok, ?SESSION_RM(nkmedia_kms_player, Session)};
 
 player_op(get_info, #{nkmedia_kms_player:=PlayerEP}=Session) ->
     {ok, Data} = invoke(PlayerEP, getVideoInfo, #{}, Session),
@@ -374,7 +414,7 @@ player_op(get_info, #{nkmedia_kms_player:=PlayerEP}=Session) ->
             },
             {ok, #{player_info=>Data2}, Session};
         _ ->
-            lager:error("Unknown player info: ~p", [Data]),
+            ?LLOG(warning, "unknown player info: ~p", [Data], Session),
             {ok, #{}, Session}
     end;
 
@@ -405,9 +445,9 @@ player_op(_, _Session) ->
 -spec get_stats(binary(), session()) ->
     {ok, map()}.
 
-get_stats(Type, Session) 
+get_stats(Type, #{nkmedia_kms_endpoint:=EP}=Session) 
         when Type == <<"AUDIO">>; Type == <<"VIDEO">>; Type == <<"DATA">> ->
-    {ok, _Stats} = invoke(getStats, #{mediaType=>Type}, Session);
+    {ok, _Stats} = invoke(EP, getStats, #{mediaType=>Type}, Session);
 
 get_stats(Type, _Session) ->
     {error, {invalid_value, Type}}.
@@ -435,103 +475,117 @@ create_endpoint(Type, Params, Session) ->
     end.
 
 
-
 %% @private
-%% If you remove all medias, you can not connect again any media
-%% (the hole connection is d)
+%% Adds or remove medias in the EP -> Proxy path
 -spec update_media(map(), session()) ->
     ok.
 
-update_media(Opts, #{nkmedia_kms_endpoint:=EP}=Session) ->
+update_media(Opts, #{nkmedia_kms_endpoint:=EP, nkmedia_kms_proxy:=Proxy}=Session) ->
     case get_update_medias(Opts) of
         {[], []} ->
             ok;
         {Add, Remove} ->
-            lists:foreach(
-                fun(PeerEP) ->
-                    % lager:error("Source ~s: A: ~p, R: ~p", [PeerEP, Add, Remove]),
-                    do_connect(PeerEP, EP, Add, Session),
-                    do_disconnect(PeerEP, EP, Remove, Session)
-                end,
-                maps:keys(get_sources(Session))),
-            lists:foreach(
-                fun(PeerEP) ->
-                    % lager:error("Sink ~s: A: ~p, R: ~p", [PeerEP, Add, Remove]),
-                    do_connect(EP, PeerEP, Add, Session),
-                    do_disconnect(EP, PeerEP, Remove, Session)
-                end,
-                maps:keys(get_sinks(Session)))
+            ?LLOG(notice, "updated media: +~p, -~p", [Add, Remove], Session),
+            do_connect(EP, Proxy, Add, Session),
+            do_disconnect(EP, Proxy, Remove, Session)
     end.
 
 
 %% @private
-%% Connects a remote Endpoint to us as sink
+%% Connects Remote -> EP (some medias). It first disconnect from previous source.
 %% We can select the medias to use, or use a map() with options, and all medias
-%% will be include except the ones that have 'use' false.
--spec connect(endpoint(), [media_type()], session()) ->
-    ok | {error, nkservice:error()}.
+%% will be included except the ones that have 'use' false.
+-spec connect_from(endpoint(), map()|[media_type()], session()) ->
+    {ok, session()} | {error, nkservice:error()}.
 
-connect(PeerEP, Opts, Session) when is_map(Opts) ->
+connect_from(PeerEP, Opts, Session) when is_map(Opts) ->
     Medias = get_create_medias(Opts),
-    connect(PeerEP, Medias, Session);
+    connect_from(PeerEP, Medias, Session);
 
-connect(PeerEP, [<<"AUDIO">>, <<"VIDEO">>, <<"DATA">>], #{nkmedia_kms_endpoint:=EP}=Session) ->
-    invoke(PeerEP, connect, #{sink=>EP}, Session);
+connect_from(PeerEP, Medias, Session) ->
+    #{nkmedia_kms_endpoint:=EP} = Session,
+    case Session of
+        #{nkmedia_kms_source:=Source} ->
+            do_disconnect(Source, EP, all, Session);
+        _ -> 
+            ok
+    end,
+    Medias2 = case Medias of
+        ?ALL_MEDIAS -> all;
+        _ -> Medias
+    end,
+    case do_connect(PeerEP, EP, Medias2, Session) of
+        ok ->
+            {ok, ?SESSION(#{nkmedia_kms_source=>PeerEP}, Session)};
+        {error, Error} ->
+            {error, Error}
+    end.
 
-connect(PeerEP, Medias, #{nkmedia_kms_endpoint:=EP}=Session) ->
-    Res = do_connect(PeerEP, EP, Medias, Session),
-    Medias2 = [<<"AUDIO">>, <<"DATA">>, <<"VIDEO">>] -- lists:sort(Medias),
-    do_disconnect(PeerEP, EP, Medias2, Session),
-    Res.
 
 
 %% @private
+%% Connects EP -> Proxy with medias
+-spec connect_to_proxy(map(), session()) ->
+    ok | {error, nkservice:error()}.
+
+connect_to_proxy(Opts, Session) ->
+    #{nkmedia_kms_endpoint:=EP, nkmedia_kms_proxy:=Proxy} = Session,
+    Medias = get_create_medias(Opts),
+    ok = do_connect(EP, Proxy, Medias, Session).
+
+
+%% @private
+do_connect(PeerEP, SinkEP, all, Session) ->
+    ?LLOG(notice, "connecting ~s -> ~s (all)", 
+          [print_id(PeerEP, Session), print_id(SinkEP, Session)], Session),
+    invoke(PeerEP, connect, #{sink=>SinkEP}, Session);
 do_connect(_PeerEP, _SinkEP, [], _Session) ->
     ok;
 do_connect(PeerEP, SinkEP, [Type|Rest], Session) ->
+    ?LLOG(notice, "connecting ~s -> ~s (~s)", 
+          [print_id(PeerEP, Session), print_id(SinkEP, Session), Type], Session),
     case invoke(PeerEP, connect, #{sink=>SinkEP, mediaType=>Type}, Session) of
         ok ->
-            lager:info("connecting ~s", [Type]),
             do_connect(PeerEP, SinkEP, Rest, Session);
         {error, Error} ->
             {error, Error}
     end.
 
 %% @private
+do_disconnect(PeerEP, SinkEP, all, Session) ->
+    ?LLOG(notice, "disconnecting ~s -> ~s (all)", 
+          [print_id(PeerEP, Session), print_id(SinkEP, Session)], Session),
+    invoke(PeerEP, disconnect, #{sink=>SinkEP}, Session);
 do_disconnect(_PeerEP, _SinkEP, [], _Session) ->
     ok;
 do_disconnect(PeerEP, SinkEP, [Type|Rest], Session) ->
+    ?LLOG(notice, "disconnecting ~s -> ~s (~s)", 
+          [print_id(PeerEP, Session), print_id(SinkEP, Session), Type], Session),
     case invoke(PeerEP, disconnect, #{sink=>SinkEP, mediaType=>Type}, Session) of
         ok ->
-            lager:info("disconnecting ~s", [Type]),
             do_disconnect(PeerEP, SinkEP, Rest, Session);
         {error, Error} ->
             {error, Error}
     end.
 
 
-%% @private
--spec disconnect_all(session()) ->
+%% @private Disconnect EP -> Proxy and External -> EP
+-spec park(session()) ->
     ok.
 
-disconnect_all(#{nkmedia_kms_endpoint:=EP}=Session) ->
-    lists:foreach(
-        fun(PeerEP) -> invoke(PeerEP, disconnect, #{sink=>EP}, Session) end,
-        maps:keys(get_sources(Session))),
-    lists:foreach(
-        fun(PeerEP) -> invoke(EP, disconnect, #{sink=>PeerEP}, Session) end,
-        maps:keys(get_sinks(Session)));
+park(#{nkmedia_kms_proxy:=Proxy, nkmedia_kms_endpoint:=EP}=Session) ->
+    lager:error("STOP MEDIA"),
+    ok = do_disconnect(EP, Proxy, all, Session),
+    case Session of
+        #{nkmedia_kms_source:=Source} ->
+            ok = do_disconnect(Source, EP, all, Session);
+        _ ->
+            ok
+    end,
+    {ok, ?SESSION_RM(nkmedia_kms_source, Session)};
 
-disconnect_all(_Session) ->
-    ok.
-
-
-%% @private
--spec subscribe(atom(), session()) ->
-    SubsId::binary().
-
-subscribe(Type, #{nkmedia_kms_endpoint:=EP}=Session) ->
-    subscribe(EP, Type, Session).
+park(Session) ->
+    {ok, Session}.
 
 
 %% @private
@@ -541,14 +595,6 @@ subscribe(Type, #{nkmedia_kms_endpoint:=EP}=Session) ->
 subscribe(ObjId, Type, #{nkmedia_kms_id:=KmsId}) ->
     {ok, SubsId} = nkmedia_kms_client:subscribe(KmsId, ObjId, Type),
     SubsId.
-
-
-%% @private
--spec invoke(atom(), map(), session()) ->
-    ok | {ok, term()} | {error, nkservice:error()}.
-
-invoke(Op, Params, #{nkmedia_kms_endpoint:=EP}=Session) ->
-    invoke(EP, Op, Params, Session).
 
 
 %% @private
@@ -564,29 +610,20 @@ invoke(ObjId, Op, Params, #{nkmedia_kms_id:=KmsId}) ->
 
 
 %% @private
--spec release(session()) ->
-    ok | {error, nkservice:error()}.
- 
-release(#{nkmedia_kms_endpoint:=EP}=Session) ->
-    release(EP, Session);
-release(_Session) ->
-    ok.
-
-
-%% @private
 -spec release(binary(), session()) ->
     ok | {error, nkservice:error()}.
  
-release(ObjId, #{nkmedia_kms_id:=KmsId}) ->
+release(ObjId, #{nkmedia_kms_id:=KmsId}=Session) ->
+    ?LLOG(notice, "releasing ~s", [print_id(ObjId, Session)], Session),
     nkmedia_kms_client:release(KmsId, ObjId).
 
 
 %% @private
--spec get_sources(session()) ->
+-spec get_sources(endpoint(), session()) ->
     #{endpoint() => [media_type()]}.
 
-get_sources(#{nkmedia_kms_endpoint:=EP}=Session) ->
-    {ok, Sources} = invoke(getSourceConnections, #{}, Session),
+get_sources(EP, Session) ->
+    {ok, Sources} = invoke(EP, getSourceConnections, #{}, Session),
     lists:foldl(
         fun(#{<<"type">>:=Type, <<"source">>:=Source, <<"sink">>:=Sink}, Acc) ->
             Sink = EP,
@@ -598,11 +635,11 @@ get_sources(#{nkmedia_kms_endpoint:=EP}=Session) ->
 
 
 %% @private
--spec get_sinks(session()) ->
+-spec get_sinks(endpoint(), session()) ->
     #{endpoint() => [media_type()]}.
 
-get_sinks(#{nkmedia_kms_endpoint:=EP}=Session) ->
-    {ok, Sinks} = invoke(getSinkConnections, #{}, Session),
+get_sinks(EP, Session) ->
+    {ok, Sinks} = invoke(EP, getSinkConnections, #{}, Session),
     lists:foldl(
         fun(#{<<"type">>:=Type, <<"source">>:=Source, <<"sink">>:=Sink}, Acc) ->
             Source = EP,
@@ -616,10 +653,10 @@ get_sinks(#{nkmedia_kms_endpoint:=EP}=Session) ->
 %% @private
 %% All medias will be included, except if "use_XXX=false"
 -spec get_create_medias(map()) ->
-    [media_type()].
+    all|[media_type()].
 
 get_create_medias(Opts) ->
-    lists:flatten([
+    Medias = lists:flatten([
         case maps:get(use_audio, Opts, true) of
             true -> <<"AUDIO">>;
             _ -> []
@@ -632,9 +669,15 @@ get_create_medias(Opts) ->
             true -> <<"DATA">>;
             _ -> []
         end
-    ]).
+    ]),
+    case Medias of
+        [<<"AUDIO">>, <<"VIDEO">>, <<"DATA">>] -> all;
+        _ -> Medias
+    end.
 
 
+%% @private
+%% Will generate medias to ADD and REMOVE based on opts
 -spec get_update_medias(map()) ->
     {[media_type()], [media_type()]}.
 
@@ -655,11 +698,23 @@ get_update_medias(Opts) ->
     {Add, Rem}.
 
 
-%% @private
-get_id(List) when is_list(List) ->
-    nklib_util:bjoin([get_id(Id) || Id <- lists:sort(List), is_binary(Id)]);
 
-get_id(Ep) when is_binary(Ep) ->
+
+%% @private
+print_id(Ep) ->
+    print_id(Ep, #{}).
+   
+
+%% @private
+print_id(EP, #{nkmedia_kms_endpoint:=EP}) ->
+    <<"(endpoint)">>;
+print_id(EP, #{nkmedia_kms_proxy:=EP}) ->
+    <<"(proxy)">>;
+print_id(EP, #{nkmedia_kms_player:=EP}) ->
+    <<"(player)">>;
+print_id(EP, #{nkmedia_kms_recorder:=EP}) ->
+    <<"(recorder)">>;
+print_id(Ep, _Session) ->
     case binary:split(Ep, <<"/">>) of
         [_, Id] -> Id;
         _ -> Ep
@@ -667,51 +722,95 @@ get_id(Ep) when is_binary(Ep) ->
 
 
 %% @private
-print_info(SessId, #{nkmedia_kms_endpoint:=EP}=Session) ->
-    io:format("Id: ~s\n", [SessId]),
-    io:format("EP: ~s\n", [get_id(EP)]),
-    io:format("\nSources:\n"),
+print_info(SessId, #{nkmedia_kms_endpoint:=EP, nkmedia_kms_proxy:=Proxy}=Session) ->
+    io:format("SessId:   ~s\n", [SessId]),
+    io:format("Endpoint: ~s\n", [print_id(EP)]),
+    Source = maps:get(nkmedia_kms_player, Session, <<>>),
+    io:format("Source:   ~s\n", [print_id(Source)]),
+    io:format("Proxy:    ~s\n", [print_id(Proxy)]),
+    Player = maps:get(nkmedia_kms_player, Session, <<>>),
+    io:format("Player:   ~s\n", [print_id(Player)]),
+    Recorder = maps:get(nkmedia_kms_recorder, Session, <<>>),
+    io:format("Recorder: ~s\n", [print_id(Recorder)]),
+    io:format("\nEndpoint Source: "),
     lists:foreach(
         fun({Id, Types}) -> 
-            io:format("~s: ~s\n", [get_id(Id), nklib_util:bjoin(Types)]) 
+            io:format("~s: ~s\n", [print_id(Id, Session), nklib_util:bjoin(Types)]) 
         end,
-        maps:to_list(get_sources(Session))),
-    io:format("\nSinks:\n"),
+        maps:to_list(get_sources(EP, Session))),
+    io:format("\nEndpoint Sinks:\n"),
     lists:foreach(
         fun({Id, Types}) -> 
-            io:format("~s: ~s\n", [get_id(Id), nklib_util:bjoin(Types)]) 
+            io:format("~s: ~s\n", [print_id(Id, Session), nklib_util:bjoin(Types)]) 
         end,
-        maps:to_list(get_sinks(Session))),
+        maps:to_list(get_sinks(EP, Session))),
+    io:format("\nProxy Source: "),
+    lists:foreach(
+        fun({Id, Types}) -> 
+            io:format("~s: ~s\n", [print_id(Id, Session), nklib_util:bjoin(Types)]) 
+        end,
+        maps:to_list(get_sources(Proxy, Session))),
+    io:format("\nProxy Sinks:\n"),
+    lists:foreach(
+        fun({Id, Types}) -> 
+            io:format("~s: ~s\n", [print_id(Id, Session), nklib_util:bjoin(Types)]) 
+        end,
+        maps:to_list(get_sinks(Proxy, Session))),
 
-    {ok, MediaSession} = invoke(getMediaSession, #{}, Session),
+    case Player of
+        <<>> ->
+            ok;
+        _ ->
+            io:format("\nPlayer Sinks:\n"),
+            lists:foreach(
+                fun({Id, Types}) -> 
+                    io:format("~s: ~s\n", [print_id(Id, Session), nklib_util:bjoin(Types)]) 
+                end,
+                maps:to_list(get_sinks(Player, Session)))
+    end,
+    case Recorder of
+        <<>> ->
+            ok;
+        _ ->
+            io:format("\nRecorder Source: "),
+            lists:foreach(
+                fun({Id, Types}) -> 
+                    io:format("~s: ~s\n", [print_id(Id, Session), nklib_util:bjoin(Types)]) 
+                end,
+                maps:to_list(get_sources(Recorder, Session)))
+    end,
+    {ok, MediaSession} = invoke(EP, getMediaState, #{}, Session),
     io:format("\nMediaSession: ~s\n", [MediaSession]),
-    {ok, ConnectionSession} = invoke(getConnectionSession, #{}, Session),
-    io:format("ConnectionSession: ~s\n", [ConnectionSession]),
+    {ok, ConnectionState} = invoke(EP, getConnectionState, #{}, Session),
+    io:format("ConnectionState: ~s\n", [ConnectionState]),
 
-    {ok, IsMediaFlowingIn1} = invoke(isMediaFlowingIn, #{mediaType=>'AUDIO'}, Session),
+    {ok, IsMediaFlowingIn1} = 
+        invoke(EP, isMediaFlowingIn, #{mediaType=>'AUDIO'}, Session),
     io:format("IsMediaFlowingIn AUDIO: ~p\n", [IsMediaFlowingIn1]),
-    {ok, IsMediaFlowingOut1} = invoke(isMediaFlowingOut, #{mediaType=>'AUDIO'}, Session),
+    {ok, IsMediaFlowingOut1} = invoke(EP, isMediaFlowingOut, #{mediaType=>'AUDIO'}, Session),
     io:format("IsMediaFlowingOut AUDIO: ~p\n", [IsMediaFlowingOut1]),
-    {ok, IsMediaFlowingIn2} = invoke(isMediaFlowingIn, #{mediaType=>'VIDEO'}, Session),
+    {ok, IsMediaFlowingIn2} = 
+        invoke(EP, isMediaFlowingIn, #{mediaType=>'VIDEO'}, Session),
     io:format("IsMediaFlowingIn VIDEO: ~p\n", [IsMediaFlowingIn2]),
-    {ok, IsMediaFlowingOut2} = invoke(isMediaFlowingOut, #{mediaType=>'VIDEO'}, Session),
+    {ok, IsMediaFlowingOut2} = 
+        invoke(EP, isMediaFlowingOut, #{mediaType=>'VIDEO'}, Session),
     io:format("IsMediaFlowingOut VIDEO: ~p\n", [IsMediaFlowingOut2]),
 
-    {ok, MinVideoRecvBandwidth} = invoke(getMinVideoRecvBandwidth, #{}, Session),
+    {ok, MinVideoRecvBandwidth} = invoke(EP, getMinVideoRecvBandwidth, #{}, Session),
     io:format("MinVideoRecvBandwidth: ~p\n", [MinVideoRecvBandwidth]),
-    {ok, MinVideoSendBandwidth} = invoke(getMinVideoSendBandwidth, #{}, Session),
+    {ok, MinVideoSendBandwidth} = invoke(EP, getMinVideoSendBandwidth, #{}, Session),
     io:format("MinVideoSendBandwidth: ~p\n", [MinVideoSendBandwidth]),
-    {ok, MaxVideoRecvBandwidth} = invoke(getMaxVideoRecvBandwidth, #{}, Session),
+    {ok, MaxVideoRecvBandwidth} = invoke(EP, getMaxVideoRecvBandwidth, #{}, Session),
     io:format("MaxVideoRecvBandwidth: ~p\n", [MaxVideoRecvBandwidth]),
-    {ok, MaxVideoSendBandwidth} = invoke(getMaxVideoSendBandwidth, #{}, Session),
+    {ok, MaxVideoSendBandwidth} = invoke(EP, getMaxVideoSendBandwidth, #{}, Session),
     io:format("MaxVideoSendBandwidth: ~p\n", [MaxVideoSendBandwidth]),
     
-    {ok, MaxAudioRecvBandwidth} = invoke(getMaxAudioRecvBandwidth, #{}, Session),
+    {ok, MaxAudioRecvBandwidth} = invoke(EP, getMaxAudioRecvBandwidth, #{}, Session),
     io:format("MaxAudioRecvBandwidth: ~p\n", [MaxAudioRecvBandwidth]),
     
-    {ok, MinOutputBitrate} = invoke(getMinOutputBitrate, #{}, Session),
+    {ok, MinOutputBitrate} = invoke(EP, getMinOutputBitrate, #{}, Session),
     io:format("MinOutputBitrate: ~p\n", [MinOutputBitrate]),
-    {ok, MaxOutputBitrate} = invoke(getMaxOutputBitrate, #{}, Session),
+    {ok, MaxOutputBitrate} = invoke(EP, getMaxOutputBitrate, #{}, Session),
     io:format("MaxOutputBitrate: ~p\n", [MaxOutputBitrate]),
 
     % {ok, RembParams} = invoke(getRembParams, #{}, Session),
@@ -727,6 +826,27 @@ print_info(SessId, #{nkmedia_kms_endpoint:=EP}=Session) ->
 %% @private
 -spec print_event(session_id(), binary(), map()) ->
     ok.
+
+print_event(SessId, <<"OnIceComponentStateChanged">>, Data) ->
+    #{
+        <<"source">> := _SrcId,
+        <<"state">> := IceSession,
+        <<"streamId">> := StreamId,
+        <<"componentId">> := CompId
+    } = Data,
+    {Level, Msg} = case IceSession of
+        <<"GATHERING">> -> {info, gathering};
+        <<"CONNECTING">> -> {info, connecting};
+        <<"CONNECTED">> -> {notice, connected};
+        <<"READY">> -> {notice, ready};
+        <<"FAILED">> -> {warning, failed}
+    end,
+    Txt = io_lib:format("ICE State (~p:~p) ~s", [StreamId, CompId, Msg]),
+    case Level of
+        info ->    ?LLOG(info, "~s", [Txt], SessId);
+        notice ->  ?LLOG(notice, "~s", [Txt], SessId);
+        warning -> ?LLOG(warning, "~s", [Txt], SessId)
+    end;
 
 print_event(SessId, <<"OnIceComponentSessionChanged">>, Data) ->
     #{
@@ -750,7 +870,7 @@ print_event(SessId, <<"OnIceComponentSessionChanged">>, Data) ->
     end;
 
 print_event(SessId, <<"MediaSessionStarted">>, _Data) ->
-    ?LLOG(info, "event media session started: ~p", [_Data], SessId);
+    ?LLOG(info, "event media session started", [], SessId);
 
 print_event(SessId, <<"ElementConnected">>, Data) ->
     #{
@@ -759,7 +879,7 @@ print_event(SessId, <<"ElementConnected">>, Data) ->
         <<"source">> := Source
     } = Data,
     ?LLOG(info, "event element connected ~s: ~s -> ~s", 
-           [Type, get_id(Source), get_id(Sink)], SessId);
+           [Type, print_id(Source), print_id(Sink)], SessId);
 
 print_event(SessId, <<"ElementDisconnected">>, Data) ->
     #{
@@ -768,7 +888,7 @@ print_event(SessId, <<"ElementDisconnected">>, Data) ->
         <<"source">> := Source
     } = Data,
     ?LLOG(info, "event element disconnected ~s: ~s -> ~s", 
-           [Type, get_id(Source), get_id(Sink)], SessId);
+           [Type, print_id(Source), print_id(Sink)], SessId);
 
 print_event(SessId, <<"NewCandidatePairSelected">>, Data) ->
     #{
@@ -782,33 +902,33 @@ print_event(SessId, <<"NewCandidatePairSelected">>, Data) ->
     ?LLOG(notice, "candidate selected (~p:~p) local: ~s remote: ~s", 
            [StreamId, CompId, Local, Remote], SessId);
 
-print_event(SessId, <<"ConnectionSessionChanged">>, Data) ->
+print_event(SessId, <<"ConnectionStateChanged">>, Data) ->
     #{
-        <<"newSession">> := New,
-        <<"oldSession">> := Old
+        <<"newState">> := New,
+        <<"oldState">> := Old
     } = Data,
     ?LLOG(info, "event connection state changed (~s -> ~s)", [Old, New], SessId);
 
-print_event(SessId, <<"MediaFlowOutSessionChange">>, Data) ->
+print_event(SessId, <<"MediaFlowOutStateChange">>, Data) ->
     #{
         <<"mediaType">> := Type, 
         <<"padName">> := _Pad,
-        <<"state">> := Session
+        <<"state">> := State
     }  = Data,
-    ?LLOG(info, "event media flow out state change (~s: ~s)", [Type, Session], SessId);
+    ?LLOG(info, "event media flow out state change (~s: ~s)", [Type, State], SessId);
 
-print_event(SessId, <<"MediaFlowInSessionChange">>, Data) ->
+print_event(SessId, <<"MediaFlowInStateChange">>, Data) ->
     #{
         <<"mediaType">> := Type, 
         <<"padName">> := _Pad,
-        <<"state">> := Session
+        <<"state">> := State
     }  = Data,
-    ?LLOG(info, "event media in out state change (~s: ~s)", [Type, Session], SessId);    
+    ?LLOG(info, "event media in out state change (~s: ~s)", [Type, State], SessId);    
 
-print_event(SessId, <<"MediaSessionChanged">>, Data) ->
+print_event(SessId, <<"MediaStateChanged">>, Data) ->
     #{
-        <<"newSession">> := New,
-        <<"oldSession">> := Old
+        <<"newState">> := New,
+        <<"oldState">> := Old
     } = Data,
     ?LLOG(info, "event media state changed (~s -> ~s)", [Old, New], SessId);
 
@@ -821,5 +941,5 @@ print_event(SessId, <<"Paused">>, _Data) ->
 print_event(SessId, <<"Stopped">>, _Data) ->
     ?LLOG(info, "event 'stopped recording'", [], SessId);
 
-print_event(_SessId, Type, Data) ->
-    lager:warning("NkMEDIA KMS Session: unknown event ~s: ~p", [Type, Data]).
+print_event(SessId, Type, Data) ->
+    ?LLOG(warning, "unknown event ~s: ~p", [Type, Data], SessId).
