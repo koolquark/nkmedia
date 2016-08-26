@@ -177,6 +177,14 @@ listen_swich(SessId, Publisher) ->
     nkmedia_session:update(SessId, listen_switch, #{publisher_id=>Publisher}).
 
 
+play(Dest) ->
+    Config = #{
+        backend => nkmedia_kms
+    },
+    start_invite(play, Config, Dest).
+
+
+
 update_type(SessId, Type, Opts) ->
     nkmedia_session:update(SessId, session_type, Opts#{session_type=>Type}).
 
@@ -474,10 +482,9 @@ start_invite(Type, Config, Dest) ->
         {rtp, _} -> Config#{proxy_type=>rtp};
         _ -> Config
     end,
-    case start_session(Type, Config2#{trickle_ice=>false}) of
+    case start_session(Type, Config2) of
         {offer, Offer, SessLink} ->
-            lager:error("OFFER: ~p", [Offer]),
-
+            % lager:error("OFFER: ~p", [Offer]),
             {nkmedia_session, SessId, _} = SessLink,
             case User of 
                 {webrtc, {nkmedia_verto, VertoPid}} ->
@@ -569,6 +576,10 @@ speed(_Acc, 0) ->
 speed(Acc, Pos) ->
     #{a:=1, b:=2, c:=3, d:=4} = maps:merge(Acc, #{a=>1, b=>2}),
     speed(Acc, Pos-1).
+
+
+
+
 
 
 

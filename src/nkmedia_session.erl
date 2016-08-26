@@ -595,7 +595,7 @@ do_start(From, #state{type=Type, session=Session}=State) ->
         {ok, ExtOps, State2} ->
             State3 = update_ext_ops_offer(ExtOps, State2),
             noreply(restart_timer(State3));
-        {wait_server_trickle_ice, State2} ->
+        {wait_trickle_ice, State2} ->
             Time2 = maps:get(max_ice_time, Session, ?MAX_ICE_TIME),
             erlang:start_timer(Time2, self(), server_ice_timeout),
             ?LLOG(notice, "waiting for server Trickle ICE", [], State),

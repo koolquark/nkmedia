@@ -147,12 +147,17 @@ nkmedia_verto_invite(SrvId, CallId, Offer, Verto) ->
 % an answer for an invite we received, we set the answer in the session
 % (we are ignoring the possible proxy answer in the reponse)
 nkmedia_verto_answer(_CallId, {nkmedia_session, SessId, _Pid}, Answer, Verto) ->
-    case nkmedia_session:answer_async(SessId, Answer) of
-        ok -> 
-            {ok, Verto};
-        {error, Error} -> 
-            {hangup, Error, Verto}
-    end;
+    Self = self(),
+    spawn(
+        fun() ->
+            case nkmedia_session:answer(SessId, Answer) of
+                {ok, _} ->
+                    ok;
+                {error, Error} -> 
+                    nkmedia_verto:hangup(Self, Error)
+            end
+        end),
+    {ok, Verto};
 
 % If the registered process happens to be {nkmedia_call, ...} and we have
 % an answer for an invite we received, we set the answer in the call

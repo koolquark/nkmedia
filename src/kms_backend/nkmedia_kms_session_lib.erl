@@ -253,10 +253,10 @@ create_rtp(Offer, Session) ->
 
 %% @private
 -spec set_answer(nkmedia:answer(), session()) ->
-    ok | {error, nkservice:error()}.
+    {ok, SDP::binary()} | {error, nkservice:error()}.
 
 set_answer(#{sdp:=SDP}, #{nkmedia_kms_endpoint:=EP}=Session) ->
-    invoke(EP, processAnswer, #{offer=>SDP}, Session).
+    invoke(EP, processAnswer, #{answer=>SDP}, Session).
 
 
 %% @private
@@ -271,8 +271,6 @@ add_ice_candidate(Candidate, #{nkmedia_kms_endpoint:=EP}=Session) ->
         candidate => ALine
     },
     ok = invoke(EP, addIceCandidate, #{candidate=>Data}, Session).
-
-
 
 
 %% @private
