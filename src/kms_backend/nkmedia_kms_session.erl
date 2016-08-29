@@ -92,8 +92,7 @@
         record => boolean(),            %
         play_url => binary(),
         room_id => binary(),            % publish, listen
-        publisher_id => binary(),       % listen
-        proxy_type => webrtc | rtp      % proxy
+        publisher_id => binary()       % listen
     }.
 
 
@@ -186,7 +185,7 @@ server_trickle_ready(Candidates, #{nkmedia_kms_trickle_ice:=Info}=Session) ->
             extops := ExtOps,
             answer := #{sdp:=SDP}=Answer
         } ->
-            SDP2 = nksip_sdp:add_candidates(SDP, Candidates),
+            SDP2 = nksip_sdp_util:add_candidates(SDP, Candidates),
             Answer2 = Answer#{sdp=>nksip_sdp:unparse(SDP2), trickle_ice=>false},
             Reply2 = {ok, Reply#{answer=>Answer2}}, 
             ExtOps2 = ExtOps#{answer=>Answer2};
@@ -194,7 +193,7 @@ server_trickle_ready(Candidates, #{nkmedia_kms_trickle_ice:=Info}=Session) ->
             from := From,
             offer := #{sdp:=SDP}=Offer
         } ->
-            SDP2 = nksip_sdp:add_candidates(SDP, Candidates),
+            SDP2 = nksip_sdp_util:add_candidates(SDP, Candidates),
             Offer2 = Offer#{sdp=>nksip_sdp:unparse(SDP2), trickle_ice=>false},
             Reply2 = {ok, #{offer=>Offer2}}, 
             ExtOps2 = #{offer=>Offer2}
@@ -366,14 +365,12 @@ is_supported(_) -> false.
 
 do_start_offeree(Type, Offer, From, Session) ->
     case create_endpoint_offeree(Offer, Session) of
-        {ok, Answer, Session2} ->
+        {ok, #{trickle_ice:=AnsTrickleIce}=Answer, Session2} ->
             case do_start_type(Type, Session2) of
                 {ok, Reply, ExtOps, Session3} ->
-                    case Session3 of
-                        #{trickle_ice:=true} ->
-                            gen_server:repy(From, {ok, Reply#{answer=>Answer}}),
-                            {ok, ExtOps#{answer=>Answer}, Session3};
-                        _ ->
+                    SessTrickleIce = maps:get(trickle_ice, Session3, false),
+                    case AnsTrickleIce andalso not SessTrickleIce of
+                        true -> 
                             Info = #{
                                 from => From,
                                 reply => Reply,
@@ -382,7 +379,10 @@ do_start_offeree(Type, Offer, From, Session) ->
                             },
                             Update = #{nkmedia_kms_trickle_ice => Info},
                             Session4 = ?SESSION(Update, Session3),
-                            {wait_trickle_ice, Session4}
+                            {wait_trickle_ice, Session4};
+                        false ->
+                            gen_server:reply(From, {ok, Reply#{answer=>Answer}}),
+                            {ok, ExtOps#{answer=>Answer}, Session3}
                     end;
                 {error, Error, Session3} ->
                     {error, Error, Session3}
@@ -399,19 +399,20 @@ do_start_offeree(Type, Offer, From, Session) ->
 
 do_start_offerer(_Type, From, Session) ->
     case create_endpoint_offerer(Session) of
-        {ok, Offer, Session2} ->
-            case Session2 of
-                #{trickle_ice:=true} ->
-                    gen_server:reply(From, {ok, #{offer=>Offer}}),
-                    {ok, #{offer=>Offer}, Session2};
-                _ ->
+        {ok, #{trickle_ice:=OffTrickleIce}=Offer, Session2} ->
+            SessTrickleIce = maps:get(trickle_ice, Session2, false),
+            case OffTrickleIce andalso not SessTrickleIce of
+                true ->
                     Info = #{
                         from => From,
                         offer => Offer
                     },
                     Update = #{nkmedia_kms_trickle_ice => Info},
                     Session3 = ?SESSION(Update, Session2),
-                    {wait_trickle_ice, Session3}
+                    {wait_trickle_ice, Session3};
+                false ->
+                    gen_server:reply(From, {ok, #{offer=>Offer}}),
+                    {ok, #{offer=>Offer}, Session2}
             end;
         {error, Error} ->
             {error, Error, Session}

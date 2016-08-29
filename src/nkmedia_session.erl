@@ -600,6 +600,11 @@ do_start(From, #state{type=Type, session=Session}=State) ->
             erlang:start_timer(Time2, self(), server_ice_timeout),
             ?LLOG(notice, "waiting for server Trickle ICE", [], State),
             noreply(State2#state{server_candidates=[]});
+        {wait_client_ice, State2} ->
+            Time2 = maps:get(max_ice_time, Session, ?MAX_ICE_TIME),
+            erlang:start_timer(Time2, self(), client_ice_timeout),
+            ?LLOG(notice, "waiting for client Trickle ICE", [], State),
+            noreply(State2#state{client_candidates=[]});
         {error, Error, State2} ->
             stop(self(), Error),
             reply({error, Error}, From, State2)

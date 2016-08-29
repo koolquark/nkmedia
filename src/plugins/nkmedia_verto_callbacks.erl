@@ -365,7 +365,7 @@ start_session(SrvId, CallId, #{dest:=Dest} = Offer) ->
                     {error, Error}
             end;
         <<"sip:", Callee/binary>> ->
-            Config2 = Config1#{backend => nkmedia_janus, proxy_type => rtp},
+            Config2 = Config1#{backend => nkmedia_janus, sdp_type => rtp},
             case nkmedia_session:start(SrvId, proxy, Config2) of
                 {ok, SessId, SessPid, #{offer:=Offer2}} ->
                     {ok, {sip, Callee, Offer2, SessId, SessPid}};

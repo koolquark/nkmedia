@@ -26,9 +26,9 @@
          plugin_start/2, plugin_stop/2]).
 -export([error_code/1]).
 -export([nkmedia_fs_get_mediaserver/1]).
--export([nkmedia_session_init/2, nkmedia_session_terminate/2]).
--export([nkmedia_session_start/2, nkmedia_session_answer/3,
+-export([nkmedia_session_start/3, nkmedia_session_answer/4,
          nkmedia_session_update/4, nkmedia_session_stop/2,
+         nkmedia_session_server_trickle_ready/2,
          nkmedia_session_reg_event/4, nkmedia_session_handle_cast/2]).
 -export([api_syntax/4]).
 -export([nkdocker_notify/2]).
@@ -119,10 +119,11 @@ nkmedia_fs_get_mediaserver(SrvId) ->
 
 %% @private Error Codes -> 23XX range
 error_code(fs_error)             ->  {2300, <<"Freeswitch internal error">>};
-error_code(fs_op_error)          ->  {2301, <<"Error in Freeswitch operation">>};
-error_code(fs_channel_stop)      ->  {2302, <<"FS Channel Stop">>};
-
-error_code(incompatible_fs_role) ->  {2310, <<"Incompatible Freeswitch Role">>};
+error_code(fs_get_answer_error)  ->  {2301, <<"Freeswitch get answer error">>};
+error_code(fs_get_offer_error)   ->  {2302, <<"Freeswitch get offer error">>};
+error_code(fs_channel_stop)      ->  {2303, <<"Freeswitch channel stop">>};
+error_code(fs_transfer_error)    ->  {2304, <<"Freeswitch transfer error">>};
+error_code(fs_bridge_error)      ->  {2305, <<"Freeswitch bridge error">>};
 error_code(_)                    ->  continue.
 
 
@@ -131,82 +132,52 @@ error_code(_)                    ->  continue.
 %% ===================================================================
 
 
-
 %% @private
-nkmedia_session_init(Id, Session) ->
-    State = maps:get(nkmedia_fs, Session, #{}),
-    {ok, State2} = nkmedia_fs_session:init(Id, Session, State),
-    {ok, update_state(State2, Session)}.
-
-
-%% @private
-nkmedia_session_terminate(Reason, Session) ->
-    nkmedia_fs_session:terminate(Reason, Session, state(Session)),
-    {ok, nkmedia_session:do_rm(nkmedia_fs, Session)}.
-
-
-%% @private
-nkmedia_session_start(Type, Session) ->
+nkmedia_session_start(Type, From, Session) ->
     case maps:get(backend, Session, nkmedia_fs) of
         nkmedia_fs ->
-            State = state(Session),
-            case nkmedia_fs_session:start(Type, Session, State) of
-                {ok, Reply, ExtOps, State2} ->
-                    Session2 = nkmedia_session:do_add(backend, nkmedia_fs, Session),
-                    {ok, Reply, ExtOps, update_state(State2, Session2)};
-                {error, Error, State2} ->
-                    Session2 = nkmedia_session:do_add(backend, nkmedia_fs, Session),
-                    {error, Error, update_state(State2, Session2)};
-                wait_trickle_ice ->
-                    {wait_trickle_ice, Session};
-                continue ->
-                    continue
-            end;
+            nkmedia_fs_session:start(Type, From, Session);
         _ ->
             continue
     end.
 
 
 %% @private
-nkmedia_session_answer(Type, Answer, Session) ->
-    case maps:get(backend, Session, nkmedia_fs) of
-        nkmedia_fs ->
-            State = state(Session),
-            case nkmedia_fs_session:answer(Type, Answer, Session, State) of
-                {ok, Reply, ExtOps, State2} ->
-                    {ok, Reply, ExtOps, update_state(State2, Session)};
-                {error, Error, State2} ->
-                    {error, Error, update_state(State2, Session)};
-                continue ->
-                    continue
-            end;
-        _ ->
-            continue
-    end.
+nkmedia_session_answer(Type, Answer, From, #{backend:=nkmedia_fs}=Session) ->
+    nkmedia_fs_session:answer(Type, Answer, From, Session);
+
+nkmedia_session_answer(_Type, _Answer, _From, _Session) ->
+    continue.
 
 
 %% @private
-nkmedia_session_update(Update, Opts, Type, Session) ->
-    case maps:get(backend, Session, nkmedia_fs) of
-        nkmedia_fs ->
-            State = state(Session),
-            case nkmedia_fs_session:update(Update, Opts, Type, Session, State) of
-                {ok, Reply, ExtOps, State2} ->
-                    {ok, Reply, ExtOps, update_state(State2, Session)};
-                {error, Error, State2} ->
-                    {error, Error, update_state(State2, Session)};
-                continue ->
-                    continue
-            end;
-        _ ->
-            continue
-    end.
+nkmedia_session_update(Update, Opts, From, #{backend:=nkmedia_fs}=Session) ->
+   nkmedia_fs_session:update(Update, Opts, From, Session);
+
+nkmedia_session_update(_Update, _Opts, _From, _Session) ->
+    continue.
 
 
 %% @private
-nkmedia_session_stop(Reason, Session) ->
-    {ok, State2} = nkmedia_fs_session:stop(Reason, Session, state(Session)),
-    {continue, [Reason, update_state(State2, Session)]}.
+nkmedia_session_server_trickle_ready(Candidates, #{backend:=nkmedia_fs}=Session) ->
+    nkmedia_fs_session:server_trickle_ready(Candidates, Session);
+
+nkmedia_session_server_trickle_ready(_Candidates, _Session) ->
+    continue.
+
+
+%% @private
+nkmedia_session_stop(Reason, #{backend:=nkmedia_fs}=Session) ->
+    nkmedia_fs_session:stop(Reason, Session).
+
+
+%% @private
+nkmedia_session_handle_cast({nkmedia_fs, Msg}, Session) ->
+    nkmedia_fs_session:handle_cast(Msg, Session);
+
+nkmedia_session_handle_cast(_Msg, _Session) ->
+    continue.
+
 
 
 %% @private
@@ -220,16 +191,6 @@ nkmedia_session_reg_event(SessId, {master_peer, SessIdB}, {answer, _Ans}, Sessio
     end;
 
 nkmedia_session_reg_event(_SessId, _Link, _Event, _Session) ->
-    continue.
-
-
-%% @private
-nkmedia_session_handle_cast({nkmedia_fs_session, Msg}, Session) ->
-    State = state(Session),
-    {ok, State2} = nkmedia_fs_session:handle_cast(Msg, Session, State),
-    {noreply, update_state(State2, Session)};
-
-nkmedia_session_handle_cast(_Msg, _Session) ->
     continue.
 
 
@@ -291,17 +252,6 @@ syntax(<<"session">>, <<"update">>, Syntax, Defaults, Mandatory) ->
 
 syntax(_Sub, _Cmd, Syntax, Defaults, Mandatory) ->
     {Syntax, Defaults, Mandatory}.
-
-
-
-%% @private
-state(#{nkmedia_fs:=State}) ->
-    State.
-
-
-%% @private
-update_state(State, Session) ->
-    nkmedia_session:do_add(nkmedia_fs, State, Session).
 
 
 

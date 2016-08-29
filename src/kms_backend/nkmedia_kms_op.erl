@@ -444,7 +444,7 @@ end_ice(#state{candidates=Candidates}=State) when is_map(Candidates) ->
             invoke(ObjId, getLocalSessionDescriptor, #{}, State);
         false ->
             ?LLOG(notice, "add current candidates to SDP", [], State),
-            nksip_sdp:unparse(nksip_sdp:add_candidates(SDP, Candidates))
+            nksip_sdp:unparse(nksip_sdp_util:add_candidates(SDP, Candidates))
     end,
     io:format("SDPbis\n~s\n", [SDP2]),
     nklib_util:reply(From, {ok, #{sdp=>SDP2}}),

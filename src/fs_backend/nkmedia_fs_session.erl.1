@@ -52,7 +52,8 @@
 -type session() :: 
     nkmedia_session:session() |
     #{
-        nkmedia_fs_id => nmedia_fs_engine:id()
+        nkmedia_fs_id => nmedia_fs_engine:id(),
+        nkmedia_fs_role => offer | answer
     }.
     
 
@@ -133,13 +134,21 @@ start(Type, From, #{offer:=#{sdp:=_}=Offer}=Session) ->
             Session2 = ?SESSION(#{backend=>nkmedia_kms}, Session),
             case get_fs_answer(Session2) of
                 {ok, Answer, Session3}  ->
-                    case do_type(Type, Session3, Session3) of
-                        {ok, Reply, ExtOps, Session4} ->
-                            Reply2 = Reply#{answer=>Answer},
-                            ExtOps2 = ExtOps#{answer=>Answer},
-                            {ok, Reply2, ExtOps2, Session4};
-                        {error, Error, Session4} ->
-                            {error, Error, Session4}
+                    case Type of
+                        park ->
+                            Reply = ExtOps = #{answer=>Answer},
+                            {ok, Reply, ExtOps, Session3};
+                        _ ->
+                            case do_type(Type, Session3, Session3) of
+                                {ok, Reply, ExtOps, Session4} ->
+                                    Reply2 = Reply#{answer=>Answer},
+                                    ExtOps2 = ExtOps#{answer=>Answer},
+                                    {ok, Reply2, ExtOps2, Session4};
+                                {error, Error, Session4} ->
+                                    {error, Error, Session4};
+                                continue ->
+                                    {error, invalid_parameters, Session3}
+                            end
                     end;
                 {error, Error, Session3} ->
                     {error, Error, Session3}
@@ -150,8 +159,8 @@ start(Type, From, #{offer:=#{sdp:=_}=Offer}=Session) ->
 
 start(Type, _From, Session) ->
     case 
-        is_supported(Type) orelse
         (Type==call andalso maps:is_key(master_peer, Session))
+        orelse is_supported(Type) 
     of
         true ->  
             case get_fs_offer(Session) of
@@ -172,13 +181,15 @@ start(Type, _From, Session) ->
     {ok, ext_ops(), session()} |
     {error, term(), session()} | continue().
 
-answer(Type, Answer, _From, #{session_id:=SessId, offer:=Offer}=Session) ->
-    SdpType = maps:get(sdp_type, Offer, webrtc),
+answer(Type, Answer, _From, #{nkmedia_fs_role:=offer}=Session) ->
+    #{session_id:=SessId, offer:=#{sdp_type:=SdpType}} = Session,
     Mod = fs_mod(SdpType),
     case Mod:answer_out(SessId, Answer) of
         ok ->
             wait_park(Session),
             case Type of
+                park ->     
+                    {ok, #{}, #{answer=>Answer}, Session};
                 call ->
                     #{master_peer:=Peer} = Session,
                     {ok, #{}, #{answer=>Answer, type_ext=>#{peer_id=>Peer}}, Session};
@@ -187,7 +198,9 @@ answer(Type, Answer, _From, #{session_id:=SessId, offer:=Offer}=Session) ->
                         {ok, Reply, ExtOps, Session2} ->
                             {ok, Reply, ExtOps#{answer=>Answer}, Session2};
                         {error, Error, Session2} ->
-                            {error, Error, Session2}
+                            {error, Error, Session2};
+                        continue ->
+                            {error, invalid_parameters, Session}
                     end
             end;
         {error, Error} ->
@@ -241,9 +254,8 @@ update(_Update, _Opts, _From, _Session) ->
     {ok, session()}.
 
 stop(_Reason, #{session_id:=SessId, nkmedia_fs_id:=FsId}=Session) ->
-    Session2 = reset_type(Session),
     nkmedia_fs_cmd:hangup(FsId, SessId),
-    {ok, Session2}.
+    {ok, Session}.
 
 
 %% @private Called from nkmedia_fs_callbacks
@@ -278,8 +290,6 @@ handle_cast({bridge, PeerId}, Session) ->
 
 %% @private
 do_type(park, _Opts, Session) ->
-    Session2 = reset_type(Session),
-
     nkmedia_session:unlink_session(self()),
     case fs_transfer("park", Session) of
         ok ->
@@ -336,7 +346,7 @@ get_fs_answer(#{nkmedia_fs_id:=FsId, session_id:=SessId, offer:=Offer}=Session) 
     case nkmedia_fs_verto:start_in(SessId, FsId, Offer) of
         {ok, SDP} ->
             wait_park(Session),
-            {ok, #{sdp=>SDP}, Session};
+            {ok, #{sdp=>SDP}, ?SESSION(#{nkmedia_fs_role=>answer}, Session)};
         {error, Error} ->
             ?LLOG(warning, "error calling start_in: ~p", [Error], Session),
             {error, fs_get_answer_error, Session}
@@ -352,15 +362,23 @@ get_fs_answer(Session) ->
 
 
 %% @private
-get_fs_offer(#{nkmedia_fs_id:=FsId, session_id:=SessId}=Session) ->
+get_fs_offer(#{nkmedia_fs_role:=offer}=Session) ->
+    {error, offer_already_set, Session};
+
+get_fs_offer(#{nkmedia_fs_role:=answer}=Session) ->
+    {error, incompatible_nkmedia_fs_role, Session};
+
+get_fs_offer(#{session_id:=SessId, nkmedia_fs_id:=FsId}=Session) ->
     Type = maps:get(sdp_type, Session, webrtc),
     Mod = fs_mod(Type),
     case Mod:start_out(SessId, FsId, #{}) of
         {ok, SDP} ->
-            {ok, #{sdp=>SDP}, Session};
+            Offer = maps:get(offer, Session, #{}),
+            Offer2 = Offer#{sdp=>SDP, sdp_type=>Type},
+            {ok, Offer2, ?SESSION(#{nkmedia_fs_role=>offer}, Session)};
         {error, Error} ->
             ?LLOG(warning, "error calling start_out: ~p", [Error], Session),
-            {error, fs_get_offer_error, Session}
+            {error, fs_error, Session}
     end;
 
 get_fs_offer(Session) ->

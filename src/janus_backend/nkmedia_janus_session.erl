@@ -64,8 +64,7 @@
     #{
         record => boolean(),            %
         room_id => binary(),            % publish, listen
-        publisher_id => binary(),       % listen
-        proxy_type => webrtc | rtp      % proxy
+        publisher_id => binary()        % listen
     }.
 
 
@@ -134,7 +133,7 @@ start(proxy, #{offer:=#{sdp:=_}=Offer}=Session, State) ->
     case get_janus_op(Session, State) of
         {ok, Pid, State2} ->
             OfferType = maps:get(sdp_type, Offer, webrtc),
-            OutType = maps:get(proxy_type, Session, webrtc),
+            OutType = maps:get(sdp_type, Session, webrtc),
             Fun = case {OfferType, OutType} of
                 {webrtc, webrtc} -> videocall;
                 {webrtc, rtp} -> to_sip;

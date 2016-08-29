@@ -58,7 +58,6 @@ syntax(<<"session">>, <<"start">>, Syntax, Defaults, Mandatory) ->
         Syntax#{
             record => boolean,
             bitrate => {integer, 0, none},
-            proxy_type => {enum, [webrtc, rtp]},
             room_id => binary,
             publisher_id => binary,
             use_audio => boolean,

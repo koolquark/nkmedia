@@ -367,7 +367,7 @@ send_call(SrvId, #{dest:=Dest}=Offer) ->
                     {ok, _CallId} = nkmedia_call:start(SessId, Dest2, #{}),
                     {ok, SessId};
                 {rtp, Dest2} ->
-                    Config = #{offer=>Offer, proxy_type=>rtp},
+                    Config = #{offer=>Offer, sdp_type=>rtp},
                     {ok, SessId, #{}} = nkmedia_session:start(SrvId, proxy, Config),
                     {ok, _CallId} = nkmedia_call:start(SessId, Dest2, #{}),
                     {ok, SessId};

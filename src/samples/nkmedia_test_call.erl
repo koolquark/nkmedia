@@ -347,7 +347,7 @@ start_call(CallId, Dest, WsPid, Offer, Events, Link) ->
     end,
     SessConfig = #{
         backend => nkmedia_janus, 
-        proxy_type => ProxyType,
+        sdp_type => ProxyType,
         offer => Offer,
         register => Link
     },

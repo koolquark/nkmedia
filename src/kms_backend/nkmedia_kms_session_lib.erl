@@ -215,7 +215,7 @@ create_webrtc(Offer, Session) ->
                     {ok, SDP2} = invoke(EP, generateOffer, #{}, Session2)
             end,
             ok = invoke(EP, gatherCandidates, #{}, Session2),
-            {ok, Offer#{sdp=>SDP2, trickle_ice=>true, sdp_type=>webrtc}, Session2};
+            {ok, Offer#{sdp=>SDP2, sdp_type=>webrtc, trickle_ice=>true}, Session2};
         {error, Error} ->
            {error, Error}
     end.
@@ -240,12 +240,13 @@ create_rtp(Offer, Session) ->
             subscribe(EP, 'MediaSessionStarted', Session2),
             subscribe(EP, 'MediaSessionTerminated', Session2),
             case Offer of
-                #{offer:=#{sdp:=SDP}} ->
-                    {ok, SDP2} = invoke(EP, processOffer, #{offer=>SDP}, Session2);
+                #{sdp:=SDP} ->
+                    {ok, SDP2} = invoke(EP, processOffer, #{offer=>SDP}, Session2),
+                    io:format("SDP2: ~s\n", [SDP2]);
                 _ ->
                     {ok, SDP2} = invoke(EP, generateOffer, #{}, Session2)
             end,
-            {ok, Offer#{sdp=>SDP2, sdp_type=>rtp}, Session2};
+            {ok, Offer#{sdp=>SDP2, sdp_type=>rtp, trickle_ice=>false}, Session2};
         {error, Error} ->
            {error, Error}
     end.
