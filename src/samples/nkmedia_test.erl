@@ -169,7 +169,7 @@ listen(Publisher, Dest) ->
     Config = #{
         publisher_id => Publisher, 
         use_video => true,
-        backend => nkmedia_kms
+        backend => nkmedia_janus
     },
     start_invite(listen, Config, Dest).
 

@@ -630,12 +630,12 @@ terminate(Reason, State) ->
 
 %% @private
 do_start(From, #state{type=Type, session=Session}=State) ->
-    case Session of
-        #{offer:=#{sdp:=SDP}} ->
-            io:format("OFFER:\n~s\n", [SDP]);
-        _ ->
-            ok
-    end,
+    % case Session of
+    %     #{offer:=#{sdp:=SDP}} ->
+    %         io:format("OFFER:\n~s\n", [SDP]);
+    %     _ ->
+    %         ok
+    % end,
     case handle(nkmedia_session_start, [Type], State) of
         {ok, Reply, ExtOps, State2} ->
             State3 = update_ext_ops_offer(ExtOps, State2),
@@ -768,7 +768,7 @@ update_ext_ops_offer(ExtOps, #state{session=Session}=State) ->
                     State;
                 _ ->
                     ?LLOG(info, "offer set", [], State),
-                    io:format("OFFER\n~s\n", [maps:get(sdp, Offer, <<>>)]),
+                    % io:format("OFFER\n~s\n", [maps:get(sdp, Offer, <<>>)]),
                     State2 = add_to_session(offer, Offer, State),
                     event({offer, Offer}, State2#state{has_offer=true})
             end;
@@ -788,7 +788,7 @@ update_ext_ops_answer(ExtOps, #state{session=Session}=State) ->
                     State;
                 _ ->
                     ?LLOG(info, "answer set", [], State),
-                    io:format("ANSWER\n~s\n", [maps:get(sdp, Answer, <<>>)]),
+                    % io:format("ANSWER\n~s\n", [maps:get(sdp, Answer, <<>>)]),
                     State2 = add_to_session(answer, Answer, State),
                     event({answer, Answer}, State2#state{has_answer=true})
             end;

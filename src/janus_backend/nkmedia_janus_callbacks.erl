@@ -26,9 +26,8 @@
          plugin_start/2, plugin_stop/2]).
 -export([error_code/1]).
 -export([nkmedia_janus_get_mediaserver/1]).
--export([nkmedia_session_init/2, nkmedia_session_terminate/2]).
 -export([nkmedia_session_start/2, nkmedia_session_answer/3, nkmedia_session_candidate/2,
-         nkmedia_session_update/4, nkmedia_session_stop/2, 
+         nkmedia_session_update/3, nkmedia_session_stop/2, 
          nkmedia_session_handle_call/3, nkmedia_session_handle_info/2]).
 -export([nkmedia_room_init/2, nkmedia_room_terminate/2, nkmedia_room_tick/2,
          nkmedia_room_handle_cast/2]).
@@ -130,102 +129,53 @@ error_code(_)                       ->  continue.
 %% Implemented Callbacks - nkmedia_session
 %% ===================================================================
 
-%% @private
-nkmedia_session_init(Id, Session) ->
-    State = maps:get(nkmedia_janus, Session, #{}),
-    {ok, State2} = nkmedia_janus_session:init(Id, Session, State),
-    {ok, update_state(State2, Session)}.
-
-
-%% @private
-nkmedia_session_terminate(Reason, Session) ->
-    nkmedia_janus_session:terminate(Reason, Session, state(Session)),
-    {ok, nkmedia_session:do_rm(nkmedia_janus, Session)}.
 
 
 %% @private
 nkmedia_session_start(Type, Session) ->
     case maps:get(backend, Session, nkmedia_janus) of
         nkmedia_janus ->
-            State = state(Session),
-            case nkmedia_janus_session:start(Type, Session, State) of
-                {ok, Reply, ExtOps, State2} ->
-                    Session2 = nkmedia_session:do_add(backend, nkmedia_janus, Session),
-                    {ok, Reply, ExtOps, update_state(State2, Session2)};
-                {error, Error, State2} ->
-                    Session2 = nkmedia_session:do_add(backend, nkmedia_janus, Session),
-                    {error, Error, update_state(State2, Session2)};
-                continue ->
-                    continue
-            end;
+            nkmedia_janus_session:start(Type, Session);
         _ ->
             continue
     end.
 
 
 %% @private
-nkmedia_session_answer(Type, Answer, Session) ->
-    case maps:get(backend, Session, nkmedia_janus) of
-        nkmedia_janus ->
-            State = state(Session),
-            case nkmedia_janus_session:answer(Type, Answer, Session, State) of
-                {ok, Reply, ExtOps, State2} ->
-                    {ok, Reply, ExtOps, update_state(State2, Session)};
-                {error, Error, State2} ->
-                    {error, Error, update_state(State2, Session)};
-                continue ->
-                    continue
-            end;
-        _ ->
-            continue
-    end.
+nkmedia_session_answer(Type, Answer, #{backend:=nkmedia_janus}=Session) ->
+    nkmedia_janus_session:answer(Type, Answer, Session);
+
+nkmedia_session_answer(_Type, _Answer, _Session) ->
+    continue.
 
 
 %% @private
-nkmedia_session_candidate(Candidate, Session) ->
-    case maps:get(backend, Session, nkmedia_janus) of
-        nkmedia_janus ->
-            State = state(Session),
-            nkmedia_janus_session:candidate(Candidate, Session, State),
-            {ok, Session};
-        _ ->
-            continue
-    end.
+nkmedia_session_update(Update, Opts, #{backend:=nkmedia_janus}=Session) ->
+   nkmedia_janus_session:update(Update, Opts, Session);
+
+nkmedia_session_update(_Update, _Opts, _Session) ->
+    continue.
 
 
 %% @private
-nkmedia_session_update(Update, Opts, Type, Session) ->
-    case maps:get(backend, Session, nkmedia_janus) of
-        nkmedia_janus ->
-            State = state(Session),
-            case nkmedia_janus_session:update(Update, Opts, Type, Session, State) of
-                {ok, Reply, ExtOps, State2} ->
-                    {ok, Reply, ExtOps, update_state(State2, Session)};
-                {error, Error, State2} ->
-                    {error, Error, update_state(State2, Session)};
-                continue ->
-                    continue
-            end;
-        _ ->
-            continue
-    end.
+nkmedia_session_candidate(Candidate, #{backend:=nkmedia_janus}=Session) ->
+    nkmedia_janus_session:candidate(Candidate, Session);
+
+nkmedia_session_candidate(_Candidate, _Session) ->
+    continue.
 
 
 %% @private
-nkmedia_session_stop(Reason, Session) ->
-    {ok, State2} = nkmedia_janus_session:stop(Reason, Session, state(Session)),
-    {continue, [Reason, update_state(State2, Session)]}.
+nkmedia_session_stop(Reason, #{backend:=nkmedia_janus}=Session) ->
+    nkmedia_janus_session:stop(Reason, Session);
+
+nkmedia_session_stop(_Reason, _Session) ->
+    continue.
 
 
-%% @private
-nkmedia_session_handle_call(nkmedia_janus_get_room, _From, Session) ->
-    Reply = case Session of
-        #{srv_id:=SrvId, type:=publish, type_ext:=#{room_id:=Room}} ->
-            {ok, SrvId, Room};
-        _ ->
-            {error, invalid_state}
-    end,
-    {reply, Reply, Session};
+% @private
+nkmedia_session_handle_call({nkmedia_janus, Msg}, From, Session) ->
+    nkmedia_janus_session:handle_call(Msg, From, Session);
 
 nkmedia_session_handle_call(_Msg, _From, _Session) ->
     continue.
@@ -233,8 +183,8 @@ nkmedia_session_handle_call(_Msg, _From, _Session) ->
 
 %% @private The janus_op process is down
 nkmedia_session_handle_info({'DOWN', Ref, process, _Pid, _Reason}, Session) ->
-    case state(Session) of
-        #{janus_mon:=Ref} ->
+    case Session of
+        #{nkmedia_janus_mon:=Ref} ->
             nkmedia_session:stop(self(), janus_session_down),
             {noreply, Session};
         _ ->

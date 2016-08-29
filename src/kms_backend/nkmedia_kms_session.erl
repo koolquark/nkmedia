@@ -429,8 +429,8 @@ do_start_type(Type, Session) ->
             case do_type(Type, Session2, Session2) of
                 {ok, Reply, ExtOps, Session3} ->
                     {ok, Reply, ExtOps, Session3};
-                {error, Error} ->
-                    {error, Error, Session2}
+                {error, Error, Session3} ->
+                    {error, Error, Session2, Session3}
             end;
         {error, Error} ->
             {error, Error, Session}
