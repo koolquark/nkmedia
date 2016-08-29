@@ -26,8 +26,8 @@
          plugin_start/2, plugin_stop/2]).
 -export([nkmedia_kms_get_mediaserver/1]).
 -export([error_code/1]).
--export([nkmedia_session_start/3, nkmedia_session_answer/4, nkmedia_session_candidate/2,
-         nkmedia_session_update/4, nkmedia_session_stop/2, 
+-export([nkmedia_session_start/2, nkmedia_session_answer/3, nkmedia_session_candidate/2,
+         nkmedia_session_update/3, nkmedia_session_stop/2, 
          nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2,
          nkmedia_session_server_trickle_ready/2]).
 -export([nkmedia_room_init/2, nkmedia_room_terminate/2, nkmedia_room_tick/2,
@@ -130,28 +130,28 @@ error_code(_) -> continue.
 %% ===================================================================
 
 %% @private
-nkmedia_session_start(Type, From, Session) ->
+nkmedia_session_start(Type, Session) ->
     case maps:get(backend, Session, nkmedia_kms) of
         nkmedia_kms ->
-            nkmedia_kms_session:start(Type, From, Session);
+            nkmedia_kms_session:start(Type, Session);
         _ ->
             continue
     end.
 
 
 %% @private
-nkmedia_session_answer(Type, Answer, From, #{backend:=nkmedia_kms}=Session) ->
-    nkmedia_kms_session:answer(Type, Answer, From, Session);
+nkmedia_session_answer(Type, Answer, #{backend:=nkmedia_kms}=Session) ->
+    nkmedia_kms_session:answer(Type, Answer, Session);
 
-nkmedia_session_answer(_Type, _Answer, _From, _Session) ->
+nkmedia_session_answer(_Type, _Answer, _Session) ->
     continue.
 
 
 %% @private
-nkmedia_session_update(Update, Opts, From, #{backend:=nkmedia_kms}=Session) ->
-   nkmedia_kms_session:update(Update, Opts, From, Session);
+nkmedia_session_update(Update, Opts, #{backend:=nkmedia_kms}=Session) ->
+   nkmedia_kms_session:update(Update, Opts, Session);
 
-nkmedia_session_update(_Update, _Opts, _From, _Session) ->
+nkmedia_session_update(_Update, _Opts, _Session) ->
     continue.
 
 
@@ -173,7 +173,10 @@ nkmedia_session_server_trickle_ready(_Candidates, _Session) ->
 
 %% @private
 nkmedia_session_stop(Reason, #{backend:=nkmedia_kms}=Session) ->
-    nkmedia_kms_session:stop(Reason, Session).
+    nkmedia_kms_session:stop(Reason, Session);
+
+nkmedia_session_stop(_Reason, _Session) ->
+    continue.
 
 
 %% @private

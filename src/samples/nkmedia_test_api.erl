@@ -456,7 +456,7 @@ send_call(<<"f", Num/binary>>, WsPid, Base) ->
     },
     {answer, AnswerA, SessLinkA} = start_session(WsPid, ConfigA),
     {test_session, SessIdA, WsPid} = SessLinkA,
-    ConfigB = #{type=>call, peer_id=>SessIdA, park_after_bridge=>false},
+    ConfigB = #{type=>call, master_id=>SessIdA, park_after_bridge=>false},
     spawn(
         fun() -> 
             case start_invite(WsPid, Num, ConfigB) of

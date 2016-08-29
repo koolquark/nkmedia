@@ -28,8 +28,8 @@
 -export([start/3, get_type/1, get_session/1, get_offer/1, get_answer/1]).
 -export([stop/1, stop/2, stop_all/0]).
 -export([answer/2, answer_async/2, client_candidate/2, server_candidate/2]).
--export([update/3, update_async/3, info/2]).
--export([register/2, unregister/2, link_slave/2, unlink_session/1]).
+-export([update/3, update_async/3, info/2, bridge_stop/2]).
+-export([register/2, unregister/2, link_slave/2, unlink_session/1, unlink_session/2]).
 -export([get_all/0]).
 -export([ext_ops/2, do_add/3, do_rm/2]).
 -export([find/1, do_cast/2, do_call/2, do_call/3, do_info/2]).
@@ -46,7 +46,7 @@
 -include_lib("nkservice/include/nkservice.hrl").
 -include_lib("nksip/include/nksip.hrl").
 
--define(MAX_ICE_TIME, 200).
+-define(MAX_ICE_TIME, 5000).
 -define(MAX_CALL_TIME, 5000).
 
 %% ===================================================================
@@ -66,17 +66,19 @@
 
 
 %% Session configuration
-%% If we set a peer session, we will consider it 'master' and we are 'slave'
-%% If one of them stops, the other will stop (see nkmedia_callbacks)
-%% If the slave has an answer, it will send it back to the master
+%% If we set a master session, we will set up as a 'slave' of that 'master' session
+%% If one of them stops, the other one will also stop (see nkmedia_callbacks)
+%% If the slave has an answer, it will send it back to the master, if the option
+%% set_master_answer is tru
 -type config() :: 
     #{
         session_id => id(),                         % Generated if not included
-        peer_id => id(),                            % See above
         trickle_ice => boolean(),                   % Default false (candidates in SDP)
+        backend => nkemdia:backend(),
         wait_timeout => integer(),                  % Secs
         ready_timeout => integer(),
-        backend => nkemdia:backend(),
+        master_id => id(),                          % See above
+        set_master_answer => boolean(),                 
         register => nklib:link(),
         user_id => nkservice:user_id(),             % Informative only
         user_session => nkservice:user_session(),   % Informative only
@@ -118,6 +120,7 @@
         wait_server_trickle_ice => boolean()
     }.
 
+-type from() :: {pid(), term()}.
 
 
 %% ===================================================================
@@ -265,10 +268,10 @@ info(SessId, Info) ->
 -spec link_slave(id(), id()) ->
     {ok, pid()} | {error, nkservice:error()}.
 
-link_slave(SessId, SessIdB) ->
-    case find(SessIdB) of
+link_slave(MasterId, SlaveId) ->
+    case find(SlaveId) of
         {ok, PidB} ->
-            do_call(SessId, {link_to_slave, SessIdB, PidB});
+            do_call(MasterId, {link_to_slave, SlaveId, PidB});
         not_found ->
             {error, peer_session_not_found}
     end.
@@ -280,6 +283,14 @@ link_slave(SessId, SessIdB) ->
 
 unlink_session(SessId) ->
     do_cast(SessId, unlink_session).
+
+
+%% @doc Unkinks this session from its peer 
+-spec unlink_session(id(), id()) ->
+    ok | {error, nkservice:error()}.
+
+unlink_session(SessId, PeerId) ->
+    do_cast(SessId, {unlink_session, PeerId}).
 
 
 %% @doc Registers a process with the session
@@ -314,6 +325,15 @@ ext_ops(SessId, ExtOps) ->
     do_cast(SessId, {ext_ops, ExtOps}).
 
 
+%% @private Called when a bridged session stops
+-spec bridge_stop(id(), session()) ->
+    {ok, session()} | {stop, session()}.
+
+bridge_stop(PeerId, #{srv_id:=SrvId}=Session) ->
+    SrvId:nkmedia_session_bridge_stop(PeerId, Session).
+
+
+
 %% ===================================================================
 %% Internal
 %% ===================================================================
@@ -344,6 +364,7 @@ do_rm(Key, Session) ->
     links :: nklib_links:links(),
     client_candidates = trickle :: trickle | last | [nkmedia:candidate()],
     server_candidates = trickle :: trickle | last | [nkmedia:candidate()],
+    server_from :: from(),
     session :: session()
 }).
 
@@ -371,8 +392,8 @@ init([#{session_id:=Id, type:=Type, srv_id:=SrvId}=Session]) ->
             State1
     end,
     case Session3 of
-        #{peer_id:=Peer} -> 
-            case link_slave(Peer, Id) of
+        #{master_id:=Master} -> 
+            case link_slave(Master, Id) of
                 {ok, _} -> 
                     ok;
                 {error, _Error} -> 
@@ -423,11 +444,12 @@ handle_call(get_answer, _From, #state{session=Session}=State) ->
     end,
     reply(Reply, State);
 
-handle_call({link_to_slave, IdB, PidB}, _From, #state{id=IdA}=State) ->
-    ?LLOG(notice, "linked to slave session ~s", [IdB], State),
-    do_cast(PidB, {link_to_master, IdA, self()}),
-    State2 = links_add({slave_peer, IdB}, PidB, State),
-    State3 = add_to_session(slave_peer, IdB, State2),
+handle_call({link_to_slave, SlaveId, PidB}, _From, #state{id=MasterId}=State) ->
+    % We are Master of SlaveId
+    ?LLOG(notice, "linked to slave session ~s", [SlaveId], State),
+    do_cast(PidB, {link_to_master, MasterId, self()}),
+    State2 = links_add({slave_peer, SlaveId}, PidB, State),
+    State3 = add_to_session(slave_peer, SlaveId, State2),
     reply({ok, self()}, State3);
 
 handle_call({register, Link}, _From, State) ->
@@ -458,46 +480,66 @@ handle_cast({update, Update, Opts}, State) ->
 handle_cast({info, Info}, State) ->
     noreply(event({info, Info}, State));
 
-handle_cast({link_to_master, IdB, PidB}, State) ->
-    ?LLOG(notice, "linked to master ~s", [IdB], State),
-    State2 = links_add({master_peer, IdB}, PidB, State),
-    State3 = add_to_session(master_peer, IdB, State2),
+handle_cast({link_to_master, MasterId, PidB}, State) ->
+    % We are Slave of MasterId
+    ?LLOG(notice, "linked to master ~s", [MasterId], State),
+    State2 = links_add({master_peer, MasterId}, PidB, State),
+    State3 = add_to_session(master_peer, MasterId, State2),
     noreply(State3);
 
-handle_cast(unlink_session, #state{id=IdA, session=Session}=State) ->
+handle_cast({unlink_session, PeerId}, #state{id=SessId, session=Session}=State) ->
     case maps:find(slave_peer, Session) of
-        {ok, IdB} ->
-            % We are a master, IdB is a slave
-            do_cast(self(), {unlink_from_slave, IdB}),
-            do_cast(IdB, {unlink_from_master, IdA});
+        {ok, PeerId} ->
+            % We are Master of SlaveId
+            do_cast(self(), {unlink_from_slave, PeerId}),
+            do_cast(PeerId, {unlink_from_master, SessId});
+        _ ->
+            ok
+    end,
+    case maps:find(master_peer, Session) of
+        {ok, PeerId} ->
+            % We are Slave of PeerId
+            do_cast(self(), {unlink_from_master, PeerId}),
+            do_cast(PeerId, {unlink_from_slave, SessId});
+        _ ->
+            ok
+    end,
+    noreply(State);
+
+handle_cast(unlink_session, #state{id=SessId, session=Session}=State) ->
+    case maps:find(slave_peer, Session) of
+        {ok, SlaveId} ->
+            % We are Master of SlaveId
+            do_cast(self(), {unlink_from_slave, SlaveId}),
+            do_cast(SlaveId, {unlink_from_master, SessId});
         error ->
             ok
     end,
     case maps:find(master_peer, Session) of
-        {ok, IdC} ->
-            % We are a slave, IdC is a master
-            do_cast(self(), {unlink_from_master, IdC}),
-            do_cast(IdC, {unlink_from_slave, IdC});
+        {ok, MasterId} ->
+            % We are Slave of MasterId
+            do_cast(self(), {unlink_from_master, MasterId}),
+            do_cast(MasterId, {unlink_from_slave, SessId});
         error ->
             ok
     end,
     noreply(State);
 
-handle_cast({unlink_from_slave, IdB}, #state{session=Session}=State) ->
+handle_cast({unlink_from_slave, SlaveId}, #state{session=Session}=State) ->
     case maps:find(slave_peer, Session) of
-        {ok, IdB} ->
-            ?LLOG(notice, "unlinked from slave ~s", [IdB], State),
-            State2 = links_remove({slave_peer, IdB}, State),
+        {ok, SlaveId} ->
+            ?LLOG(notice, "unlinked from slave ~s", [SlaveId], State),
+            State2 = links_remove({slave_peer, SlaveId}, State),
             noreply(remove_from_session(slave_peer, State2));
         _ ->
             noreply(State)
     end;
 
-handle_cast({unlink_from_master, IdB}, #state{session=Session}=State) ->
+handle_cast({unlink_from_master, MasterId}, #state{session=Session}=State) ->
     case maps:find(master_peer, Session) of
-        {ok, IdB} ->
-            ?LLOG(notice, "unlinked from master ~s", [IdB], State),
-            State2 = links_remove({master_peer, IdB}, State),
+        {ok, MasterId} ->
+            ?LLOG(notice, "unlinked from master ~s", [MasterId], State),
+            State2 = links_remove({master_peer, MasterId}, State),
             noreply(remove_from_session(master_peer, State2));
         _ ->
             noreply(State)
@@ -588,23 +630,28 @@ terminate(Reason, State) ->
 
 %% @private
 do_start(From, #state{type=Type, session=Session}=State) ->
-    case handle(nkmedia_session_start, [Type, From], State) of
+    case Session of
+        #{offer:=#{sdp:=SDP}} ->
+            io:format("OFFER:\n~s\n", [SDP]);
+        _ ->
+            ok
+    end,
+    case handle(nkmedia_session_start, [Type], State) of
         {ok, Reply, ExtOps, State2} ->
             State3 = update_ext_ops_offer(ExtOps, State2),
-            reply(Reply, From, restart_timer(State3));
-        {ok, ExtOps, State2} ->
-            State3 = update_ext_ops_offer(ExtOps, State2),
-            noreply(restart_timer(State3));
-        {wait_trickle_ice, State2} ->
+            reply({ok, Reply}, From, restart_timer(State3));
+        {wait_server_ice, State2} ->
             Time2 = maps:get(max_ice_time, Session, ?MAX_ICE_TIME),
             erlang:start_timer(Time2, self(), server_ice_timeout),
             ?LLOG(notice, "waiting for server Trickle ICE", [], State),
-            noreply(State2#state{server_candidates=[]});
+            noreply(State2#state{server_from=From, server_candidates=[]});
         {wait_client_ice, State2} ->
             Time2 = maps:get(max_ice_time, Session, ?MAX_ICE_TIME),
             erlang:start_timer(Time2, self(), client_ice_timeout),
             ?LLOG(notice, "waiting for client Trickle ICE", [], State),
-            noreply(State2#state{client_candidates=[]});
+            State3 = State2#state{client_candidates=[]},
+            % We need to reply, so that the client gets where to send the candidates
+            reply({ok, #{wait_client_ice=>true}}, From, State3);
         {error, Error, State2} ->
             stop(self(), Error),
             reply({error, Error}, From, State2)
@@ -615,14 +662,17 @@ do_start(From, #state{type=Type, session=Session}=State) ->
 do_set_answer(_Answer, From, #state{has_answer=true}=State) ->
     reply({error, answer_already_set}, From, State);
 
-do_set_answer(Answer, From, #state{type=Type}=State) ->
-    case handle(nkmedia_session_answer, [Type, Answer, From], State) of
+do_set_answer(Answer, From, #state{type=Type, session=Session}=State) ->
+    case handle(nkmedia_session_answer, [Type, Answer], State) of
         {ok, Reply, ExtOps, State2} ->
             State3 = update_ext_ops_answer(ExtOps, State2),
-            reply(Reply, From, restart_timer(State3));
-        {ok, ExtOps, State2} ->
-            State3 = update_ext_ops_answer(ExtOps, State2),
-            noreply(restart_timer(State3));
+            reply({ok, Reply}, From, restart_timer(State3));
+        {wait_client_ice, State2} ->
+            Time2 = maps:get(max_ice_time, Session, ?MAX_ICE_TIME),
+            erlang:start_timer(Time2, self(), client_ice_timeout),
+            ?LLOG(notice, "waiting for client Trickle ICE", [], State),
+            State3 = State2#state{client_candidates=[]},
+            reply({ok, #{wait_client_ice=>true}}, From, State3);
         {error, Error, State2} ->
             reply({error, Error}, From, State2)
     end.
@@ -630,13 +680,10 @@ do_set_answer(Answer, From, #state{type=Type}=State) ->
 
 %% @private
 do_update(Update, Opts, From, #state{has_answer=true}=State) ->
-    case handle(nkmedia_session_update, [Update, Opts, From], State) of
+    case handle(nkmedia_session_update, [Update, Opts], State) of
         {ok, Reply, ExtOps, State2} ->
             State3 = update_ext_ops_type(ExtOps, State2),
-            reply(Reply, From, restart_timer(State3));
-        {ok, ExtOps, State2} ->
-            State3 = update_ext_ops_type(ExtOps, State2),
-            noreply(restart_timer(State3));
+            reply({ok, Reply}, From, restart_timer(State3));
         {error, Error, State2} ->
             reply({error, Error}, From, State2)
     end;
@@ -659,11 +706,15 @@ do_client_candidate(Candidate, #state{client_candidates=last}=State) ->
 
 do_client_candidate(#candidate{last=true}, State) ->
     #state{client_candidates=Candidates} = State,
-    {ok, ExtOps, State2} = 
-        handle(nkmedia_session_client_trickle_ready, [Candidates], State),
-    State3 = update_ext_ops_offer(ExtOps, State2),
-    State4 = State3#state{client_candidates=last},
-    restart_timer(State4);
+    case handle(nkmedia_session_client_trickle_ready, [Candidates], State) of
+        {ok, ExtOps, State2} ->
+            State3 = update_ext_ops_offer(ExtOps, State2),
+            State4 = State3#state{client_candidates=last},
+            restart_timer(State4);
+        {error, Error, State2} ->
+            stop(self(), Error),
+            State2
+    end;
 
 do_client_candidate(Candidate, #state{client_candidates=Candidates}=State) ->
     Candidates2 = [Candidate|Candidates],
@@ -682,12 +733,18 @@ do_server_candidate(Candidate, #state{server_candidates=last}=State) ->
     State;
 
 do_server_candidate(#candidate{last=true}, State) ->
-    #state{server_candidates=Candidates} = State,
-    {ok, ExtOps, State2} = 
-        handle(nkmedia_session_server_trickle_ready, [Candidates], State),
-    State3 = update_ext_ops_answer(ExtOps, State2),
-    State4 = State3#state{server_candidates=last},
-    restart_timer(State4);
+    #state{server_candidates=Candidates, server_from=From} = State,
+    case handle(nkmedia_session_server_trickle_ready, [Candidates], State) of
+        {ok, Reply, ExtOps, State2} ->
+            nklib_util:reply(From, {ok, Reply}),
+            State3 = update_ext_ops_offer(ExtOps, State2),
+            State4 = State3#state{server_candidates=last},
+            restart_timer(State4);
+        {error, Error, State2} ->
+            nklib_util:reply(From, {error, Error}),
+            stop(self(), Error),
+            State2
+    end;
 
 do_server_candidate(Candidate, State) ->
     #state{server_candidates=Candidates} = State,
@@ -705,15 +762,15 @@ do_server_candidate(Candidate, State) ->
 update_ext_ops_offer(ExtOps, #state{session=Session}=State) ->
     State3 = case ExtOps of
         #{offer:=Offer} ->
-            OldOffer = maps:get(offer, Session, #{}),
-            NewOffer = maps:merge(OldOffer, Offer),
-            State2 = add_to_session(offer, NewOffer, State),
-            case NewOffer of
-                #{sdp:=_} ->
-                    ?LLOG(info, "offer set", [], State2),
-                    event({offer, Offer}, State2#state{has_offer=true});
+            case Session of
+                #{offer:=_} ->
+                    ?LLOG(notice, "ignoring updated offer", [], State),
+                    State;
                 _ ->
-                    State2
+                    ?LLOG(info, "offer set", [], State),
+                    io:format("OFFER\n~s\n", [maps:get(sdp, Offer, <<>>)]),
+                    State2 = add_to_session(offer, Offer, State),
+                    event({offer, Offer}, State2#state{has_offer=true})
             end;
         _ ->
             State
@@ -725,44 +782,20 @@ update_ext_ops_offer(ExtOps, #state{session=Session}=State) ->
 update_ext_ops_answer(ExtOps, #state{session=Session}=State) ->
     State3 = case ExtOps of
         #{answer:=Answer} ->
-            OldAnswer = maps:get(answer, Session, #{}),
-            NewAnswer = maps:merge(OldAnswer, Answer),
-            State2 = add_to_session(answer, NewAnswer, State),
-            case NewAnswer of
-                #{sdp:=_} ->
-                    ?LLOG(info, "answer set", [], State2),
-                    event({answer, Answer}, State2#state{has_answer=true});
+            case Session of
+                #{answer:=_} ->
+                    ?LLOG(notice, "ignoring updated answer", [], State),
+                    State;
                 _ ->
-                    State2
+                    ?LLOG(info, "answer set", [], State),
+                    io:format("ANSWER\n~s\n", [maps:get(sdp, Answer, <<>>)]),
+                    State2 = add_to_session(answer, Answer, State),
+                    event({answer, Answer}, State2#state{has_answer=true})
             end;
         _ ->
             State
     end,
     update_ext_ops_type(ExtOps, State3).
-
-
-% %% @private
-% update_ext_ops_trickle(ExtOps, #state{session=Session}=State) ->
-%     State2 = case ExtOps of
-%         #{wait_client_trickle_ice:=true} ->
-%             Time1 = maps:get(max_ice_time, Session, ?MAX_ICE_TIME),
-%             erlang:start_timer(Time1, self(), client_ice_timeout),
-%             ?LLOG(notice, "waiting for client Trickle ICE", [], State),
-%             State#state{client_candidates=[]};
-%         _ ->
-%             State
-%     end,
-%     State3 = case ExtOps of
-%         #{wait_server_trickle_ice:=true} ->
-%             lager:error("WAIT SERVER"),
-%             Time2 = maps:get(max_ice_time, Session, ?MAX_ICE_TIME),
-%             erlang:start_timer(Time2, self(), server_ice_timeout),
-%             ?LLOG(notice, "waiting for server Trickle ICE", [], State),
-%             State2#state{server_candidates=[]};
-%         _ ->
-%             State2
-%     end,
-%     update_ext_ops_type(ExtOps, State3).
 
 
 update_ext_ops_type(ExtOps, #state{type=OldType, session=Session}=State) ->

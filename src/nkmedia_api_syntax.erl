@@ -37,7 +37,7 @@ syntax(<<"session">>, <<"start">>, Syntax, Defaults, Mandatory) ->
 			session_id => binary,
 			type => atom,							%% p2p, proxy...
 			offer => offer(),
-			peer_id => binary,
+			master_id => binary,
             sdp_type => {enum, [webrtc, rtp]},		%% For generated SDP only
 			subscribe => boolean,
 			events_body => any,

@@ -180,7 +180,7 @@ nkmedia_janus_start(SessId, Answer, Janus) ->
 
 nkmedia_janus_candidate(Candidate, #{link:={nkmedia_session, SessId, _Pid}}=Janus) ->
     #{role:=Role} = Janus,
-    % If the session has two webrtc endpoint, we must tell the role (caller or callee)
+    % If the session has two webrtc endpoints, we must tell the role (caller or callee)
     Candidate2 = Candidate#candidate{meta={role, Role}},
     ok = nkmedia_session:client_candidate(SessId, Candidate2),
     {ok, Janus};
@@ -287,9 +287,10 @@ nkmedia_call_reg_event(_CallId, _Link, _Event, _Call) ->
 %% @private
 %% Convenient functions in case we are registered with the session as
 %% {nkmedia_janus, CallId, Pid}
-nkmedia_session_reg_event(_SessId, {nkmedia_janus, CallId, Pid}, Event, _Call) ->
+nkmedia_session_reg_event(_SessId, {nkmedia_janus, CallId, Pid}, Event, _Session) ->
     case Event of
         {answer, Answer} ->
+            % lager:error("SET SESS ANS: ~s", [SDP_F]),
             % we may be blocked waiting for the same session creation
             case nkmedia_janus_proto:answer_async(Pid, CallId, Answer) of
                 ok ->
@@ -298,7 +299,7 @@ nkmedia_session_reg_event(_SessId, {nkmedia_janus, CallId, Pid}, Event, _Call) -
                     lager:error("Error setting Janus answer: ~p", [Error])
             end;
         {stop, Reason} ->
-            lager:info("Janus stopping after session stop: ~p", [Reason]),
+            lager:info("Janus Proto stopping after session stop: ~p", [Reason]),
             nkmedia_janus_proto:hangup(Pid, CallId, Reason);
         _ ->
             ok

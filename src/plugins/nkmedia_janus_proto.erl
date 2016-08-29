@@ -481,7 +481,7 @@ process_client_msg(call, Body, Msg, NkPort, #state{srv_id=SrvId}=State) ->
     ?LLOG(info, "received CALL (~s)", [CallId], State),
     #{<<"username">>:=Dest} = Body,
     #{<<"jsep">>:=#{<<"sdp">>:=SDP}=_JSep} = Msg,
-    Offer = #{dest=>Dest, sdp=>SDP, sdp_type=>webrtc},
+    Offer = #{dest=>Dest, sdp=>SDP, sdp_type=>webrtc, trickle_ice=>true},
     % io:format("SDP: ~s\n", [SDP]),
     % lager:notice("JSEP: ~p", [Msg#{<<"jsep">>=>maps:remove(<<"sdp">>, JSep)}]),
     case handle(nkmedia_janus_invite, [SrvId, CallId, Offer], State) of
@@ -501,7 +501,7 @@ process_client_msg(accept, _Body, Msg, NkPort, State) ->
     #state{call_id=CallId} = State,
     ?LLOG(info, "received ACCEPT (~s)", [CallId], State),
     #{<<"jsep">>:=#{<<"sdp">>:=SDP}} = Msg,
-    Answer = #{sdp=>SDP, sdp_type=>webrtc},
+    Answer = #{sdp=>SDP, sdp_type=>webrtc, trickle_ice=>true},
     case links_get(CallId, State) of
         {ok, Link} ->
             case handle(nkmedia_janus_answer, [CallId, Link, Answer], State) of

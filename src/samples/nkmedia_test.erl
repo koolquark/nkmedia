@@ -178,7 +178,7 @@ listen_swich(SessId, Publisher) ->
 
 
 invite(Dest, Type, Opts) ->
-    Opts2 = Opts#{backend => nkmedia_kms},
+    Opts2 = maps:merge(#{backend => nkmedia_fs}, Opts),
     start_invite(Type, Opts2, Dest).
 
 
@@ -193,7 +193,7 @@ mcu_layout(SessId, Layout) ->
 
 
 fs_call(SessId, Dest) ->
-    Config = #{peer_id=>SessId, park_after_bridge=>true},
+    Config = #{master_id=>SessId, park_after_bridge=>true},
     case start_invite(call, Config, Dest) of
         {ok, _SessLinkB} ->
             ok;
@@ -264,7 +264,7 @@ nkmedia_verto_invite(_SrvId, CallId, Offer, Verto) ->
 % @private Called when we receive INVITE from Janus
 nkmedia_janus_invite(_SrvId, CallId, Offer, Janus) ->
     #{dest:=Dest} = Offer, 
-    Base = #{offer=>Offer#{trickle_ice=>true}, register=>{nkmedia_janus, CallId, self()}},
+    Base = #{offer=>Offer, register=>{nkmedia_janus, CallId, self()}},
     case incoming(Dest, Base) of
         {ok, Link} ->
             {ok, Link, Janus};
@@ -460,7 +460,7 @@ incoming(<<"f", Num/binary>>, Base) ->
     case start_session(park, ConfigA) of
         {ok, SessLinkA} ->
             {nkmedia_session, SessIdA, _} = SessLinkA,
-            ConfigB = #{peer_id=>SessIdA, park_after_bridge=>false},
+            ConfigB = #{master_id=>SessIdA, park_after_bridge=>false},
             spawn(
                 fun() -> 
                     case start_invite(call, ConfigB, Num) of
@@ -481,7 +481,7 @@ incoming(<<"k", Num/binary>>, Base) ->
     case start_session(park, ConfigA) of
         {ok, SessLinkA} ->
             {nkmedia_session, SessIdA, _} = SessLinkA,
-            ConfigB = #{peer_id=>SessIdA, backend=>nkmedia_kms},
+            ConfigB = #{master_id=>SessIdA, backend=>nkmedia_kms},
             spawn(
                 fun() -> 
                     case start_invite(bridge, ConfigB, Num) of
@@ -549,7 +549,7 @@ start_session(Type, Config) ->
         {ok, SessId, SessPid, #{offer:=Offer}} ->
             {offer, Offer, {nkmedia_session, SessId, SessPid}};
         {ok, SessId, SessPid, #{}} ->
-            % Offer = maps:get(offer, Config),
+            % With wait_ice_client, we don't send the answer yet
             {ok, {nkmedia_session, SessId, SessPid}};
         {error, Error} ->
             {rejected, Error}

@@ -28,7 +28,7 @@
 -module(nkmedia_kms_session).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/3, answer/4, candidate/2, server_trickle_ready/2, update/4, stop/2]).
+-export([start/2, answer/3, candidate/2, server_trickle_ready/2, update/3, stop/2]).
 -export([handle_call/3, handle_cast/2]).
 
 
@@ -48,7 +48,6 @@
 %% ===================================================================
 
 -type session_id() :: nkmedia_session:id().
--type from() :: {pid(), term()}.
 -type endpoint() :: binary().
 -type continue() :: continue | {continue, list()}.
 
@@ -108,12 +107,12 @@
 
 
 %% @private
--spec start(type(), from(), session()) ->
-    {ok, Reply::term(), ext_ops(), session()} |
-    {ok, ext_ops(), session()} |
+-spec start(nkmedia_session:type(), session()) ->
+    {ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
+    {wait_server_ice, session()} | {wait_client_ice, session()} |
     {error, nkservice:error(), session()} | continue().
 
-start(Type, From, Session) -> 
+start(Type, Session) -> 
     case is_supported(Type) of
         true ->
             Session2 = ?SESSION(#{backend=>nkmedia_kms}, Session),
@@ -123,12 +122,12 @@ start(Type, From, Session) ->
                         {ok, Session4} ->
                             case Session4 of
                                 #{offer:=#{sdp:=_}=Offer} ->
-                                    do_start_offeree(Type, Offer, From, Session4);
+                                    do_start_offeree(Type, Offer, Session4);
                                 _ ->
-                                    do_start_offerer(Type, From, Session4)
+                                    do_start_offerer(Type, Session4)
                             end;
                         {error, Error} ->
-                            {error, Error}
+                            {error, Error, Session3}
                     end;
                 {error, Error} ->
                     {error, Error, Session2}
@@ -139,19 +138,19 @@ start(Type, From, Session) ->
 
 
 %% @private
--spec answer(type(), nkmedia:answer(), from(), session()) ->
-    {ok, Reply::term(), ext_ops(), session()} |
-    {ok, ext_ops(), session()} |
-    {error, term(), session()} | continue().
+-spec answer(type(), nkmedia:answer(), session()) ->
+    {ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
+    {wait_server_ice, session()} | {wait_client_ice, session()} |
+    {error, nkservice:error(), session()} | continue().
 
-answer(Type, Answer, _From, Session) ->
+answer(Type, Answer, Session) ->
     case nkmedia_kms_session_lib:set_answer(Answer, Session) of
         {ok, _} ->
             case do_start_type(Type, Session) of
                 {ok, Reply, ExtOps, Session2} ->
                     Reply2 = Reply#{answer=>Answer},
                     ExtOps2 = ExtOps#{answer=>Answer},
-                    {ok, {ok, Reply2}, ExtOps2, Session2};
+                    {ok, Reply2, ExtOps2, Session2};
                 {error, Error, Session2} ->
                     {error, Error, Session2}
             end;
@@ -175,42 +174,38 @@ candidate(Candidate, Session) ->
 
 %% @private
 -spec server_trickle_ready([nkmedia:candidate()], session()) ->
-    {ok, ext_ops(), session()} | {error, nkservice:error()}.
+    {ok, Reply::map(), ext_ops(), session()} | 
+    {error, nkservice:error(), session()}.
 
 server_trickle_ready(Candidates, #{nkmedia_kms_trickle_ice:=Info}=Session) ->
     case Info of
         #{
-            from := From,
             reply := Reply,
             extops := ExtOps,
             answer := #{sdp:=SDP}=Answer
         } ->
             SDP2 = nksip_sdp_util:add_candidates(SDP, Candidates),
             Answer2 = Answer#{sdp=>nksip_sdp:unparse(SDP2), trickle_ice=>false},
-            Reply2 = {ok, Reply#{answer=>Answer2}}, 
+            Reply2 = Reply#{answer=>Answer2}, 
             ExtOps2 = ExtOps#{answer=>Answer2};
         #{
-            from := From,
             offer := #{sdp:=SDP}=Offer
         } ->
             SDP2 = nksip_sdp_util:add_candidates(SDP, Candidates),
             Offer2 = Offer#{sdp=>nksip_sdp:unparse(SDP2), trickle_ice=>false},
-            Reply2 = {ok, #{offer=>Offer2}}, 
+            Reply2 = #{offer=>Offer2}, 
             ExtOps2 = #{offer=>Offer2}
     end,
-    gen_server:reply(From, Reply2),
     Session2 = ?SESSION_RM(nkmedia_kms_trickle_ice, Session),
-    {ok, ExtOps2, Session2}.
+    {ok, Reply2, ExtOps2, Session2}.
 
 
 %% @private
--spec update(update(), Opts::map(), from(), session()) ->
-    {ok, Reply::term(), ext_ops(), session()} |
-    {ok, ext_ops(), session()} |
+-spec update(update(), Opts::map(), session()) ->
+    {ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
     {error, term(), session()} | continue().
 
-
-update(session_type, #{session_type:=Type}=Opts, _From, Session) ->
+update(session_type, #{session_type:=Type}=Opts, Session) ->
     case check_record(Opts, Session) of
         {ok, Session2} ->
             do_type(Type, Opts, Session2);
@@ -218,11 +213,11 @@ update(session_type, #{session_type:=Type}=Opts, _From, Session) ->
             {error, Error, Session}
     end;
 
-update(connect, Opts, _From, Session) ->
+update(connect, Opts, Session) ->
     do_type(connect, Opts, Session);
    
 %% Updates media in EP -> Proxy path only (to "mute")
-update(media, Opts, _From, Session) ->
+update(media, Opts, Session) ->
     case check_record(Opts, Session) of
         {ok, Session2} ->
             ok = nkmedia_kms_session_lib:update_media(Opts, Session),
@@ -231,42 +226,42 @@ update(media, Opts, _From, Session) ->
             {error, Error, Session}
     end;
 
-update(recorder, #{operation:=Op}, From, Session) ->
+update(recorder, #{operation:=Op}, Session) ->
     case nkmedia_kms_session_lib:recorder_op(Op, Session) of
         {ok, Session2} ->
-            {ok, {ok, #{}}, #{}, Session2};
+            {ok, #{}, #{}, Session2};
         {error, Error} ->
             {error, Error, Session}
     end;
 
-update(recorder, _Opts, _From, Session) ->
+update(recorder, _Opts, Session) ->
     {error, {missing_parameter, operation}, Session};
 
-update(player, #{operation:=Op}=Opts, _From, Session) ->
+update(player, #{operation:=Op}=Opts, Session) ->
     case nkmedia_kms_session_lib:player_op(Op, Session) of
         {ok, Reply, Session2} ->
-            {ok, {ok, Reply}, #{}, Session2};
+            {ok, Reply, #{}, Session2};
         {ok, Session2} ->
-            {ok, {ok, #{}}, #{}, Session2};
+            {ok, #{}, #{}, Session2};
         {error, Error} ->
             {error, Error, Session}
     end;
 
-update(get_stats, Opts, From, Session) ->
+update(get_stats, Opts, Session) ->
     Type1 = maps:get(media_type, Opts, <<"VIDEO">>),
     Type2 = nklib_util:to_upper(Type1),
     case nkmedia_kms_session_lib:get_stats(Type2, Session) of
         {ok, Stats} ->
-            {ok, {ok, #{stats=>Stats}}, #{}, Session};
+            {ok, #{stats=>Stats}, #{}, Session};
         {error, Error} ->
             {error, Error, Session}
     end;
 
-update(print_info, _Opts, From, #{session_id:=SessId}=Session) ->
+update(print_info, _Opts, #{session_id:=SessId}=Session) ->
     nkmedia_kms_session_lib:print_info(SessId, Session),
-    {ok, {ok, #{}}, #{}, Session};
+    {ok, #{}, #{}, Session};
 
-update(_Update, _Opts, _From, _Session) ->
+update(_Update, _Opts, _Session) ->
     continue.
 
 
@@ -304,17 +299,23 @@ handle_call(get_publisher, _From, Session) ->
 
  
 %% @private
-handle_cast({bridge_stop, PeerId}, Session) ->
-    case Session of
-        #{nkmedia_kms_bridged_to:=PeerId} ->
-            Session2 = ?SESSION_RM(nkmedia_kms_bridged_to, Session),
+%% @private Called from nkmedia_fs_callbacks
+handle_cast({bridge_stop, PeerId}, #{nkmedia_kms_bridged_to:=PeerId}=Session) ->
+    case nkmedia_session:bridge_stop(PeerId, Session) of
+        {ok, Session2} ->
             Session3 = reset_type(Session2),
+            % In case we were linked
+            nkmedia_session:unlink_session(self(), PeerId),
             nkmedia_session:ext_ops(self(), #{type=>park}),
             {noreply, Session3};
-        _ ->
-            ?LLOG(notice, "ignoring bridge stop", [], Session),
-            {noreply, Session}
+        {stop, Session2} ->
+            nkmedia_session:stop(self(), bridge_stop),
+            {noreply, Session2}
     end;
+
+handle_cast({bridge_stop, PeerId}, Session) ->
+    ?LLOG(notice, "ignoring bridge stop from ~s", [PeerId], Session),
+    {noreply, Session};
 
 handle_cast({end_of_stream, Player}, #{nkmedia_kms_player:=Player}=Session) ->
     case Session of
@@ -359,11 +360,12 @@ is_supported(_) -> false.
 
 
 %% @private
--spec do_start_offeree(type(), nkmedia:offer(), from(), session()) ->
-    {ok, Reply::term(), ext_ops(), session()} |
-    {error, nkservice:error(), session()}.
+-spec do_start_offeree(nkmedia_session:type(), nkmedia:offer(), session()) ->
+    {ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
+    {wait_server_ice, session()} | {wait_client_ice, session()} |
+    {error, nkservice:error(), session()} | continue().
 
-do_start_offeree(Type, Offer, From, Session) ->
+do_start_offeree(Type, Offer, Session) ->
     case create_endpoint_offeree(Offer, Session) of
         {ok, #{trickle_ice:=AnsTrickleIce}=Answer, Session2} ->
             case do_start_type(Type, Session2) of
@@ -372,17 +374,17 @@ do_start_offeree(Type, Offer, From, Session) ->
                     case AnsTrickleIce andalso not SessTrickleIce of
                         true -> 
                             Info = #{
-                                from => From,
                                 reply => Reply,
                                 extops => ExtOps,
                                 answer => Answer
                             },
                             Update = #{nkmedia_kms_trickle_ice => Info},
                             Session4 = ?SESSION(Update, Session3),
-                            {wait_trickle_ice, Session4};
+                            {wait_server_ice, Session4};
                         false ->
-                            gen_server:reply(From, {ok, Reply#{answer=>Answer}}),
-                            {ok, ExtOps#{answer=>Answer}, Session3}
+                            Reply2 = Reply#{answer=>Answer},
+                            ExtOps = ExtOps#{answer=>Answer},
+                            {ok, Reply2, ExtOps, Session3}
                     end;
                 {error, Error, Session3} ->
                     {error, Error, Session3}
@@ -393,26 +395,23 @@ do_start_offeree(Type, Offer, From, Session) ->
 
 
 %% @private
--spec do_start_offerer(type(), from(), session()) ->
-    {ok, Reply::map(), ext_ops(), session()} |
-    {error, nkservice:error(), session()}.
+-spec do_start_offerer(type(), session()) ->
+    {ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
+    {wait_server_ice, session()} | {wait_client_ice, session()} |
+    {error, nkservice:error(), session()} | continue().
 
-do_start_offerer(_Type, From, Session) ->
+do_start_offerer(_Type, Session) ->
     case create_endpoint_offerer(Session) of
         {ok, #{trickle_ice:=OffTrickleIce}=Offer, Session2} ->
             SessTrickleIce = maps:get(trickle_ice, Session2, false),
             case OffTrickleIce andalso not SessTrickleIce of
                 true ->
-                    Info = #{
-                        from => From,
-                        offer => Offer
-                    },
+                    Info = #{offer => Offer},
                     Update = #{nkmedia_kms_trickle_ice => Info},
                     Session3 = ?SESSION(Update, Session2),
-                    {wait_trickle_ice, Session3};
+                    {wait_server_ice, Session3};
                 false ->
-                    gen_server:reply(From, {ok, #{offer=>Offer}}),
-                    {ok, #{offer=>Offer}, Session2}
+                    {ok, #{offer=>Offer}, #{offer=>Offer}, Session2}
             end;
         {error, Error} ->
             {error, Error, Session}
@@ -421,7 +420,7 @@ do_start_offerer(_Type, From, Session) ->
 
 %% @private
 -spec do_start_type(type(), session()) ->
-    {ok, Reply::term(), ext_ops(), session()} |
+    {ok, Reply::map(), ext_ops(), session()} |
     {error, nkservice:error(), session()}.
 
 do_start_type(Type, Session) ->
@@ -516,7 +515,6 @@ do_type(listen, #{publisher_id:=PeerId}=Opts, #{session_id:=SessId}=Session) ->
     end;
 
 do_type(listen, _Opts, Session) ->
-    lager:error("O: ~p", [_Opts]),
     {error, {missing_field, publisher_id}, Session};
 
 do_type(connect, Opts, #{peer_id:=PeerId}=Session) ->
@@ -585,7 +583,7 @@ get_pipeline(_Type, Session) ->
 get_pipeline_from_room(RoomId, Session) ->
     case nkmedia_room:get_room(RoomId) of
         {ok, #{nkmedia_kms:=#{kms_id:=KmsId}}} -> 
-            ?LLOG(notice, "getting engine from ROOM: ~s", [KmsId], Session),
+            ?LLOG(info, "getting engine from ROOM: ~s", [KmsId], Session),
             Session2 = ?SESSION(#{nkmedia_kms_id=>KmsId}, Session),
             case nkmedia_kms_session_lib:get_pipeline(Session2) of
                 {ok, Session3} -> 
@@ -650,6 +648,8 @@ reset_type(#{session_id:=SessId}=Session) ->
     case Session2 of
         #{nkmedia_kms_bridged_to:=PeerId} ->
             session_cast(PeerId, {bridge_stop, SessId}),
+            % In case we were linked
+            nkmedia_session:unlink_session(self(), PeerId),
             Session3 = ?SESSION_RM(nkmedia_kms_bridged_to, Session2);
         _ ->
             Session3 = Session2
