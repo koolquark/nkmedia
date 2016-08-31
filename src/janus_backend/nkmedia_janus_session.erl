@@ -25,7 +25,7 @@
 -module(nkmedia_janus_session).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/2, answer/3, candidate/2, update/3, stop/2, handle_call/3]).
+-export([start/2, offer/3, answer/3, candidate/2, update/3, stop/2, handle_call/3]).
 
 -export_type([session/0, type/0, opts/0, update/0]).
 
@@ -33,6 +33,7 @@
     lager:Type("NkMEDIA JANUS Session ~s "++Txt, 
                [maps:get(session_id, Session) | Args])).
 
+-include_lib("nksip/include/nksip.hrl").
 -include("../../include/nkmedia.hrl").
 
 %% ===================================================================
@@ -49,8 +50,7 @@
         nkmedia_janus_id => nkmedia_janus_engine:id(),
         nkmedia_janus_pid => pid(),
         nkmedia_janus_mon => reference(),
-        nkmedia_janus_op => answer,
-        nkmedia_janus_record_pos => integer()
+        nkmedia_janus_offer => nkmedia:offer()
     }.
 
 
@@ -84,163 +84,155 @@
 
 %% @private
 -spec start(nkmedia_session:type(), session()) ->
-    {ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
-    {wait_server_ice, session()} | {wait_client_ice, session()} |
+    {ok, session()} |
     {error, nkservice:error(), session()} | continue().
 
-start(echo, #{offer:=#{sdp:=_}=Offer}=Session) ->
-    case get_janus_op(Session) of
-        {ok, Pid, Session2} ->
-            {Opts, Session3} = get_opts(Session2),
-            case nkmedia_janus_op:echo(Pid, Offer, Opts) of
-                {ok, #{sdp:=_}=Answer} ->
-                    Reply = ExtOps = #{answer=>Answer},
-                    {ok, Reply, ExtOps, Session3};
-                {error, Error} ->
-                    {error, Error, Session3}
-            end;
-        {error, Error} ->
-            {error, Error, Session}
-    end;
-
-start(echo, Session) ->
-    {error, missing_offer, Session};
-
-start(proxy, #{offer:=#{sdp:=_}=Offer}=Session) ->
-    case get_janus_op(Session) of
-        {ok, Pid, Session2} ->
-            OfferType = maps:get(sdp_type, Offer, webrtc),
-            OutType = maps:get(sdp_type, Session, webrtc),
-            Fun = case {OfferType, OutType} of
-                {webrtc, webrtc} -> videocall;
-                {webrtc, rtp} -> to_sip;
-                {rtp, webrtc} -> from_sip;
-                {rtp, rtp} -> error
-            end,
-            case Fun of
-                error ->
-                    {error, invalid_parameters, Session};
-                _ ->
-                    {Opts, Session3} = get_opts(Session2),
-                    case nkmedia_janus_op:Fun(Pid, Offer, Opts) of
-                        {ok, Offer2} ->
-                            Session4 = ?SESSION(#{nkmedia_janus_op=>answer}, Session3),
-                            Offer3 = maps:merge(Offer, Offer2),
-                            Reply = ExtOps = #{offer=>Offer3},
-                            {ok, Reply, ExtOps, Session4};
+start(Type, Session) -> 
+    case is_supported(Type) of
+        true ->
+            Session2 = ?SESSION(#{backend=>nkmedia_janus}, Session),
+            case get_mediaserver(Session2) of
+                {ok, Session3} ->
+                    case get_janus_op(Session3) of
+                        {ok, Session4} ->
+                            do_start(Type, Session4);
                         {error, Error} ->
-                            {error, Error, Session3}
-                    end
-            end;
-        {error, Error} ->
-            {error, Error, Session}
-    end;
-
-start(proxy, Session) ->
-    {error, missing_offer, Session};
-
-start(publish, #{offer:=#{sdp:=_}=Offer}=Session) ->
-    case get_janus_op(Session) of
-        {ok, Pid, Session2} ->
-            case get_room(publish, Session2) of
-                {ok, RoomId} ->
-                    {Opts, Session3} = get_opts(Session2),
-                    case nkmedia_janus_op:publish(Pid, RoomId, Offer, Opts) of
-                        {ok, #{sdp:=_}=Answer} ->
-                            Reply = #{answer=>Answer, room_id=>RoomId},
-                            ExtOps = #{answer=>Answer, type_ext=>#{room_id=>RoomId}},
-                            {ok, Reply, ExtOps, Session3};
-                        {error, Error} ->
-                            {error, Error, Session3}
+                            {error, Error, Session2}
                     end;
                 {error, Error} ->
-                    {error, Error, Session}
+                    {error, Error, Session2}
             end;
-        {error, Error} ->
-            {error, Error, Session}
-    end;
+        false ->
+            continue
+    end.
 
-start(publish, Session) ->
-    {error, missing_offer, Session};
 
-start(listen, #{publisher_id:=Publisher}=Session) ->
-    case get_janus_op(Session) of
-        {ok, Pid, Session2} ->
-            case get_room(listen, Session2) of
-                {ok, RoomId} ->
-                    {Opts, Session3} = get_opts(Session, Session2),
-                    case nkmedia_janus_op:listen(Pid, RoomId, Publisher, Opts) of
-                        {ok, Offer} ->
-                            Session4 = Session3#{nkmedia_janus_op=>answer},
-                            Reply = #{offer=>Offer, room_id=>RoomId},
-                            ExtOps = #{
-                                offer => Offer, 
-                                type_ext => #{room_id=>RoomId, publisher_id=>Publisher}
-                            },
-                            {ok, Reply, ExtOps, Session4};
-                        {error, Error} ->
-                            {error, Error, Session3}
-                    end;
+do_start(_Type, #{offer:=_}=Session) ->
+    %% Wait for offer callback
+    {ok, Session};
+
+do_start(listen, #{publisher_id:=Publisher, nkmedia_janus_pid:=Pid}=Session) ->
+    case get_room(listen, Session) of
+        {ok, RoomId} ->
+            {Opts, Session2} = get_media_opts(Session),
+            case nkmedia_janus_op:listen(Pid, RoomId, Publisher, Opts) of
+                {ok, Offer} ->
+                    update_type(listen, #{room_id=>RoomId, publisher_id=>Publisher}),
+                    {ok, set_offer(Offer, Session2)};
                 {error, Error} ->
-                    {error, Error, Session}
+                    {error, Error, Session2}
             end;
         {error, Error} ->
             {error, Error, Session}
     end;
 
-
-start(listen, Session) ->
+do_start(listen, Session) ->
     {error, {missing_field, publisher_id}, Session};
 
-start(_Type, _Session) ->
+do_start(_, Session) ->
+    {error, invalid_operation, Session}.
+
+
+%% @private
+-spec offer(type(), nkmedia:offer(), session()) ->
+    {ok, session()} | {error, nkservice:error(), session()}.
+
+offer(_Type, #{backend:=nkmedia_janus}, Session) ->
+    {ok, Session};
+
+offer(echo, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
+    {Opts, Session2} = get_media_opts(Session),
+    case nkmedia_janus_op:echo(Pid, Offer, Opts) of
+        {ok, Answer} ->
+            update_type(echo, #{}),
+            {ok, set_answer(Answer, Session2)};
+        {error, Error} ->
+            {error, Error, Session2}
+    end;
+
+offer(proxy, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
+    OfferType = maps:get(sdp_type, Offer, webrtc),
+    OutType = maps:get(sdp_type, Session, webrtc),
+    Fun = case {OfferType, OutType} of
+        {webrtc, webrtc} -> videocall;
+        {webrtc, rtp} -> to_sip;
+        {rtp, webrtc} -> from_sip;
+        {rtp, rtp} -> error
+    end,
+    case Fun of
+        error ->
+            {error, invalid_parameters, Session};
+        _ ->
+            {Opts, Session2} = get_media_opts(Session),
+            case nkmedia_janus_op:Fun(Pid, Offer, Opts) of
+                {ok, Offer2} ->
+                    Session3 = ?SESSION(#{nkmedia_janus_offer=>Offer2}, Session2),
+                    {ok, Session3};
+                {error, Error} ->
+                    {error, Error, Session2}
+            end
+    end;
+
+offer(publish, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
+    case get_room(publish, Session) of
+        {ok, RoomId} ->
+            {Opts, Session2} = get_media_opts(Session),
+            case nkmedia_janus_op:publish(Pid, RoomId, Offer, Opts) of
+                {ok, Answer} ->
+                    update_type(publish, #{room_id=>RoomId}),
+                    {ok, set_answer(Answer, Session2)};
+                {error, Error} ->
+                    {error, Error, Session2}
+            end;
+        {error, Error} ->
+            {error, Error, Session}
+    end;
+
+offer(_Type, _Offer, _Session) ->
     continue.
 
 
 %% @private
 -spec answer(type(), nkmedia:answer(), session()) ->
-    {ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
-    {wait_server_ice, session()} | {wait_client_ice, session()} |
-    {error, nkservice:error(), session()} | continue().
+    {ok, session()} | {error, nkservice:error(), session()}.
 
-answer(Type, Answer, #{nkmedia_janus_op:=answer}=Session)
-            when Type==proxy; Type==listen ->
-    #{nkmedia_janus_pid:=Pid} = Session,
+answer(_Type, #{backend:=nkmedia_janus}, Session) ->
+    {ok, Session};
+
+answer(Type, Answer, #{nkmedia_janus_pid:=Pid}=Session)
+        when Type==proxy; Type==listen ->
     case nkmedia_janus_op:answer(Pid, Answer) of
         ok ->
-            ExtOps = #{answer=>Answer},
-            {ok, #{}, ExtOps, ?SESSION_RM(nkmedia_janus_op, Session)};
+            {ok, Session};
         {ok, Answer2} ->
-            Reply = ExtOps = #{answer=>Answer2},
-            {ok, Reply, ExtOps, ?SESSION_RM(nkmedia_janus_op, Session)};
+            {ok, set_answer(Answer2, Session)};
         {error, Error} ->
             {error, Error, Session}
-    end;
-
-answer(_Type, _Answer, _Session) ->
-    continue.
+    end.
 
 
-%% @private
+%% @private We received a candidate from the client
 -spec candidate(nkmedia:candidate(), session()) ->
-    {ok, session()} | {error, term()}.
+    {ok, session()} | continue.
+
+candidate(#candidate{last=true}, Session) ->
+    {ok, Session};
 
 candidate(Candidate, #{nkmedia_janus_pid:=Pid}=Session) ->
-    ?LLOG(info, "Client candidate to server: ~p", [Candidate], Session),
     nkmedia_janus_op:candidate(Pid, Candidate),
     {ok, Session}.
 
 
 %% @private
 -spec update(update(), Opts::map(), session()) ->
-    {ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
-    {error, term(), session()} | continue().
+    {ok, Reply::term(), session()} | {error, term(), session()} | continue().
 
 update(media, Opts, #{type:=Type}=Session) when Type==echo; Type==proxy; Type==publish ->
-    #{session_id:=SessId, nkmedia_janus_pid:=Pid} = Session,
-    {Opts2, Session2} = get_opts(Opts, Session),
+    #{nkmedia_janus_pid:=Pid} = Session,
+    {Opts2, Session2} = get_media_opts(Opts, Session),
     case nkmedia_janus_op:update(Pid, Opts2) of
         ok ->
-            {ok, #{}, #{}, Session2};
+            {ok, #{}, Session2};
         {error, Error} ->
             {error, Error, Session2}
     end;
@@ -249,11 +241,14 @@ update(listen_switch, #{publisher_id:=Publisher}, #{type:=listen}=Session) ->
     #{nkmedia_janus_pid:=Pid, type_ext:=Ext} = Session,
     case nkmedia_janus_op:listen_switch(Pid, Publisher, #{}) of
         ok ->
-            ExtOps = #{type_ext=>Ext#{publisher_id:=Publisher}},
-            {ok, #{}, ExtOps, Session};
+            update_type(listen, Ext#{publisher_id=>Publisher}),
+            {ok, #{}, Session};
         {error, Error} ->
             {error, Error, Session}
     end;
+
+update(get_proxy_offer, _, #{nkmedia_janus_offer:=Offer}=Session) ->
+    {ok, Offer, Session};
 
 update(_Update, _Opts, _Session) ->
     continue.
@@ -284,6 +279,14 @@ handle_call(get_publisher, _From, Session) ->
 
 
 %% @private
+is_supported(echo) -> true;
+is_supported(proxy) -> true;
+is_supported(publish) -> true;
+is_supported(listen) -> true;
+is_supported(_) -> false.
+
+
+%% @private
 get_janus_op(#{nkmedia_janus_id:=JanusId, session_id:=SessId}=Session) ->
     case nkmedia_janus_op:start(JanusId, SessId) of
         {ok, Pid} ->
@@ -291,21 +294,11 @@ get_janus_op(#{nkmedia_janus_id:=JanusId, session_id:=SessId}=Session) ->
                 nkmedia_janus_pid => Pid,
                 nkmedia_janus_mon => monitor(process, Pid)
             },
-            {ok, Pid, Session2};
+            {ok, Session2};
         {error, Error} ->
             ?LLOG(warning, "janus connection start error: ~p", [Error], Session),
             {error, janus_connection_error}
-    end;
-
-get_janus_op(Session) ->
-    case get_mediaserver(Session) of
-        {ok, Session2} ->
-            get_janus_op(Session2);
-        {error, Error} ->
-            ?LLOG(warning, "get_mediaserver error: ~p", [Error], Session),
-            {error, no_mediaserver}
     end.
-
 
 
 %% @private
@@ -324,6 +317,9 @@ get_mediaserver(#{srv_id:=SrvId}=Session) ->
     end.
 
 
+
+
+
 %% @private
 -spec get_room(publish|listen, session()) ->
     {ok, nkmedia_room:id()} | {error, term()}.
@@ -336,7 +332,8 @@ get_room(Type, #{srv_id:=SrvId, nkmedia_janus_id:=JanusId}=Session) ->
                 {ok, #{nkmedia_janus:=#{janus_id:=JanusId}}} ->
                     lager:error("Room exists in same MS"),
                     {ok, RoomId};
-                {ok, _} ->
+                {ok, O} ->
+                    lager:error("O: ~p", [O]),
                     {error, different_mediaserver};
                 {error, room_not_found} ->
                     Opts1 = [
@@ -404,13 +401,28 @@ get_peer_publisher(SessId) ->
 
 
 %% @private
-get_opts(Session) ->
-    get_opts(Session, Session).
+set_offer(Offer, Session) ->
+    ?SESSION(#{offer=>Offer}, Session).
 
 
 %% @private
-get_opts(Opts, #{session_id:=SessId}=Session) ->
-    Keys = [record, use_audio, use_video, use_data, bitrate, dtmf],
+set_answer(Answer, Session) ->
+    ?SESSION(#{answer=>Answer}, Session).
+
+
+%% @private
+update_type(Type, TypeExt) ->
+    nkmedia_session:set_type(self(), Type, TypeExt).
+
+
+%% @private
+get_media_opts(Session) ->
+    get_media_opts(Session, Session).
+
+
+%% @private
+get_media_opts(Opts, Session) ->
+    Keys = [record, use_audio, use_video, use_data, bitrate],
     Opts1 = maps:with(Keys, Opts),
     Opts2 = case Session of
         #{user_id:=UserId} -> Opts1#{user=>UserId};
@@ -418,10 +430,8 @@ get_opts(Opts, #{session_id:=SessId}=Session) ->
     end,
     case Opts of
         #{record:=true} ->
-            Pos = maps:get(nkmedia_janus_record_pos, Session, 0),
-            Name = io_lib:format("~s_p~4..0w", [SessId, Pos]),
-            File = filename:join(<<"/tmp/record">>, list_to_binary(Name)),
-            Session2 = ?SESSION(#{nkmedia_janus_record_pos=>Pos+1}, Session),
+            {Name, Session2} = nkmedia_session:get_session_file(Session),
+            File = filename:join(<<"/tmp/record">>, Name),
             {Opts2#{filename => File}, Session2};
         _ ->
             {Opts2, Session}

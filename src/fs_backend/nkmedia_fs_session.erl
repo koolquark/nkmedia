@@ -22,7 +22,7 @@
 -module(nkmedia_fs_session).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/2, answer/3, update/3, stop/2, client_trickle_ready/2]).
+-export([start/2, offer/3, answer/3, update/3, stop/2]).
 -export([handle_call/3, handle_cast/2, fs_event/3, send_bridge/2]).
 
 -export_type([session/0, type/0, opts/0, update/0]).
@@ -61,8 +61,6 @@
     echo    |
     mcu     |
     bridge.
-
--type ext_ops() :: nkmedia_session:ext_ops().
 
 
 -type opts() ::  
@@ -113,25 +111,23 @@ send_bridge(Remote, Local) ->
 %% ===================================================================
 
 
-
 %% @private
 -spec start(nkmedia_session:type(), session()) ->
-    {ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
-    {wait_server_ice, session()} | {wait_client_ice, session()} |
+    {ok, session()} |
     {error, nkservice:error(), session()} | continue().
 
 start(Type, Session) ->
     case is_supported(Type) of
         true ->
-            Session2 = ?SESSION(#{backend=>nkmedia_fs}, Session),
+            Update = #{
+                backend => nkmedia_fs, 
+                no_offer_trickle_ice => true,
+                no_answer_trickle_ice => true
+            },
+            Session2 = ?SESSION(Update, Session),
             case get_engine(Session2) of
                 {ok, Session3} ->
-                    case Session3 of
-                        #{offer:=#{sdp:=_}=Offer} ->
-                            do_start_offeree(Type, Offer, Session3);
-                        _ ->
-                            do_start_offerer(Type, Session3)
-                    end;
+                    do_start(Session3);
                 {error, Error} ->
                     {error, Error, Session2}
             end;
@@ -140,76 +136,69 @@ start(Type, Session) ->
     end.
 
 
+do_start(#{offer:=_}=Session) ->
+    %% Wait for offer callback
+    {ok, Session};
+
+do_start(Session) ->
+    case get_fs_offer(Session) of
+        {ok, Offer} ->
+            {ok, ?SESSION(#{offer=>Offer}, Session)};
+        {error, Error, Session} ->
+            {error, Error, Session}
+    end.
+                    
+
+
+%% @private
+-spec offer(type(), nkmedia:offer(), session()) ->
+    {ok, session()} | {error, nkservice:error(), session()}.
+
+offer(_Type, #{backend:=nkmedia_fs}, Session) ->
+    {ok, Session};
+
+offer(Type, Offer, Session) ->
+    case get_fs_answer(Offer, Session) of
+        {ok, Answer}  ->
+            do_start_type(Type, ?SESSION(#{answer=>Answer}, Session));
+        {error, Error} ->
+            {error, Error, Session}
+    end.
+
+
 %% @private
 -spec answer(type(), nkmedia:answer(), session()) ->
-    {ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
-    {wait_server_ice, session()} | {wait_client_ice, session()} |
-    {error, nkservice:error(), session()} | continue().
+    {ok, session()} | {error, nkservice:error(), session()}.
+
+answer(_Type, #{backend:=nkmedia_fs}, Session) ->
+    {ok, Session};
 
 answer(Type, Answer, #{session_id:=SessId, offer:=Offer}=Session) ->
-    case maps:get(trickle_ice, Answer, false) of
-        true ->
-            Info = #{answer=>Answer},
-            Session2 = ?SESSION(#{nkmedia_fs_trickle => Info}, Session),
-            {wait_client_ice, Session2};
-        false ->
-            SdpType = maps:get(sdp_type, Offer, webrtc),
-            Mod = fs_mod(SdpType),
-            case Mod:answer_out(SessId, Answer) of
-                ok ->
-                    wait_park(Session),
-                    case do_start_type(Type, Session) of
-                        {ok, Reply, ExtOps, Session2} ->
-                            {ok, Reply, ExtOps#{answer=>Answer}, Session2};
-                        {error, Error, Session2} ->
-                            {error, Error, Session2}
-                    end;
-                {error, Error} ->
-                    {error, Error, Session}
-            end
+    SdpType = maps:get(sdp_type, Offer, webrtc),
+    Mod = fs_mod(SdpType),
+    case Mod:answer_out(SessId, Answer) of
+        ok ->
+            wait_park(Session),
+            do_start_type(Type, Session);
+        {error, Error} ->
+            {error, Error, Session}
     end.
-
-
-%% @private
--spec client_trickle_ready([nkmedia:candidate()], session()) ->
-    {ok, ext_ops(), session()} | 
-    {error, nkservice:error(), session()}.
-
-client_trickle_ready(Candidates, #{type:=Type, nkmedia_fs_trickle:=Info}=Session) ->
-    Session2 = ?SESSION_RM(nkmedia_fs_trickle, Session),
-    case Info of
-        #{offer:=#{sdp:=SDP}=Offer} ->
-            SDP2 = nksip_sdp_util:add_candidates(SDP, Candidates),
-            Offer2 = Offer#{sdp:=nksip_sdp:unparse(SDP2), trickle_ice=>false},
-            Session3 = ?SESSION(#{offer=>Offer2}, Session2),
-            case start(Type, Session3) of
-                {ok, _Reply, ExtOps, Session4} -> 
-                    {ok, ExtOps, Session4};
-                Other ->
-                    Other
-            end;
-        #{answer:= #{sdp:=SDP}=Answer} ->
-            SDP2 = nksip_sdp_util:add_candidates(SDP, Candidates),
-            Answer2 = Answer#{sdp:=nksip_sdp:unparse(SDP2), trickle_ice=>false},
-            case answer(Type, Answer2, Session2) of
-                {ok, _Reply, ExtOps, Session4} -> 
-                    {ok, ExtOps, Session4};
-                Other ->
-                    Other
-            end
-    end.
-
 
 
 %% @private
 -spec update(update(), Opts::map(), session()) ->
-    {ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
-    {error, term(), session()} | continue().
+    {ok, Reply::term(), session()} | {error, term(), session()} | continue().
 
 update(session_type, #{session_type:=Type}=Opts, Session) ->
     case check_record(Opts, Session) of
         {ok, Session2} ->
-            do_type(Type, Opts, Session2);
+            case do_type(Type, Opts, Session2) of
+                {ok, TypeExt, Session3} -> 
+                    update_type(Type, TypeExt),
+                    {ok, TypeExt, Session3};
+                {error, Error, Session3} ->
+                    {error, Error, Session3}
+            end;
         {error, Error} ->
             {error, Error, Session}
     end;
@@ -218,7 +207,7 @@ update(media, Opts, Session) ->
     case check_record(Opts, Session) of
         {ok, Session2} ->
             %% TODO: update medias
-            {ok, #{}, #{}, Session2};
+            {ok, #{}, Session2};
         {error, Error} ->
             {error, Error, Session}
     end;
@@ -227,8 +216,8 @@ update(mcu_layout, #{mcu_layout:=Layout},
        #{type:=mcu, type_ext:=#{room_id:=Room}=Ext, nkmedia_fs_id:=FsId}=Session) ->
     case nkmedia_fs_cmd:conf_layout(FsId, Room, Layout) of
         ok  ->
-            ExtOps = #{type_ext=>Ext#{mcu_layout=>Layout}},
-            {ok, #{}, ExtOps, Session};
+            update_type(mcu, Ext#{mcu_layout=>Layout}),
+            {ok, #{}, Session};
         {error, Error} ->
             {error, Error, Session}
     end;
@@ -258,7 +247,7 @@ handle_cast({bridge_stop, PeerId}, #{nkmedia_fs_bridged_to:=PeerId}=Session) ->
             Session3 = reset_type(Session2),
             % In case we were linked
             nkmedia_session:unlink_session(self(), PeerId),
-            nkmedia_session:ext_ops(self(), #{type=>park}),
+            nkmedia_session:update_type(park, #{}),
             {noreply, Session3};
         {stop, Session2} ->
             nkmedia_session:stop(self(), bridge_stop),
@@ -282,8 +271,7 @@ handle_cast({fs_event, _FsId, _Event}, Session) ->
 handle_call({bridge, PeerId}, _From, Session) ->
     case fs_bridge(PeerId, Session) of
         ok ->
-            Ops = #{type=>bridge, type_ext=>#{peer_id=>PeerId}},
-            nkmedia_session:ext_ops(self(), Ops),
+            update_type(bridge, #{peer_id=>PeerId}),
             Session2 = ?SESSION(#{nkmedia_fs_bridged_to=>PeerId}, Session),
             ?LLOG(info, "received remote ~s bridge request", [PeerId], Session),
             {reply, ok, Session2};
@@ -307,63 +295,19 @@ is_supported(_) -> false.
 
 
 
--spec do_start_offeree(nkmedia_session:type(), nkmedia:offer(), session()) ->
-    {ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
-    {wait_server_ice, session()} | {wait_client_ice, session()} |
-    {error, nkservice:error(), session()} | continue().
-
-do_start_offeree(Type, Offer, Session) ->
-    case maps:get(trickle_ice, Offer, false) of
-        true ->
-            Info = #{offer=>Offer},
-            Session2 = ?SESSION(#{nkmedia_fs_trickle => Info}, Session),
-            {wait_client_ice, Session2};
-        false ->  
-            case get_fs_answer(Offer, Session) of
-                {ok, Answer, Session2}  ->
-                    case do_start_type(Type, Session2) of
-                        {ok, Reply, ExtOps, Session3} ->
-                            Reply2 = Reply#{answer=>Answer},
-                            ExtOps2 = ExtOps#{answer=>Answer},
-                            {ok, Reply2, ExtOps2, Session3};
-                        {error, Error, Session3} ->
-                            {error, Error, Session3}
-                    end;
-                {error, Error, Session2} ->
-                    {error, Error, Session2}
-            end
-    end.
-
-
--spec do_start_offerer(nkmedia_session:type(), session()) ->
-    {ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
-    {wait_server_ice, session()} | {wait_client_ice, session()} |
-    {error, nkservice:error(), session()} | continue().
-
-do_start_offerer(_Type, Session) ->
-    case get_fs_offer(Session) of
-        {ok, Offer, Session2} ->
-            Reply2 = #{offer=>Offer},
-            ExtOps = #{offer=>Offer},
-            {ok, Reply2, ExtOps, Session2};
-        {error, Error, Session2} ->
-            {error, Error, Session2}
-    end.
-
-
 %% @private
 -spec do_start_type(type(), session()) ->
-    {ok, Reply::term(), ext_ops(), session()} |
-    {error, nkservice:error(), session()}.
+    {ok, session()} | {error, nkservice:error(), session()}.
 
 do_start_type(Type, Session) ->
     case check_record(Session, Session) of
         {ok, Session2} ->
             case do_type(Type, Session2, Session2) of
-                {ok, Reply, ExtOps, Session3} ->
-                    {ok, Reply, ExtOps, Session3};
-                {error, Error} ->
-                    {error, Error, Session2}
+                {ok, TypeExt, Session3} ->
+                    update_type(Type, TypeExt),
+                    {ok, Session3};
+                {error, Error, Session3} ->
+                    {error, Error, Session3}
             end;
         {error, Error} ->
             {error, Error, Session}
@@ -371,23 +315,27 @@ do_start_type(Type, Session) ->
 
 
 %% @private
+-spec do_type(type(), map(), session()) ->
+    {ok, nkmedia_session:type_ext(), session()} |
+    {error, nkservice:error(), session()}.
+
 do_type(park, _Opts, #{type:=park}=Session) ->
-    {ok, #{}, #{}, Session};
+    {ok, #{}, Session};
     
 do_type(park, _Opts, Session) ->
     Session2 = reset_type(Session),
     case fs_transfer("park", Session) of
         ok ->
-            {ok, #{}, #{type=>park}, Session};
+            {ok, #{}, Session2};
         {error, Error} ->
-            {error, Error, Session}
+            {error, Error, Session2}
     end;
 
 do_type(echo, _Opts, Session) ->
     Session2 = reset_type(Session),
     case fs_transfer("echo", Session2) of
         ok ->
-            {ok, #{}, #{type=>echo}, Session2};
+            {ok, #{}, Session2};
         {error, Error} ->
             {error, Error, Session2}
     end;
@@ -402,8 +350,8 @@ do_type(mcu, Opts, Session) ->
     Cmd = [<<"conference:">>, Room, <<"@">>, RoomType],
     case fs_transfer(Cmd, Session) of
         ok ->
-            ExtOps = #{type=>mcu, type_ext=>#{room_id=>Room, room_type=>RoomType}},
-            {ok, #{room_id=>Room}, ExtOps, Session2};
+            TypeExt = #{room_id=>Room, room_type=>RoomType},
+            {ok, TypeExt, Session2};
         {error, Error} ->
             {error, Error, Session2}
     end;
@@ -414,8 +362,7 @@ do_type(bridge, #{peer_id:=PeerId}, #{session_id:=SessId}=Session) ->
         ok ->
             ?LLOG(info, "bridged accepted at ~s", [PeerId], Session),
             Session3 = ?SESSION(#{nkmedia_fs_bridged_to=>PeerId}, Session2),
-            ExtOps = #{type=>bridge, type_ext=>#{peer_id=>PeerId}},
-            {ok, #{}, ExtOps, Session3};
+            {ok, #{peer_id=>PeerId}, Session3};
         {error, Error} ->
             ?LLOG(notice, "bridged not accepted at ~s", [PeerId], Session),
             {error, Error, Session2}
@@ -430,10 +377,16 @@ get_fs_answer(Offer, #{nkmedia_fs_id:=FsId, session_id:=SessId}=Session) ->
     case nkmedia_fs_verto:start_in(SessId, FsId, Offer) of
         {ok, SDP} ->
             wait_park(Session),
-            {ok, #{sdp=>SDP}, Session};
+            Answer = #{
+                sdp => SDP,
+                trickle_ice => false,
+                sdp_type => webrtc,
+                backend => nkmedia_fs
+            },
+            {ok, Answer};
         {error, Error} ->
             ?LLOG(warning, "error calling start_in: ~p", [Error], Session),
-            {error, fs_get_answer_error, Session}
+            {error, fs_get_answer_error}
     end.
 
 
@@ -444,10 +397,16 @@ get_fs_offer(#{nkmedia_fs_id:=FsId, session_id:=SessId}=Session) ->
     Mod = fs_mod(Type),
     case Mod:start_out(SessId, FsId, #{}) of
         {ok, SDP} ->
-            {ok, #{sdp=>SDP}, Session};
+            Offer = #{
+                sdp => SDP,
+                trickle_ice => false,
+                sdp_type => Type,
+                backend => nkmedia_fs
+            },
+            {ok, Offer};
         {error, Error} ->
             ?LLOG(warning, "error calling start_out: ~p", [Error], Session),
-            {error, fs_get_offer_error, Session}
+            {error, fs_get_offer_error}
     end.
 
 
@@ -556,11 +515,11 @@ do_fs_event({bridge, PeerId}, bridge, Session) ->
             ?LLOG(warning, "received bridge for different peer ~s: ~p!", 
                   [PeerId, Ext], Session)
     end,
-    nkmedia_session:ext_ops(self(), #{type=>bridge, type_ext=>#{peer_id=>PeerId}});
+    update_type(bridge, #{peer_id=>PeerId});
 
 do_fs_event({bridge, PeerId}, Type, Session) ->
     ?LLOG(warning, "received bridge in ~p state", [Type], Session),
-    nkmedia_session:ext_ops(self(), #{type=>bridge, type_ext=>#{peer_id=>PeerId}});
+    update_type(bridge, #{peer_id=>PeerId});
 
 do_fs_event({mcu, McuInfo}, mcu, Session) ->
     ?LLOG(info, "FS MCU Info: ~p", [McuInfo], Session),
@@ -568,7 +527,7 @@ do_fs_event({mcu, McuInfo}, mcu, Session) ->
 
 do_fs_event(mcu, Type, Session) ->
     ?LLOG(warning, "received mcu in ~p state", [Type], Session),
-    nkmedia_session:ext_ops(self(), #{type=>mcu, type_ext=>#{}});
+    update_type(mcu, #{});
 
 do_fs_event({hangup, Reason}, _Type, Session) ->
     ?LLOG(warning, "received hangup from FS: ~p", [Reason], Session),
@@ -596,6 +555,11 @@ wait_park(Session) ->
         2000 -> 
             ?LLOG(warning, "parked not received", [], Session)
     end.
+
+
+%% @private
+update_type(Type, TypeExt) ->
+    nkmedia_session:set_type(self(), Type, TypeExt).
 
 
 %% @private

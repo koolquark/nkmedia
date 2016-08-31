@@ -28,7 +28,7 @@
 -module(nkmedia_kms_session).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/2, answer/3, candidate/2, server_trickle_ready/2, update/3, stop/2]).
+-export([start/2, offer/3, answer/3, candidate/2, update/3, stop/2]).
 -export([handle_call/3, handle_cast/2]).
 
 
@@ -60,15 +60,13 @@
         nkmedia_kms_proxy => endpoint(),
         nkmedia_kms_endpoint => endpoint(),
         nkmedia_kms_endpoint_type => webtrc | rtp,
+        nkmedia_kms_role => offerer | offeree,
         nkmedia_kms_source => endpoint(),
         nkmedia_kms_recorder => endpoint(),
         nkmedia_kms_player => endpoint(),
         nkmedia_kms_bridged_to => session_id(),
         nkmedia_kms_publish_to => nkmedia_room:id(),
-        nkmedia_kms_listen_to => nkmedia_room:id(),
-        nkmedia_kms_record_pos => integer(),
-        nkmedia_kms_player_loops => boolean() | integer(),
-        nkmedia_kms_trickle_ice => map()  
+        nkmedia_kms_listen_to => nkmedia_room:id()
     }.
 
 
@@ -82,8 +80,6 @@
     connect.
 
 -type update() :: atom().
-
--type ext_ops() :: nkmedia_session:ext_ops().
 
 -type opts() ::
     nkmedia_session:session() |
@@ -108,8 +104,7 @@
 
 %% @private
 -spec start(nkmedia_session:type(), session()) ->
-    {ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
-    {wait_server_ice, session()} | {wait_client_ice, session()} |
+    {ok, session()} |
     {error, nkservice:error(), session()} | continue().
 
 start(Type, Session) -> 
@@ -120,12 +115,7 @@ start(Type, Session) ->
                 {ok, Session3} ->
                     case nkmedia_kms_session_lib:create_proxy(Session3) of
                         {ok, Session4} ->
-                            case Session4 of
-                                #{offer:=#{sdp:=_}=Offer} ->
-                                    do_start_offeree(Type, Offer, Session4);
-                                _ ->
-                                    do_start_offerer(Type, Session4)
-                            end;
+                            do_start(Session4);
                         {error, Error} ->
                             {error, Error, Session3}
                     end;
@@ -137,78 +127,76 @@ start(Type, Session) ->
     end.
 
 
-%% @private
--spec answer(type(), nkmedia:answer(), session()) ->
-    {ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
-    {wait_server_ice, session()} | {wait_client_ice, session()} |
-    {error, nkservice:error(), session()} | continue().
+do_start(#{offer:=_}=Session) ->
+    %% Wait for offer callback
+    {ok, Session};
 
-answer(Type, Answer, Session) ->
-    case nkmedia_kms_session_lib:set_answer(Answer, Session) of
-        {ok, _} ->
-            case do_start_type(Type, Session) of
-                {ok, Reply, ExtOps, Session2} ->
-                    Reply2 = Reply#{answer=>Answer},
-                    ExtOps2 = ExtOps#{answer=>Answer},
-                    {ok, Reply2, ExtOps2, Session2};
-                {error, Error, Session2} ->
-                    {error, Error, Session2}
-            end;
+do_start(Session) ->
+    case create_endpoint_offerer(Session) of
+        {ok, Session2} ->
+            {ok, Session2};
+        {error, Error} ->
+            {error, Error, Session}
+    end.
+
+
+%% @private
+-spec offer(type(), nkmedia:offer(), session()) ->
+    {ok, session()} | {error, nkservice:error(), session()}.
+
+offer(_Type, #{backend:=nkmedia_kms}, Session) ->
+    {ok, Session};
+
+offer(Type, Offer, Session) ->
+    case create_endpoint_offeree(Offer, Session) of
+        {ok, Session2} ->
+            do_start_type(Type, Session2);
         {error, Error} ->
             {error, Error, Session}
     end.
 
 %% @private
+-spec answer(type(), nkmedia:answer(), session()) ->
+    {ok, session()} | {error, nkservice:error(), session()}.
+
+answer(_Type, #{backend:=nkmedia_kms}, Session) ->
+    {ok, Session};
+
+answer(Type, Answer, Session) ->
+    case nkmedia_kms_session_lib:set_answer(Answer, Session) of
+        ok ->
+            do_start_type(Type, Session);
+        {error, Error} ->
+            {error, Error, Session}
+    end.
+
+
+%% @private We received a candidate from the client
 -spec candidate(nkmedia:candidate(), session()) ->
-    {ok, session()}.
+    {ok, session()} | continue.
 
 candidate(#candidate{last=true}, Session) ->
-    ?LLOG(info, "sending last client candidate to Kurento", [], Session),
     {ok, Session};
 
 candidate(Candidate, Session) ->
-    ?LLOG(info, "sending client candidate to Kurento", [], Session),
     nkmedia_kms_session_lib:add_ice_candidate(Candidate, Session),
     {ok, Session}.
 
 
 %% @private
--spec server_trickle_ready([nkmedia:candidate()], session()) ->
-    {ok, Reply::map(), ext_ops(), session()} | 
-    {error, nkservice:error(), session()}.
-
-server_trickle_ready(Candidates, #{nkmedia_kms_trickle_ice:=Info}=Session) ->
-    case Info of
-        #{
-            reply := Reply,
-            extops := ExtOps,
-            answer := #{sdp:=SDP}=Answer
-        } ->
-            SDP2 = nksip_sdp_util:add_candidates(SDP, Candidates),
-            Answer2 = Answer#{sdp=>nksip_sdp:unparse(SDP2), trickle_ice=>false},
-            Reply2 = Reply#{answer=>Answer2}, 
-            ExtOps2 = ExtOps#{answer=>Answer2};
-        #{
-            offer := #{sdp:=SDP}=Offer
-        } ->
-            SDP2 = nksip_sdp_util:add_candidates(SDP, Candidates),
-            Offer2 = Offer#{sdp=>nksip_sdp:unparse(SDP2), trickle_ice=>false},
-            Reply2 = #{offer=>Offer2}, 
-            ExtOps2 = #{offer=>Offer2}
-    end,
-    Session2 = ?SESSION_RM(nkmedia_kms_trickle_ice, Session),
-    {ok, Reply2, ExtOps2, Session2}.
-
-
-%% @private
 -spec update(update(), Opts::map(), session()) ->
-    {ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
-    {error, term(), session()} | continue().
+    {ok, Reply::term(), session()} | {error, term(), session()} | continue().
 
 update(session_type, #{session_type:=Type}=Opts, Session) ->
     case check_record(Opts, Session) of
         {ok, Session2} ->
-            do_type(Type, Opts, Session2);
+            case do_type(Type, Opts, Session2) of
+                {ok, TypeExt, Session3} -> 
+                    update_type(Type, TypeExt),
+                    {ok, TypeExt, Session3};
+                {error, Error, Session3} ->
+                    {error, Error, Session3}
+            end;
         {error, Error} ->
             {error, Error, Session}
     end;
@@ -221,7 +209,7 @@ update(media, Opts, Session) ->
     case check_record(Opts, Session) of
         {ok, Session2} ->
             ok = nkmedia_kms_session_lib:update_media(Opts, Session),
-            {ok, #{}, #{}, Session2};
+            {ok, #{}, Session2};
         {error, Error} ->
             {error, Error, Session}
     end;
@@ -229,7 +217,7 @@ update(media, Opts, Session) ->
 update(recorder, #{operation:=Op}, Session) ->
     case nkmedia_kms_session_lib:recorder_op(Op, Session) of
         {ok, Session2} ->
-            {ok, #{}, #{}, Session2};
+            {ok, #{}, Session2};
         {error, Error} ->
             {error, Error, Session}
     end;
@@ -237,29 +225,22 @@ update(recorder, #{operation:=Op}, Session) ->
 update(recorder, _Opts, Session) ->
     {error, {missing_parameter, operation}, Session};
 
-update(player, #{operation:=Op}=Opts, Session) ->
-    case nkmedia_kms_session_lib:player_op(Op, Session) of
-        {ok, Reply, Session2} ->
-            {ok, Reply, #{}, Session2};
-        {ok, Session2} ->
-            {ok, #{}, #{}, Session2};
-        {error, Error} ->
-            {error, Error, Session}
-    end;
+update(player, #{operation:=Op}, Session) ->
+    nkmedia_kms_session_lib:player_op(Op, Session);
 
 update(get_stats, Opts, Session) ->
     Type1 = maps:get(media_type, Opts, <<"VIDEO">>),
     Type2 = nklib_util:to_upper(Type1),
     case nkmedia_kms_session_lib:get_stats(Type2, Session) of
         {ok, Stats} ->
-            {ok, #{stats=>Stats}, #{}, Session};
+            {ok, #{stats=>Stats}, Session};
         {error, Error} ->
             {error, Error, Session}
     end;
 
 update(print_info, _Opts, #{session_id:=SessId}=Session) ->
     nkmedia_kms_session_lib:print_info(SessId, Session),
-    {ok, #{}, #{}, Session};
+    {ok, #{}, Session};
 
 update(_Update, _Opts, _Session) ->
     continue.
@@ -283,8 +264,7 @@ handle_call({bridge, PeerSessId, PeerProxy, Opts},
              _From, #{nkmedia_kms_proxy:=Proxy}=Session) ->
     case connect_from_peer(PeerProxy, Opts, Session) of
         {ok, Session2} ->
-            ExtOp = #{type=>bridge, type_ext=>#{peer_id=>PeerSessId}},
-            nkmedia_session:ext_ops(self(), ExtOp),
+            update_type(bridge, #{peer_id=>PeerSessId}),
             Session3 = ?SESSION(#{nkmedia_kms_bridged_to=>PeerSessId}, Session2),
             {reply, {ok, Proxy}, Session3};
         {error, Error} ->
@@ -298,15 +278,24 @@ handle_call(get_publisher, _From, Session) ->
     {reply, {error, not_publishing}, Session}.
 
  
-%% @private
-%% @private Called from nkmedia_fs_callbacks
+% %% @private
+% handle_cast({kms_candidate, Candidate}, #{nkmedia_kms_role:=offerer}=Session) ->
+%     % Sent to remote party or buffer
+%     nkmedia_session:backend_candidate(self(), Candidate#candidate{type=offer}),
+%     {noreply, Session};
+
+% handle_cast({kms_candidate, Candidate}, #{nkmedia_kms_role:=offeree}=Session) ->
+%     % Sent to remote party or buffer
+%     nkmedia_session:candidate(self(), Candidate#candidate{type=answer}),
+%     {noreply, Session};
+
 handle_cast({bridge_stop, PeerId}, #{nkmedia_kms_bridged_to:=PeerId}=Session) ->
     case nkmedia_session:bridge_stop(PeerId, Session) of
         {ok, Session2} ->
             Session3 = reset_type(Session2),
             % In case we were linked
             nkmedia_session:unlink_session(self(), PeerId),
-            nkmedia_session:ext_ops(self(), #{type=>park}),
+            update_type(park, #{}),
             {noreply, Session3};
         {stop, Session2} ->
             nkmedia_session:stop(self(), bridge_stop),
@@ -319,12 +308,12 @@ handle_cast({bridge_stop, PeerId}, Session) ->
 
 handle_cast({end_of_stream, Player}, #{nkmedia_kms_player:=Player}=Session) ->
     case Session of
-        #{nkmedia_kms_player_loops:=true} ->
+        #{player_loops:=true} ->
             nkmedia_kms_session_lib:player_op(resume, Session),
             {noreply, Session};
-        #{nkmedia_kms_player_loops:=Loops} when is_integer(Loops), Loops > 1 ->
+        #{player_loops:=Loops} when is_integer(Loops), Loops > 1 ->
             nkmedia_kms_session_lib:player_op(resume, Session),
-            {noreply, ?SESSION(#{nkmedia_kms_player_loops=>Loops-1}, Session)};
+            {noreply, ?SESSION(#{player_loops=>Loops-1}, Session)};
         _ ->
             % Launch player stop event
             {noreply, Session}
@@ -360,32 +349,16 @@ is_supported(_) -> false.
 
 
 %% @private
--spec do_start_offeree(nkmedia_session:type(), nkmedia:offer(), session()) ->
-    {ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
-    {wait_server_ice, session()} | {wait_client_ice, session()} |
-    {error, nkservice:error(), session()} | continue().
+-spec do_start_type(type(), session()) ->
+    {ok, session()} | {error, nkservice:error(), session()}.
 
-do_start_offeree(Type, Offer, Session) ->
-    case create_endpoint_offeree(Offer, Session) of
-        {ok, #{trickle_ice:=AnsTrickleIce}=Answer, Session2} ->
-            case do_start_type(Type, Session2) of
-                {ok, Reply, ExtOps, Session3} ->
-                    SessTrickleIce = maps:get(trickle_ice, Session3, false),
-                    case AnsTrickleIce andalso not SessTrickleIce of
-                        true -> 
-                            Info = #{
-                                reply => Reply,
-                                extops => ExtOps,
-                                answer => Answer
-                            },
-                            Update = #{nkmedia_kms_trickle_ice => Info},
-                            Session4 = ?SESSION(Update, Session3),
-                            {wait_server_ice, Session4};
-                        false ->
-                            Reply2 = Reply#{answer=>Answer},
-                            ExtOps = ExtOps#{answer=>Answer},
-                            {ok, Reply2, ExtOps, Session3}
-                    end;
+do_start_type(Type, Session) ->
+    case check_record(Session, Session) of
+        {ok, Session2} ->
+            case do_type(Type, Session2, Session2) of
+                {ok, TypeExt, Session3} ->                    
+                    update_type(Type, TypeExt),
+                    {ok, Session3};
                 {error, Error, Session3} ->
                     {error, Error, Session3}
             end;
@@ -395,65 +368,21 @@ do_start_offeree(Type, Offer, Session) ->
 
 
 %% @private
--spec do_start_offerer(type(), session()) ->
-    {ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
-    {wait_server_ice, session()} | {wait_client_ice, session()} |
-    {error, nkservice:error(), session()} | continue().
-
-do_start_offerer(_Type, Session) ->
-    case create_endpoint_offerer(Session) of
-        {ok, #{trickle_ice:=OffTrickleIce}=Offer, Session2} ->
-            SessTrickleIce = maps:get(trickle_ice, Session2, false),
-            case OffTrickleIce andalso not SessTrickleIce of
-                true ->
-                    Info = #{offer => Offer},
-                    Update = #{nkmedia_kms_trickle_ice => Info},
-                    Session3 = ?SESSION(Update, Session2),
-                    {wait_server_ice, Session3};
-                false ->
-                    {ok, #{offer=>Offer}, #{offer=>Offer}, Session2}
-            end;
-        {error, Error} ->
-            {error, Error, Session}
-    end.
-
-
-%% @private
--spec do_start_type(type(), session()) ->
-    {ok, Reply::map(), ext_ops(), session()} |
-    {error, nkservice:error(), session()}.
-
-do_start_type(Type, Session) ->
-    case check_record(Session, Session) of
-        {ok, Session2} ->
-            case do_type(Type, Session2, Session2) of
-                {ok, Reply, ExtOps, Session3} ->
-                    {ok, Reply, ExtOps, Session3};
-                {error, Error, Session3} ->
-                    {error, Error, Session2, Session3}
-            end;
-        {error, Error} ->
-            {error, Error, Session}
-    end.
-
-
-%% @private
 -spec do_type(atom(), map(), session()) ->
-    {ok, Reply::map(), ext_ops(), session()} |
-    {error, nkservice:error(), session()} | continue().
+    {ok, nkmedia_session:type_ext(), session()} |
+    {error, nkservice:error(), session()}.
 
 do_type(park, _Opts, Session) ->
     Session2 = reset_type(Session),
     {ok, Session3} = nkmedia_kms_session_lib:park(Session2),
-    {ok, #{}, #{type=>park}, Session3};
+    {ok, #{}, Session3};
 
-do_type(echo, Opts, #{session_id:=SessId, nkmedia_kms_proxy:=Proxy}=Session) ->
+do_type(echo, Opts, #{nkmedia_kms_proxy:=Proxy}=Session) ->
     Session2 = reset_type(Session),
-    % {ok, #{}, #{type=>echo}, Session2};
     ok = connect_to_proxy(Opts, Session2),
     case connect_from_peer(Proxy, Opts, Session2) of
         {ok, Session3} ->
-            {ok, #{}, #{type=>echo}, Session3};
+            {ok, #{}, Session3};
         {error, Error} ->
             {error, Error, Session2}
     end;
@@ -466,10 +395,9 @@ do_type(bridge, #{peer_id:=PeerId}=Opts, Session) ->
             case connect_from_peer(PeerProxy, Opts, Session2) of
                 {ok, Session3} ->
                     Session4 = ?SESSION(#{nkmedia_kms_bridged_to=>PeerId}, Session3),
-                    ExtOps = #{type=>bridge, type_ext=>#{peer_id=>PeerId}},
-                    {ok, #{}, ExtOps, Session4};
+                    {ok, #{peer_id=>PeerId}, Session4};
                 {error, Error} ->
-                    {error, Error}
+                    {error, Error, Session2}
             end;
         {error, Error} ->
             {error, Error, Session2}
@@ -483,10 +411,8 @@ do_type(publish, Opts, #{session_id:=SessId}=Session) ->
             Update = {started_publisher, SessId, #{pid=>self()}},
             %% TODO: Link with room
             {ok, _RoomPid} = nkmedia_room:update(RoomId, Update),
-            Reply = #{room_id=>RoomId},
-            ExtOps = #{type=>publish, type_ext=>#{room_id=>RoomId}},
             Session3 = ?SESSION(#{nkmedia_kms_publish_to=>RoomId}, Session2),
-            {ok, Reply, ExtOps, Session3};
+            {ok, #{room_id=>RoomId}, Session3};
         {error, Error} ->
             {error, Error, Session2}
     end;
@@ -500,13 +426,9 @@ do_type(listen, #{publisher_id:=PeerId}=Opts, #{session_id:=SessId}=Session) ->
                     Update = {started_listener, SessId, #{peer_id=>PeerId, pid=>self()}},
                     %% TODO: Link with room
                     {ok, _RoomPid} = nkmedia_room:update(RoomId, Update),
-                    Reply = #{room_id=>RoomId},
-                    ExtOps = #{
-                        type => listen, 
-                        type_ext => #{room_id=>RoomId, publisher_id=>PeerId}
-                    },
+                    TypeExt = #{room_id=>RoomId, publisher_id=>PeerId},
                     Session4 = ?SESSION(#{nkmedia_kms_listen_to=>RoomId}, Session3),
-                    {ok, Reply, ExtOps, Session4};
+                    {ok, TypeExt, Session4};
                 {error, Error} ->
                     {error, Error, Session2}
             end;
@@ -520,7 +442,7 @@ do_type(listen, _Opts, Session) ->
 do_type(connect, Opts, #{peer_id:=PeerId}=Session) ->
     case connect_from_session(PeerId, Opts, Session) of
         ok ->
-            {ok, #{}, #{}, Session};
+            {ok, #{}, Session};
         {error, Error} ->
             {error, Error, Session}
     end;
@@ -529,13 +451,10 @@ do_type(play, #{player_uri:=Uri}=Opts, Session) ->
     Session2 = reset_type(Session),
     case nkmedia_kms_session_lib:create_player(Uri, Opts, Session2) of
         {ok, Session3} ->
-            Loops = maps:get(player_loops, Session, false),
-            ExtOps = #{
-                type=>play, 
-                type_ext => #{player_uri=>Uri, player_loops=>Loops}
-            },
-            Session4 = ?SESSION(#{nkmedia_kms_player_loops=>Loops}, Session3),
-            {ok, #{}, ExtOps, Session4};
+            Loops = maps:get(player_loops, Opts, false),
+            TypeExt = #{player_uri=>Uri, player_loops=>Loops},
+            Session4 = ?SESSION(#{player_loops=>Loops}, Session3),
+            {ok, TypeExt, Session4};
         {error, Error} ->
             {error, Error, Session2}
     end;
@@ -598,7 +517,7 @@ get_pipeline_from_room(RoomId, Session) ->
 
 %% @private
 -spec create_endpoint_offeree(nkmedia:offer(), session()) ->
-    {ok, nkmedia:answer(), session()} | {error, nkservice:error()}.
+    {ok, session()} | {error, nkservice:error()}.
 
 create_endpoint_offeree(#{sdp_type:=rtp}=Offer, Session) ->
     nkmedia_kms_session_lib:create_rtp(Offer, Session);
@@ -609,7 +528,7 @@ create_endpoint_offeree(Offer, Session) ->
 
 %% @private
 -spec create_endpoint_offerer(session()) ->
-    {ok, nkmedia:answer(), session()} | {error, nkservice:error()}.
+    {ok, session()} | {error, nkservice:error()}.
 
 create_endpoint_offerer(#{sdp_type:=rtp}=Session) ->
     nkmedia_kms_session_lib:create_rtp(#{}, Session);
@@ -780,6 +699,11 @@ get_peer_proxy(SessId, _Session) ->
 
 get_peer_publisher(SessId) ->
     session_call(SessId, get_publisher).
+
+
+%% @private
+update_type(Type, TypeExt) ->
+    nkmedia_session:set_type(self(), Type, TypeExt).
 
 
 %% @private

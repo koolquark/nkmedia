@@ -81,10 +81,11 @@ kms_event(SessId, <<"OnIceCandidate">>, Data) ->
         }
     } = Data,
     Candidate = #candidate{m_id=MId, m_index=MIndex, a_line=ALine},
-    nkmedia_session:server_candidate(SessId, Candidate);
+    nkmedia_session:backend_candidate(SessId, Candidate);
 
 kms_event(SessId, <<"OnIceGatheringDone">>, _Data) ->
-    nkmedia_session:server_candidate(SessId, #candidate{last=true});
+    Candidate = #candidate{last=true},
+    nkmedia_session:backend_candidate(SessId, Candidate);
 
 kms_event(SessId, <<"EndOfStream">>, Data) ->
     #{<<"source">>:=Player} = Data,
@@ -188,13 +189,13 @@ create_proxy(#{nkmedia_kms_id:=KmsId, nkmedia_kms_pipeline:=Pipeline}=Session) -
 
 %% @private
 -spec create_webrtc(nkmedia:offer()|#{}, session()) ->
-    {ok, nkmedia:offer()|nkmedia:answer(), session()} | {error, nkservice:error()}.
+    {ok, session()} | {error, nkservice:error()}.
 
 create_webrtc(Offer, Session) ->
     case create_endpoint('WebRtcEndpoint', #{}, Session) of
         {ok, EP} ->
-            Update = #{nkmedia_kms_endpoint=>EP, nkmedia_kms_endpoint_type=>webrtc},
-            Session2 = ?SESSION(Update, Session),
+            Update1 = #{nkmedia_kms_endpoint=>EP, nkmedia_kms_endpoint_type=>webrtc},
+            Session2 = ?SESSION(Update1, Session),
             subscribe(EP, 'Error', Session2),
             subscribe(EP, 'OnIceComponentStateChanged', Session2),
             subscribe(EP, 'OnIceCandidate', Session2),
@@ -208,14 +209,27 @@ create_webrtc(Offer, Session) ->
             subscribe(EP, 'ElementDisconnected', Session2),
             subscribe(EP, 'MediaSessionStarted', Session2),
             subscribe(EP, 'MediaSessionTerminated', Session2),
-            case Offer of
+            Base = Offer#{
+                sdp_type => webrtc, 
+                trickle_ice => true,
+                backend => nkmedia_kms
+            },
+            Update2 = case Offer of
                 #{sdp:=SDP} ->
-                    {ok, SDP2} = invoke(EP, processOffer, #{offer=>SDP}, Session2);
+                    {ok, SDP2} = invoke(EP, processOffer, #{offer=>SDP}, Session2),
+                    #{
+                        answer => Base#{sdp=>SDP2},
+                        nkmedia_kms_role => offeree
+                    };
                 _ ->
-                    {ok, SDP2} = invoke(EP, generateOffer, #{}, Session2)
+                    {ok, SDP2} = invoke(EP, generateOffer, #{}, Session2),
+                    #{
+                        offer => Base#{sdp=>SDP2},
+                        nkmedia_kms_role => offerer
+                    }
             end,
             ok = invoke(EP, gatherCandidates, #{}, Session2),
-            {ok, Offer#{sdp=>SDP2, sdp_type=>webrtc, trickle_ice=>true}, Session2};
+            {ok, ?SESSION(Update2, Session2)};
         {error, Error} ->
            {error, Error}
     end.
@@ -223,7 +237,7 @@ create_webrtc(Offer, Session) ->
 
 %% @private
 -spec create_rtp(nkmedia:offer()|#{}, session()) ->
-    {ok, nkmedia:offer()|nkmedia:answer(), session()} | {error, nkservice:error()}.
+    {ok, session()} | {error, nkservice:error()}.
 
 create_rtp(Offer, Session) ->
     case create_endpoint('RtpEndpoint', #{}, Session) of
@@ -239,14 +253,20 @@ create_rtp(Offer, Session) ->
             subscribe(EP, 'ElementDisconnected', Session2),
             subscribe(EP, 'MediaSessionStarted', Session2),
             subscribe(EP, 'MediaSessionTerminated', Session2),
-            case Offer of
+            Base = Offer#{
+                sdp_type => rtp, 
+                trickle_ice => false,
+                backend => nkmedia_kms
+            },
+            Session3 = case Offer of
                 #{sdp:=SDP} ->
                     {ok, SDP2} = invoke(EP, processOffer, #{offer=>SDP}, Session2),
-                    io:format("SDP2: ~s\n", [SDP2]);
+                    ?SESSION(#{answer=>Base#{sdp=>SDP2}}, Session2);
                 _ ->
-                    {ok, SDP2} = invoke(EP, generateOffer, #{}, Session2)
+                    {ok, SDP2} = invoke(EP, generateOffer, #{}, Session2),
+                    ?SESSION(#{offer=>Base#{sdp=>SDP2}}, Session2)
             end,
-            {ok, Offer#{sdp=>SDP2, sdp_type=>rtp, trickle_ice=>false}, Session2};
+            {ok, Session3};
         {error, Error} ->
            {error, Error}
     end.
@@ -254,10 +274,15 @@ create_rtp(Offer, Session) ->
 
 %% @private
 -spec set_answer(nkmedia:answer(), session()) ->
-    {ok, SDP::binary()} | {error, nkservice:error()}.
+    ok | {error, nkservice:error()}.
 
 set_answer(#{sdp:=SDP}, #{nkmedia_kms_endpoint:=EP}=Session) ->
-    invoke(EP, processAnswer, #{answer=>SDP}, Session).
+    case invoke(EP, processAnswer, #{answer=>SDP}, Session) of
+        {ok, _SDP2} -> 
+            ok;
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 %% @private
@@ -311,11 +336,10 @@ create_recorder(Opts, #{nkmedia_kms_proxy:=Proxy}=Session) ->
 -spec make_record_uri(session()) ->
     {binary(), session()}.
 
-make_record_uri(#{session_id:=SessId}=Session) ->
-    Pos = maps:get(nkmedia_kms_record_pos, Session, 0),
-    Name = io_lib:format("~s_p~4..0w.webm", [SessId, Pos]),
-    File = filename:join(<<"/tmp/record">>, list_to_binary(Name)),
-    {<<"file://", File/binary>>, ?SESSION(#{nkmedia_kms_record_pos=>Pos+1}, Session)}.
+make_record_uri(Session) ->
+    {Name, Session2} = nkmedia_session:get_session_file(Session),
+    File = filename:join(<<"/tmp/record">>, Name),
+    {<<"file://", File/binary>>, Session2}.
 
 
 %% @private
@@ -381,20 +405,20 @@ create_player(Uri, Opts, Session) ->
 
 %% @private
 -spec player_op(term(), session()) ->
-    {ok, session()} | {ok, term(), session()} | {error, nkservice:error()}.
+    {ok, term(), session()} | {error, nkservice:error()}.
 
 player_op(pause, #{nkmedia_kms_player:=PlayerEP}=Session) ->
     ok = invoke(PlayerEP, pause, #{}, Session),
-    {ok, Session};
+    {ok, #{}, Session};
 
 player_op(resume, #{nkmedia_kms_player:=PlayerEP}=Session) ->
     ok = invoke(PlayerEP, play, #{}, Session),
-    {ok, Session};
+    {ok, #{}, Session};
 
 player_op(stop, #{nkmedia_kms_player:=PlayerEP}=Session) ->
     invoke(PlayerEP, stop, #{}, Session),
     release(PlayerEP, Session),
-    {ok, ?SESSION_RM(nkmedia_kms_player, Session)};
+    {ok, #{}, ?SESSION_RM(nkmedia_kms_player, Session)};
 
 player_op(get_info, #{nkmedia_kms_player:=PlayerEP}=Session) ->
     {ok, Data} = invoke(PlayerEP, getVideoInfo, #{}, Session),
@@ -428,7 +452,7 @@ player_op(get_position, #{nkmedia_kms_player:=PlayerEP}=Session) ->
 player_op({set_position, Pos}, #{nkmedia_kms_player:=PlayerEP}=Session) ->
     case invoke(PlayerEP, setPosition, #{position=>Pos}, Session) of
         ok ->
-            {ok, Session};
+            {ok, #{}, Session};
         {error, Error} ->
             {error, Error}
     end;

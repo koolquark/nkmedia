@@ -122,7 +122,7 @@ nkmedia_janus_invite(_SrvId, _CallId, _Offer, Janus) ->
 % an answer for an invite we received, we set the answer in the session
 % (we are ignoring the possible proxy answer in the reponse)
 nkmedia_janus_answer(_CallId, {nkmedia_session, SessId, _Pid}, Answer, Janus) ->
-    case nkmedia_session:answer_async(SessId, Answer) of
+    case nkmedia_session:set_answer(SessId, Answer) of
         ok ->
             {ok, Janus};
         {error, Error} ->
@@ -165,7 +165,7 @@ nkmedia_janus_bye(_CallId, _Link, Janus) ->
     ok | {hangup, nkservice:error(), janus()} | continue().
 
 nkmedia_janus_start(SessId, Answer, Janus) ->
-    case nkmedia_session:answer_async(SessId, Answer, #{}) of
+    case nkmedia_session:set_answer(SessId, Answer, #{}) of
         ok ->
             {ok, Janus};
         {error, Error} ->
@@ -179,10 +179,7 @@ nkmedia_janus_start(SessId, Answer, Janus) ->
     {ok, janus()}.
 
 nkmedia_janus_candidate(Candidate, #{link:={nkmedia_session, SessId, _Pid}}=Janus) ->
-    #{role:=Role} = Janus,
-    % If the session has two webrtc endpoints, we must tell the role (caller or callee)
-    Candidate2 = Candidate#candidate{meta={role, Role}},
-    ok = nkmedia_session:client_candidate(SessId, Candidate2),
+    ok = nkmedia_session:candidate(SessId, Candidate),
     {ok, Janus};
 
 nkmedia_janus_candidate(_Candidate, Janus) ->

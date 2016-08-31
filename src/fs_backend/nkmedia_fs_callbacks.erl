@@ -26,9 +26,9 @@
          plugin_start/2, plugin_stop/2]).
 -export([error_code/1]).
 -export([nkmedia_fs_get_mediaserver/1]).
--export([nkmedia_session_start/2, nkmedia_session_answer/3,
-         nkmedia_session_update/3, nkmedia_session_stop/2,
-         nkmedia_session_client_trickle_ready/2,
+-export([nkmedia_session_start/2, nkmedia_session_stop/2,
+         nkmedia_session_offer/3, nkmedia_session_answer/3,
+         nkmedia_session_update/3, 
          nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2]).
 -export([api_syntax/4]).
 -export([nkdocker_notify/2]).
@@ -143,7 +143,15 @@ nkmedia_session_start(Type, Session) ->
 
 
 %% @private
-nkmedia_session_answer(Type, Answer, #{backend:=nkmedia_fs}=Session) ->
+nkmedia_session_offer(Type, Offer, #{nkmedia_fs_id:=_}=Session) ->
+    nkmedia_fs_session:offer(Type, Offer, Session);
+
+nkmedia_session_offer(_Type, _Offer, _Session) ->
+    continue.
+
+
+%% @private
+nkmedia_session_answer(Type, Answer, #{nkmedia_fs_id:=_}=Session) ->
     nkmedia_fs_session:answer(Type, Answer, Session);
 
 nkmedia_session_answer(_Type, _Answer, _Session) ->
@@ -151,7 +159,7 @@ nkmedia_session_answer(_Type, _Answer, _Session) ->
 
 
 %% @private
-nkmedia_session_update(Update, Opts, #{backend:=nkmedia_fs}=Session) ->
+nkmedia_session_update(Update, Opts, #{nkmedia_fs_id:=_}=Session) ->
    nkmedia_fs_session:update(Update, Opts, Session);
 
 nkmedia_session_update(_Update, _Opts, _Session) ->
@@ -159,15 +167,7 @@ nkmedia_session_update(_Update, _Opts, _Session) ->
 
 
 %% @private
-nkmedia_session_client_trickle_ready(Candidates, #{backend:=nkmedia_fs}=Session) ->
-    nkmedia_fs_session:client_trickle_ready(Candidates, Session);
-
-nkmedia_session_client_trickle_ready(_Candidates, _Session) ->
-    continue.
-
-
-%% @private
-nkmedia_session_stop(Reason, #{backend:=nkmedia_fs}=Session) ->
+nkmedia_session_stop(Reason, #{nkmedia_fs_id:=_}=Session) ->
     nkmedia_fs_session:stop(Reason, Session);
 
 nkmedia_session_stop(_Reason, _Session) ->

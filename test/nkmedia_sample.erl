@@ -93,7 +93,7 @@ restart() ->
 %                 {invite, User} ->
 %                     case find_user(User) of
 %                         {webrtc, Inv} ->
-%                             {ok, _} = nkmedia_session:answer(SessId, invite, 
+%                             {ok, _} = nkmedia_session:set_answer(SessId, invite, 
 %                                                              #{dest=>Inv}),
 %                             {ok, SessId};
 %                         not_found ->
@@ -101,10 +101,10 @@ restart() ->
 %                             {error, user_not_found}
 %                     end;
 %                 {room, Room2} ->
-%                     nkmedia_session:answer(SessId, publish, #{room=>Room2}),
+%                     nkmedia_session:set_answer(SessId, publish, #{room=>Room2}),
 %                     {ok, SessId};
 %                 {mcu, Room2} ->
-%                     nkmedia_session:answer(SessId, mcu, #{room=>Room2}),
+%                     nkmedia_session:set_answer(SessId, mcu, #{room=>Room2}),
 %                     {ok, SessId}
 %             end;
 %         _ ->
@@ -115,7 +115,7 @@ restart() ->
 % mcu2publish() ->
 %     {ok, S, _} = nkmedia_session:start(sample, #{}),
 %     {ok, _} = nkmedia_session:offer(S, park, #{}),
-%     {ok, _} = nkmedia_session:answer(S, publish, #{}),
+%     {ok, _} = nkmedia_session:set_answer(S, publish, #{}),
 %     S.
 
 
@@ -125,9 +125,9 @@ restart() ->
 %     {ok, _} = nkmedia_session:offer(SessId, {play, Id}, #{}),
 %     case Dest of
 %         {call, Call} ->
-%             {ok, _} = nkmedia_session:answer(SessId, {call, Call}, #{});
+%             {ok, _} = nkmedia_session:set_answer(SessId, {call, Call}, #{});
 %         {room, Room2} ->
-%             nkmedia_session:answer(SessId, {publish, Room2}, #{})
+%             nkmedia_session:set_answer(SessId, {publish, Room2}, #{})
 %     end,
 %     listener(SessId, {call, "c"}).
 

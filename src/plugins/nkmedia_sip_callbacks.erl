@@ -175,8 +175,8 @@ nkmedia_sip_invite_answered({nkmedia_call, CallId, _Pid}, Answer) ->
     nkmedia_call:answered(CallId, {nkmedia_sip, self()}, Answer);
 
 nkmedia_sip_invite_answered({nkmedia_session, SessId, _Pid}, Answer) ->
-    case nkmedia_session:answer(SessId, Answer) of
-        {ok, _} -> ok;
+    case nkmedia_session:set_answer(SessId, Answer) of
+        ok -> ok;
         {error, Error} -> {error, Error}
     end;
 
@@ -467,7 +467,7 @@ start_session(SrvId, Dest, Offer) ->
     case Dest of
         <<"sip-", Callee/binary>> ->
             case nkmedia_session:start(SrvId, p2p, Config1) of
-                {ok, SessId, SessPid, #{}} ->
+                {ok, SessId, SessPid} ->
                     {ok, {sip, Callee, Offer, SessId, SessPid}};
                 {error, Error} ->
                     {error, Error}
@@ -475,16 +475,26 @@ start_session(SrvId, Dest, Offer) ->
         <<"verto-", Callee/binary>> ->
             Config2 = Config1#{backend => nkmedia_janus},
             case nkmedia_session:start(SrvId, proxy, Config2) of
-                {ok, SessId, SessPid, #{offer:=Offer2}} ->
-                    {ok, {verto, Callee, Offer2, SessId, SessPid}};
+                {ok, SessId, SessPid} ->
+                    case nkmedia_session:get_offer(SessPid) of
+                        {ok, Offer2} ->
+                            {ok, {verto, Callee, Offer2, SessId, SessPid}};
+                        {error, Error} ->
+                            {error, Error}
+                    end;
                 {error, Error} ->
                     {error, Error}
             end;
         Callee ->
             Config2 = Config1#{backend => nkmedia_janus},
             case nkmedia_session:start(SrvId, proxy, Config2) of
-                {ok, SessId, SessPid, #{offer:=Offer2}} ->
-                    {ok, {user, Callee, Offer2, SessId, SessPid}};
+                {ok, SessId, SessPid} ->
+                    case nkmedia_session:get_offer(SessPid) of
+                        {ok, Offer2} ->     
+                            {ok, {user, Callee, Offer2, SessId, SessPid}};
+                        {error, Error} ->
+                            {error, Error}
+                    end;
                 {error, Error} ->
                     {error, Error}
             end

@@ -148,15 +148,12 @@ nkmedia_verto_invite(SrvId, CallId, Offer, Verto) ->
 % (we are ignoring the possible proxy answer in the reponse)
 nkmedia_verto_answer(_CallId, {nkmedia_session, SessId, _Pid}, Answer, Verto) ->
     Self = self(),
-    spawn(
-        fun() ->
-            case nkmedia_session:answer(SessId, Answer) of
-                {ok, _} ->
-                    ok;
-                {error, Error} -> 
-                    nkmedia_verto:hangup(Self, Error)
-            end
-        end),
+    case nkmedia_session:set_answer(SessId, Answer) of
+        ok ->
+            ok;
+        {error, Error} -> 
+            nkmedia_verto:hangup(Self, Error)
+    end,
     {ok, Verto};
 
 % If the registered process happens to be {nkmedia_call, ...} and we have
@@ -351,7 +348,7 @@ start_session(SrvId, CallId, #{dest:=Dest} = Offer) ->
     case Dest of
         <<"p2p:", Callee/binary>> ->
             case nkmedia_session:start(SrvId, p2p, Config1) of
-                {ok, SessId, SessPid, #{}} ->
+                {ok, SessId, SessPid} ->
                     {ok, {user, Callee, Offer, SessId, SessPid}};
                 {error, Error} ->
                     {error, Error}
@@ -359,24 +356,39 @@ start_session(SrvId, CallId, #{dest:=Dest} = Offer) ->
         <<"verto:", Callee/binary>> ->
             Config2 = Config1#{backend => nkmedia_janus},
             case nkmedia_session:start(SrvId, proxy, Config2) of
-                {ok, SessId, SessPid, #{offer:=Offer2}} ->
-                    {ok, {verto, Callee, Offer2, SessId, SessPid}};
+                {ok, SessId, SessPid} ->
+                    case nkmedia_session:get_offer(SessPid) of
+                        {ok, Offer2} ->
+                            {ok, {verto, Callee, Offer2, SessId, SessPid}};
+                        {error, Error} ->
+                            {error, Error}
+                    end;
                 {error, Error} ->
                     {error, Error}
             end;
         <<"sip:", Callee/binary>> ->
             Config2 = Config1#{backend => nkmedia_janus, sdp_type => rtp},
             case nkmedia_session:start(SrvId, proxy, Config2) of
-                {ok, SessId, SessPid, #{offer:=Offer2}} ->
-                    {ok, {sip, Callee, Offer2, SessId, SessPid}};
+                {ok, SessId, SessPid} ->
+                    case nkmedia_session:get_offer(SessPid) of
+                        {ok, Offer2} ->
+                            {ok, {sip, Callee, Offer2, SessId, SessPid}};
+                        {error, Error} ->
+                            {error, Error}
+                    end;
                 {error, Error} ->
                     {error, Error}
             end;
         Callee ->
             Config2 = Config1#{backend => nkmedia_janus},
             case nkmedia_session:start(SrvId, proxy, Config2) of
-                {ok, SessId, SessPid, #{offer:=Offer2}} ->
-                    {ok, {user, Callee, Offer2, SessId, SessPid}};
+                {ok, SessId, SessPid} ->
+                    case nkmedia_session:get_offer(SessPid) of
+                        {ok, Offer2} ->
+                            {ok, {user, Callee, Offer2, SessId, SessPid}};
+                        {error, Error} ->
+                            {error, Error}
+                    end;
                 {error, Error} ->
                     {error, Error}
             end

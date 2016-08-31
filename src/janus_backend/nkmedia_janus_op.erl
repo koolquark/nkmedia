@@ -48,7 +48,7 @@
 -define(OP_TIMEOUT, 4*60*60).   
 -define(KEEPALIVE, 20).
 
--define(DO_TRICKLE, false).     % With true, Verto clients don't work
+-define(USING_TRICKLE, false).     % Change to false if Verto client has no trickle
 
 
 %% ===================================================================
@@ -449,7 +449,7 @@ handle_call({sip_registered, Contact}, _From, #state{status=Status, wait=Wait}=S
 handle_call({sip_invite, Handle, Dialog, SDP}, _From, 
             #state{status=wait, wait=to_sip_invite}=State) ->
     #state{from=UserFrom} = State,
-    gen_server:reply(UserFrom, {ok, #{sdp=>SDP, sdp_type=>rtp}}),
+    gen_server:reply(UserFrom, {ok, sdp_rtp(SDP)}),
     State2 = State#state{sip_handle=Handle, sip_dialog=Dialog, from=undefined},
     reply(ok, wait(to_sip_answer, State2));
 
@@ -541,10 +541,11 @@ handle_cast({invite, {error, Error}}, #state{status=wait, wait=from_sip_invite}=
 
 handle_cast({candidate, Candidate}, State) ->
     #state{janus_sess_id=SessId, handle_id=Handle1, handle_id2=Handle2, conn=Pid} =State,
-    Handle = case Candidate of
-        #candidate{meta={role, callee}} when is_integer(Handle2) -> Handle2;
-        _ -> Handle1
-    end,
+    Handle = Handle1,
+    % case Candidate of
+    %     #candidate{type=answer} when is_integer(Handle2) -> Handle2;
+    %     _ -> Handle1
+    % end,
     case nkmedia_janus_client:candidate(Pid, SessId, Handle, Candidate) of
         ok ->
             noreply(State);
@@ -635,15 +636,20 @@ terminate(Reason, #state{from=From, status=Status}=State) ->
 %% Echo
 %% ===================================================================
 
+%% If we set trickle=>true (or not including it) Verto does not work
+%% The answer seems to be the same, but Janus does not send media 
+%% (until it receives the final candidate?)
+%% However, with trickle=false, Verto works and also the candidates are processed
+
 %% @private Echo plugin
 do_echo(#{sdp:=SDP}, #state{opts=Opts}=State) ->
     {ok, Handle} = attach(echotest, State),
     Body = get_body(Opts),
-    Jsep = #{sdp=>SDP, type=>offer, trickle=>?DO_TRICKLE},
+    Jsep = #{sdp=>SDP, type=>offer, trickle=>false},
     case message(Handle, Body, Jsep, State) of
         {ok, #{<<"result">>:=<<"ok">>}, #{<<"sdp">>:=SDP2}} ->
             State2 = State#state{handle_id=Handle},
-            reply({ok, #{sdp=>SDP2}}, status(echo, State2));
+            reply({ok, sdp(SDP2)}, status(echo, State2));
         {error, Error} ->
             ?LLOG(notice, "echo error: ~p", [Error], State),
             reply_stop({error, Error}, State)
@@ -682,7 +688,7 @@ do_play(File, State) ->
                             #{<<"sdp">>:=SDP}
                         } ->
                             State3 = wait(play_answer, State2),
-                            reply({ok, #{sdp=>SDP}}, State3);
+                            reply({ok, sdp(SDP)}, State3);
                         {error, Error} ->
                             ?LLOG(notice, "play error1: ~p", [Error], State),
                             reply_stop({error, Error}, State2)
@@ -700,7 +706,7 @@ do_play(File, State) ->
 %% @private Caller answers
 do_play_answer(#{sdp:=SDP}, #state{handle_id=Handle} = State) ->
     Body = #{request=>start},
-    Jsep = #{sdp=>SDP, type=>answer, trickle=>?DO_TRICKLE},
+    Jsep = #{sdp=>SDP, type=>answer, trickle=>false},
     case message(Handle, Body, Jsep, State) of
         {ok, #{<<"result">>:=#{<<"status">>:=<<"playing">>}}, _} ->
             reply(ok, status(play, State));
@@ -748,7 +754,7 @@ do_videocall_2(SDP, State) ->
 do_videocall_3(SDP, State) ->
     #state{handle_id = Handle, handle_id2 = Handle2} = State,
     Body = #{request=>call, username=>nklib_util:to_binary(Handle2)},
-    Jsep = #{sdp=>SDP, type=>offer, trickle=>?DO_TRICKLE},
+    Jsep = #{sdp=>SDP, type=>offer, trickle=>false},
     case message(Handle, Body, Jsep, State) of
         {ok, #{<<"result">>:=#{<<"event">>:=<<"calling">>}}, _} ->
             noreply(wait(videocall_offer, State));
@@ -762,7 +768,7 @@ do_videocall_3(SDP, State) ->
 do_videocall_answer(#{sdp:=SDP}, From, State) ->
     #state{opts=Opts, handle_id2=Handle2} = State,
     Body = #{request=>accept},
-    Jsep = #{sdp=>SDP, type=>answer, trickle=>?DO_TRICKLE},
+    Jsep = #{sdp=>SDP, type=>answer, trickle=>false},
     case message(Handle2, Body, Jsep, State) of
         {ok, #{<<"result">>:=#{<<"event">>:=<<"accepted">>}}, _} ->
             Set1 = get_body(append_file(Opts, <<"b">>)),
@@ -898,7 +904,7 @@ do_publish_2(SDP_A, State) ->
         opts = Opts
     } = State,
     Body = get_body(Opts),
-    Jsep = #{sdp=>SDP_A, type=>offer, trickle=>?DO_TRICKLE},
+    Jsep = #{sdp=>SDP_A, type=>offer, trickle=>false},
     case message(Handle, Body#{request=>configure}, Jsep, State) of
         {ok, #{<<"configured">>:=<<"ok">>}, #{<<"sdp">>:=SDP_B}} ->
             User = maps:get(user, Opts, <<>>),
@@ -907,7 +913,7 @@ do_publish_2(SDP_A, State) ->
                 {ok, Pid} ->
                     Mon = erlang:monitor(process, Pid),
                     State2 = State#state{room_mon=Mon},
-                    reply({ok, #{sdp=>SDP_B}}, status(publish, State2));
+                    reply({ok, sdp(SDP_B)}, status(publish, State2));
                 {error, Error} ->
                     ?LLOG(notice, "publish error2: ~p", [Error], State),
                     reply_stop({error, room_not_found}, State)
@@ -972,7 +978,7 @@ do_listen(Listen, #state{room=Room, nkmedia_id=SessId, opts=Opts}=State) ->
                 {ok, Pid} ->
                     Mon = erlang:monitor(process, Pid),
                     State3 = State2#state{room_mon=Mon},
-                    reply({ok, #{sdp=>SDP}}, wait(listen_answer, State3));
+                    reply({ok, sdp(SDP)}, wait(listen_answer, State3));
                 {error, Error} ->
                     ?LLOG(notice, "listen error1: ~p", [Error], State),
                     reply_stop({error, room_not_found}, State)
@@ -987,7 +993,7 @@ do_listen(Listen, #state{room=Room, nkmedia_id=SessId, opts=Opts}=State) ->
 do_listen_answer(#{sdp:=SDP}, State) ->
     #state{handle_id=Handle, room=Room} = State,
     Body = #{request=>start, room=>Room},
-    Jsep = #{sdp=>SDP, type=>answer, trickle=>?DO_TRICKLE},
+    Jsep = #{sdp=>SDP, type=>answer, trickle=>false},
     case message(Handle, Body, Jsep, State) of
         {ok, #{<<"started">>:=<<"ok">>}, _} ->
             reply(ok, status(listen, State));
@@ -1081,7 +1087,7 @@ do_from_sip(#state{sip_contact=Contact, offer=Offer}=State) ->
 do_from_sip_answer(#{sdp:=SDP}, From, State) ->
     #state{handle_id=Handle} = State,
     Body = #{request=>accept},
-    Jsep = #{sdp=>SDP, type=>answer, trickle=>?DO_TRICKLE},
+    Jsep = #{sdp=>SDP, type=>answer, trickle=>false},
     case message(Handle, Body, Jsep, State) of
         {ok, #{<<"result">>:=#{<<"event">>:=<<"accepted">>}}, _} ->
             noreply(wait(from_sip_invite, State#state{from=From}));
@@ -1120,7 +1126,7 @@ do_to_sip(#state{janus_sess_id=Id, handle_id=Handle, offer=#{sdp:=SDP}}=State) -
         request => call,
         uri => <<"sip:nkmedia_janus_op-", BinId/binary, "@nkmedia">>
     },
-    Jsep = #{sdp=>SDP2, type=>offer, trickle=>?DO_TRICKLE},
+    Jsep = #{sdp=>SDP2, type=>offer, trickle=>false},
     case message(Handle, Body, Jsep, State) of
         {ok, #{<<"result">>:=#{<<"event">>:=<<"calling">>}}, _} ->
             State2 = State#state{offer=undefined},
@@ -1197,13 +1203,13 @@ do_event(Id, Handle, {event, <<"incomingcall">>, _, #{<<"sdp">>:=SDP}}, State) -
         #state{status=wait, wait=videocall_offer, 
                janus_sess_id=Id, handle_id2=Handle} ->
             #state{from=From} = State,
-            gen_server:reply(From, {ok, #{sdp=>SDP}}),
+            gen_server:reply(From, {ok, sdp(SDP)}),
             State2 = State#state{from=undefined},
             noreply(wait(videocall_answer, State2));
         #state{status=wait, wait=from_sip_answer_1, 
                janus_sess_id=Id, handle_id=Handle} ->
             #state{from=From} = State,
-            gen_server:reply(From, {ok, #{sdp=>SDP, sdp_type=>webrtc}}),
+            gen_server:reply(From, {ok, sdp(SDP)}),
             State2 = State#state{from=undefined},
             noreply(wait(from_sip_answer_2, State2));
         _ ->
@@ -1215,7 +1221,7 @@ do_event(Id, Handle, {event, <<"accepted">>, _, #{<<"sdp">>:=SDP}}, State) ->
     case State of
         #state{status=wait, wait=videocall_reply, janus_sess_id=Id, handle_id=Handle} ->
             #state{from=From, opts=Opts} = State,
-            gen_server:reply(From, {ok, #{sdp=>SDP}}),
+            gen_server:reply(From, {ok, sdp(SDP)}),
             Set1 = get_body(append_file(Opts, <<"a">>)),
             Set2 = Set1#{request=>set},
             case message(Handle, Set2, #{}, State) of
@@ -1229,7 +1235,7 @@ do_event(Id, Handle, {event, <<"accepted">>, _, #{<<"sdp">>:=SDP}}, State) ->
         #state{status=wait, wait=to_sip_reply, janus_sess_id=Id, handle_id=Handle} ->
             #state{from=From, opts=Opts} = State,
             State2 = State#state{from=undefined},
-            gen_server:reply(From, {ok, #{sdp=>SDP}}),
+            gen_server:reply(From, {ok, sdp(SDP)}),
             case Opts of
                 #{record:=true} ->
                     case do_sip_update(#{record=>true}, State2) of
@@ -1505,6 +1511,7 @@ update_body(Opts) ->
     maps:from_list(lists:flatten(Body)).
 
 
+%% @private
 append_file(Opts, Txt) ->
     case Opts of
         #{filename:=File} ->
@@ -1512,6 +1519,26 @@ append_file(Opts, Txt) ->
         _ ->
             Opts
     end.
+
+
+%% @private
+sdp(SDP) ->
+    #{
+        sdp => SDP,
+        trickle_ice => ?USING_TRICKLE,
+        sdp_type => webrtc,
+        backend => nkmedia_janus
+    }.
+
+
+%% @private
+sdp_rtp(SDP) ->
+    #{
+        sdp => SDP,
+        trickle_ice => ?USING_TRICKLE,
+        sdp_type => rtp,
+        backend => nkmedia_janus
+    }.
 
 
 

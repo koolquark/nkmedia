@@ -66,8 +66,8 @@ session_event(SessId, Event, #{srv_id:=SrvId}=Session) ->
             {answer, #{answer=>Answer}};
         {info, Info} ->
             {info, #{info=>Info}};
-        {updated_type, Type, Ext} ->
-            {updated_type, Ext#{type=>Type}};
+        {session_type, Type, Ext} ->
+            {session_type, Ext#{type=>Type}};
         {stop, Reason} ->
             {Code, Txt} = SrvId:error_code(Reason),
             {stop, #{code=>Code, reason=>Txt}};

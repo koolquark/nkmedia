@@ -28,10 +28,10 @@
 		 nkmedia_session_event/3, nkmedia_session_reg_event/4,
 		 nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2, 
 		 nkmedia_session_handle_info/2]).
--export([nkmedia_session_start/2, nkmedia_session_answer/3, nkmedia_session_candidate/2,
-	     nkmedia_session_update/3, nkmedia_session_stop/2,
+-export([nkmedia_session_start/2, nkmedia_session_stop/2,
+	     nkmedia_session_offer/3, nkmedia_session_answer/3, 
+	     nkmedia_session_candidate/2, nkmedia_session_update/3, 
 	     nkmedia_session_bridge_stop/2]).
--export([nkmedia_session_client_trickle_ready/2, nkmedia_session_server_trickle_ready/2]).
 -export([nkmedia_call_init/2, nkmedia_call_terminate/2, 
 		 nkmedia_call_resolve/3, nkmedia_call_invite/5, nkmedia_call_cancel/3, 
 		 nkmedia_call_event/3, nkmedia_call_reg_event/4, nkmedia_session_reg_down/4,
@@ -106,6 +106,7 @@ error_code(offer_already_set) 		-> 	{2013, <<"Offer already set">>};
 error_code(duplicated_answer) 		-> 	{2014, <<"Duplicated answer">>};
 error_code(answer_not_set) 			-> 	{2015, <<"Answer not set">>};
 error_code(answer_already_set) 		-> 	{2016, <<"Answer already set">>};
+error_code(no_ice_candidates) 		-> 	{2017, <<"No ICE candidates">>};
 
 error_code(call_not_found) 			->  {2020, <<"Call not found">>};
 error_code(call_rejected)			->  {2021, <<"Call rejected">>};
@@ -161,37 +162,38 @@ nkmedia_session_terminate(_Reason, Session) ->
 	{ok, Session}.
 
 
-
-
-%% @doc Called when a new session has started
-%% - If the server receives and offer
-
-
+%% @private
 -spec nkmedia_session_start(nkmedia_session:type(), session()) ->
-	{ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
-	{wait_server_ice, session()} | {wait_client_ice, session()} |
+	{ok, session()} |
 	{error, nkservice:error(), session()} | continue().
 
-nkmedia_session_start(p2p, Session) ->
-	{ok, #{}, #{}, Session};
-
 nkmedia_session_start(_Type, Session) ->
-	{error, unknown_session_type, Session}.
+	{ok, Session}.
 
 
 %% @private
--spec nkmedia_session_answer(nkmedia_session:type(), nkmedia:answer(), session()) ->
-	{ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
-	{wait_server_ice, session()} | {wait_client_ice, session()} |
+%% Plugin can update the offer
+-spec nkmedia_session_offer(nkmedia_session:type(), nkmedia:offer(), session()) ->
+	{ok, session()} | {ignore, session()} | 
 	{error, nkservice:error(), session()} | continue().
 
-nkmedia_session_answer(Type, Answer, Session) ->
-	{ok, #{}, #{answer=>Answer}, Session}.
+nkmedia_session_offer(_Type, _Offer, Session) ->
+	{ok, Session}.
+
+
+%% @private
+%% Plugin can update the answer
+-spec nkmedia_session_answer(nkmedia_session:type(), nkmedia:answer(), session()) ->
+	{ok, session()} | {ignore, session()} | 
+	{error, nkservice:error(), session()} | continue().
+
+nkmedia_session_answer(_Type, _Answer, Session) ->
+	{ok, Session}.
 
 
 %% @private
 -spec nkmedia_session_update(nkmedia_session:update(), Opts::map(), session()) ->
-	{ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
+	{ok, Reply::map(), session()} |
 	{error, term(), session()} | continue().
 
 nkmedia_session_update(_Update, _Opts, Session) ->
@@ -204,24 +206,6 @@ nkmedia_session_update(_Update, _Opts, Session) ->
 
 nkmedia_session_candidate(_Candidate, Session) ->
 	{ok, Session}.
-
-
-%% @private
--spec nkmedia_session_client_trickle_ready([nkmedia:candidate()], session()) ->
-	{ok, nkmedia_session:ext_ops(), session()} |
-	{error, nkservice:error(), session()} | continue().
-
-nkmedia_session_client_trickle_ready(_Candidates, Session) ->
-	{error, not_implemented, Session}.
-
-
-%% @private
--spec nkmedia_session_server_trickle_ready([nkmedia:candidate()], session()) ->
-	{ok, Reply::map(), nkmedia_session:ext_ops(), session()} |
-	{error, nkservice:error(), session()} | continue().
-
-nkmedia_session_server_trickle_ready(_Candidates, Session) ->
-	{error, not_implemented, Session}.
 
 
 %% @private%% @doc Called when the status of the session changes
@@ -244,7 +228,18 @@ nkmedia_session_event(SessId, Event, Session) ->
 nkmedia_session_reg_event(_SessId, {master_peer, MasterId}, {answer, Answer}, Session) ->
 	case Session of
 		#{set_master_answer:=true} ->
-			nkmedia_session:answer(MasterId, Answer);
+			nkmedia_session:set_answer(MasterId, Answer);
+		_ ->
+			ok
+	end,
+	{ok, Session};
+
+%% If we detect an answer in a slave session, send it to its master.
+nkmedia_session_reg_event(_SessId, {master_peer, MasterId}, 
+				          {candidate, Candidate}, Session) ->
+	case Session of
+		#{set_master_answer:=true} ->
+			nkmedia_session:candidate(MasterId, Candidate);
 		_ ->
 			ok
 	end,
@@ -396,7 +391,7 @@ nkmedia_call_event(CallId, Event, Call) ->
 nkmedia_call_reg_event(_CallId, {nkmedia_session, SessId}, Event, Call) ->
 	case Event of
 		{answer, _Callee, Answer} ->
-			nkmedia_session:answer(SessId, Answer);
+			nkmedia_session:set_answer(SessId, Answer);
 		{hangup, Reason} ->
 			nkmedia_session:stop(SessId, Reason);
 		_ ->

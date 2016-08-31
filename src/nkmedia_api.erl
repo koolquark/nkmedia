@@ -58,17 +58,27 @@ cmd(<<"session">>, <<"start">>, Req, State) ->
 		user_session => UserSession
 	},
 	case nkmedia_session:start(SrvId, Type, Config) of
-		{ok, SessId, Pid, Reply} ->
-			nkservice_api_server:register(self(), {nkmedia_session, SessId, Pid}),
-			case maps:get(subscribe, Data, true) of
-				true ->
-					RegId = session_reg_id(SrvId, <<"*">>, SessId),
-					Body = maps:get(events_body, Data, #{}),
-					nkservice_api_server:register_events(self(), RegId, Body);
-				false ->
-					ok
+		{ok, SessId, Pid} ->
+			Reply = case Config of
+				#{offer:=_, answer:=_} -> {ok, #{}};
+				#{offer:=_} -> nkmedia_session:get_answer(Pid);
+				_ -> nkmedia_session:get_offer(Pid)
 			end,
-			{ok, Reply#{session_id=>SessId}, State};
+			case Reply of
+				{ok, ReplyData} ->
+		   		    nkservice_api_server:register(self(), {nkmedia_session, SessId, Pid}),
+					case maps:get(subscribe, Data, true) of
+						true ->
+							RegId = session_reg_id(SrvId, <<"*">>, SessId),
+							Body = maps:get(events_body, Data, #{}),
+							nkservice_api_server:register_events(self(), RegId, Body);
+						false ->
+							ok
+					end,
+					{ok, ReplyData#{session_id=>SessId}, State};
+				{error, Error} ->
+					{error, Error, State}
+			end;
 		{error, Error} ->
 			{error, Error, State}
 	end;
@@ -80,9 +90,9 @@ cmd(<<"session">>, <<"stop">>, #api_req{data=Data}, State) ->
 
 cmd(<<"session">>, <<"set_answer">>, #api_req{data=Data}, State) ->
 	#{answer:=Answer, session_id:=SessId} = Data,
-	case nkmedia_session:answer(SessId, Answer) of
-		{ok, Reply} ->
-			{ok, Reply, State};
+	case nkmedia_session:set_answer(SessId, Answer) of
+		ok ->
+			{ok, #{}, State};
 		{error, Error} ->
 			{error, Error, State}
 	end;
@@ -91,13 +101,12 @@ cmd(<<"session">>, <<"set_answer">>, #api_req{data=Data}, State) ->
 cmd(<<"session">>, <<"set_candidate">>, #api_req{data=Data}, State) ->
 	#{
 		session_id := SessId, 
-		role := Role, 
 		sdpMid := Id, 
 		sdpLineIndex := Index, 
 		candidate := ALine
 	} = Data,
-	Candidate = #candidate{m_id=Id, m_index=Index, a_line=ALine, meta={role, Role}},
-	case nkmedia_session:client_candidate(SessId, Candidate) of
+	Candidate = #candidate{m_id=Id, m_index=Index, a_line=ALine},
+	case nkmedia_session:candidate(SessId, Candidate) of
 		ok ->
 			{ok, #{}, State};
 		{error, Error} ->
@@ -106,8 +115,8 @@ cmd(<<"session">>, <<"set_candidate">>, #api_req{data=Data}, State) ->
 
 %% Not tested!
 cmd(<<"session">>, <<"set_candidate_end">>, #api_req{data=Data}, State) ->
-	#{session_id := SessId, role := Role} = Data,
-	Candidate = #candidate{last=true, meta={role, Role}},
+	#{session_id := SessId} = Data,
+	Candidate = #candidate{last=true},
 	case nkmedia_session:client_candidate(SessId, Candidate) of
 		ok ->
 			{ok, #{}, State};
