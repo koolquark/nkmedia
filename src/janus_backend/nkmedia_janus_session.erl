@@ -25,13 +25,14 @@
 -module(nkmedia_janus_session).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/2, offer/3, answer/3, candidate/2, update/3, stop/2, handle_call/3]).
+-export([start/2, answer/3, candidate/2, update/3, stop/2]).
+-export([handle_call/3, handle_cast/2]).
 
 -export_type([session/0, type/0, opts/0, update/0]).
 
 -define(LLOG(Type, Txt, Args, Session),
-    lager:Type("NkMEDIA JANUS Session ~s "++Txt, 
-               [maps:get(session_id, Session) | Args])).
+    lager:Type("NkMEDIA JANUS Session ~s (~s)"++Txt, 
+               [maps:get(session_id, Session), maps:get(type, Session) | Args])).
 
 -include_lib("nksip/include/nksip.hrl").
 -include("../../include/nkmedia.hrl").
@@ -40,7 +41,6 @@
 %% Types
 %% ===================================================================
 
--type session_id() :: nkmedia_session:id().
 -type continue() :: continue | {continue, list()}.
 
 
@@ -87,6 +87,15 @@
     {ok, session()} |
     {error, nkservice:error(), session()} | continue().
 
+start(callee, #{role:=offeree, master_peer:=Master}=Session) -> 
+    case session_call(Master, get_caller_data) of
+        {ok, Update} ->
+            Session2 = ?SESSION(Update, Session),
+            {ok, Session2};
+        {error, Error} ->
+            {error, Error, Session}
+    end;
+
 start(Type, Session) -> 
     case is_supported(Type) of
         true ->
@@ -94,8 +103,10 @@ start(Type, Session) ->
             case get_mediaserver(Session2) of
                 {ok, Session3} ->
                     case get_janus_op(Session3) of
+                        {ok, #{offer:=Offer}=Session4} ->
+                            start_offeree(Type, Offer, Session4);
                         {ok, Session4} ->
-                            do_start(Type, Session4);
+                            start_offerer(Type, Session4);
                         {error, Error} ->
                             {error, Error, Session2}
                     end;
@@ -107,50 +118,50 @@ start(Type, Session) ->
     end.
 
 
-do_start(_Type, #{offer:=_}=Session) ->
-    %% Wait for offer callback
-    {ok, Session};
+%% @private
+-spec start_offerer(type(), session()) ->
+    {ok, session()} |
+    {error, nkservice:error(), session()} | continue().
 
-do_start(listen, #{publisher_id:=Publisher, nkmedia_janus_pid:=Pid}=Session) ->
+%% We must make the offer
+start_offerer(listen, #{publisher_id:=Publisher, nkmedia_janus_pid:=Pid}=Session) ->
     case get_room(listen, Session) of
         {ok, RoomId} ->
-            {Opts, Session2} = get_media_opts(Session),
-            case nkmedia_janus_op:listen(Pid, RoomId, Publisher, Opts) of
+            case nkmedia_janus_op:listen(Pid, RoomId, Publisher, #{}) of
                 {ok, Offer} ->
                     update_type(listen, #{room_id=>RoomId, publisher_id=>Publisher}),
-                    {ok, set_offer(Offer, Session2)};
+                    {ok, set_offer(Offer, Session)};
                 {error, Error} ->
-                    {error, Error, Session2}
+                    {error, Error, Session}
             end;
         {error, Error} ->
             {error, Error, Session}
     end;
 
-do_start(listen, Session) ->
+start_offerer(listen, Session) ->
     {error, {missing_field, publisher_id}, Session};
 
-do_start(_, Session) ->
+start_offerer(_, Session) ->
     {error, invalid_operation, Session}.
 
 
+
 %% @private
--spec offer(type(), nkmedia:offer(), session()) ->
-    {ok, session()} | {error, nkservice:error(), session()}.
+-spec start_offeree(type(), nkmedia:offer(), session()) ->
+    {ok, session()} |
+    {error, nkservice:error(), session()} | continue().
 
-offer(_Type, #{backend:=nkmedia_janus}, Session) ->
-    {ok, Session};
-
-offer(echo, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
-    {Opts, Session2} = get_media_opts(Session),
-    case nkmedia_janus_op:echo(Pid, Offer, Opts) of
+start_offeree(echo, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
+    io:format("OFF:\n~s", [maps:get(sdp, Offer)]),
+    case nkmedia_janus_op:echo(Pid, Offer) of
         {ok, Answer} ->
-            update_type(echo, #{}),
-            {ok, set_answer(Answer, Session2)};
+            io:format("ANS:\n~s", [maps:get(sdp, Answer)]),
+            set_media(set_answer(Answer, Session));
         {error, Error} ->
-            {error, Error, Session2}
+            {error, Error, Session}
     end;
 
-offer(proxy, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
+start_offeree(proxy, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
     OfferType = maps:get(sdp_type, Offer, webrtc),
     OutType = maps:get(sdp_type, Session, webrtc),
     Fun = case {OfferType, OutType} of
@@ -163,32 +174,34 @@ offer(proxy, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
         error ->
             {error, invalid_parameters, Session};
         _ ->
-            {Opts, Session2} = get_media_opts(Session),
-            case nkmedia_janus_op:Fun(Pid, Offer, Opts) of
+            case nkmedia_janus_op:Fun(Pid, Offer) of
                 {ok, Offer2} ->
-                    Session3 = ?SESSION(#{nkmedia_janus_offer=>Offer2}, Session2),
-                    {ok, Session3};
+                    Session2 = ?SESSION(#{nkmedia_janus_offer=>Offer2}, Session),
+                    set_media(Session2);
                 {error, Error} ->
-                    {error, Error, Session2}
+                    lager:error("FUN: ~p ~p", [Fun, Error]),
+                    {error, Error, Session}
             end
     end;
 
-offer(publish, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
+start_offeree(publish, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
     case get_room(publish, Session) of
         {ok, RoomId} ->
-            {Opts, Session2} = get_media_opts(Session),
-            case nkmedia_janus_op:publish(Pid, RoomId, Offer, Opts) of
+            case nkmedia_janus_op:publish(Pid, RoomId, Offer, #{}) of
                 {ok, Answer} ->
                     update_type(publish, #{room_id=>RoomId}),
-                    {ok, set_answer(Answer, Session2)};
+                    {ok, set_media(set_answer(Answer, Session))};
                 {error, Error} ->
-                    {error, Error, Session2}
+                    {error, Error, Session}
             end;
         {error, Error} ->
             {error, Error, Session}
     end;
 
-offer(_Type, _Offer, _Session) ->
+start_offeree(callee, _Offer, Session) ->
+    {ok, Session};
+
+start_offeree(_Type, _Offer, _Session) ->
     continue.
 
 
@@ -196,11 +209,9 @@ offer(_Type, _Offer, _Session) ->
 -spec answer(type(), nkmedia:answer(), session()) ->
     {ok, session()} | {error, nkservice:error(), session()}.
 
-answer(_Type, #{backend:=nkmedia_janus}, Session) ->
-    {ok, Session};
-
-answer(Type, Answer, #{nkmedia_janus_pid:=Pid}=Session)
-        when Type==proxy; Type==listen ->
+%% We generated the offer, let's process the answer
+answer(Type, Answer, Session) when Type==proxy; Type==listen ->
+    #{nkmedia_janus_pid:=Pid} = Session,
     case nkmedia_janus_op:answer(Pid, Answer) of
         ok ->
             {ok, Session};
@@ -208,14 +219,19 @@ answer(Type, Answer, #{nkmedia_janus_pid:=Pid}=Session)
             {ok, set_answer(Answer2, Session)};
         {error, Error} ->
             {error, Error, Session}
-    end.
+    end;
+
+answer(_Type, _Answer, Session) ->
+    {ok, Session}.
+
 
 
 %% @private We received a candidate from the client
 -spec candidate(nkmedia:candidate(), session()) ->
     {ok, session()} | continue.
 
-candidate(#candidate{last=true}, Session) ->
+candidate(Candidate, #{type:=callee, master_peer:=Master}=Session) ->
+    session_cast(Master, {callee_candidate, Candidate}),
     {ok, Session};
 
 candidate(Candidate, #{nkmedia_janus_pid:=Pid}=Session) ->
@@ -227,13 +243,19 @@ candidate(Candidate, #{nkmedia_janus_pid:=Pid}=Session) ->
 -spec update(update(), Opts::map(), session()) ->
     {ok, Reply::term(), session()} | {error, term(), session()} | continue().
 
-update(media, Opts, #{type:=Type}=Session) when Type==echo; Type==proxy; Type==publish ->
-    #{nkmedia_janus_pid:=Pid} = Session,
-    {Opts2, Session2} = get_media_opts(Opts, Session),
-    case nkmedia_janus_op:update(Pid, Opts2) of
-        ok ->
+update(media, Opts, #{type:=callee}=Session) ->
+    case set_media_callee(Opts, Session) of
+        {ok, Session2} ->
             {ok, #{}, Session2};
-        {error, Error} ->
+        {error, Error, Session2} ->
+            {error, Error, Session2}
+    end;
+
+update(media, Opts, #{type:=Type}=Session) when Type==echo; Type==proxy; Type==publish ->
+    case set_media(Opts, Session) of
+        {ok, Session2} ->
+            {ok, #{}, Session2};
+        {error, Error, Session2} ->
             {error, Error, Session2}
     end;
 
@@ -268,8 +290,20 @@ handle_call(get_publisher, _From, #{type:=publish}=Session) ->
     {reply, {ok, RoomId}, Session};
 
 handle_call(get_publisher, _From, Session) ->
-    {reply, {error, invalid_publisher}, Session}.
+    {reply, {error, invalid_publisher}, Session};
 
+handle_call(get_caller_data, _From, #{type:=proxy}=Session) ->
+    Update = maps:with([nkmedia_janus_id, nkmedia_janus_pid], Session),
+    {reply, {ok, Update}, Session};
+
+handle_call(caller_data, _From,Session) ->
+    {reply, {error, invalid_operation}, Session}.
+
+
+%% @private
+handle_cast({callee_candidate, Candidate}, #{nkmedia_janus_pid:=Pid}=Session) ->
+    nkmedia_janus_op:candidate_callee(Pid, Candidate),
+    {ok, Session}.
 
 
 
@@ -315,9 +349,6 @@ get_mediaserver(#{srv_id:=SrvId}=Session) ->
         {error, Error} ->
             {error, Error}
     end.
-
-
-
 
 
 %% @private
@@ -382,7 +413,7 @@ get_room_id(Type, Session) ->
         error when Type==listen ->
             case Session of
                 #{publisher_id:=Publisher} ->
-                    case get_peer_publisher(Publisher) of
+                    case session_call(Publisher, get_publisher) of
                         {ok, RoomId} -> {ok, RoomId};
                         {error, _Error} -> {error, invalid_publisher}
                     end;
@@ -390,14 +421,6 @@ get_room_id(Type, Session) ->
                     {error, {missing_field, publisher_id}}
             end
     end.
-
-
-%% @private
--spec get_peer_publisher(session_id()) ->
-    {ok, nkmedia_room:id()} | {error, nkservice:error()}.
-
-get_peer_publisher(SessId) ->
-    nkmedia_session:do_call(SessId, {nkmedia_janus, get_publisher}).
 
 
 %% @private
@@ -409,6 +432,13 @@ set_offer(Offer, Session) ->
 set_answer(Answer, Session) ->
     ?SESSION(#{answer=>Answer}, Session).
 
+%% @private
+session_call(SessId, Msg) ->
+    nkmedia_session:do_call(SessId, {nkmedia_janus, Msg}).
+
+%% @private
+session_cast(SessId, Msg) ->
+    nkmedia_session:do_cast(SessId, {nkmedia_janus, Msg}).
 
 %% @private
 update_type(Type, TypeExt) ->
@@ -416,26 +446,52 @@ update_type(Type, TypeExt) ->
 
 
 %% @private
-get_media_opts(Session) ->
-    get_media_opts(Session, Session).
+set_media(Session) ->
+    set_media(Session, Session).
 
 
 %% @private
-get_media_opts(Opts, Session) ->
-    Keys = [record, use_audio, use_video, use_data, bitrate],
-    Opts1 = maps:with(Keys, Opts),
-    Opts2 = case Session of
-        #{user_id:=UserId} -> Opts1#{user=>UserId};
-        _ -> Opts1
-    end,
-    case Opts of
-        #{record:=true} ->
-            {Name, Session2} = nkmedia_session:get_session_file(Session),
-            File = filename:join(<<"/tmp/record">>, Name),
-            {Opts2#{filename => File}, Session2};
-        _ ->
-            {Opts2, Session}
+set_media(Opts, #{nkmedia_janus_pid:=Pid}=Session) ->
+    case get_media(Opts, Session) of
+        none ->
+            {ok, Session};
+        {Data, Session2} ->
+            case nkmedia_janus_op:media(Pid, Data) of
+                ok ->
+                    {ok, Session2};
+                {error, Error} ->
+                    {error, Error, Session2}
+            end
     end.
 
+
+%% @private
+set_media_callee(Opts, #{nkmedia_janus_pid:=Pid}=Session) ->
+    case get_media(Opts, Session) of
+        none ->
+            {ok, Session};
+        {Data, Session2} ->
+            case nkmedia_janus_op:media_callee(Pid, Data) of
+                ok ->
+                    {ok, Session2};
+                {error, Error} ->
+                    {error, Error, Session2}
+            end
+    end.
+
+
+%% @private
+get_media(Opts, Session) ->
+    Keys = [use_audio, use_video, use_data, bitrate, record],
+    case maps:with(Keys, Opts) of
+        Data when map_size(Data) == 0 ->
+            none;
+        #{record:=true}=Data ->
+            {Name, Session2} = nkmedia_session:get_session_file(Session),
+            File = filename:join(<<"/tmp/record">>, Name),
+            {Data#{filename => File}, Session2};
+        Data ->
+            {Data, Session}
+    end.
 
 

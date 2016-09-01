@@ -27,9 +27,10 @@
 -export([error_code/1]).
 -export([nkmedia_janus_get_mediaserver/1]).
 -export([nkmedia_session_start/2, nkmedia_session_stop/2,
-         nkmedia_session_offer/3, nkmedia_session_answer/3,
+         nkmedia_session_answer/3,
          nkmedia_session_candidate/2, nkmedia_session_update/3,
-         nkmedia_session_handle_call/3, nkmedia_session_handle_info/2]).
+         nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2, 
+         nkmedia_session_handle_info/2]).
 -export([nkmedia_room_init/2, nkmedia_room_terminate/2, nkmedia_room_tick/2,
          nkmedia_room_handle_cast/2]).
 -export([api_cmd/2, api_syntax/4]).
@@ -143,14 +144,6 @@ nkmedia_session_start(Type, Session) ->
 
 
 %% @private
-nkmedia_session_offer(Type, Offer, #{nkmedia_janus_id:=_}=Session) ->
-    nkmedia_janus_session:offer(Type, Offer, Session);
-
-nkmedia_session_offer(_Type, _Offer, _Session) ->
-    continue.
-
-
-%% @private
 nkmedia_session_answer(Type, Answer, #{nkmedia_janus_id:=_}=Session) ->
     nkmedia_janus_session:answer(Type, Answer, Session);
 
@@ -188,6 +181,15 @@ nkmedia_session_handle_call({nkmedia_janus, Msg}, From, Session) ->
 
 nkmedia_session_handle_call(_Msg, _From, _Session) ->
     continue.
+
+
+% @private
+nkmedia_session_handle_cast({nkmedia_janus, Msg}, Session) ->
+    nkmedia_janus_session:handle_cast(Msg, Session);
+
+nkmedia_session_handle_cast(_Msg, _Session) ->
+    continue.
+
 
 
 %% @private The janus_op process is down

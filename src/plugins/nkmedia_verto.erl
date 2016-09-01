@@ -70,10 +70,15 @@
 %% @doc Sends an INVITE. 
 %% Listen to callbacks nkmedia_verto_answer/3 and nkmedia_verto_bye/2
 -spec invite(pid(), call_id(), nkmedia:offer(), nklib:link()) ->
-    ok | {error, nkservice:error()}.
+    {ok, nklib:link()} | {error, nkservice:error()}.
     
 invite(Pid, CallId, Offer, Link) ->
-    do_call(Pid, {invite, CallId, Offer, Link}).
+    case do_call(Pid, {invite, CallId, Offer, Link}) of
+        ok ->
+            {ok, {nkmedia_verto, CallId, Pid}};
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 %% @doc Sends an ANSWER (only sdp is used in answer())

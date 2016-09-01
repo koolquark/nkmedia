@@ -25,8 +25,7 @@
 -behaviour(gen_server).
 
 -export([start/3, get_type/1, get_session/1, get_offer/1, get_answer/1]).
--export([set_answer/2, set_answer_async/2, set_type/3]).
--export([update/3, update_async/3, info/2]).
+-export([set_answer/2, set_type/3, update/3, update_async/3, info/2]).
 -export([stop/1, stop/2, stop_all/0]).
 -export([candidate/2]).
 -export([register/2, unregister/2, link_slave/2, unlink_session/1, unlink_session/2]).
@@ -91,6 +90,7 @@
     config () | 
     #{
         srv_id => nkservice:id(),
+        role => offerer | offeree,
         type => type(),
         type_ext => map(),
         master_peer => id(),
@@ -195,14 +195,6 @@ stop_all() ->
     ok | {error, nkservice:error()}.
 
 set_answer(SessId, Answer) ->
-    do_cast(SessId, {set_answer, Answer}).
-
-
-%% @doc Equivalent to answer/3, but does not wait for operation's result
--spec set_answer_async(id(), nkmedia:answer()) ->
-    ok | {error, nkservice:error()}.
-
-set_answer_async(SessId, Answer) ->
     do_cast(SessId, {set_answer, Answer}).
 
 
@@ -424,7 +416,7 @@ handle_call({update, Update, Opts}, _From, State) ->
 
 handle_call({link_to_slave, SlaveId, PidB}, _From, #state{id=MasterId}=State) ->
     % We are Master of SlaveId
-    ?LLOG(notice, "linked to slave session ~s", [SlaveId], State),
+    ?LLOG(info, "linked to slave session ~s", [SlaveId], State),
     do_cast(PidB, {link_to_master, MasterId, self()}),
     State2 = links_add({slave_peer, SlaveId}, PidB, State),
     State3 = add_to_session(slave_peer, SlaveId, State2),
@@ -483,6 +475,7 @@ handle_cast({set_answer, _Answer}, #state{has_answer=true}=State) ->
     noreply(State);
 
 handle_cast({set_answer, Answer}, State) ->
+    % ?LLOG(notice, "SET ANSWER\n~s", [maps:get(sdp, Answer)], State),
     State2 = add_to_session(answer, Answer, State),
     case do_set_answer(State2) of
         {ok, State3} ->
@@ -522,7 +515,7 @@ handle_cast({backend_candidate, Candidate}, #state{role=offeree}=State) ->
 
 handle_cast({link_to_master, MasterId, PidB}, State) ->
     % We are Slave of MasterId
-    ?LLOG(notice, "linked to master ~s", [MasterId], State),
+    ?LLOG(info, "linked to master ~s", [MasterId], State),
     State2 = links_add({master_peer, MasterId}, PidB, State),
     State3 = add_to_session(master_peer, MasterId, State2),
     noreply(State3);
@@ -740,10 +733,10 @@ do_set_offer(#state{type=Type, session=#{offer:=Offer}=Session}=State) ->
             case handle(nkmedia_session_offer, [Type, Offer], State) of
                 {ok, State2} ->
                     #state{session=#{offer:=Offer2}, wait_offer=Wait} = State2,
-                    reply_all({ok, Offer2}, Wait),
+                    reply_all_waiting({ok, Offer2}, Wait),
                     State3 = State2#state{has_offer=true, wait_offer=[]},
                     ?LLOG(info, "offer set", [], State3),
-                    io:format("OFFER\n~s\n", [maps:get(sdp, Offer2, <<>>)]),
+                    % ?LLOG(info, "\n~s", [maps:get(sdp, Offer2, <<>>)], State3),
                     {ok, State3};
                 {ignore, State2} ->
                     {ok, State2};
@@ -771,10 +764,20 @@ do_set_answer(#state{type=Type, session=#{answer:=Answer}=Session}=State) ->
             case handle(nkmedia_session_answer, [Type, Answer], State) of
                 {ok, State2} ->
                     #state{session=#{answer:=Answer2}, wait_answer=Wait} = State2,
-                    reply_all({ok, Answer2}, Wait),
+                    reply_all_waiting({ok, Answer2}, Wait),
                     State3 = State2#state{has_answer=true, wait_answer=[]},
                     ?LLOG(info, "answer set", [], State3),
-                    io:format("ANSWER\n~s\n", [maps:get(sdp, Answer2, <<>>)]),
+                    % ?LLOG(info, "\n~s", [maps:get(sdp, Answer2, <<>>)], State3),
+                    case Session of
+                        #{
+                            master_peer := MasterId,
+                            set_master_answer := true
+                        } ->
+                            lager:error("send to master"),
+                            set_answer(MasterId, Answer2);
+                        _ ->
+                            ok
+                    end,
                     {ok, event({answer, Answer2}, restart_timer(State3))};
                 {ignore, State2} ->
                     {ok, State2};
@@ -910,7 +913,7 @@ reply(Reply, State) ->
 
 
 %% @private
-reply_all(Msg, List) ->
+reply_all_waiting(Msg, List) ->
     lists:foreach(fun(From) -> nklib_util:reply(From, Msg) end, List).
 
 
@@ -929,9 +932,17 @@ noreply(State) ->
 do_stop(_Reason, #state{stop_sent=true}=State) ->
     {stop, normal, State};
 
-do_stop(Reason, State) ->
+do_stop(Reason, #state{session=Session}=State) ->
     {ok, State2} = handle(nkmedia_session_stop, [Reason], State),
     State3 = event({stop, Reason}, State2#state{stop_sent=true}),
+    % case Session of
+    %     #{master_peer:=MasterId} -> stop(MasterId, peer_stopped);
+    %     _ -> ok
+    % end,
+    % case Session of
+    %     #{slave_peer:=SlaveId} -> stop(SlaveId, peer_stopped);
+    %     _ -> ok
+    % end,
     % Allow events to be processed
     timer:sleep(100),
     {stop, normal, State3}.

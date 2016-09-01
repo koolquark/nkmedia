@@ -313,50 +313,93 @@ sip_register(Req, Call) ->
     {continue, [Req2, Call]}.
 
 
-% Version that generates a Janus proxy before going on
-nkmedia_sip_invite(_SrvId, Dest, Offer, SipLink, _Req, _Call) ->
-    % {Codecs, SDP2} = nksip_sdp_util:extract_codecs(SDP),
-    % Codecs2 = nksip_sdp_util:remove_codec(video, h264, Codecs),
-    % SDP3 = nksip_sdp:unparse(nksip_sdp_util:insert_codecs(Codecs2, SDP2)),
+% % Version that generates a Janus proxy before going on
+% nkmedia_sip_invite(_SrvId, Dest, Offer, SipLink, _Req, _Call) ->
+%     % {Codecs, SDP2} = nksip_sdp_util:extract_codecs(SDP),
+%     % Codecs2 = nksip_sdp_util:remove_codec(video, h264, Codecs),
+%     % SDP3 = nksip_sdp:unparse(nksip_sdp_util:insert_codecs(Codecs2, SDP2)),
 
-     Base = #{
-        offer => Offer,
-        register => SipLink,
-        backend => nkmedia_kms
-    },
-    % We have created a session registered with SipLink, so will detect the
-    % answer and stops in nkmedia_sip_callbacks:nkmedia_session_reg_event().
-    % We return the session link, so that if we receive a BYE, 
-    % nkmedia_sip_callbacks:sip_bye() will call nkmedia_session:stop()
-    case incoming(Dest, Base) of
-        {ok, SessId, SessPid} ->
-            {ok, {nkmedia_session, SessId, SessPid}};
-        {error, Error} ->
-            {rejected, Error}
-    end.
+%      Base = #{
+%         offer => Offer,
+%         register => SipLink,
+%         backend => nkmedia_kms
+%     },
+%     % We create a session registered with SipLink, so will detect the
+%     % answer and stops in nkmedia_sip_callbacks:nkmedia_session_reg_event().
+%     % We return the session link, so that if we receive a BYE, 
+%     % nkmedia_sip_callbacks:sip_bye() will call nkmedia_session:stop()
+%     case incoming(Dest, Base) of
+%         {ok, SessId, SessPid} ->
+%             {ok, {nkmedia_session, SessId, SessPid}};
+%         {error, Error} ->
+%             {rejected, Error}
+%     end.
     
-%     nkmedia_sip:register_incoming(Req, {nkmedia_session, SessId}),
+% %     nkmedia_sip:register_incoming(Req, {nkmedia_session, SessId}),
 
 
 % % Version that generates a Janus proxy before going on
-% nkmedia_sip_invite(_SrvId, Dest, Offer, Req, _Call) ->
-%     Config1 = #{offer=>Offer, register=>{nkmedia_sip, in, self()}, backend=>nkmedia_janus},
-%     % We register with the session as {nkmedia_sip, in, ...}, so:
-%     % - we will detect the answer in nkmedia_sip_callbacks:nkmedia_session_reg_event
-%     % - we stop the session if session process stops
-%     {offer, Offer2, Link2} = start_session(proxy, Config1),
-%     {nkmedia_session, SessId, _} = Link2,
-%     nkmedia_sip:register_incoming(Req, {nkmedia_session, SessId}),
-%     % Since we are registering as {nkmedia_session, ..}, the second session
-%     % will be linked with the first, and will send answer back
-%     % We return {ok, Link} or {rejected, Reason}
-%     % nkmedia_sip will store that Link
-%     case incoming(Dest, #{offer=>Offer2, peer_id=>SessId}) of
-%         {ok, {nkmedia_session, SessId2, _SessPid2}} ->
-%             {ok, {nkmedia_session, SessId2}};
-%         {rejected, Rejected} ->
-%             {rejected, Rejected}
+% nkmedia_sip_invite(_SrvId, Dest, Offer, SipLink, _Req, _Call) ->
+%     Base = #{
+%         offer => Offer, 
+%         register => SipLink, 
+%         backend => nkmedia_janus
+%     },
+%     {Base2, SessLink} = insert_janus_proxy(Base),
+%     case incoming(Dest, Base2) of
+%         {ok, _, _} ->
+%             {ok, SessLink};
+%         {error, Error} ->
+%             {rejected, Error}
 %     end.
+
+
+
+% insert_janus_proxy(Base) ->
+%     Base2 = Base#{backend => nkmedia_janus},
+%     {ok, SessId, SessPid} = start_session(proxy, Base#{}),
+%     {ok, Offer2} = nkmedia_session:update(SessId, get_proxy_offer, #{}),
+%     Base3 = maps:remove(register, Base2),
+%     Base4 = Base3#{offer=>Offer2, master_id=>SessId, set_master_answer=>true},
+%     {Base4, {nkmedia_session, SessId, SessPid}}.
+
+
+
+
+% Version that generates a Janus proxy before going on
+nkmedia_sip_invite(_SrvId, Dest, Offer, SipLink, _Req, _Call) ->
+    Base = #{
+        offer => Offer, 
+        register => SipLink, 
+        backend => nkmedia_janus
+    },
+    {ok, SessId, SessPid} = start_session(proxy, Base#{}),
+    {ok, Offer2} = nkmedia_session:update(SessId, get_proxy_offer, #{}),
+    {nkmedia_verto, VertoPid} = find_user(1008),
+    SessLink = {nkmedia_session, SessId, SessPid},
+    lager:error("VERTO INVITE"),
+    {ok, VertoLink} = nkmedia_verto:invite(VertoPid, SessId, Offer2, SessLink),
+    {ok, _} = nkmedia_session:register(SessId, VertoLink),
+    {ok, SessLink}.
+
+
+
+
+
+
+
+    % {nkmedia_session, SessId, _} = Link2,
+    % nkmedia_sip:register_incoming(Req, {nkmedia_session, SessId}),
+    % % Since we are registering as {nkmedia_session, ..}, the second session
+    % % will be linked with the first, and will send answer back
+    % % We return {ok, Link} or {rejected, Reason}
+    % % nkmedia_sip will store that Link
+    % case incoming(Dest, #{offer=>Offer2, peer_id=>SessId}) of
+    %     {ok, {nkmedia_session, SessId2, _SessPid2}} ->
+    %         {ok, {nkmedia_session, SessId2}};
+    %     {rejected, Rejected} ->
+    %         {rejected, Rejected}
+    % end.
 
 
 
@@ -410,7 +453,9 @@ nkmedia_sip_invite(_SrvId, Dest, Offer, SipLink, _Req, _Call) ->
 incoming(<<"je">>, Base) ->
     Config = Base#{
         backend => nkmedia_janus, 
-        record => false
+        use_audio => false,
+        bitrate => 100000,
+        record => true
     },
     start_session(echo, Config);
 
@@ -466,17 +511,16 @@ incoming(<<"d", Num/binary>>, Base) ->
     {ok, SessId, SessPid} = start_session(p2p, Base),
     start_invite_slave(p2p, {nkmedia_session, SessId, SessPid}, Base, Num);
 
-% incoming(<<"j", Num/binary>> , Base) ->
-%     start_invite(proxy, Base, Num);
-
 incoming(<<"j", Num/binary>>, Base) ->
     Config = Base#{
         backend => nkmedia_janus
     },
     {ok, SessId, SessPid} = start_session(proxy, Config),
+    lager:error("J1"),
     {ok, Offer2} = nkmedia_session:update(SessId, get_proxy_offer, #{}),
-    lager:error("GOT OFFER"),
-    {ok, _, _} = start_invite_slave(p2p, SessId, Config#{offer=>Offer2}, Num),
+    lager:error("J2"),
+    {ok, _, _} = start_invite_slave(callee, SessId, Config#{offer=>Offer2}, Num),
+    lager:error("J3"),
     {ok, SessId, SessPid};
 
 incoming(<<"f", Num/binary>>, Base) ->
@@ -506,8 +550,9 @@ start_session(Type, Config) ->
 
 
 start_invite_slave(Type, SessId, Config, Dest) ->
-    Config2 = Config#{master_id=>SessId, set_master_answer=>true},
-    start_invite(Type, Config2, Dest).
+    Config2 = maps:remove(register, Config),
+    Config3 = Config2#{master_id=>SessId, set_master_answer=>true},
+    start_invite(Type, Config3, Dest).
 
 
 %% Creates a new 'B' session, gets an offer and invites a Verto, Janus or SIP endoint

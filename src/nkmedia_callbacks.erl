@@ -126,6 +126,7 @@ error_code(publisher_stopped)       ->  {2036, <<"Publisher stopped">>};
 
 error_code(call_error)       		->  {2040, <<"Call error">>};
 error_code(bridge_stop)       		->  {2041, <<"Bridge stop">>};
+error_code(peer_stopped)       		->  {2041, <<"Peer session stopped">>};
 
 error_code(no_active_recorder) 		->  {2050, <<"No active recorder">>};
 error_code(record_start_error) 		->  {2051, <<"Record start error">>};
@@ -223,42 +224,12 @@ nkmedia_session_event(SessId, Event, Session) ->
 								media_session:event(), session()) ->
 	{ok, session()} | continue().
 
-
-%% If we detect an answer in a slave session, send it to its master.
-nkmedia_session_reg_event(_SessId, {master_peer, MasterId}, {answer, Answer}, Session) ->
-	case Session of
-		#{set_master_answer:=true} ->
-			nkmedia_session:set_answer(MasterId, Answer);
-		_ ->
-			ok
-	end,
-	{ok, Session};
-
-%% If we detect an answer in a slave session, send it to its master.
-nkmedia_session_reg_event(_SessId, {master_peer, MasterId}, 
-				          {candidate, Candidate}, Session) ->
-	case Session of
-		#{set_master_answer:=true} ->
-			nkmedia_session:candidate(MasterId, Candidate);
-		_ ->
-			ok
-	end,
-	{ok, Session};
-
-%% If a master or slave session stops, stop its peer also.
-nkmedia_session_reg_event(_SessId, {master_peer, MasterId}, {stop, Reason}, Session) ->
-	nkmedia_session:stop(MasterId, Reason),
-	{ok, Session};
-
-nkmedia_session_reg_event(_SessId, {slave_peer, SlaveId}, {stop, Reason}, Session) ->
-	nkmedia_session:stop(SlaveId, Reason),
-	{ok, Session};
-
 nkmedia_session_reg_event(_SessId, {nkmedia_call, CallId, _CallPid}, {stop, Reason}, 						  Session) ->
 	nkmedia_call:hangup(CallId, Reason),
 	{ok, Session};
 
 nkmedia_session_reg_event(SessId, Link, Event, Session) ->
+	% lager:warning("RE: ~p, ~p", [Link, Event]),
 	nkmedia_api:nkmedia_session_reg_event(SessId, Link, Event, Session),
 	{ok, Session}.
 

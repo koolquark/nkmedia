@@ -38,6 +38,9 @@
 %% Types
 %% ===================================================================
 
+
+-type room_id() :: nkmedia_room:id().
+
 -type state() ::
     #{
         janus_id => nkmedia_janus:id()
@@ -68,7 +71,7 @@ janus_check(JanusId, RoomId, Data) ->
             spawn(
                 fun() -> 
                     lager:warning("Destroying orphan Janus room ~s", [RoomId]),
-                    nkmedia_janus_op:destroy_room(JanusId, RoomId)
+                    destroy_room(JanusId, RoomId)
                 end)
     end.
 
@@ -83,7 +86,7 @@ janus_check(JanusId, RoomId, Data) ->
 -spec init(nkmedia_room:id(), nkmedia_room:room()) ->
     {ok, state()} | {error, term()}.
 
-init(Id, #{srv_id:=SrvId}=Config) ->
+init(RoomId, #{srv_id:=SrvId}=Config) ->
     case get_janus(SrvId, Config) of
         {ok, JanusId} ->
             Audio = maps:get(audio_codec, Config,
@@ -97,7 +100,7 @@ init(Id, #{srv_id:=SrvId}=Config) ->
                 videocodec => Video,
                 bitrate => Bitrate
             },
-            case nkmedia_janus_op:create_room(JanusId, Id, Create) of
+            case create_room(JanusId, RoomId, Create) of
                 ok ->
                     {ok, #{janus_id=>JanusId}};
                 {error, Error} ->
@@ -113,7 +116,7 @@ init(Id, #{srv_id:=SrvId}=Config) ->
     ok | {error, term()}.
 
 terminate(_Reason, #{room_id:=Id}=Room, #{janus_id:=JanusId}=State) ->
-    case nkmedia_janus_op:destroy_room(JanusId, Id) of
+    case destroy_room(JanusId, Id) of
         ok ->
             ?LLOG(info, "stopping, destroying room", [], Room);
         {error, Error} ->
@@ -162,6 +165,33 @@ nkmedia_room_handle_cast({participants, Num}, Room, State) ->
 % ===================================================================
 %% Internal
 %% ===================================================================
+
+-spec create_room(nkmedia_janus:id(), room_id(), map()) ->
+    ok | {error, term()}.
+
+create_room(JanusId, RoomId, Opts) ->
+    case nkmedia_janus_op:start(JanusId, RoomId) of
+        {ok, Pid} ->
+            nkmedia_janus_op:create_room(Pid, RoomId, Opts);
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+-spec destroy_room(nkmedia_janus:id(), room_id()) ->
+    ok | {error, term()}.
+
+destroy_room(JanusId, RoomId) ->
+    case nkmedia_janus_op:start(JanusId, RoomId) of
+        {ok, Pid} ->
+            nkmedia_janus_op:destroy_room(Pid, RoomId);
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+
+
 
 %% @private
 get_janus(_SrvId, #{janus_id:=JanusId}) ->

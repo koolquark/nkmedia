@@ -41,7 +41,7 @@
 -define(OP_TIME, 15000).            % Maximum operation time
 -define(CALL_TIMEOUT, 30000).       % 
 
--define(DO_TRICKLE, true).
+-define(USE_TRICKLE, false).        % Set to false if Verto client is configured so
 
 -include_lib("nksip/include/nksip.hrl").
 
@@ -70,10 +70,15 @@
 %% @doc Sends an INVITE. 
 %% Follow 
 -spec invite(pid(), call_id(), nkmedia:offer(), nklib:link()) ->
-    ok | {error, term()}.
+    {ok, nklin:link()} | {error, term()}.
     
 invite(Pid, CallId, Offer, Link) ->
-    do_call(Pid, {invite, CallId, Offer, Link}).
+    case do_call(Pid, {invite, CallId, Offer, Link}) of
+        ok ->
+            {nkmedia_janus, CallId, Pid};
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 %% @doc Sends an ANSWER (only sdp is used in answer())
@@ -311,7 +316,9 @@ send_req({invite, CallId, Offer, Link}, From, NkPort, State) ->
         event => incomingcall, 
         username => unknown
     },
-    Jsep = #{sdp=>SDP, type=>offer, trickle=>?DO_TRICKLE},
+    % Jsep = #{sdp=>SDP, type=>offer, trickle=>?USE_TRICKLE},
+    % Janus does not support receiving candidates...
+    Jsep = #{sdp=>SDP, type=>offer},
     Req = make_videocall_req(Result, Jsep, State),
     State2 = links_add(CallId, Link, callee, State),
     % Client will send us accept
@@ -329,7 +336,9 @@ send_req({answer, CallId, #{sdp:=SDP}}, From, NkPort, State) ->
         event => accepted, 
         username => unknown
     },
-    Jsep = #{sdp=>SDP, type=>answer, trickle=>?DO_TRICKLE},
+    % Jsep = #{sdp=>SDP, type=>answer, trickle=>?USE_TRICKLE},
+    % Janus does not support receiving candidates...
+    Jsep = #{sdp=>SDP, type=>answer},
     Req = make_videocall_req(Result, Jsep, State),
     nklib_util:reply(From, ok),
     send(Req, NkPort, State);
@@ -480,8 +489,10 @@ process_client_msg(call, Body, Msg, NkPort, #state{srv_id=SrvId}=State) ->
     CallId = nklib_util:uuid_4122(),
     ?LLOG(info, "received CALL (~s)", [CallId], State),
     #{<<"username">>:=Dest} = Body,
-    #{<<"jsep">>:=#{<<"sdp">>:=SDP}=_JSep} = Msg,
-    Offer = #{dest=>Dest, sdp=>SDP, sdp_type=>webrtc, trickle_ice=>true},
+    #{<<"jsep">>:=JSep} = Msg,
+    #{<<"type">>:=<<"offer">>, <<"trickle">>:=Trickle, <<"sdp">>:=SDP} = JSep,
+    lager:warning("janus offer, trickle: ~p", [Trickle]),
+    Offer = #{dest=>Dest, sdp=>SDP, sdp_type=>webrtc, trickle_ice=>Trickle},
     % io:format("SDP: ~s\n", [SDP]),
     % lager:notice("JSEP: ~p", [Msg#{<<"jsep">>=>maps:remove(<<"sdp">>, JSep)}]),
     case handle(nkmedia_janus_invite, [SrvId, CallId, Offer], State) of
@@ -500,8 +511,10 @@ process_client_msg(call, Body, Msg, NkPort, #state{srv_id=SrvId}=State) ->
 process_client_msg(accept, _Body, Msg, NkPort, State) ->
     #state{call_id=CallId} = State,
     ?LLOG(info, "received ACCEPT (~s)", [CallId], State),
-    #{<<"jsep">>:=#{<<"sdp">>:=SDP}} = Msg,
-    Answer = #{sdp=>SDP, sdp_type=>webrtc, trickle_ice=>true},
+    #{<<"jsep">>:=JSep} = Msg,
+    #{<<"type">>:=<<"answer">>, <<"trickle">>:=Trickle, <<"sdp">>:=SDP} = JSep,
+    lager:warning("janus answer, trickle: ~p", [Trickle]),
+    Answer = #{sdp=>SDP, sdp_type=>webrtc, trickle_ice=>Trickle},
     case links_get(CallId, State) of
         {ok, Link} ->
             case handle(nkmedia_janus_answer, [CallId, Link, Answer], State) of
@@ -773,11 +786,15 @@ print(Txt, [#{}=Map], State) ->
         #{<<"jsep">>:=#{<<"sdp">>:=_SDP}=Jsep} -> 
             Map#{<<"jsep">>:=Jsep#{<<"sdp">>=><<"...">>}};
         _ -> 
-            _SDP = <<>>,
+            _SDP = none,
             Map
     end,
-    % io:format("~s\n", [_SDP]),
-    print(Txt, [nklib_json:encode_pretty(Map2)], State);
+    print(Txt, [nklib_json:encode_pretty(Map2)], State),
+    % case SDP of
+    %     none -> ok;
+    %     _ -> ?LLOG(info, "SDP\n~s\n", [_SDP], State)
+    % end,
+    ok;
 print(Txt, Args, State) ->
     ?LLOG(info, Txt, Args, State).
 

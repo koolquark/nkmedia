@@ -39,19 +39,12 @@
 		sdp => binary(),
 		sdp_type => rtp | webrtc,
 		trickle_ice => boolean(),	% Default false, all candidates must be in SDP
+		backend => atom(),
 		dest => binary(),
         caller_name => binary(),
         caller_id => binary(),
         callee_name => binary(),
-        callee_id => binary(),
-        use_audio => boolean(),
-        use_stereo => boolean(),
-        use_video => boolean(),
-        use_screen => boolean(),
-        use_data => boolean(),
-        in_bw => integer(),
-        out_bw => integer(),
-        module() => term()
+        callee_id => binary()
 	}.
 
 
@@ -60,11 +53,7 @@
 		sdp => binary(),
 		sdp_type => rtp | webrtc,
 		trickle_ice => boolean(),	% Default false, all candidates must be in SDP
-        use_audio => boolean(),
-        use_video => boolean(),
-        use_screen => boolean(),
-        use_data => boolean(),
-        module() => term()
+		backend => atom()
 	}.
 
 

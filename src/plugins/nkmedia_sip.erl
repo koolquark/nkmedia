@@ -153,7 +153,7 @@ send_bye(Link) ->
 register_incoming(Req, Link) ->
     {ok, Handle} = nksip_request:get_handle(Req),
     {ok, Dialog} = nksip_dialog:get_handle(Req),
-    lager:error("Register SIP: ~p, ~p, ~p", [Handle, Dialog, Link]),
+    % lager:error("Register SIP: ~p, ~p, ~p", [Handle, Dialog, Link]),
     nklib_proc:put({nkmedia_sip_dialog_to_id, Dialog}, Link),
     nklib_proc:put({nkmedia_sip_id_to_dialog, Link}, Dialog),
     nklib_proc:put({nkmedia_sip_handle_to_id, Handle}, Link),
