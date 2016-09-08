@@ -75,7 +75,7 @@
 invite(Pid, CallId, Offer, Link) ->
     case do_call(Pid, {invite, CallId, Offer, Link}) of
         ok ->
-            {nkmedia_janus, CallId, Pid};
+            {ok, {nkmedia_janus, CallId, Pid}};
         {error, Error} ->
             {error, Error}
     end.
@@ -451,17 +451,21 @@ process_client_req(trickle, Msg, NkPort, #state{session_id=SessionId}=State) ->
         <<"session_id">> := SessionId, 
         <<"handle_id">> := _Handle
     } = Msg,
+    Type = case State of
+        #state{janus=#{role:=caller}} -> offer;
+        #state{janus=#{role:=callee}} -> answer
+    end,
     Candidate = case CandidateGroup of
         #{
             <<"sdpMid">> := MId,
             <<"sdpMLineIndex">> := MIndex,
             <<"candidate">> := ALine
         } ->
-            #candidate{m_id=MId, m_index=MIndex, a_line=ALine};
+            #candidate{m_id=MId, m_index=MIndex, a_line=ALine, type=Type};
         #{
             <<"completed">> := true
         } ->
-            #candidate{last=true}
+            #candidate{last=true, type=Type}
     end,
     {ok, State2} = handle(nkmedia_janus_candidate, [Candidate], State),
     Resp = make_resp(#{janus=>ack, session_id=>SessionId}, Msg),

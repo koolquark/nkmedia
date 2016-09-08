@@ -25,12 +25,12 @@
 -behaviour(gen_server).
 
 -export([start/3, get_type/1, get_session/1, get_offer/1, get_answer/1]).
--export([set_answer/2, set_type/3, update/3, update_async/3, info/2]).
+-export([set_answer/2, set_type/3, cmd/3, cmd_async/3, info/2]).
 -export([stop/1, stop/2, stop_all/0]).
 -export([candidate/2]).
 -export([register/2, unregister/2, link_slave/2, unlink_session/1, unlink_session/2]).
--export([get_all/0, bridge_stop/2]).
--export([do_add/3, do_rm/2, get_session_file/1, backend_candidate/2]).
+-export([get_all/0, bridge_stop/2, get_session_file/1]).
+-export([set_slave_answer/3, peer_candidate/3]).
 -export([find/1, do_cast/2, do_call/2, do_call/3, do_info/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
@@ -61,25 +61,28 @@
 
 
 %% Backend plugins expand the available types
--type update() :: term().
+-type cmd() :: term().
 
 
 %% Session configuration
-%% If we set a master session, we will set up as a 'slave' of that 'master' session
-%% If one of them stops, the other one will also stop (see nkmedia_callbacks)
-%% If the slave has an answer, it will send it back to the master, if the option
-%% set_master_answer is tru
+%% If we set a master session, we will set this as a 'slave' of that 'master' session
+%% If one of them stops, the other one will also stop.
+%% If the slave has an answer, it will invoke nkmedia_session_slave_answer in master
+%% If it has an ICE candidate to send, it will invoke nkmedia_session_peer_candidate
+%% in master instead of sending the event {candidate, Candidate}
+%% If the master has an ICE candidate to send, will invoke nkmedia_session_peer_candidate
+%% in slave
 -type config() :: 
     #{
         session_id => id(),                         % Generated if not included
         no_offer_trickle_ice => boolean(),          % Buffer candidates and insert in SDP
         no_answer_trickle_ice => boolean(),       
         backend => nkemdia:backend(),
+        master_id => id(),                          % See above
+        % set_master_answer => boolean(),             
+        register => nklib:link(),
         wait_timeout => integer(),                  % Secs
         ready_timeout => integer(),
-        master_id => id(),                          % See above
-        set_master_answer => boolean(),                 
-        register => nklib:link(),
         user_id => nkservice:user_id(),             % Informative only
         user_session => nkservice:user_session(),   % Informative only
         term() => term()                            % Plugin data
@@ -90,9 +93,9 @@
     config () | 
     #{
         srv_id => nkservice:id(),
-        role => offerer | offeree,
+        backend_role => offerer | offeree,
         type => type(),
-        type_ext => map(),
+        type_ext => type_ext(),
         master_peer => id(),
         slave_peer => id(),
         record_pos => integer(),                     % Record position
@@ -100,7 +103,7 @@
     }.
 
 
--type type_ext() :: {type(), map()}.
+-type type_ext() :: map().
 
 
 -type event() ::
@@ -161,7 +164,7 @@ get_answer(SessId) ->
 
 %% @doc Get current type, type_ext and remaining time to timeout
 -spec get_type(id()) ->
-    {ok, type(), map(), integer()} | {error, term()}.
+    {ok, type(), type_ext(), integer()} | {error, term()}.
 
 get_type(SessId) ->
     do_call(SessId, get_type).
@@ -189,8 +192,6 @@ stop_all() ->
 
 
 %% @doc Sets the session's current answer operation.
-%% See each operation's doc for returned info
-%% Some backends my support updating answer (like Freeswitch)
 -spec set_answer(id(), nkmedia:answer()) ->
     ok | {error, nkservice:error()}.
 
@@ -198,7 +199,7 @@ set_answer(SessId, Answer) ->
     do_cast(SessId, {set_answer, Answer}).
 
 
-%% @doc Sets the session's current type
+%% @doc Updates the session's current type
 -spec set_type(id(), type(), type_ext()) ->
     ok | {error, nkservice:error()}.
 
@@ -206,29 +207,30 @@ set_type(SessId, Type, TypeExt) ->
     do_cast(SessId, {set_type, Type, TypeExt}).
 
 
-%% @doc Sends a client ICE candidate to the backend
+%% @doc Sends a ICE candidate
+%% The type field can select if it is for the offer or the answer
+%% If it is undefined, will be offer for 'offeree' role and answer for 'offerer'
 -spec candidate(id(), nkmedia:candidate()) ->
     ok | {error, term()}.
 
-candidate(SessId, Candidate) ->
+candidate(SessId, #candidate{}=Candidate) ->
     do_cast(SessId, {candidate, Candidate}).
 
-%% @doc Sets the session's current answer operation.
-%% See each operation's doc for returned info
-%% Some backends my support updating answer (like Freeswitch)
--spec update(id(), update(), Opts::map()) ->
+
+%% @doc Sends a command to the session
+-spec cmd(id(), cmd(), Opts::map()) ->
+    {ok, term()} | {error, nkservice:error()}.
+
+cmd(SessId, Cmd, Opts) ->
+    do_call(SessId, {cmd, Cmd, Opts}).
+
+
+%% @doc Equivalent to cmd/3, but does not wait for operation's result
+-spec cmd_async(id(), cmd(), Opts::map()) ->
     ok | {error, nkservice:error()}.
 
-update(SessId, Update, Opts) ->
-    do_call(SessId, {update, Update, Opts}).
-
-
-%% @doc Equivalent to update/3, but does not wait for operation's result
--spec update_async(id(), update(), Opts::map()) ->
-    ok | {error, nkservice:error()}.
-
-update_async(SessId, Update, Opts) ->
-    do_cast(SessId, {update, Update, Opts}).
+cmd_async(SessId, Cmd, Opts) ->
+    do_cast(SessId, {cmd, Cmd, Opts}).
 
 
 %% @doc Sends an info to the sesison
@@ -240,7 +242,6 @@ info(SessId, Info) ->
 
 
 %% @doc Links this session to another. We are master, other is slave
-%% See peer option
 -spec link_slave(id(), id()) ->
     {ok, pid()} | {error, nkservice:error()}.
 
@@ -298,14 +299,12 @@ get_all() ->
 %% ===================================================================
 
 
-%% @private
-do_add(Key, Val, Session) ->
-    maps:put(Key, Val, Session).
+% %% @doc Sends a client ICE candidate from the backend
+% -spec backend_candidate(id(), nkmedia:candidate()) ->
+%     ok | {error, term()}.
 
-
-%% @private
-do_rm(Key, Session) ->
-    maps:remove(Key, Session).
+% backend_candidate(SessId, Candidate) ->
+%     do_cast(SessId, {backend_candidate, Candidate}).
 
 
 %% @private
@@ -318,20 +317,29 @@ get_session_file(#{session_id:=SessId}=Session) ->
     {Name, ?SESSION(#{record_pos=>Pos+1}, Session)}.
 
 
-%% @doc Sends a client ICE candidate to the backend
--spec backend_candidate(id(), nkmedia:candidate()) ->
-    ok | {error, term()}.
-
-backend_candidate(SessId, Candidate) ->
-    do_cast(SessId, {backend_candidate, Candidate}).
-
-
-%% @private Called when a bridged session stops
+%% @private Called when a bridged session stops to call nkmedia_session_bridge_stop
+%% callback
 -spec bridge_stop(id(), session()) ->
     {ok, session()} | {stop, session()}.
 
 bridge_stop(PeerId, #{srv_id:=SrvId}=Session) ->
     SrvId:nkmedia_session_bridge_stop(PeerId, Session).
+
+
+%% @private
+-spec set_slave_answer(id(), id(), nkmedia:answer()) ->
+    ok | {error, term()}.
+
+set_slave_answer(MasterId, SlaveId, Answer) ->
+    do_cast(MasterId, {set_slave_answer, SlaveId, Answer}).
+
+
+%% @private
+-spec peer_candidate(id(), id(), nkmedia:candidate()) ->
+    ok | {error, term()}.
+
+peer_candidate(MasterId, SlaveId, Candidate) ->
+    do_cast(MasterId, {peer_candidate, SlaveId, Candidate}).
 
 
 % ===================================================================
@@ -341,7 +349,7 @@ bridge_stop(PeerId, #{srv_id:=SrvId}=Session) ->
 -record(state, {
     id :: id(),
     srv_id :: nkservice:id(),
-    role :: offerer | offeree,
+    backend_role :: offerer | offeree,
     type :: type(),
     type_ext :: type_ext(),
     has_offer = false :: boolean(),
@@ -368,8 +376,8 @@ init([#{session_id:=Id, type:=Type, srv_id:=SrvId}=Session]) ->
         true -> offeree;
         false -> offerer
     end,
-    Update = #{
-        role => Role,       
+    Session2 = Session#{
+        backend_role => Role,       
         type => Type,
         type_ext => #{},
         start_time => nklib_util:l_timestamp()
@@ -377,19 +385,19 @@ init([#{session_id:=Id, type:=Type, srv_id:=SrvId}=Session]) ->
     State1 = #state{
         id = Id, 
         srv_id = SrvId, 
-        role = Role,
+        backend_role = Role,
         type = Type,
         type_ext = #{},
         links = nklib_links:new(),
-        session = ?SESSION(Update, Session)
+        session = Session2
     },
-    State2 = case Session of
+    State2 = case Session2 of
         #{register:=Link} ->
             links_add(Link, State1);
         _ ->
             State1
     end,
-    case Session of
+    case Session2 of
         #{master_id:=Master} -> 
             case link_slave(Master, Id) of
                 {ok, _} -> 
@@ -410,8 +418,16 @@ init([#{session_id:=Id, type:=Type, srv_id:=SrvId}=Session]) ->
     {noreply, #state{}} | {reply, term(), #state{}} |
     {stop, Reason::term(), #state{}} | {stop, Reason::term(), Reply::term(), #state{}}.
 
-handle_call({update, Update, Opts}, _From, State) ->
-    {Reply, State2} = do_update(Update, Opts, State),
+handle_call({cmd, set_answer, #{answer:=Answer}}, _From, State) ->
+    case do_set_answer(Answer, State) of
+        {ok, State2} ->
+            reply({ok, #{}}, State2);
+        {error, Error, State2} ->
+            reply({error, Error}, State2)
+    end;
+
+handle_call({cmd, Cmd, Opts}, _From, State) ->
+    {Reply, State2} = do_cmd(Cmd, Opts, State),
     reply(Reply, State2);
 
 handle_call({link_to_slave, SlaveId, PidB}, _From, #state{id=MasterId}=State) ->
@@ -458,31 +474,29 @@ handle_call(Msg, From, State) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
 handle_cast(do_start, State) ->
-    case do_start(State) of
+    do_start(State);
+
+handle_cast({set_answer, Answer}, State) ->
+    case do_set_answer(Answer, State) of
         {ok, State2} ->
-            noreply(restart_timer(State2));
+            noreply(State2);
         {error, Error, State2} ->
-            ?LLOG(notice, "do_start error: ~p", [Error], State2),
+            ?LLOG(notice, "set_answer error: ~p", [Error], State2),
             do_stop(Error, State2)
     end;
 
-handle_cast({set_answer, _Answer}, #state{has_offer=false}=State) ->
-    ?LLOG(notice, "set_answer error: offer not set", [], State),
-    do_stop(offer_not_set, State);
-
-handle_cast({set_answer, _Answer}, #state{has_answer=true}=State) ->
-    ?LLOG(notice, "set_answer error: answer already set", [], State),
-    noreply(State);
-
-handle_cast({set_answer, Answer}, State) ->
-    % ?LLOG(notice, "SET ANSWER\n~s", [maps:get(sdp, Answer)], State),
-    State2 = add_to_session(answer, Answer, State),
-    case do_set_answer(State2) of
-        {ok, State3} ->
-            noreply(State3);
-        {error, Error, State3} ->
-            ?LLOG(notice, "set_answer error: ~p", [Error], State3),
-            do_stop(Error, State3)
+handle_cast({set_slave_answer, SlaveId, Answer}, #state{session=Session}=State) ->
+    case Session of
+        #{slave_id:=SlaveId} ->
+            case handle(nkmedia_session_slave_answer, [Answer], State) of
+                {ok, Answer2, State2} ->
+                    handle_cast({set_answer, Answer2}, State2);
+                {ignore, State2} ->
+                    {noreply, State2}
+            end;
+        _ ->
+            ?LLOG(notice, "received answer from unknown slave ~s", [SlaveId], State),
+            noreply(State)
     end;
 
 handle_cast({set_type, Type, TypeExt}, #state{session=Session}=State) ->
@@ -490,28 +504,61 @@ handle_cast({set_type, Type, TypeExt}, #state{session=Session}=State) ->
     {ok, #state{}=State2} = check_type(State#state{session=Session2}),
     noreply(State2);
 
-handle_cast({update, Update, Opts}, State) ->
-    {_Reply, State2} = do_update(Update, Opts, State),
+handle_cast({cmd, Cmd, Opts}, State) ->
+    {_Reply, State2} = do_cmd(Cmd, Opts, State),
     noreply(State2);
 
 handle_cast({info, Info}, State) ->
     noreply(event({info, Info}, State));
 
-handle_cast({candidate, Candidate}, #state{role=offerer}=State) ->
-    % We sent the offer, so this client candidate must be for the answer
-    noreply(do_answer_candidate(Candidate, State));
-
-handle_cast({candidate, Candidate}, #state{role=offeree}=State) ->
-    % We sent the answer, so this client candidate must be for the offer
+handle_cast({candidate, #candidate{type=offer}=Candidate}, State) ->
     noreply(do_offer_candidate(Candidate, State));
 
-handle_cast({backend_candidate, Candidate}, #state{role=offerer}=State) ->
-    % We sent the offer, so this backend candidate must be for the offer
-    noreply(do_offer_candidate(Candidate, State));
-
-handle_cast({backend_candidate, Candidate}, #state{role=offeree}=State) ->
-    % We sent the answer so this backend candidate must be for the answer
+handle_cast({candidate, #candidate{type=answer}=Candidate}, State) ->
     noreply(do_answer_candidate(Candidate, State));
+
+% We assume that if a candidate has no type, it is from the client (not the backend)
+handle_cast({candidate, Candidate}, #state{backend_role=offeree}=State) ->
+    handle_cast({candidate, Candidate#candidate{type=offer}}, State);
+
+handle_cast({candidate, Candidate}, #state{backend_role=offerer}=State) ->
+    handle_cast({candidate, Candidate#candidate{type=answer}}, State);
+
+handle_cast({peer_candidate, PeerId, Candidate}, #state{session=Session}=State) ->
+    case 
+        {ok, PeerId} == maps:find(slave_peer, Session) orelse 
+        {ok, PeerId} == maps:get(master_peer, Session)
+    of
+        true ->
+            case handle(nkmedia_session_peer_candidate, [Candidate], State) of
+                {ok, Candidate2, State2} ->
+                    handle_cast({candidate, Candidate2}, State2);
+                {ignore, State2} ->
+                    noreply(State2)
+            end;
+        false ->
+            ?LLOG(notice, "received candidate from unknown peer ~s", [PeerId], State),
+            noreply(State)
+    end;
+
+
+% handle_cast({candidate, Candidate}, #state{role=offerer}=State) ->
+%     % We sent the offer, so this client candidate must be for the answer
+%     noreply(do_answer_candidate(Candidate, State));
+
+% handle_cast({candidate, Candidate}, #state{role=offeree}=State) ->
+%     % We had an offer and must make the answer, so this client candidate 
+%     % must be for the offer
+%     noreply(do_offer_candidate(Candidate, State));
+
+% handle_cast({backend_candidate, Candidate}, #state{role=offerer}=State) ->
+%     % We sent the offer, so this backend candidate must be for the offer
+%     noreply(do_offer_candidate(Candidate, State));
+
+% handle_cast({backend_candidate, Candidate}, #state{role=offeree}=State) ->
+%     % We had an offer and must make the answer, so this backend candidate 
+%     % must be for the answer
+%     noreply(do_answer_candidate(Candidate, State));
 
 handle_cast({link_to_master, MasterId, PidB}, State) ->
     % We are Slave of MasterId
@@ -661,15 +708,22 @@ terminate(Reason, State) ->
 do_start(#state{type=Type}=State) ->
     case handle(nkmedia_session_start, [Type], State) of
         {ok, State2} ->
-            check_offer(State2);
-        {error, Error, State2} ->
-            {error, Error, State2}
+            case check_offer(State2) of
+                {ok, State3} ->
+                    noreply(restart_timer(State3));
+                {error, Error, State3} ->
+                    ?LLOG(notice, "do_start error: ~p", [Error], State3),
+                    do_stop(Error, State3)
+            end;
+       {error, Error, State2} ->
+            ?LLOG(notice, "do_start error: ~p", [Error], State2),
+            do_stop(Error, State2)
     end.
 
 
 %% @private
-do_update(Update, Opts, State) ->
-    case handle(nkmedia_session_update, [Update, Opts], State) of
+do_cmd(Cmd, Opts, State) ->
+    case handle(nkmedia_session_cmd, [Cmd, Opts], State) of
         {ok, Reply, State2} -> 
             {{ok, Reply}, State2};
         {error, Error, State2} ->
@@ -679,9 +733,9 @@ do_update(Update, Opts, State) ->
 
 
 %% @private
-check_offer(#state{has_offer=false}=State) ->
+check_offer(#state{has_offer=false, session=#{offer:=Offer}}=State) ->
     % The callback can update the answer and type here also
-    case do_set_offer(State) of
+    case do_set_offer(Offer, State) of
         {ok, State2} -> 
             check_answer(State2);
         {error, Error, State2} -> 
@@ -693,9 +747,9 @@ check_offer(State) ->
 
 
 %% @private
-check_answer(#state{has_answer=false}=State) ->
+check_answer(#state{has_answer=false, session=#{answer:=Answer}}=State) ->
     % The callback can update the type here also
-    case do_set_answer(State) of
+    case do_set_answer(Answer, State) of
         {ok, State2} -> 
             check_type(State2);
         {error, Error, State2} -> 
@@ -719,8 +773,10 @@ check_type(#state{type=OldType, type_ext=OldExt, session=Session}=State) ->
 
 
 %% @private
-do_set_offer(#state{type=Type, session=#{offer:=Offer}=Session}=State) ->
-    #state{has_offer=false} = State,
+do_set_offer(_Offer, #state{has_offer=true}=State) ->
+    {error, offer_already_set, State};
+
+do_set_offer(Offer, #state{type=Type, session=Session}=State) ->
     NoTrickleIce = maps:get(no_offer_trickle_ice, Session, false),
     case Offer of
         #{trickle_ice:=true} when NoTrickleIce ->
@@ -728,13 +784,18 @@ do_set_offer(#state{type=Type, session=#{offer:=Offer}=Session}=State) ->
             Time = maps:get(max_ice_time, Session, ?MAX_ICE_TIME),
             erlang:start_timer(Time, self(), offer_ice_timeout),
             ?LLOG(notice, "starting buffering offer Trickle ICE", [], State),
-            {ok, State#state{offer_candidates=[]}};
+            Session2 = ?SESSION(#{offer=>Offer}, Session),
+            {ok, State#state{session=Session2, offer_candidates=[]}};
         _ ->
             case handle(nkmedia_session_offer, [Type, Offer], State) of
-                {ok, State2} ->
-                    #state{session=#{offer:=Offer2}, wait_offer=Wait} = State2,
+                {ok, Offer2, State2} ->
+                    #state{wait_offer=Wait} = State2,
                     reply_all_waiting({ok, Offer2}, Wait),
-                    State3 = State2#state{has_offer=true, wait_offer=[]},
+                    State3 = State2#state{
+                        has_offer = true, 
+                        session = ?SESSION(#{offer=>Offer}, Session),
+                        wait_offer = []
+                    },
                     ?LLOG(info, "offer set", [], State3),
                     % ?LLOG(info, "\n~s", [maps:get(sdp, Offer2, <<>>)], State3),
                     {ok, State3};
@@ -743,15 +804,17 @@ do_set_offer(#state{type=Type, session=#{offer:=Offer}=Session}=State) ->
                 {error, Error, State2} ->
                     {error, Error, State2}
             end
-    end;
-
-do_set_offer(State) ->
-    {ok, State}.
+    end.
 
 
 %% @private
-do_set_answer(#state{type=Type, session=#{answer:=Answer}=Session}=State) ->
-    #state{has_answer=false} = State,
+do_set_answer(_Answer, #state{has_offer=false}=State) ->
+    {error, offer_not_set, State};
+
+do_set_answer(_Answer, #state{has_answer=true}=State) ->
+    {error, answer_already_set, State};
+
+do_set_answer(Answer, #state{type=Type, session=Session}=State) ->
     NoTrickleIce = maps:get(no_answer_trickle_ice, Session, false),
     case Answer of
         #{trickle_ice:=true} when NoTrickleIce ->
@@ -759,22 +822,23 @@ do_set_answer(#state{type=Type, session=#{answer:=Answer}=Session}=State) ->
             Time = maps:get(max_ice_time, Session, ?MAX_ICE_TIME),
             erlang:start_timer(Time, self(), answer_ice_timeout),
             ?LLOG(notice, "starting buffering answer Trickle ICE", [], State),
-            {ok, State#state{answer_candidates=[]}};
+            Session2 = ?SESSION(#{answer=>Answer}, Session),
+            {ok, State#state{session=Session2, answer_candidates=[]}};
         _ ->
             case handle(nkmedia_session_answer, [Type, Answer], State) of
-                {ok, State2} ->
-                    #state{session=#{answer:=Answer2}, wait_answer=Wait} = State2,
+                {ok, Answer2, State2} ->
+                    #state{wait_answer=Wait} = State2,
                     reply_all_waiting({ok, Answer2}, Wait),
-                    State3 = State2#state{has_answer=true, wait_answer=[]},
+                    State3 = State2#state{
+                        has_answer = true, 
+                        session = ?SESSION(#{answer=>Answer2}, Session),
+                        wait_answer = []
+                    },
                     ?LLOG(info, "answer set", [], State3),
                     % ?LLOG(info, "\n~s", [maps:get(sdp, Answer2, <<>>)], State3),
                     case Session of
-                        #{
-                            master_peer := MasterId,
-                            set_master_answer := true
-                        } ->
-                            lager:error("send to master"),
-                            set_answer(MasterId, Answer2);
+                        #{master_peer:=MasterId, session_id:=Id} ->
+                            set_slave_answer(MasterId, Id, Answer2);
                         _ ->
                             ok
                     end,
@@ -784,22 +848,43 @@ do_set_answer(#state{type=Type, session=#{answer:=Answer}=Session}=State) ->
                 {error, Error, State2} ->
                     {error, Error, State2}
             end
-    end;
+    end.
 
-do_set_answer(State) ->
-    {ok, State}.
 
 
 %% @private
-do_offer_candidate(Candidate, #state{offer_candidates=trickle, role=offerer}=State) ->
-    % We are not storing candidates
-    % We sent the offer, so this offer candidate is from the backend
-    event({candidate, Candidate}, State);
+do_offer_candidate(Candidate, 
+                   #state{offer_candidates=trickle, backend_role=offerer}=State) ->
+    % We are not storing candidates (we are using Trickle ICE)
+    % The backend made the offer, so this offer candidate is from the backend and 
+    % must be announced to the client or peer session
+    case State of
+        #state{session=#{slave_peer:=SlaveId, session_id:=Id}} ->
+            peer_candidate(SlaveId, Id, Candidate),
+            State;
+        _ ->
+            event({candidate, Candidate}, State)
+    end;
 
-do_offer_candidate(Candidate, #state{offer_candidates=trickle, role=offeree}=State) ->
-    % We sent the answer, so this offer candidate is for the backend
-    {ok, State2} = handle(nkmedia_session_candidate, [Candidate], State),
-    State2;
+do_offer_candidate(Candidate, 
+                   #state{offer_candidates=trickle, backend_role=offeree}=State) ->
+    % The backend made the answer, so this offer candidate is from the client 
+    % to the backend
+    % (or for my p2p peer, that is my 'backend')
+    case State of
+        #state{session=#{backend:=p2p, slave_peer:=SlaveId, session_id:=Id}} ->
+            peer_candidate(SlaveId, Id, Candidate),
+            State;
+        _ ->
+            % Send the candidate to the backend
+            case handle(nkmedia_session_candidate, [Candidate], State) of
+                {ok, State2} ->
+                    State2;
+                {continue, State2} ->
+                    ?LLOG(notice, "unmanaged offer candidate!", [], State2),
+                    State2
+            end
+    end;
 
 do_offer_candidate(#candidate{last=true}, #state{offer_candidates=last}=State) ->
     State;
@@ -838,15 +923,38 @@ do_offer_candidate(Candidate, #state{offer_candidates=Candidates}=State) ->
 
 
 %% @private
-do_answer_candidate(Candidate, #state{answer_candidates=trickle, role=offerer}=State) ->
-    % We are not storing candidates
-    % We sent the offer, so this answer candidate is for the backend
-    {ok, State2} = handle(nkmedia_session_candidate, [Candidate], State),
-    State2;
+do_answer_candidate(Candidate, 
+                    #state{answer_candidates=trickle, backend_role=offerer}=State) ->
+    % We are not storing candidates (we are using Tricle ICE)
+    % The backend made the offer, so this answer candidate is from the client 
+    % to the backend
+    % (or for my p2p peer, that is my 'backend')
+    case State of
+        #state{session=#{backend:=p2p, master_peer:=MasterId, session_id:=Id}} ->
+            peer_candidate(MasterId, Id, Candidate),
+            State;
+        _ ->
+            % Send the candidate to the backend
+            case handle(nkmedia_session_candidate, [Candidate], State) of
+                {ok, State2} ->
+                    State2;
+                {continue, State2} ->
+                    ?LLOG(notice, "unmanaged answer candidate!", [], State2),
+                    State2
+            end
+    end;
 
-do_answer_candidate(Candidate, #state{answer_candidates=trickle, role=offeree}=State) ->
-    % We sent the answer, so this answer candidate is from the backend
-    event({candidate, Candidate}, State);
+do_answer_candidate(Candidate, 
+                    #state{answer_candidates=trickle, backend_role=offeree}=State) ->
+    % The backend made the answer, so this answer candidate is from the backend,
+    % so it must be announced to the client (or my peer session)
+    case State of
+        #state{session=#{master_peer:=MasterId, session_id:=Id}} ->
+            peer_candidate(MasterId, Id, Candidate),
+            State;
+        _ ->
+            event({candidate, Candidate}, State)
+    end;
 
 do_answer_candidate(#candidate{last=true}, #state{answer_candidates=last}=State) ->
     State;
@@ -935,14 +1043,14 @@ do_stop(_Reason, #state{stop_sent=true}=State) ->
 do_stop(Reason, #state{session=Session}=State) ->
     {ok, State2} = handle(nkmedia_session_stop, [Reason], State),
     State3 = event({stop, Reason}, State2#state{stop_sent=true}),
-    % case Session of
-    %     #{master_peer:=MasterId} -> stop(MasterId, peer_stopped);
-    %     _ -> ok
-    % end,
-    % case Session of
-    %     #{slave_peer:=SlaveId} -> stop(SlaveId, peer_stopped);
-    %     _ -> ok
-    % end,
+    case Session of
+        #{master_peer:=MasterId} -> stop(MasterId, peer_stopped);
+        _ -> ok
+    end,
+    case Session of
+        #{slave_peer:=SlaveId} -> stop(SlaveId, peer_stopped);
+        _ -> ok
+    end,
     % Allow events to be processed
     timer:sleep(100),
     {stop, normal, State3}.
@@ -1014,11 +1122,11 @@ do_info(SessId, Msg) ->
 
 %% @private
 add_to_session(Key, Val, #state{session=Session}=State) ->
-    Session2 = do_add(Key, Val, Session),
+    Session2 = maps:put(Key, Val, Session),
     State#state{session=Session2}.
 
 remove_from_session(Key, #state{session=Session}=State) ->
-    Session2 = do_rm(Key, Session),
+    Session2 = map:remove(Key, Session),
     State#state{session=Session2}.
 
 

@@ -74,12 +74,11 @@ syntax(<<"session">>, <<"set_candidate">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
-			role => {enum, [caller, callee]},
 			sdpMid => binary,
 			sdpMLineIndex => integer,
 			candidate => binary
 		},
-		Defaults#{role=>caller},
+		Defaults,
 		[session_id, sdpMid, sdpMLineIndex, candidate|Mandatory]
 	};
 

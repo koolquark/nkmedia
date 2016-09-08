@@ -30,7 +30,8 @@
 		 nkmedia_session_handle_info/2]).
 -export([nkmedia_session_start/2, nkmedia_session_stop/2,
 	     nkmedia_session_offer/3, nkmedia_session_answer/3, 
-	     nkmedia_session_candidate/2, nkmedia_session_update/3, 
+		 nkmedia_session_slave_answer/2, nkmedia_session_cmd/3, 
+	     nkmedia_session_candidate/2, nkmedia_session_peer_candidate/2,
 	     nkmedia_session_bridge_stop/2]).
 -export([nkmedia_call_init/2, nkmedia_call_terminate/2, 
 		 nkmedia_call_resolve/3, nkmedia_call_invite/5, nkmedia_call_cancel/3, 
@@ -103,10 +104,11 @@ error_code(missing_offer) 			-> 	{2010, <<"Missing offer">>};
 error_code(duplicated_offer) 		-> 	{2011, <<"Duplicated offer">>};
 error_code(offer_not_set) 			-> 	{2012, <<"Offer not set">>};
 error_code(offer_already_set) 		-> 	{2013, <<"Offer already set">>};
-error_code(duplicated_answer) 		-> 	{2014, <<"Duplicated answer">>};
-error_code(answer_not_set) 			-> 	{2015, <<"Answer not set">>};
-error_code(answer_already_set) 		-> 	{2016, <<"Answer already set">>};
-error_code(no_ice_candidates) 		-> 	{2017, <<"No ICE candidates">>};
+error_code(remote_offer_error) 		-> 	{2014, <<"Remote offer error">>};
+error_code(duplicated_answer) 		-> 	{2015, <<"Duplicated answer">>};
+error_code(answer_not_set) 			-> 	{2016, <<"Answer not set">>};
+error_code(answer_already_set) 		-> 	{2017, <<"Answer already set">>};
+error_code(no_ice_candidates) 		-> 	{2018, <<"No ICE candidates">>};
 
 error_code(call_not_found) 			->  {2020, <<"Call not found">>};
 error_code(call_rejected)			->  {2021, <<"Call rejected">>};
@@ -175,29 +177,37 @@ nkmedia_session_start(_Type, Session) ->
 %% @private
 %% Plugin can update the offer
 -spec nkmedia_session_offer(nkmedia_session:type(), nkmedia:offer(), session()) ->
-	{ok, session()} | {ignore, session()} | 
+	{ok, nkmedia:offer(), session()} | {ignore, session()} | 
 	{error, nkservice:error(), session()} | continue().
 
-nkmedia_session_offer(_Type, _Offer, Session) ->
-	{ok, Session}.
+nkmedia_session_offer(_Type, Offer, Session) ->
+	{ok, Offer, Session}.
 
 
 %% @private
 %% Plugin can update the answer
 -spec nkmedia_session_answer(nkmedia_session:type(), nkmedia:answer(), session()) ->
-	{ok, session()} | {ignore, session()} | 
+	{ok, nkmedia:answer(), session()} | {ignore, session()} | 
 	{error, nkservice:error(), session()} | continue().
 
-nkmedia_session_answer(_Type, _Answer, Session) ->
-	{ok, Session}.
+nkmedia_session_answer(_Type, Answer, Session) ->
+	{ok, Answer, Session}.
 
 
 %% @private
--spec nkmedia_session_update(nkmedia_session:update(), Opts::map(), session()) ->
+-spec nkmedia_session_slave_answer(nkmedia:answer(), session()) ->
+	{ok, nkmedia:answer(), session()} | {ignore, session()} | continue().
+
+nkmedia_session_slave_answer(Answer, Session) ->
+	{ok, Answer, Session}.
+
+
+%% @private
+-spec nkmedia_session_cmd(nkmedia_session:cmd(), Opts::map(), session()) ->
 	{ok, Reply::map(), session()} |
 	{error, term(), session()} | continue().
 
-nkmedia_session_update(_Update, _Opts, Session) ->
+nkmedia_session_cmd(_Cmd, _Opts, Session) ->
 	{error, invalid_operation, Session}.
 
 
@@ -205,8 +215,16 @@ nkmedia_session_update(_Update, _Opts, Session) ->
 -spec nkmedia_session_candidate(nkmedia:candidate(), session()) ->
 	{ok, session()} | continue().
 
-nkmedia_session_candidate(_Candidate, Session) ->
-	{ok, Session}.
+nkmedia_session_candidate(Candidate, Session) ->
+	{continue, [Candidate, Session]}.
+
+
+%% @private
+-spec nkmedia_session_peer_candidate(nkmedia:candidate(), session()) ->
+	{ok, nkmedia:candidate(), session()} | {ignore, session()} | continue().
+
+nkmedia_session_peer_candidate(Candidate, Session) ->
+	{ok, Candidate, Session}.
 
 
 %% @private%% @doc Called when the status of the session changes

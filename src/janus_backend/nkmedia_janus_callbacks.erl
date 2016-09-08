@@ -28,7 +28,8 @@
 -export([nkmedia_janus_get_mediaserver/1]).
 -export([nkmedia_session_start/2, nkmedia_session_stop/2,
          nkmedia_session_answer/3,
-         nkmedia_session_candidate/2, nkmedia_session_update/3,
+         nkmedia_session_candidate/2, nkmedia_session_peer_candidate/2,
+         nkmedia_session_update/3,
          nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2, 
          nkmedia_session_handle_info/2]).
 -export([nkmedia_room_init/2, nkmedia_room_terminate/2, nkmedia_room_tick/2,
@@ -37,7 +38,7 @@
 -export([nkdocker_notify/2]).
 
 -include_lib("nkservice/include/nkservice.hrl").
-
+-include("../../include/nkmedia.hrl").
 
 
 %% ===================================================================
@@ -168,6 +169,14 @@ nkmedia_session_candidate(_Candidate, _Session) ->
 
 
 %% @private
+nkmedia_session_peer_candidate(Candidate, #{nkmedia_janus_id:=_}=Session) ->
+    nkmedia_janus_session:peer_candidate(Candidate, Session);
+
+nkmedia_session_peer_candidate(_Candidate, _Session) ->
+    continue.
+
+
+%% @private
 nkmedia_session_stop(Reason, #{nkmedia_janus_id:=_}=Session) ->
     nkmedia_janus_session:stop(Reason, Session);
 
@@ -240,7 +249,7 @@ nkmedia_room_terminate(Reason, Room) ->
             {ok, Room};
         State ->
             {ok, State2} = nkmedia_janus_room:terminate(Reason, Room, State),
-            {ok, update_state(State2, Room)}
+            {ok, ?ROOM(#{nkmedia_janus=>State2}, Room)}
     end.
 
 
@@ -251,7 +260,7 @@ nkmedia_room_tick(RoomId, Room) ->
             continue;
         State ->
             {ok, State2} = nkmedia_janus_room:nkmedia_room_tick(RoomId, Room, State),
-            {continue, [RoomId, update_state(State2, Room)]}
+            {continue, [RoomId, ?ROOM(#{nkmedia_janus=>State2}, Room)]}
     end.
 
 
@@ -259,7 +268,7 @@ nkmedia_room_tick(RoomId, Room) ->
 nkmedia_room_handle_cast({nkmedia_janus, Msg}, Room) ->
     {noreply, State2} = 
         nkmedia_janus_room:nkmedia_room_handle_cast(Msg, Room, state(Room)),
-    {noreply, update_state(State2, Room)};
+    {noreply, ?ROOM(#{nkmedia_janus=>State2}, Room)};
 
 nkmedia_room_handle_cast(_Msg, _Room) ->
     continue.
@@ -315,10 +324,6 @@ state(#{nkmedia_janus:=State}) ->
 state(_) ->
     error.
 
-
-%% @private
-update_state(State, Session) ->
-    nkmedia_session:do_add(nkmedia_janus, State, Session).
 
 
 %% @private

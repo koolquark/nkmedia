@@ -28,11 +28,11 @@
 -module(nkmedia_kms_session).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/2, offer/3, answer/3, candidate/2, update/3, stop/2]).
+-export([start/2, answer/3, candidate/2, cmd/3, stop/2]).
 -export([handle_call/3, handle_cast/2]).
 
 
--export_type([session/0, type/0, opts/0, update/0]).
+-export_type([session/0, type/0, opts/0, cmd/0]).
 
 -define(LLOG(Type, Txt, Args, Session),
     lager:Type("NkMEDIA KMS Session ~s "++Txt, 
@@ -79,7 +79,7 @@
     play     |
     connect.
 
--type update() :: atom().
+-type cmd() :: atom().
 
 -type opts() ::
     nkmedia_session:session() |
@@ -114,8 +114,10 @@ start(Type, Session) ->
             case get_pipeline(Type, Session2) of
                 {ok, Session3} ->
                     case nkmedia_kms_session_lib:create_proxy(Session3) of
+                        {ok, #{offer:=Offer}=Session4} ->
+                            start_offeree(Type, Offer, Session4);
                         {ok, Session4} ->
-                            do_start(Session4);
+                            start_offerer(Type, Session4);
                         {error, Error} ->
                             {error, Error, Session3}
                     end;
@@ -127,40 +129,9 @@ start(Type, Session) ->
     end.
 
 
-do_start(#{offer:=_}=Session) ->
-    %% Wait for offer callback
-    {ok, Session};
-
-do_start(Session) ->
-    case create_endpoint_offerer(Session) of
-        {ok, Session2} ->
-            {ok, Session2};
-        {error, Error} ->
-            {error, Error, Session}
-    end.
-
-
-%% @private
--spec offer(type(), nkmedia:offer(), session()) ->
-    {ok, session()} | {error, nkservice:error(), session()}.
-
-offer(_Type, #{backend:=nkmedia_kms}, Session) ->
-    {ok, Session};
-
-offer(Type, Offer, Session) ->
-    case create_endpoint_offeree(Offer, Session) of
-        {ok, Session2} ->
-            do_start_type(Type, Session2);
-        {error, Error} ->
-            {error, Error, Session}
-    end.
-
 %% @private
 -spec answer(type(), nkmedia:answer(), session()) ->
     {ok, session()} | {error, nkservice:error(), session()}.
-
-answer(_Type, #{backend:=nkmedia_kms}, Session) ->
-    {ok, Session};
 
 answer(Type, Answer, Session) ->
     case nkmedia_kms_session_lib:set_answer(Answer, Session) of
@@ -184,10 +155,10 @@ candidate(Candidate, Session) ->
 
 
 %% @private
--spec update(update(), Opts::map(), session()) ->
+-spec cmd(cmd(), Opts::map(), session()) ->
     {ok, Reply::term(), session()} | {error, term(), session()} | continue().
 
-update(session_type, #{session_type:=Type}=Opts, Session) ->
+cmd(session_type, #{session_type:=Type}=Opts, Session) ->
     case check_record(Opts, Session) of
         {ok, Session2} ->
             case do_type(Type, Opts, Session2) of
@@ -201,11 +172,11 @@ update(session_type, #{session_type:=Type}=Opts, Session) ->
             {error, Error, Session}
     end;
 
-update(connect, Opts, Session) ->
+cmd(connect, Opts, Session) ->
     do_type(connect, Opts, Session);
    
 %% Updates media in EP -> Proxy path only (to "mute")
-update(media, Opts, Session) ->
+cmd(media, Opts, Session) ->
     case check_record(Opts, Session) of
         {ok, Session2} ->
             ok = nkmedia_kms_session_lib:update_media(Opts, Session),
@@ -214,7 +185,7 @@ update(media, Opts, Session) ->
             {error, Error, Session}
     end;
 
-update(recorder, #{operation:=Op}, Session) ->
+cmd(recorder, #{operation:=Op}, Session) ->
     case nkmedia_kms_session_lib:recorder_op(Op, Session) of
         {ok, Session2} ->
             {ok, #{}, Session2};
@@ -222,13 +193,13 @@ update(recorder, #{operation:=Op}, Session) ->
             {error, Error, Session}
     end;
 
-update(recorder, _Opts, Session) ->
+cmd(recorder, _Opts, Session) ->
     {error, {missing_parameter, operation}, Session};
 
-update(player, #{operation:=Op}, Session) ->
+cmd(player, #{operation:=Op}, Session) ->
     nkmedia_kms_session_lib:player_op(Op, Session);
 
-update(get_stats, Opts, Session) ->
+cmd(get_stats, Opts, Session) ->
     Type1 = maps:get(media_type, Opts, <<"VIDEO">>),
     Type2 = nklib_util:to_upper(Type1),
     case nkmedia_kms_session_lib:get_stats(Type2, Session) of
@@ -238,11 +209,11 @@ update(get_stats, Opts, Session) ->
             {error, Error, Session}
     end;
 
-update(print_info, _Opts, #{session_id:=SessId}=Session) ->
+cmd(print_info, _Opts, #{session_id:=SessId}=Session) ->
     nkmedia_kms_session_lib:print_info(SessId, Session),
     {ok, #{}, Session};
 
-update(_Update, _Opts, _Session) ->
+cmd(_Update, _Opts, _Session) ->
     continue.
 
 
@@ -278,16 +249,14 @@ handle_call(get_publisher, _From, Session) ->
     {reply, {error, not_publishing}, Session}.
 
  
-% %% @private
-% handle_cast({kms_candidate, Candidate}, #{nkmedia_kms_role:=offerer}=Session) ->
-%     % Sent to remote party or buffer
-%     nkmedia_session:backend_candidate(self(), Candidate#candidate{type=offer}),
-%     {noreply, Session};
-
-% handle_cast({kms_candidate, Candidate}, #{nkmedia_kms_role:=offeree}=Session) ->
-%     % Sent to remote party or buffer
-%     nkmedia_session:candidate(self(), Candidate#candidate{type=answer}),
-%     {noreply, Session};
+%% @private
+handle_cast(#candidate{}=Candidate, #{backend_role:=Role}=Session) ->
+    Type = case Role of
+        offerer -> offer;
+        offeree -> answer
+    end,
+    nkmedia_session:candidate(self(), Candidate#candidate{type=Type}),
+    {noreply, Session};
 
 handle_cast({bridge_stop, PeerId}, #{nkmedia_kms_bridged_to:=PeerId}=Session) ->
     case nkmedia_session:bridge_stop(PeerId, Session) of
@@ -346,6 +315,36 @@ is_supported(listen) -> true;
 is_supported(play) -> true;
 is_supported(connect) -> true;
 is_supported(_) -> false.
+
+
+
+%% @private
+-spec start_offerer(type(), session()) ->
+    {ok, session()} |
+    {error, nkservice:error(), session()} | continue().
+
+%% We must make the offer
+start_offerer(_Type, Session) ->
+    case create_endpoint_offerer(Session) of
+        {ok, Session2} ->
+            {ok, Session2};
+        {error, Error} ->
+            {error, Error, Session}
+    end.
+
+
+%% @private
+-spec start_offeree(type(), nkmedia:offer(), session()) ->
+    {ok, session()} |
+    {error, nkservice:error(), session()} | continue().
+
+start_offeree(Type, Offer, Session) ->
+    case create_endpoint_offeree(Offer, Session) of
+        {ok, Session2} ->
+            do_start_type(Type, Session2);
+        {error, Error} ->
+            {error, Error, Session}
+    end.
 
 
 %% @private

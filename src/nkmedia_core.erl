@@ -51,7 +51,7 @@ start() ->
     end,
     Opts = #{
         class => nkmedia_core,
-        plugins => [?MODULE, nksip, nksip_uac_auto_auth, nksip_registrar, nksip_trace],
+        plugins => [?MODULE, nksip, nksip_uac_auto_auth, nksip_registrar],
         nksip_trace => {console, all},    % Add nksip_trace
         sip_listen => <<"sip:all">>
     },

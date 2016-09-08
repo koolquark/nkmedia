@@ -81,11 +81,11 @@ kms_event(SessId, <<"OnIceCandidate">>, Data) ->
         }
     } = Data,
     Candidate = #candidate{m_id=MId, m_index=MIndex, a_line=ALine},
-    nkmedia_session:backend_candidate(SessId, Candidate);
+    nkmedia_session:do_cast(SessId, {nkmedia_kms, Candidate});
 
 kms_event(SessId, <<"OnIceGatheringDone">>, _Data) ->
     Candidate = #candidate{last=true},
-    nkmedia_session:backend_candidate(SessId, Candidate);
+    nkmedia_session:do_cast(SessId, {nkmedia_kms, Candidate});
 
 kms_event(SessId, <<"EndOfStream">>, Data) ->
     #{<<"source">>:=Player} = Data,

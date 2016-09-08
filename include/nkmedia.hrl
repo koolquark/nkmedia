@@ -46,6 +46,8 @@
 -define(SESSION(Map, Session), maps:merge(Session, Map)).
 -define(SESSION_RM(Key, Session), maps:remove(Key, Session)).
 
+-define(ROOM(Map, Room), maps:merge(Room, Map)).
+-define(ROOM_RM(Key, Room), maps:remove(Key, Room)).
 
 
 

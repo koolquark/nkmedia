@@ -20,63 +20,77 @@
 
 %% @doc Tests for media functionality
 %% Things to test:
+%% 
 %% - Register a Verto or a Janus (videocall) (not using direct Verto connections here)
-%%   - Call e for Janus echo
-%%     Verto/Janus register with the session on start as {nkmedia_verto, CallId, Pid}
-%%     The session returns its Link, and it is registered with Janus/Verto
-%%     When the sessions answers, Verto/Janus get the answer from their callback
-%%     modules (nkmedia_session_reg_event). Same if it stops normally.
-%%     If the session is killed it is detected by both
-%%     If you hangup, nkmedia_verto_bye (or _janus_) stops the session
-%%     If Verto/Janus is killed, it is detected by the session
-%%     If the caller starts sending Trickle ICE requests (Janus client), they will be
-%%     capture in nkmedia_janus_candidate and sent to the session
-%%   - fe, p, p2, m1, m2 work the same way
-%%   - start a listener with listen(Publisher, Num)
-%%     This is the first operarion where we "call". We can reject the call, or accept it
-%%     We create a session that generates an offer, and call Verto/Janus,
-%%     then we register Verto/Janus with the session
-%%     When Verto/Janus answers, their nkmedia_..._answer functions (or rejected) 
-%%     sets the answer or stops the session (nkmedia_..._bye).
-%%     If the caller starts sending candidates, is like above
-%%     If the callee sends candidates, they again will be sent to the session, but
-%%     with role 'callee', so that they will be processed correctly at nkmedia_janus_op
-%%     and nkmedia_kms_op
-%%   - d to call other party directly
-%%   - j to call other party with Janus. Both parties are rgistered
-%%   - f to call with FS
-%%     We first starts a session in park state
-%%     Then we start another with "call" and the id of the first. When it answers,
-%%     sends a message to the first an both enter bridge.
-%%     After that can use update_type con echo, park, or fs_call again
-%%     Use park_after_bridge
-%%   
+%%
+%%   - Verto / Janus originator:
+%%     Verto or Janus call je, fe, ke, p, p2, m1, m2 all work the same way
+%%     Verto (or Janus) register with the session on start as 
+%%     {nkmedia_verto, CallId, Pid}. This way, we can use nkmedia_session_reg_event
+%%     in their callback modules to detect the available answer and session stop.
+%%     Also, if the Verto/Janus process stops, the session detects it and stops.
+%%     The session 'link' {nkmedia_session, SessId, SessPid} is returned to Verto/Janus
+%%     This way, if Verto/Janus needs to stop the session or send an info, it uses it 
+%%     in their callback modules as an 'specially recognized' link type.
+%%     Also, if the session is killed, stops, it is detected by Verto/Janus
+%% 
+%%   - Trickle ICE
+%%     When the client is Verto, it sends the SDP without trickle. It uses
+%%     no_answer_trickle_ice=true, so if the backend sends an SDP with trickle ICE
+%%     (like Kurento) the candidates will be buffered but nkmedia and the answer
+%%     will be sent when ready
+%%     If the client is Janus, it sends the offer SDP with trickle. 
+%%     When it sends a candidate the nkmedia_janus_candidate callback sends it
+%%     to the session. If the backend has not set no_offer_trickle_candidate, they will
+%%     be sent directly to the backend. Otherwise (FS), they will be buffered and sent 
+%%     to the backend when ready.
+%%     Verto does not support receiving candidates either, so uses no_answer_trickle_ice
+%%     If we had a client that supports them, should listen to the {candidate, _}
+%%     event from nkmedia_session
+%%
+%%   - Verto / Janus receiver
+%%     If we call invite/3 to a registered client, we locate it and we start the 
+%%     session without offer. We then get the offer from the session, and send
+%%     the invite to Verto/Janus with the session 'link'
+%%     This way Verto/Janus monitor the session and send the answer or bye
+%%     We also register the Verto/Janus process with the session, so that it can 
+%%     detect session stops and kills.
+%%
+%%   - Direct call
+%%     If we dial "dXXX", we start a 'master' session (p2p type), and a 'slave'
+%%     session, that 'pulls' the offer from the master. Do not include the offer,
+%%     in the slave session, so that it takes the 'offerer' role
+%%     If the master sends an offer ICE candidate, since no backend uses it,
+%%     it is sent to the slave, where it is announced (unless no_offer_trickle_ice)
+%%     When the slave sends an ICE candidate, it is sent to the master, where it
+%%     is announced (unless no_answer_trickle_ice)
+%%
+%%   - Call through Janus proxy
+%%
+%%   - Call through FS/KMS
+
+
+
+
 %%  - Register a SIP Phone
-%%    - Incoming. When a call arrives, we create a proxy session with janus  
-%%      and register {nkmedia_sip, in, Pid} with it. 
-%%      We call nkmedia_sip:register_incoming to store handle and dialog in SIP's 
-%%      We can call any destination (d1009, j1009, etc. all should work), 
-%%      and we start a second session (registered with {nkmedia_session, ...}) 
-%%      so that when it answers, sends the answer back to the first. 
-%%      SIP detects the answer in nkmedia_sip_calls (nkmedia_session_reg_event),
-%%      finds the Handle and answers. If we can cancel, sip_cancel find the session
-%%      When the answer arrives, it is detected in nkmedia_session_reg_event
-%%      If we send BYE, the session is found in sip_bye
-%%      If the session stops, it is detected in nkmedia_session_reg_event
-%%    - Outcoming. When any invite example calls to a registered SIP endpoint,
-%%      the option sdp_type=rtp is added (recognized by all backends)
-%%      If we use "j...", we call send_invite with proxy 
-%%      (Janus will generate the SIP offer) or we use "f..." we first start a 
-%%      session A and then launch the send_invite with type call, and FS will 
-%%      make the SIP offer.
-%%      Then we call nkmedia_sip:send_invite thant launchs the invite and registers
-%%      data for callbacks and dialogs.
-%%      When receiving events, calls nkmedia_sip_invite_... in callbacks module,
-%%      rejecting the session or setting the answer. When the sessions 
-%%      (or the second session in the FS case, and sends it to the first) has the
-%%      answer, the caller (Verto, etc.) is notified as above.
-%%      If the sessions stops, sip detects it in nkmedia_sip_callbacks
-%%      (nkmedia_session_reg_event), if the BYE we locate and stop the session.
+%%    The registrations is allowed and the domain is forced to 'nkmedia'
+
+%%    - Incoming SIP
+%%      When a call arrives, we create a proxy session with janus  
+%%      and register the nkmedia-generated 'sip link' with it
+%%      This way, when the proxy has an answer it is sent back to the SIP caller,
+%%      also if the session stops
+%%      We then register the invited Verto or Janus with the session, so that
+%%      they can sen the answer to the proxy
+%%
+%%    - Outcoming SIP
+%%      As a Verto/Janus originator, we start a call (j, f, k) that happens to
+%%      resolve to a registered SIP endpoint.
+%%      We start a second (slave, offerer, without offer) session, but with sdp_type=rtp
+%%      and asks for the offer. It 
+
+
+
 
 
 -module(nkmedia_test).
@@ -161,8 +175,9 @@ plugin_deps() ->
 %% ===================================================================
 
 
-update_media(SessId, Media) ->
-    nkmedia_session:update(SessId, media, Media).
+invite(Dest, Type, Opts) ->
+    Opts2 = maps:merge(#{backend => nkmedia_kms}, Opts),
+    start_invite(Dest, Type, Opts2).
 
 
 listen(Room, Pos, Dest) ->
@@ -173,40 +188,29 @@ listen(Room, Pos, Dest) ->
         backend => Backend,
         use_video => true
     },
-    start_invite(listen, Config, Dest).
+    start_invite(Dest, listen, Config).
 
 
-listen_swich(SessId, Pos) ->
-    {ok, listen, #{room_id:=Room}, _} = nkmedia_session:get_type(SessId),
-    {ok, #{publishers:=Pubs}} = nkmedia_room:get_room(Room),
-    Pub = lists:nth(Pos, maps:keys(Pubs)),
-    nkmedia_session:update(SessId, listen_switch, #{publisher_id=>Pub}).
-
-
-invite(Dest, Type, Opts) ->
-    Opts2 = maps:merge(#{backend => nkmedia_kms}, Opts),
-    start_invite(Type, Opts2, Dest).
-
+update_media(SessId, Media) ->
+    nkmedia_session:update(SessId, media, Media).
 
 
 update_type(SessId, Type, Opts) ->
     nkmedia_session:update(SessId, session_type, Opts#{session_type=>Type}).
 
 
-mcu_layout(SessId, Layout) ->
+update_layout(SessId, Layout) ->
     Layout2 = nklib_util:to_binary(Layout),
     nkmedia_session:update(SessId, mcu_layout, #{mcu_layout=>Layout2}).
 
 
-% fs_call(SessId, Dest) ->
-%     Config = #{master_id=>SessId, park_after_bridge=>true},
-%     case start_invite(call, Config, Dest) of
-%         {ok, _SessLinkB} ->
-%             ok;
-%         {rejected, Error} ->
-%             lager:notice("Error in start_invite: ~p", [Error]),
-%             nkmedia_session:stop(SessId)
-%    end.
+update_listen(SessId, Pos) ->
+    {ok, listen, #{room_id:=Room}, _} = nkmedia_session:get_type(SessId),
+    {ok, #{publishers:=Pubs}} = nkmedia_room:get_room(Room),
+    Pub = lists:nth(Pos, maps:keys(Pubs)),
+    nkmedia_session:update(SessId, listen_switch, #{publisher_id=>Pub}).
+
+
 
 
 %% ===================================================================
@@ -224,28 +228,11 @@ nkmedia_verto_login(Login, Pass, Verto) ->
     end.
 
 
-% nkmedia_verto_invite(_SrvId, _CallId, Offer, Verto) ->
-%     {ok, Op} = nkmedia_kms_op:start(<<"nk_kms_aa38ayw_8888">>, <<>>),
-%     Now = nklib_util:l_timestamp(),
-%     {ok, Answer} = nkmedia_kms_op:echo(Op, Offer, #{}),
-%     lager:error("TIME: ~p msec", [(nklib_util:l_timestamp() - Now) div 1000]),
-%     {answer, Answer, {nkmedia_kms_op, Op}, Verto}.
-
 % @private Called when we receive INVITE from Verto
-% We register with the session as {nkmedia_verto, CallId, Pid}, and with the 
-% verto server as {nkmedia_session, SessId, Pid}.
-% Answer and Hangup of the session are detected in nkmedia_verto_callbacks
-% If verto hangups, it is detected in nkmedia_verto_bye in nkmedia_verto_callbacks
-% If verto dies, it is detected in the session because of the registration
-% If the sessions dies, it is detected in verto because of the registration
 nkmedia_verto_invite(_SrvId, CallId, Offer, Verto) ->
     #{dest:=Dest} = Offer, 
-    Base = #{
-        offer => Offer, 
-        register => {nkmedia_verto, CallId, self()}, 
-        no_answer_trickle_ice => true
-    },
-    case incoming(Dest, Base) of
+    Reg = {nkmedia_verto, CallId, self()},
+    case incoming(Dest, Offer, Reg, #{no_answer_trickle_ice => true}) of
         {ok, SessId, SessPid} ->
             {ok, {nkmedia_session, SessId, SessPid}, Verto};
         {error, Reason} ->
@@ -272,12 +259,8 @@ nkmedia_verto_invite(_SrvId, CallId, Offer, Verto) ->
 % @private Called when we receive INVITE from Janus
 nkmedia_janus_invite(_SrvId, CallId, Offer, Janus) ->
     #{dest:=Dest} = Offer, 
-    Base = #{
-        offer=>Offer, 
-        register=>{nkmedia_janus, CallId, self()},
-        no_answer_trickle_ice => true
-    },
-    case incoming(Dest, Base) of
+    Reg = {nkmedia_janus, CallId, self()},
+    case incoming(Dest, Offer, Reg, #{no_answer_trickle_ice => true}) of
         {ok, SessId, SessPid} ->
             {ok, {nkmedia_session, SessId, SessPid}, Janus};
         {error, Reason} ->
@@ -311,6 +294,222 @@ nks_sip_connection_recv(SipMsg, _Packet) ->
 sip_register(Req, Call) ->
     Req2 = nksip_registrar_util:force_domain(Req, <<"nkmedia">>),
     {continue, [Req2, Call]}.
+
+
+
+% Version that generates a Janus proxy before going on
+nkmedia_sip_invite(_SrvId, _Dest, Offer, SipLink, _Req, _Call) ->
+    ConfigA = incoming_config(nkmedia_janus, Offer, SipLink, #{}),
+    {ok, SessId, SessPid} = start_session(proxy, ConfigA),
+    {ok, Offer2} = nkmedia_session:update(SessId, get_proxy_offer, #{}),
+    SessLink = {nkmedia_session, SessId, SessPid},
+    case find_user(a) of
+        {nkmedia_verto, Pid} ->
+            {ok, Link} = nkmedia_verto:invite(Pid, SessId, Offer2, SessLink),
+            {ok, _} = nkmedia_session:register(SessId, Link);
+        {nkmedia_janus, Pid} ->
+            {ok, Link} = nkmedia_janus_proto:invite(Pid, SessId, Offer2, SessLink),
+            {ok, _} = nkmedia_session:register(SessId, Link);
+        not_found ->
+            {rejected, user_not_found}
+    end.
+
+
+
+
+%% ===================================================================
+%% Internal
+%% ===================================================================
+
+incoming(<<"je">>, Offer, Reg, Opts) ->
+    Config = incoming_config(nkmedia_janus, Offer, Reg, Opts),
+    start_session(echo, Config#{use_audio=>false, bitrate=>100000, record=>true});
+
+incoming(<<"fe">>, Offer, Reg, Opts) ->
+    Config = incoming_config(nkmedia_fs, Offer, Reg, Opts),
+    start_session(echo, Config);
+
+incoming(<<"ke">>, Offer, Reg, Opts) ->
+    Config = incoming_config(nkmedia_kms, Offer, Reg, Opts),
+    start_session(echo, Config#{use_data=>false});
+
+incoming(<<"kp">>, Offer, Reg, Opts) ->
+    Config = incoming_config(nkmedia_kms, Offer, Reg, Opts),
+    start_session(park, Config);
+
+incoming(<<"m1">>, Offer, Reg, Opts) ->
+    Config = incoming_config(nkmedia_fs, Offer, Reg, Opts),
+    start_session(mcu, Config#{room_id=>"mcu1"});
+
+incoming(<<"m2">>, Offer, Reg, Opts) ->
+    Config = incoming_config(nkmedia_fs, Offer, Reg, Opts),
+    start_session(mcu, Config#{room_id=>"mcu2"});
+
+incoming(<<"pj1">>, Offer, Reg, Opts) ->
+    nkmedia_room:start(test, #{room_id=>sfu, backend=>nkmedia_janus}),
+    Config = incoming_config(nkmedia_janus, Offer, Reg, Opts),
+    start_session(publish, Config#{room_id=>sfu});
+
+incoming(<<"pj2">>, Offer, Reg, Opts) ->
+    Config1 = incoming_config(nkmedia_janus, Offer, Reg, Opts),
+    Config2 = Config1#{
+        room_audio_codec => pcma,
+        room_video_codec => vp9,
+        room_bitrate => 100000
+    },
+    start_session(publish, Config2);
+
+incoming(<<"play">>, Offer, Reg, Opts) ->
+    Config = incoming_config(nkmedia_kms, Offer, Reg, Opts),
+    start_session(play, Config);
+
+incoming(<<"d", Num/binary>>, Offer, Reg, Opts) ->
+    ConfigA = incoming_config(p2p, Offer, Reg, Opts),
+    {ok, SessId, SessPid} = start_session(p2p, ConfigA),
+    ConfigB1 = slave_config(p2p, SessId, Opts),
+    ConfigB2 = ConfigB1#{set_master_answer => true},
+    {ok, _, _} = start_invite(Num, p2p, ConfigB2),
+    {ok, SessId, SessPid};
+
+incoming(<<"j", Num/binary>>, Offer, Reg, Opts) ->
+    ConfigA1 = incoming_config(nkmedia_janus, Offer, Reg, Opts),
+    ConfigA2 = case find_user(Num) of
+        {nkmedia_sip, _, _} -> ConfigA1#{sdp_type=>rtp};
+        _ -> ConfigA1
+    end,
+    {ok, SessId, SessPid} = start_session(proxy, ConfigA2),
+    ConfigB = slave_config(nkmedia_janus, SessId, Opts#{set_master_answer=>true}),
+    % we start the second sesson without offer, to be an 'offerer'
+    % it will detect that it is a B-side proxy, and call the cmd get_proxy_offer
+    % to 'make' the offer
+    % in start_invite we get this 'B offer' and send the invite with it
+    % when it answers, the answer is sent to back to the A-proxy, that generates
+    % the A-answer
+    {ok, _, _} = start_invite(Num, proxy, ConfigB),
+    {ok, SessId, SessPid};
+
+incoming(<<"f", Num/binary>>, Offer, Reg, Opts) ->
+    ConfigA = incoming_config(nkmedia_fs, Offer, Reg, Opts),
+    {ok, SessId, SessPid} = start_session(park, ConfigA),
+    ConfigB = slave_config(nkmedia_fs, SessId, Opts),
+    {ok, _, _} = start_invite(Num, bridge, ConfigB),
+    {ok, SessId, SessPid};
+
+incoming(<<"k", Num/binary>>, Offer, Reg, Opts) ->
+    ConfigA = incoming_config(nkmedia_kms, Offer, Reg, Opts),
+    {ok, SessId, SessPid} = start_session(park, ConfigA),
+    ConfigB = slave_config(nkmedia_kms, SessId, Opts),
+    {ok, _, _} = start_invite(Num, bridge, ConfigB),
+    {ok, SessId, SessPid};
+
+% incoming(<<"aa">>, Offer, Reg, Opts) ->
+%     {ok, SessId, SessPid} = start_session(proxy, Opts{backend => nkmedia_janus}),
+%     {ok, Offer2} = nkmedia_session:update(SessId, get_proxy_offer, #{}),
+%     Config2 = #{backend=>nkmedia_fs, master_id=>SessId, set_master_answer=>true,
+%                 no_answer_trickle_ice=>true, offer=>Offer2},
+%     {ok, _, _} = start_session(echo, Config2),
+%     {ok, SessId, SessPid};
+
+incoming(_Dest, _Offer, _Reg, _Opts) ->
+    {rejected, no_destination}.
+
+
+
+%% @private
+incoming_config(Backend, Offer, Reg, Opts) ->
+    Opts#{backend=>Backend, offer=>Offer, register=>Reg}.
+
+
+%% @private
+slave_config(Backend, MasterId, Opts) ->
+    Opts#{backend=>Backend, master_id=>MasterId}.
+
+
+%% @private
+start_session(Type, Config) ->
+    nkmedia_session:start(test, Type, Config).
+
+
+%% Creates a new 'B' session, gets an offer and invites a Verto, Janus or SIP endoint
+start_invite(Dest, Type, Config) ->
+    case find_user(Dest) of
+        {nkmedia_verto, VertoPid} ->
+            Config2 = Config#{no_offer_trickle_ice=>true},
+            {ok, SessId, SessPid} = start_session(Type, Config2),
+            {ok, Offer} = nkmedia_session:get_offer(SessId),
+            SessLink = {nkmedia_session, SessId, SessPid},
+            {ok, InvLink} = nkmedia_verto:invite(VertoPid, SessId, Offer, SessLink),
+            {ok, _} = nkmedia_session:register(SessId, InvLink),
+            {ok, SessId, SessPid};
+        {nkmedia_janus, JanusPid} ->
+            Config2 = Config#{no_offer_trickle_ice=>true},
+            {ok, SessId, SessPid} = start_session(Type, Config2),
+            {ok, Offer} = nkmedia_session:get_offer(SessId),
+            SessLink = {nkmedia_session, SessId, SessPid},
+            {ok, InvLink} = nkmedia_janus_proto:invite(JanusPid, SessId, Offer, SessLink),
+            {ok, _} = nkmedia_session:register(SessId, InvLink),
+            {ok, SessId, SessPid};
+        {nkmedia_sip, Uri, Opts} ->
+            Config2 = Config#{sdp_type=>rtp},
+            {ok, SessId, SessPid} = start_session(Type, Config2),
+            {ok, SipOffer} = nkmedia_session:get_offer(SessId),
+            SessLink = {nkmedia_session, SessId, SessPid},
+            {ok, InvLink} = nkmedia_sip:send_invite(test, Uri, SipOffer, SessLink, Opts),
+            {ok, _} = nkmedia_session:register(SessId, InvLink),
+            {ok, SessId, SessPid};
+        not_found ->
+            {error, unknown_user}
+    end.
+
+
+%% @private
+find_user(User) ->
+    User2 = nklib_util:to_binary(User),
+    case nkmedia_verto:find_user(User2) of
+        [Pid|_] ->
+            {nkmedia_verto, Pid};
+        [] ->
+            case nkmedia_janus_proto:find_user(User2) of
+                [Pid|_] ->
+                    {nkmedia_janus, Pid};
+                [] ->
+                    case 
+                        nksip_registrar:find(test, sip, User2, <<"nkmedia">>) 
+                    of
+                        [Uri|_] -> 
+                            {nkmedia_sip, Uri, []};
+                        []  -> 
+                            not_found
+                    end
+            end
+    end.
+
+
+
+
+
+
+
+
+speed(N) ->
+    Start = nklib_util:l_timestamp(),
+    speed(#{c=>3, d=>4}, N),
+    Stop = nklib_util:l_timestamp(),
+    Time = (Stop - Start) / 1000000,
+    N / Time.
+
+
+
+
+speed(_Acc, 0) ->
+    ok;
+speed(Acc, Pos) ->
+    #{a:=1, b:=2, c:=3, d:=4} = maps:merge(Acc, #{a=>1, b=>2}),
+    speed(Acc, Pos-1).
+
+
+
+
 
 
 % % Version that generates a Janus proxy before going on
@@ -362,27 +561,6 @@ sip_register(Req, Call) ->
 %     Base3 = maps:remove(register, Base2),
 %     Base4 = Base3#{offer=>Offer2, master_id=>SessId, set_master_answer=>true},
 %     {Base4, {nkmedia_session, SessId, SessPid}}.
-
-
-
-
-% Version that generates a Janus proxy before going on
-nkmedia_sip_invite(_SrvId, Dest, Offer, SipLink, _Req, _Call) ->
-    Base = #{
-        offer => Offer, 
-        register => SipLink, 
-        backend => nkmedia_janus
-    },
-    {ok, SessId, SessPid} = start_session(proxy, Base#{}),
-    {ok, Offer2} = nkmedia_session:update(SessId, get_proxy_offer, #{}),
-    {nkmedia_verto, VertoPid} = find_user(1008),
-    SessLink = {nkmedia_session, SessId, SessPid},
-    lager:error("VERTO INVITE"),
-    {ok, VertoLink} = nkmedia_verto:invite(VertoPid, SessId, Offer2, SessLink),
-    {ok, _} = nkmedia_session:register(SessId, VertoLink),
-    {ok, SessLink}.
-
-
 
 
 
@@ -441,204 +619,6 @@ nkmedia_sip_invite(_SrvId, Dest, Offer, SipLink, _Req, _Call) ->
 %         not_found ->
 %             {rejected, user_not_found}
 %     end.
-
-
-
-
-
-%% ===================================================================
-%% Internal
-%% ===================================================================
-
-incoming(<<"je">>, Base) ->
-    Config = Base#{
-        backend => nkmedia_janus, 
-        use_audio => false,
-        bitrate => 100000,
-        record => true
-    },
-    start_session(echo, Config);
-
-incoming(<<"fe">>, Base) ->
-    Config = Base#{backend => nkmedia_fs},
-    start_session(echo, Config);
-
-incoming(<<"ke">>, Base) ->
-    Config = Base#{backend => nkmedia_kms, use_data=>false},
-    start_session(echo, Config);
-
-incoming(<<"kp">>, Base) ->
-    Config = Base#{backend => nkmedia_kms},
-    start_session(park, Config);
-
-incoming(<<"m1">>, Base) ->
-    Config = Base#{room_id=>"mcu1"},
-    start_session(mcu, Config);
-
-incoming(<<"m2">>, Base) ->
-    Config = Base#{room_id=>"mcu2"},
-    start_session(mcu, Config);
-
-incoming(<<"pj1">>, Base) ->
-    nkmedia_room:start(test, #{room_id=>sfu, backend=>nkmedia_janus}),
-    Config = Base#{room_id=>sfu, backend=>nkmedia_janus},
-    start_session(publish, Config);
-
-incoming(<<"pj2">>, Base) ->
-    Config = Base#{
-        room_audio_codec => pcma,
-        room_video_codec => vp9,
-        room_bitrate => 100000,
-        backend => nkmedia_janus
-    },
-    start_session(publish, Config);
-
-
-incoming(<<"p3">>, Base) ->
-    nkmedia_room:start(test, #{room_id=>sfu, backend=>nkmedia_kms}),
-    Config = Base#{room_id=>sfu1, backend=>nkmedia_kms},
-    start_session(publish, Config);
-
-incoming(<<"l3">>, Base) ->
-    Config = Base#{backend=>nkmedia_kms, publisher_id=><<"6337fbc8-3ae8-6185-138e-38c9862f00d9_">>},
-    start_session(listen, Config);
-
-incoming(<<"play">>, Base) ->
-    Config = Base#{backend=>nkmedia_kms},
-    start_session(play, Config);
-
-incoming(<<"d", Num/binary>>, Base) ->
-    {ok, SessId, SessPid} = start_session(p2p, Base),
-    start_invite_slave(p2p, {nkmedia_session, SessId, SessPid}, Base, Num);
-
-incoming(<<"j", Num/binary>>, Base) ->
-    Config = Base#{
-        backend => nkmedia_janus
-    },
-    {ok, SessId, SessPid} = start_session(proxy, Config),
-    lager:error("J1"),
-    {ok, Offer2} = nkmedia_session:update(SessId, get_proxy_offer, #{}),
-    lager:error("J2"),
-    {ok, _, _} = start_invite_slave(callee, SessId, Config#{offer=>Offer2}, Num),
-    lager:error("J3"),
-    {ok, SessId, SessPid};
-
-incoming(<<"f", Num/binary>>, Base) ->
-    Config = Base#{
-        park_after_bridge => true,
-        backend => nkmedia_fs
-    },
-    {ok, SessId, SessPid} = start_session(park, Config),
-    {ok, _, _} = start_invite_slave(bridge, SessId, Config#{peer_id=>SessId}, Num),
-    {ok, SessId, SessPid};
-
-incoming(<<"k", Num/binary>>, Base) ->
-    Config = Base#{
-        backend => nkmedia_kms
-    },
-    {ok, SessId, SessPid} = start_session(park, Config),
-    {ok, _, _} = start_invite_slave(bridge, SessId, Config#{peer_id=>SessId}, Num),
-    {ok, SessId, SessPid};
-
-incoming(_, _Base) ->
-    {rejected, no_destination}.
-
-
-%% @private
-start_session(Type, Config) ->
-    nkmedia_session:start(test, Type, Config).
-
-
-start_invite_slave(Type, SessId, Config, Dest) ->
-    Config2 = maps:remove(register, Config),
-    Config3 = Config2#{master_id=>SessId, set_master_answer=>true},
-    start_invite(Type, Config3, Dest).
-
-
-%% Creates a new 'B' session, gets an offer and invites a Verto, Janus or SIP endoint
-start_invite(Type, Config, Dest) ->
-    case find_user(Dest) of
-        {nkmedia_verto, VertoPid} ->
-            Config2 = Config#{no_offer_trickle_ice=>true},
-            {ok, SessId, SessPid} = start_session(Type, Config2),
-            % With this SessLink, when Verto answers it will send
-            % the answer to the session (and detect session kill)
-            {ok, Offer} = nkmedia_session:get_offer(SessId),
-            SessLink = {nkmedia_session, SessId, SessPid},
-            ok = nkmedia_verto:invite(VertoPid, SessId, Offer, SessLink),
-            VertoLink = {nkmedia_verto, SessId, VertoPid},
-            % With this VertoLink, verto can use nkmedia_session_reg_event()= to detect hangup (and Verto killed)
-            {ok, _} = nkmedia_session:register(SessId, VertoLink),
-            {ok, SessId, SessPid};
-        {nkmedia_janus, JanusPid} ->
-            Config2 = Config#{no_offer_trickle_ice=>true},
-            {ok, SessId, SessPid} = start_session(Type, Config2),
-            {ok, Offer} = nkmedia_session:get_offer(SessId),
-            SessLink = {nkmedia_session, SessId, SessPid},
-            ok = nkmedia_janus_proto:invite(JanusPid, SessId, Offer, SessLink),
-            JanusLink = {nkmedia_janus, SessId, JanusPid},
-            {ok, _} = nkmedia_session:register(SessId, JanusLink),
-            {ok, SessId, SessPid};
-        {nkmedia_sip, Uri, Opts} ->  
-            Config2 = Config#{sdp_type=>rtp},
-            {ok, SessId, SessPid} = start_session(Type, Config2),
-            {ok, Offer} = nkmedia_session:get_offer(SessId),
-            % With this SessLink, sip callbacks (sip_invite_ringing, etc.) will 
-            % send the answer to the session
-            SessLink = {nkmedia_session, SessId, SessPid},
-            {ok, SipLink} = nkmedia_sip:send_invite(test, Uri, Offer, SessLink, Opts),
-            % With this SipLink, sip can detect in nkmedia_session_reg_event()
-            % when the session stops.
-            {ok, _} = nkmedia_session:register(SessId, SipLink),
-            {ok, SessId, SessPid};
-        not_found ->
-            {error, unknown_user}
-    end.
-
-
-%% @private
-find_user(User) ->
-    User2 = nklib_util:to_binary(User),
-    case nkmedia_verto:find_user(User2) of
-        [Pid|_] ->
-            {nkmedia_verto, Pid};
-        [] ->
-            case nkmedia_janus_proto:find_user(User2) of
-                [Pid|_] ->
-                    {nkmedia_janus, Pid};
-                [] ->
-                    case 
-                        nksip_registrar:find(test, sip, User2, <<"nkmedia">>) 
-                    of
-                        [Uri|_] -> 
-                            {nkmedia_sip, Uri, []};
-                        []  -> 
-                            not_found
-                    end
-            end
-    end.
-
-
-
-speed(N) ->
-    Start = nklib_util:l_timestamp(),
-    speed(#{c=>3, d=>4}, N),
-    Stop = nklib_util:l_timestamp(),
-    Time = (Stop - Start) / 1000000,
-    N / Time.
-
-
-
-
-speed(_Acc, 0) ->
-    ok;
-speed(Acc, Pos) ->
-    #{a:=1, b:=2, c:=3, d:=4} = maps:merge(Acc, #{a=>1, b=>2}),
-    speed(Acc, Pos-1).
-
-
-
-
 
 
 

@@ -90,9 +90,9 @@ cmd(<<"session">>, <<"stop">>, #api_req{data=Data}, State) ->
 
 cmd(<<"session">>, <<"set_answer">>, #api_req{data=Data}, State) ->
 	#{answer:=Answer, session_id:=SessId} = Data,
-	case nkmedia_session:set_answer(SessId, Answer) of
-		ok ->
-			{ok, #{}, State};
+	case nkmedia_session:cmd(SessId, set_answer, #{answer=>Answer}) of
+		{ok, Reply} ->
+			{ok, Reply, State};
 		{error, Error} ->
 			{error, Error, State}
 	end;
@@ -126,7 +126,7 @@ cmd(<<"session">>, <<"set_candidate_end">>, #api_req{data=Data}, State) ->
 
 cmd(<<"session">>, <<"update">>, #api_req{data=Data}, State) ->
 	#{session_id:=SessId, update_type:=Type} = Data,
-	case nkmedia_session:update(SessId, Type, Data) of
+	case nkmedia_session:cmd(SessId, Type, Data) of
 		{ok, _} ->
 			{ok, #{}, State};
 		{error, Error} ->

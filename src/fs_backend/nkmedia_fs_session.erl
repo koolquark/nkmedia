@@ -22,10 +22,10 @@
 -module(nkmedia_fs_session).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/2, offer/3, answer/3, update/3, stop/2]).
+-export([start/2, answer/3, cmd/3, stop/2]).
 -export([handle_call/3, handle_cast/2, fs_event/3, send_bridge/2]).
 
--export_type([session/0, type/0, opts/0, update/0]).
+-export_type([session/0, type/0, opts/0, cmd/0]).
 
 -define(LLOG(Type, Txt, Args, Session),
     lager:Type("NkMEDIA FS Session ~s "++Txt, 
@@ -69,8 +69,8 @@
     }.
 
 
--type update() ::
-    nkmedia_session:update().
+-type cmd() ::
+    nkmedia_session:cmd().
 
 
 -type fs_event() ::
@@ -126,8 +126,10 @@ start(Type, Session) ->
             },
             Session2 = ?SESSION(Update, Session),
             case get_engine(Session2) of
+                {ok, #{offer:=Offer}=Session3} ->
+                    start_offeree(Type, Offer, Session3);
                 {ok, Session3} ->
-                    do_start(Session3);
+                    start_offerer(Type, Session3);
                 {error, Error} ->
                     {error, Error, Session2}
             end;
@@ -136,42 +138,10 @@ start(Type, Session) ->
     end.
 
 
-do_start(#{offer:=_}=Session) ->
-    %% Wait for offer callback
-    {ok, Session};
+%% @private We generated the offer, let's process the answer
 
-do_start(Session) ->
-    case get_fs_offer(Session) of
-        {ok, Offer} ->
-            {ok, ?SESSION(#{offer=>Offer}, Session)};
-        {error, Error, Session} ->
-            {error, Error, Session}
-    end.
-                    
-
-
-%% @private
--spec offer(type(), nkmedia:offer(), session()) ->
-    {ok, session()} | {error, nkservice:error(), session()}.
-
-offer(_Type, #{backend:=nkmedia_fs}, Session) ->
-    {ok, Session};
-
-offer(Type, Offer, Session) ->
-    case get_fs_answer(Offer, Session) of
-        {ok, Answer}  ->
-            do_start_type(Type, ?SESSION(#{answer=>Answer}, Session));
-        {error, Error} ->
-            {error, Error, Session}
-    end.
-
-
-%% @private
 -spec answer(type(), nkmedia:answer(), session()) ->
     {ok, session()} | {error, nkservice:error(), session()}.
-
-answer(_Type, #{backend:=nkmedia_fs}, Session) ->
-    {ok, Session};
 
 answer(Type, Answer, #{session_id:=SessId, offer:=Offer}=Session) ->
     SdpType = maps:get(sdp_type, Offer, webrtc),
@@ -186,10 +156,10 @@ answer(Type, Answer, #{session_id:=SessId, offer:=Offer}=Session) ->
 
 
 %% @private
--spec update(update(), Opts::map(), session()) ->
+-spec cmd(cmd(), Opts::map(), session()) ->
     {ok, Reply::term(), session()} | {error, term(), session()} | continue().
 
-update(session_type, #{session_type:=Type}=Opts, Session) ->
+cmd(session_type, #{session_type:=Type}=Opts, Session) ->
     case check_record(Opts, Session) of
         {ok, Session2} ->
             case do_type(Type, Opts, Session2) of
@@ -203,7 +173,7 @@ update(session_type, #{session_type:=Type}=Opts, Session) ->
             {error, Error, Session}
     end;
 
-update(media, Opts, Session) ->
+cmd(media, Opts, Session) ->
     case check_record(Opts, Session) of
         {ok, Session2} ->
             %% TODO: update medias
@@ -212,7 +182,7 @@ update(media, Opts, Session) ->
             {error, Error, Session}
     end;
 
-update(mcu_layout, #{mcu_layout:=Layout}, 
+cmd(mcu_layout, #{mcu_layout:=Layout}, 
        #{type:=mcu, type_ext:=#{room_id:=Room}=Ext, nkmedia_fs_id:=FsId}=Session) ->
     case nkmedia_fs_cmd:conf_layout(FsId, Room, Layout) of
         ok  ->
@@ -222,7 +192,7 @@ update(mcu_layout, #{mcu_layout:=Layout},
             {error, Error, Session}
     end;
 
-update(_Update, _Opts, _Session) ->
+cmd(_Update, _Opts, _Session) ->
     continue.
 
 
@@ -293,6 +263,34 @@ is_supported(mcu) -> true;
 is_supported(bridge) -> true;
 is_supported(_) -> false.
 
+
+%% @private
+-spec start_offerer(type(), session()) ->
+    {ok, session()} |
+    {error, nkservice:error(), session()} | continue().
+
+%% We must make the offer
+start_offerer(_Type, Session) ->
+    case get_fs_offer(Session) of
+        {ok, Offer} ->
+            {ok, ?SESSION(#{offer=>Offer}, Session)};
+        {error, Error, Session} ->
+            {error, Error, Session}
+    end.
+                    
+
+%% @private
+-spec start_offeree(type(), nkmedia:offer(), session()) ->
+    {ok, session()} |
+    {error, nkservice:error(), session()} | continue().
+
+start_offeree(Type, Offer, Session) ->
+    case get_fs_answer(Offer, Session) of
+        {ok, Answer}  ->
+            do_start_type(Type, ?SESSION(#{answer=>Answer}, Session));
+        {error, Error} ->
+            {error, Error, Session}
+    end.
 
 
 %% @private
