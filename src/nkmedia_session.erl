@@ -28,7 +28,7 @@
 -export([set_answer/2, set_type/3, cmd/3, cmd_async/3, info/2]).
 -export([stop/1, stop/2, stop_all/0]).
 -export([candidate/2]).
--export([register/2, unregister/2, link_slave/2, unlink_session/1, unlink_session/2]).
+-export([register/2, unregister/2, link_from_slave/2, unlink_session/1, unlink_session/2]).
 -export([get_all/0, bridge_stop/2, get_session_file/1]).
 -export([set_slave_answer/3, peer_candidate/3]).
 -export([find/1, do_cast/2, do_call/2, do_call/3, do_info/2]).
@@ -242,10 +242,10 @@ info(SessId, Info) ->
 
 
 %% @doc Links this session to another. We are master, other is slave
--spec link_slave(id(), id()) ->
+-spec link_from_slave(id(), id()) ->
     {ok, pid()} | {error, nkservice:error()}.
 
-link_slave(MasterId, SlaveId) ->
+link_from_slave(MasterId, SlaveId) ->
     case find(SlaveId) of
         {ok, PidB} ->
             do_call(MasterId, {link_to_slave, SlaveId, PidB});
@@ -275,7 +275,13 @@ unlink_session(SessId, PeerId) ->
     {ok, pid()} | {error, nkservice:error()}.
 
 register(SessId, Link) ->
-    do_call(SessId, {register, Link}).
+    case find(SessId) of
+        {ok, Pid} -> 
+            do_cast(Pid, {register, Link}),
+            {ok, Pid};
+        not_found ->
+            {error, session_not_found}
+    end.
 
 
 %% @doc Unregisters a process with the session
@@ -372,7 +378,14 @@ peer_candidate(MasterId, SlaveId, Candidate) ->
 init([#{session_id:=Id, type:=Type, srv_id:=SrvId}=Session]) ->
     true = nklib_proc:reg({?MODULE, Id}),
     nklib_proc:put(?MODULE, Id),
+    MasterId = maps:get(master_id, Session, undefined),
+    % If there is no offer, the backed must make one (offerer)
+    % If there is an offer, the backend must make the answer (offeree)
+    % unless this is a slave session, where the offer is not from the
+    % client, but from other session. We are an offerer (we 'made' the offer)
+    % and wait an answer from the client
     Role = case maps:is_key(offer, Session) of
+        true when Type==p2p, MasterId/=undefined -> offerer;
         true -> offeree;
         false -> offerer
     end,
@@ -382,6 +395,10 @@ init([#{session_id:=Id, type:=Type, srv_id:=SrvId}=Session]) ->
         type_ext => #{},
         start_time => nklib_util:l_timestamp()
     },
+    Session3 = case Type of
+        p2p -> Session2#{backend=>p2p};
+        _ -> Session2
+    end,
     State1 = #state{
         id = Id, 
         srv_id = SrvId, 
@@ -389,26 +406,27 @@ init([#{session_id:=Id, type:=Type, srv_id:=SrvId}=Session]) ->
         type = Type,
         type_ext = #{},
         links = nklib_links:new(),
-        session = Session2
+        session = Session3
     },
-    State2 = case Session2 of
+    State2 = case Session3 of
         #{register:=Link} ->
             links_add(Link, State1);
         _ ->
             State1
     end,
-    case Session2 of
-        #{master_id:=Master} -> 
-            case link_slave(Master, Id) of
+    case MasterId of
+        undefined ->
+            ok;
+        _ ->
+            case link_from_slave(MasterId, Id) of
                 {ok, _} -> 
                     ok;
                 {error, _Error} -> 
-                    stop(self(), peer_stopped)
-            end;
-        _ -> 
-            ok
+                    stop(self(), peer_stopped1)
+            end
     end,
-    lager:info("NkMEDIA Session ~s starting (~p)", [Id, self()]),
+    lager:info("NkMEDIA Session ~s (~p) starting (~p)", [Id, Role, self()]),
+    lager:info("NkMEDIA Session config: ~p", [maps:remove(offer, Session3)]),
     gen_server:cast(self(), do_start),
     handle(nkmedia_session_init, [Id], State2).
         
@@ -437,11 +455,6 @@ handle_call({link_to_slave, SlaveId, PidB}, _From, #state{id=MasterId}=State) ->
     State2 = links_add({slave_peer, SlaveId}, PidB, State),
     State3 = add_to_session(slave_peer, SlaveId, State2),
     reply({ok, self()}, State3);
-
-handle_call({register, Link}, _From, State) ->
-    ?LLOG(info, "registered link (~p)", [Link], State),
-    State2 = links_add(Link, State),
-    reply({ok, self()}, State2);
 
 handle_call(get_session, _From, #state{session=Session}=State) ->
     reply({ok, Session}, State);
@@ -487,7 +500,7 @@ handle_cast({set_answer, Answer}, State) ->
 
 handle_cast({set_slave_answer, SlaveId, Answer}, #state{session=Session}=State) ->
     case Session of
-        #{slave_id:=SlaveId} ->
+        #{slave_peer:=SlaveId} ->
             case handle(nkmedia_session_slave_answer, [Answer], State) of
                 {ok, Answer2, State2} ->
                     handle_cast({set_answer, Answer2}, State2);
@@ -625,6 +638,10 @@ handle_cast({unlink_from_master, MasterId}, #state{session=Session}=State) ->
             noreply(State)
     end;
 
+handle_cast({register, Link}, State) ->
+    ?LLOG(info, "registered link (~p)", [Link], State),
+    noreply(links_add(Link, State));
+
 handle_cast({unregister, Link}, State) ->
     ?LLOG(info, "proc unregistered (~p)", [Link], State),
     noreply(links_remove(Link, State));
@@ -705,7 +722,8 @@ terminate(Reason, State) ->
 %% ===================================================================
 
 %% @private
-do_start(#state{type=Type}=State) ->
+do_start(#state{type=Type, backend_role=Role, session=Session}=State) ->
+    ?LLOG(notice, "session start: ~p, ~p", [Role, maps:remove(offer, Session)], State),
     case handle(nkmedia_session_start, [Type], State) of
         {ok, State2} ->
             case check_offer(State2) of
@@ -789,15 +807,15 @@ do_set_offer(Offer, #state{type=Type, session=Session}=State) ->
         _ ->
             case handle(nkmedia_session_offer, [Type, Offer], State) of
                 {ok, Offer2, State2} ->
-                    #state{wait_offer=Wait} = State2,
+                    #state{wait_offer=Wait, session=Session2} = State2,
                     reply_all_waiting({ok, Offer2}, Wait),
                     State3 = State2#state{
                         has_offer = true, 
-                        session = ?SESSION(#{offer=>Offer}, Session),
+                        session = ?SESSION(#{offer=>Offer}, Session2),
                         wait_offer = []
                     },
                     ?LLOG(info, "offer set", [], State3),
-                    % ?LLOG(info, "\n~s", [maps:get(sdp, Offer2, <<>>)], State3),
+                    % ?LLOG(info, "offer:\n~s", [maps:get(sdp, Offer2, <<>>)], State3),
                     {ok, State3};
                 {ignore, State2} ->
                     {ok, State2};
@@ -825,19 +843,22 @@ do_set_answer(Answer, #state{type=Type, session=Session}=State) ->
             Session2 = ?SESSION(#{answer=>Answer}, Session),
             {ok, State#state{session=Session2, answer_candidates=[]}};
         _ ->
+            ?LLOG(warning, "set ans", [], State),
             case handle(nkmedia_session_answer, [Type, Answer], State) of
                 {ok, Answer2, State2} ->
-                    #state{wait_answer=Wait} = State2,
+                    #state{wait_answer=Wait, session=Session2} = State2,
                     reply_all_waiting({ok, Answer2}, Wait),
                     State3 = State2#state{
                         has_answer = true, 
-                        session = ?SESSION(#{answer=>Answer2}, Session),
+                        session = ?SESSION(#{answer=>Answer2}, Session2),
                         wait_answer = []
                     },
                     ?LLOG(info, "answer set", [], State3),
-                    % ?LLOG(info, "\n~s", [maps:get(sdp, Answer2, <<>>)], State3),
+                    % ?LLOG(info, "answer:\n~s", [maps:get(sdp, Answer2, <<>>)], State3),
                     case Session of
                         #{master_peer:=MasterId, session_id:=Id} ->
+                            ?LLOG(notice, "calling set_slave_answer for ~s", 
+                                  [MasterId], State),
                             set_slave_answer(MasterId, Id, Answer2);
                         _ ->
                             ok

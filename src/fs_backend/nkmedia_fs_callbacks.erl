@@ -27,7 +27,7 @@
 -export([error_code/1]).
 -export([nkmedia_fs_get_mediaserver/1]).
 -export([nkmedia_session_start/2, nkmedia_session_stop/2,
-         nkmedia_session_answer/3, nkmedia_session_update/3, 
+         nkmedia_session_answer/3, nkmedia_session_cmd/3, 
          nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2]).
 -export([api_syntax/4]).
 -export([nkdocker_notify/2]).
@@ -150,10 +150,10 @@ nkmedia_session_answer(_Type, _Answer, _Session) ->
 
 
 %% @private
-nkmedia_session_update(Update, Opts, #{nkmedia_fs_id:=_}=Session) ->
-   nkmedia_fs_session:update(Update, Opts, Session);
+nkmedia_session_cmd(Update, Opts, #{nkmedia_fs_id:=_}=Session) ->
+   nkmedia_fs_session:cmd(Update, Opts, Session);
 
-nkmedia_session_update(_Update, _Opts, _Session) ->
+nkmedia_session_cmd(_Update, _Opts, _Session) ->
     continue.
 
 

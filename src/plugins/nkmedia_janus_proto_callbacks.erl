@@ -284,16 +284,22 @@ nkmedia_call_reg_event(_CallId, _Link, _Event, _Call) ->
 %% @private
 %% Convenient functions in case we are registered with the session as
 %% {nkmedia_janus, CallId, Pid}
-nkmedia_session_reg_event(_SessId, {nkmedia_janus, CallId, Pid}, Event, _Session) ->
+nkmedia_session_reg_event(_SessId, {nkmedia_janus, CallId, Pid}, Event, Session) ->
     case Event of
         {answer, Answer} ->
-            % lager:error("SET SESS ANS: ~s", [SDP_F]),
-            % we may be blocked waiting for the same session creation
-            case nkmedia_janus_proto:answer_async(Pid, CallId, Answer) of
-                ok ->
-                    ok;
-                {error, Error} ->
-                    lager:error("Error setting Janus answer: ~p", [Error])
+            case maps:get(backend_role, Session) of
+                offeree ->                
+                    % we may be blocked waiting for the same session creation
+                    case nkmedia_janus_proto:answer_async(Pid, CallId, Answer) of
+                        ok ->
+                            ok;
+                        {error, Error} ->
+                            lager:error("Error setting Janus answer: ~p", [Error])
+                    end;
+                offerer ->
+                    lager:error("OWN"),
+                    % This is our own answer!
+                    ok
             end;
         {stop, Reason} ->
             lager:info("Janus Proto stopping after session stop: ~p", [Reason]),

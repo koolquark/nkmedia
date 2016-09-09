@@ -47,7 +47,7 @@
 
 
 -define(URL1, "nkapic://127.0.0.1:9010").
--define(URL2, "nkapic://c1.netc.io:9010").
+-define(URL2, "nkapic://c2.netc.io:9010").
 
 
 %% ===================================================================
@@ -223,12 +223,23 @@ listen(Publisher, Dest) ->
 
 
 %% Msglog
-
 msglog_send(C, Room, Msg) ->
     nkservice_api_client:cmd(C, media, room, msglog_send, #{room_id=>Room, msg=>Msg}).
 
 msglog_get(C, Room) ->
     nkservice_api_client:cmd(C, media, room, msglog_get, #{room_id=>Room}).
+
+
+%% Gelf
+gelf(C, Src, Short) ->
+    Msg = #{
+        source => Src,
+        message => Short,
+        full_message => base64:encode(crypto:rand_bytes(10000))
+    },
+    nkservice_api_client:cmd(C, core, session, log, Msg).
+
+
 
  
 

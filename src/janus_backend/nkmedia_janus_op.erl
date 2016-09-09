@@ -362,7 +362,6 @@ nkmedia_sip_invite(User, Req) ->
     handle_id :: integer(),
     handle_id2 :: integer(),
     room :: room(),
-    room_mon :: reference(),
     sip_handle :: term(),
     sip_dialog :: term(),
     sip_contact :: nklib:uri(),
@@ -609,15 +608,6 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{user_mon=Ref}=State) ->
     end,
     {stop, normal, State};
 
-handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{room_mon=Ref}=State) ->
-    case Reason of
-        normal ->
-            ?LLOG(info, "room monitor stop", [], State);
-        _ ->
-            ?LLOG(notice, "room monitor stop: ~p", [Reason], State)
-    end,
-    {stop, normal, State};
-
 handle_info(Msg, State) -> 
     lager:warning("Module ~p received unexpected info ~p", [?MODULE, Msg]),
     {noreply, State}.
@@ -635,17 +625,7 @@ code_change(_OldVsn, State, _Extra) ->
 -spec terminate(term(), #state{}) ->
     ok.
 
-terminate(Reason, #state{from=From, status=Status}=State) ->
-    case Status of
-        publisher ->
-            #state{room=Room, id=SessId} = State,
-            nkmedia_janus_room:janus_event(Room, {stopped_publisher, SessId, #{}});
-        listener ->
-            #state{room=Room, id=SessId} = State,
-            nkmedia_janus_room:janus_event(Room, {stopped_listener, SessId, #{}});
-        _ ->
-            ok
-    end,
+terminate(Reason, #state{from=From}=State) ->
     destroy(State),
     ?LLOG(info, "process stop: ~p", [Reason], State),
     nklib_util:reply(From, {error, process_down}),
@@ -904,22 +884,12 @@ do_publish(#{sdp:=SDP}, #state{room=Room, id=SessId} = State) ->
 
 
 %% @private
-do_publish_2(SDP_A, State) ->
-    #state{handle_id=Handle, room=Room, id=SessId, opts=Opts} = State,
+do_publish_2(SDP_A, #state{handle_id=Handle} = State) ->
     Jsep = #{sdp=>SDP_A, type=>offer, trickle=>false},
-    case message(Handle, #{request=>configure}, Jsep, State) of
+    Body = #{use_audio=>true, use_video=>true},
+    case message(Handle, Body#{request=>configure}, Jsep, State) of
         {ok, #{<<"configured">>:=<<"ok">>}, #{<<"sdp">>:=SDP_B}} ->
-            User = maps:get(user, Opts, <<>>),
-            JanusEvent = {started_publisher, SessId, #{user=>User, pid=>self()}},
-            case nkmedia_janus_room:janus_event(Room, JanusEvent) of
-                {ok, Pid} ->
-                    Mon = erlang:monitor(process, Pid),
-                    State2 = State#state{room_mon=Mon},
-                    reply({ok, sdp(SDP_B)}, status(publish, State2));
-                {error, Error} ->
-                    ?LLOG(notice, "publish error2: ~p", [Error], State),
-                    reply_stop({error, room_not_found}, State)
-            end;
+            reply({ok, sdp(SDP_B)}, status(publish, State));
         {error, Error} ->
             ?LLOG(notice, "publish error3: ~p", [Error], State),
             reply_stop({error, Error}, State)
@@ -957,7 +927,7 @@ do_publish_media(Opts, #state{handle_id=Handle}=State) ->
 
 
 %% @private Create session and join
-do_listen(Listen, #state{room=Room, id=SessId, opts=Opts}=State) ->
+do_listen(Listen, #state{room=Room}=State) ->
     {ok, Handle} = attach(videoroom, State),
     Feed = erlang:phash2(Listen),
     Body2 = #{
@@ -969,21 +939,7 @@ do_listen(Listen, #state{room=Room, id=SessId, opts=Opts}=State) ->
     case message(Handle, Body2, #{}, State) of
         {ok, #{<<"videoroom">>:=<<"attached">>}, #{<<"sdp">>:=SDP}} ->
             State2 = State#state{handle_id=Handle},
-            User = maps:get(user_id, Opts, <<>>),
-            JanusEvent = {
-                started_listener, 
-                SessId, 
-                #{user=>User, pid=>self(), peer_id=>Listen}
-            },
-            case nkmedia_janus_room:janus_event(Room, JanusEvent) of 
-                {ok, Pid} ->
-                    Mon = erlang:monitor(process, Pid),
-                    State3 = State2#state{room_mon=Mon},
-                    reply({ok, sdp(SDP)}, wait(listen_answer, State3));
-                {error, Error} ->
-                    ?LLOG(notice, "listen error1: ~p", [Error], State),
-                    reply_stop({error, room_not_found}, State)
-            end;
+            reply({ok, sdp(SDP)}, wait(listen_answer, State2));
         {error, Error} ->
             ?LLOG(notice, "listen error2: ~p", [Error], State),
             reply_stop({error, Error}, State)
@@ -1005,19 +961,11 @@ do_listen_answer(#{sdp:=SDP}, State) ->
 
 
 %% @private Create session and join
-do_listen_switch(Listen, State) ->
-    #state{handle_id=Handle, id=SessId, room=Room, opts=Opts} = State,
+do_listen_switch(Listen, #state{handle_id=Handle}=State) ->
     Feed = erlang:phash2(Listen),
     Body2 = #{request => switch, feed => Feed},
     case message(Handle, Body2, #{}, State) of
         {ok, #{<<"switched">>:=<<"ok">>}, _} ->
-            User = maps:get(user, Opts, <<>>),
-            JanusEvent = {
-                started_listener, 
-                SessId, 
-                #{user=>User, pid=>self(), peer_id=>Listen}
-            },
-            {ok, _} = nkmedia_janus_room:janus_event(Room, JanusEvent),
             reply(ok, State);
         {error, Error} ->
             ?LLOG(notice, "listen switch error: ~p", [Error], State),

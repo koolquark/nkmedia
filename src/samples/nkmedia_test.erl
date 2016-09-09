@@ -103,8 +103,12 @@
 -include_lib("nkservice/include/nkservice.hrl").
 -include_lib("nksip/include/nksip.hrl").
 
+s(Pos, Size) ->
+    Bytes1 = base64:encode(crypto:rand_bytes(Size)),
+    {Bytes2, _} = split_binary(Bytes1, Size-113),
+    nkservice_api_gelf:send(test, src, short, Bytes2, 2, #{data1=>Pos}).
 
-
+             
 
 %% ===================================================================
 %% Public
@@ -180,35 +184,35 @@ invite(Dest, Type, Opts) ->
     start_invite(Dest, Type, Opts2).
 
 
-listen(Room, Pos, Dest) ->
+invite_listen(Room, Pos, Dest) ->
     {ok, #{backend:=Backend, publishers:=Pubs}} = nkmedia_room:get_room(Room),
     Pub = lists:nth(Pos, maps:keys(Pubs)),
     Config = #{
-        publisher_id => Pub,
         backend => Backend,
+        publisher_id => Pub,
         use_video => true
     },
     start_invite(Dest, listen, Config).
 
 
 update_media(SessId, Media) ->
-    nkmedia_session:update(SessId, media, Media).
+    nkmedia_session:cmd(SessId, media, Media).
 
 
 update_type(SessId, Type, Opts) ->
-    nkmedia_session:update(SessId, session_type, Opts#{session_type=>Type}).
+    nkmedia_session:cmd(SessId, session_type, Opts#{session_type=>Type}).
 
 
 update_layout(SessId, Layout) ->
     Layout2 = nklib_util:to_binary(Layout),
-    nkmedia_session:update(SessId, mcu_layout, #{mcu_layout=>Layout2}).
+    nkmedia_session:cmd(SessId, mcu_layout, #{mcu_layout=>Layout2}).
 
 
 update_listen(SessId, Pos) ->
     {ok, listen, #{room_id:=Room}, _} = nkmedia_session:get_type(SessId),
     {ok, #{publishers:=Pubs}} = nkmedia_room:get_room(Room),
     Pub = lists:nth(Pos, maps:keys(Pubs)),
-    nkmedia_session:update(SessId, listen_switch, #{publisher_id=>Pub}).
+    nkmedia_session:cmd(SessId, listen_switch, #{publisher_id=>Pub}).
 
 
 
@@ -230,9 +234,10 @@ nkmedia_verto_login(Login, Pass, Verto) ->
 
 % @private Called when we receive INVITE from Verto
 nkmedia_verto_invite(_SrvId, CallId, Offer, Verto) ->
-    #{dest:=Dest} = Offer, 
+    #{dest:=Dest} = Offer,
+    Offer2 = nkmedia_util:filter_codec(video, vp8, Offer),
     Reg = {nkmedia_verto, CallId, self()},
-    case incoming(Dest, Offer, Reg, #{no_answer_trickle_ice => true}) of
+    case incoming(Dest, Offer2, Reg, #{no_answer_trickle_ice => true}) of
         {ok, SessId, SessPid} ->
             {ok, {nkmedia_session, SessId, SessPid}, Verto};
         {error, Reason} ->
@@ -301,7 +306,7 @@ sip_register(Req, Call) ->
 nkmedia_sip_invite(_SrvId, _Dest, Offer, SipLink, _Req, _Call) ->
     ConfigA = incoming_config(nkmedia_janus, Offer, SipLink, #{}),
     {ok, SessId, SessPid} = start_session(proxy, ConfigA),
-    {ok, Offer2} = nkmedia_session:update(SessId, get_proxy_offer, #{}),
+    {ok, Offer2} = nkmedia_session:cmd(SessId, get_proxy_offer, #{}),
     SessLink = {nkmedia_session, SessId, SessPid},
     case find_user(a) of
         {nkmedia_verto, Pid} ->
@@ -323,7 +328,7 @@ nkmedia_sip_invite(_SrvId, _Dest, Offer, SipLink, _Req, _Call) ->
 
 incoming(<<"je">>, Offer, Reg, Opts) ->
     Config = incoming_config(nkmedia_janus, Offer, Reg, Opts),
-    start_session(echo, Config#{use_audio=>false, bitrate=>100000, record=>true});
+    start_session(echo, Config);
 
 incoming(<<"fe">>, Offer, Reg, Opts) ->
     Config = incoming_config(nkmedia_fs, Offer, Reg, Opts),
@@ -366,9 +371,8 @@ incoming(<<"play">>, Offer, Reg, Opts) ->
 incoming(<<"d", Num/binary>>, Offer, Reg, Opts) ->
     ConfigA = incoming_config(p2p, Offer, Reg, Opts),
     {ok, SessId, SessPid} = start_session(p2p, ConfigA),
-    ConfigB1 = slave_config(p2p, SessId, Opts),
-    ConfigB2 = ConfigB1#{set_master_answer => true},
-    {ok, _, _} = start_invite(Num, p2p, ConfigB2),
+    ConfigB = slave_config(p2p, SessId, Opts#{offer=>Offer}),
+    {ok, _, _} = start_invite(Num, p2p, ConfigB),
     {ok, SessId, SessPid};
 
 incoming(<<"j", Num/binary>>, Offer, Reg, Opts) ->
@@ -378,14 +382,14 @@ incoming(<<"j", Num/binary>>, Offer, Reg, Opts) ->
         _ -> ConfigA1
     end,
     {ok, SessId, SessPid} = start_session(proxy, ConfigA2),
-    ConfigB = slave_config(nkmedia_janus, SessId, Opts#{set_master_answer=>true}),
+    ConfigB = slave_config(nkmedia_janus, SessId, Opts),
     % we start the second sesson without offer, to be an 'offerer'
-    % it will detect that it is a B-side proxy, and call the cmd get_proxy_offer
+    % it will detect that it is a bridge, and call the cmd get_proxy_offer
     % to 'make' the offer
     % in start_invite we get this 'B offer' and send the invite with it
-    % when it answers, the answer is sent to back to the A-proxy, that generates
-    % the A-answer
-    {ok, _, _} = start_invite(Num, proxy, ConfigB),
+    % when it answers, the answer is sent to back to the proxy, that generates
+    % the proxy answer
+    {ok, _, _} = start_invite(Num, bridge, ConfigB),
     {ok, SessId, SessPid};
 
 incoming(<<"f", Num/binary>>, Offer, Reg, Opts) ->
@@ -402,13 +406,15 @@ incoming(<<"k", Num/binary>>, Offer, Reg, Opts) ->
     {ok, _, _} = start_invite(Num, bridge, ConfigB),
     {ok, SessId, SessPid};
 
-% incoming(<<"aa">>, Offer, Reg, Opts) ->
-%     {ok, SessId, SessPid} = start_session(proxy, Opts{backend => nkmedia_janus}),
-%     {ok, Offer2} = nkmedia_session:update(SessId, get_proxy_offer, #{}),
-%     Config2 = #{backend=>nkmedia_fs, master_id=>SessId, set_master_answer=>true,
-%                 no_answer_trickle_ice=>true, offer=>Offer2},
-%     {ok, _, _} = start_session(echo, Config2),
-%     {ok, SessId, SessPid};
+incoming(<<"aa">>, Offer, Reg, Opts) ->
+    ConfigA1 = incoming_config(nkmedia_janus, Offer, Reg, Opts),
+    {ok, SessId, SessPid} = start_session(proxy, ConfigA1),
+    {ok, #{offer:=Offer2}} = nkmedia_session:cmd(SessId, get_proxy_offer, #{}),
+
+    ConfigB = slave_config(nkmedia_janus, SessId, Opts#{offer=>Offer2}),
+    {ok, _, _} = start_session(echo, ConfigB),
+    {ok, SessId, SessPid};
+
 
 incoming(_Dest, _Offer, _Reg, _Opts) ->
     {rejected, no_destination}.
@@ -557,7 +563,7 @@ speed(Acc, Pos) ->
 % insert_janus_proxy(Base) ->
 %     Base2 = Base#{backend => nkmedia_janus},
 %     {ok, SessId, SessPid} = start_session(proxy, Base#{}),
-%     {ok, Offer2} = nkmedia_session:update(SessId, get_proxy_offer, #{}),
+%     {ok, Offer2} = nkmedia_session:cmd(SessId, get_proxy_offer, #{}),
 %     Base3 = maps:remove(register, Base2),
 %     Base4 = Base3#{offer=>Offer2, master_id=>SessId, set_master_answer=>true},
 %     {Base4, {nkmedia_session, SessId, SessPid}}.

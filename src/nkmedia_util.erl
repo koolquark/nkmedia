@@ -21,7 +21,7 @@
 -module(nkmedia_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([get_q850/1, add_id/2]).
+-export([get_q850/1, add_id/2, filter_codec/3]).
 -export([kill/1]).
 -export([remove_sdp_data_channel/1]).
 -export_type([stop_reason/0, q850/0]).
@@ -50,6 +50,23 @@ add_id(Key, Config) ->
 			Id = nklib_util:uuid_4122(),
 			{Id, maps:put(Key, Id, Config)}
 	end.
+
+
+
+
+%% @doc Allow only one codec family, removing all other
+-spec filter_codec(audio|video, atom()|string()|binary(), 
+				   nkmedia:offer()|nkmedia:answer()) ->
+	nkmedia:offer()|nkmedia:answer().
+
+filter_codec(Media, Codec, #{sdp:=SDP1}=OffAns) ->
+    {CodecMap, SDP2} = nksip_sdp_util:extract_codec_map(SDP1),
+    CodecMap2 = nksip_sdp_util:filter_codec(Media, Codec, CodecMap),
+    SDP3 = nksip_sdp_util:insert_codec_map(CodecMap2, SDP2),
+    OffAns#{sdp:=nksip_sdp:unparse(SDP3)}.
+
+
+
 
 
 %% @private
