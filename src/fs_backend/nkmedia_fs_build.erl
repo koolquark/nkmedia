@@ -316,7 +316,7 @@ run_sip() -> <<"
     <param name=\"watchdog-event-timeout\" value=\"30000\"/>
     <param name=\"log-auth-failures\" value=\"false\"/>
     <param name=\"forward-unsolicited-mwi-notify\" value=\"false\"/>
-    <param name=\"context\" value=\"public\"/>
+    <param name=\"context\" value=\"default\"/>
     <param name=\"rfc2833-pt\" value=\"101\"/>
     <param name=\"sip-port\" value=\"$${internal_sip_port}\"/>
     <param name=\"dialplan\" value=\"XML\"/>
@@ -328,7 +328,8 @@ run_sip() -> <<"
     <param name=\"sip-ip\" value=\"$${nk_fs_ip}\"/>
     <param name=\"hold-music\" value=\"$${hold_music}\"/>
     <param name=\"apply-nat-acl\" value=\"nat.auto\"/>
-    <param name=\"apply-inbound-acl\" value=\"domains\"/>
+    <!--<param name=\"apply-inbound-acl\" value=\"domains\"/> -->
+    <param name=\"apply-inbound-acl\" value=\"localnet.auto\"/>
     <param name=\"local-network-acl\" value=\"localnet.auto\"/>
     <!--<param name=\"dtmf-type\" value=\"info\"/>-->
     <param name=\"record-path\" value=\"$${recordings_dir}\"/>
@@ -411,9 +412,18 @@ run_modules() -> <<"
 run_dialplan() -> 
 <<"
 <include>
-
     <extension name=\"nkmedia_inbound\">
         <condition field=\"destination_number\" expression=\"^nkmedia_in$\">
+            <action application=\"set\" data=\"nkmedia_session_id=${call_uuid}\"/>
+            <action application=\"answer\"/>
+            <action application=\"park\"/>
+        </condition>
+    </extension>
+    <extension name=\"nkmedia_sip_inbound\">
+        <condition field=\"destination_number\" expression=\"^nkmedia_sip_in_(.*)$\">
+            <action application=\"set\" data=\"nkmedia_session_id=$1\"/>
+            <action application=\"set\" data=\"sip_rh_X-UUID=${call_uuid}\"/>
+            <action application=\"info\"/>
             <action application=\"answer\"/>
             <action application=\"park\"/>
         </condition>

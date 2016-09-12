@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([start/2, offer/3, answer/3, cmd/3, stop/2]).
--export([handle_call/3, handle_cast/2, fs_event/3, send_bridge/2]).
+-export([handle_call/3, handle_cast/2, fs_event/3]).
 
 -export_type([session/0, type/0, opts/0, cmd/0]).
 
@@ -51,7 +51,8 @@
 -type session() :: 
     nkmedia_session:session() |
     #{
-        nkmedia_fs_id => nmedia_fs_engine:id()
+        nkmedia_fs_id => nmedia_fs_engine:id(),
+        nkmedia_fs_uuid => binary()
     }.
     
 
@@ -88,19 +89,20 @@
     ok.
 
 fs_event(SessId, FsId, Event) ->
+    lager:error("Event: ~p", [Event]),
     case session_cast(SessId, {fs_event, FsId, Event}) of
         ok -> 
             ok;
         {error, _} when Event==stop ->
             ok;
         {error, _} -> 
-            ?LLOG(warning, "FS event ~p for unknown session", [Event], SessId) 
+            ?LLOG2(warning, "FS event ~p for unknown session", [Event], SessId) 
     end.
 
 
-%% @private
-send_bridge(Remote, Local) ->
-    session_cast(Remote, {bridge, Local}).
+% %% @private
+% send_bridge(Remote, Local) ->
+%     session_cast(Remote, {bridge, Local}).
 
 
 
@@ -164,10 +166,10 @@ answer(_Type, _Answer, #{backend_role:=offeree}) ->
     % We generated the answer
     continue;
 
-answer(Type, Answer, #{session_id:=SessId, offer:=Offer}=Session) ->
+answer(Type, Answer, #{nkmedia_fs_uuid:=UUID, offer:=Offer}=Session) ->
     SdpType = maps:get(sdp_type, Offer, webrtc),
     Mod = fs_mod(SdpType),
-    case Mod:answer_out(SessId, Answer) of
+    case Mod:answer_out(UUID, Answer) of
         ok ->
             wait_park(Session),
             case do_start_type(Type, Session) of
@@ -226,9 +228,9 @@ cmd(_Update, _Opts, _Session) ->
 -spec stop(nkservice:error(), session()) ->
     {ok, session()}.
 
-stop(_Reason, #{session_id:=SessId, nkmedia_fs_id:=FsId}=Session) ->
+stop(_Reason, #{nkmedia_fs_uuid:=UUID, nkmedia_fs_id:=FsId}=Session) ->
     Session2 = reset_type(Session),
-    nkmedia_fs_cmd:hangup(FsId, SessId),
+    nkmedia_fs_cmd:hangup(FsId, UUID),
     {ok, Session2};
 
 stop(_Reason, Session) ->
@@ -298,8 +300,8 @@ is_supported(_) -> false.
 %% We must make the offer
 start_offerer(_Type, Session) ->
     case get_fs_offer(Session) of
-        {ok, Offer} ->
-            {ok, ?SESSION(#{offer=>Offer}, Session)};
+        {ok, Session2} ->
+            {ok, Session2};
         {error, Error, Session} ->
             {error, Error, Session}
     end.
@@ -312,8 +314,8 @@ start_offerer(_Type, Session) ->
 
 start_offeree(Type, Offer, Session) ->
     case get_fs_answer(Offer, Session) of
-        {ok, Answer}  ->
-            do_start_type(Type, ?SESSION(#{answer=>Answer}, Session));
+        {ok, Session2}  ->
+            do_start_type(Type, Session2);
         {error, Error} ->
             {error, Error, Session}
     end.
@@ -400,7 +402,7 @@ get_fs_answer(Offer, #{nkmedia_fs_id:=FsId, session_id:=SessId}=Session) ->
     Type = maps:get(sdp_type, Offer, webrtc),
     Mod = fs_mod(Type),
     case Mod:start_in(SessId, FsId, Offer) of
-        {ok, SDP} ->
+        {ok, UUID, SDP} ->
             wait_park(Session),
             Answer = #{
                 sdp => SDP,
@@ -408,7 +410,8 @@ get_fs_answer(Offer, #{nkmedia_fs_id:=FsId, session_id:=SessId}=Session) ->
                 sdp_type => webrtc,
                 backend => nkmedia_fs
             },
-            {ok, Answer};
+            Session2 = ?SESSION(#{answer=>Answer, nkmedia_fs_uuid=>UUID}, Session),
+            {ok, Session2};
         {error, Error} ->
             ?LLOG(warning, "error calling start_in: ~p", [Error], Session),
             {error, fs_get_answer_error}
@@ -421,14 +424,14 @@ get_fs_offer(#{nkmedia_fs_id:=FsId, session_id:=SessId}=Session) ->
     Type = maps:get(sdp_type, Session, webrtc),
     Mod = fs_mod(Type),
     case Mod:start_out(SessId, FsId, #{}) of
-        {ok, SDP} ->
+        {ok, UUID, SDP} ->
             Offer = #{
                 sdp => SDP,
                 trickle_ice => false,
                 sdp_type => Type,
                 backend => nkmedia_fs
             },
-            {ok, Offer};
+            {ok, ?SESSION(#{offer=>Offer, nkmedia_fs_uuid=>UUID}, Session)};
         {error, Error} ->
             ?LLOG(warning, "error calling start_out: ~p", [Error], Session),
             {error, fs_get_offer_error}
@@ -487,9 +490,10 @@ reset_type(#{session_id:=SessId}=Session) ->
 
 
 %% @private
-fs_transfer(Dest, #{session_id:=SessId, nkmedia_fs_id:=FsId}=Session) ->
+fs_transfer(Dest, Session) ->
+    #{nkmedia_fs_id:=FsId, nkmedia_fs_uuid:=UUID} = Session,
     ?LLOG(info, "sending transfer to ~s", [Dest], Session),
-    case nkmedia_fs_cmd:transfer_inline(FsId, SessId, Dest) of
+    case nkmedia_fs_cmd:transfer_inline(FsId, UUID, Dest) of
         ok ->
             ok;
         {error, Error} ->
@@ -499,22 +503,32 @@ fs_transfer(Dest, #{session_id:=SessId, nkmedia_fs_id:=FsId}=Session) ->
 
 
 %% @private
-fs_bridge(SessIdB, #{session_id:=SessIdA, nkmedia_fs_id:=FsId}=Session) ->
-    case nkmedia_fs_cmd:set_var(FsId, SessIdA, "park_after_bridge", "true") of
-        ok ->
-            case nkmedia_fs_cmd:set_var(FsId, SessIdB, "park_after_bridge", "true") of
+fs_bridge(SessIdB, Session) ->
+    #{nkmedia_fs_id:=FsId, nkmedia_fs_uuid:=UUID_A} = Session,
+    case session_call(SessIdB, get_uuid) of
+        {ok, UUID_B} ->
+            case fs_set_park(FsId, UUID_A) of
                 ok ->
-                    ?LLOG(info, "sending bridge to ~s", [SessIdB], Session),
-                    nkmedia_fs_cmd:bridge(FsId, SessIdA, SessIdB);
+                    case fs_set_park(FsId, UUID_B) of
+                        ok ->
+                            ?LLOG(info, "sending bridge to ~s", [SessIdB], Session),
+                            nkmedia_fs_cmd:bridge(FsId, UUID_A, UUID_B);
+                        {error, Error} ->
+                            ?LLOG(warning, "FS bridge error: ~p", [Error], Session),
+                            error
+                    end;
                 {error, Error} ->
                     ?LLOG(warning, "FS bridge error: ~p", [Error], Session),
-                    error
+                    {error, fs_bridge_error}
             end;
         {error, Error} ->
-            ?LLOG(warning, "FS bridge error: ~p", [Error], Session),
-            {error, fs_bridge_error}
+            {error, Error}
     end.
 
+
+%% @private
+fs_set_park(FsId, UUID) ->
+    nkmedia_fs_cmd:set_var(FsId, UUID, "park_after_bridge", "true").
 
 
 %% @private

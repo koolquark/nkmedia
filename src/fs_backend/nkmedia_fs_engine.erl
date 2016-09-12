@@ -51,7 +51,8 @@
 	<<"CHANNEL_EXECUTE">>, <<"CHANNEL_EXECUTE_COMPLETE">>, <<"CHANNEL_UNBRIDGE">>,
 	<<"CALL_STATE">>, <<"CHANNEL_ANSWER">>, <<"CHANNEL_UNPARK">>,
 	<<"CHANNEL_HANGUP">>, <<"CHANNEL_HANGUP_COMPLETE">>, 
-	<<"CHANNEL_PROGRESS">>, <<"CHANNEL_ORIGINATE">>, <<"CALL_UPDATE">>,
+	<<"CHANNEL_PROGRESS">>, <<"CHANNEL_PROGRESS_MEDIA">>, 
+	<<"CHANNEL_ORIGINATE">>, <<"CALL_UPDATE">>,
 	<<"CALL_SECURE">>, <<"CODEC">>, <<"RECV_RTCP_MESSAGE">>, 
 	<<"PRESENCE_IN">>, 
 	<<"RELOADXML">>, <<"MODULE_LOAD">>, <<"MODULE_UNLOAD">>, <<"SHUTDOWN">>,
@@ -59,6 +60,8 @@
 	<<"CONFERENCE_DATA">>, 
 	<<"TRAP">>
 ]).
+
+-define(NK_ID, <<"variable_nkmedia_session_id">>).
 
 -include("../../include/nkmedia.hrl").
 
@@ -384,23 +387,24 @@ update_status(NewStatus, #state{id=Id, status=OldStatus, conn=Pid}=State) ->
 % 	State;
 
 %% @private
-parse_event(<<"NkMEDIA">>, #{<<"Unique-ID">>:=_CallId}, State) ->
+parse_event(<<"NkMEDIA">>, #{?NK_ID:=_CallId}, State) ->
     ?LLOG(info, "event 'NkMEDIA'", [], State);
     
-parse_event(<<"CHANNEL_PARK">>, #{<<"Unique-ID">>:=CallId}, State) ->
-	send_event(CallId, parked, State);
+parse_event(<<"CHANNEL_PARK">>, #{?NK_ID:=SessId}=Ev, State) ->
+	lager:error("EV: ~p", [Ev]),
+	send_event(SessId, parked, State);
 
-parse_event(<<"CHANNEL_HANGUP">>, #{<<"Unique-ID">>:=CallId}, State) ->
-	send_event(CallId, stop, State);
+parse_event(<<"CHANNEL_HANGUP">>, #{?NK_ID:=SessId}, State) ->
+	send_event(SessId, stop, State);
 
-parse_event(<<"CHANNEL_DESTROY">>, #{<<"Unique-ID">>:=CallId}, State) ->
-	send_event(CallId, stop, State);
+parse_event(<<"CHANNEL_DESTROY">>, #{?NK_ID:=SessId}, State) ->
+	send_event(SessId, stop, State);
 
-parse_event(<<"CHANNEL_BRIDGE">>, Data, State) ->
-    CallIdA = maps:get(<<"Bridge-A-Unique-ID">>, Data),
+parse_event(<<"CHANNEL_BRIDGE">>, #{?NK_ID:=SessIdA}=Data, #state{id=FsId}=State) ->
     CallIdB = maps:get(<<"Bridge-B-Unique-ID">>, Data),
-    send_event(CallIdA, {bridge, CallIdB}, State),
-	send_event(CallIdB, {bridge, CallIdA}, State);
+    {ok, SessIdB} = nkmedia_fs_cmd:get_var(FsId, CallIdB, ?NK_ID),
+    send_event(SessIdA, {bridge, SessIdB}, State),
+	send_event(SessIdB, {bridge, SessIdA}, State);
 
 parse_event(<<"CONFERENCE_DATA">>, Data, State) ->
     ?LLOG(notice, "CONF DATA: ~s", [nklib_json:encode_pretty(Data)], State);

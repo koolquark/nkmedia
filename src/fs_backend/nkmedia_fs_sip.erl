@@ -28,7 +28,7 @@
          handle_cast/2, handle_info/2]).
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkMEDIA FS SIP (~s) "++Txt, [State#state.sess_id | Args])).
+    lager:Type("NkMEDIA FS SIP (~s) "++Txt, [State#state.uuid | Args])).
 
 -define(TIMEOUT, 60000).
 
@@ -45,23 +45,35 @@
 
 
 %% @doc
--spec start_in(nkmedia_session:id(), nkmedia_fs:id(), binary()) ->
-    {ok, binary()} | {error, term()}.
+-spec start_in(nkmedia_session:id(), nkmedia_fs:id(), nkmedia:offer()) ->
+    {ok, UUID::binary(), SDP::binary()} | {error, term()}.
 
-start_in(SessId, FsId, SDP) ->
+start_in(SessId, FsId, #{sdp:=SDP}) ->
     {ok, Pid} = gen_server:start(?MODULE, [in, FsId, SessId, SDP], []),
-    nkservice_util:call(Pid, get_sdp).
+    case nkservice_util:call(Pid, get_uuid) of
+        {ok, UUID} ->
+            case nkservice_util:call(Pid, get_sdp) of
+                {ok, SDP2} -> {ok, UUID, SDP2};
+                {error, Error} -> {error, Error}
+            end;
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 %% @doc
 %% nkmedia_sip will find any process registered under {nkmedia_sip, call, SessId}
 %% and {nkmedia_sip_dialog, Dialog} and will send messages
 -spec start_out(nkmedia_session:id(), nkmedia_fs:id(), map()) ->
-    {ok, binary()} | {error, term()}.
+    {ok, UUID::binary(), SDP::binary()} | {error, term()}.
 
 start_out(SessId, FsId, #{}) ->
     {ok, Pid} = gen_server:start(?MODULE, [out, FsId, SessId], []),
-    nkservice_util:call(Pid, get_sdp).
+    case nkservice_util:call(Pid, get_sdp) of
+        {ok, SDP} -> {ok, SessId, SDP};
+        {error, Error} -> {error, Error}
+    end.
+
 
 
 %% @doc
@@ -117,7 +129,7 @@ find(SessId) ->
 
 -record(state, {
     fs_id :: nkmedia_fs_engine:id(),
-    sess_id :: binary(),
+    uuid :: binary(),
     originate :: pid(),
     handle :: binary(),
     dialog :: binary(),
@@ -139,12 +151,23 @@ init([in, FsId, SessId, SDP]) ->
                 scheme = sip,
                 domain = Host,
                 port = Base+2,
-                user = <<"nkmedia_in">>
+                user = <<"nkmedia_sip_in_", SessId/binary>>
             },
-            I = nkmedia_core:invite(Uri, SDP),
-            lager:error("I: ~p", [I]),
-            State = #state{fs_id=FsId, sess_id=SessId},
-            {ok, State};
+            SDP2 = nksip_sdp:parse(SDP),
+            Opts = [{body, SDP2}, auto_2xx_ack, {meta, [body, {header, <<"x-uuid">>}]}],
+            case nksip_uac:invite(nkmedia_core, Uri, Opts) of
+                {ok, 200, [{dialog, Dialog}, {body, SDP_B}, {{header, _}, UUID}]} ->
+                    State = #state{
+                        fs_id = FsId, 
+                        uuid = UUID,
+                        dialog = Dialog,
+                        sdp = nksip_sdp:unparse(SDP_B)
+                    },
+                    {ok, State};
+                Other ->
+                    lager:error("invalid response from FS INVITE: ~p", [Other]),
+                    {stop, fs_error}
+            end;
         {error, Error} ->
             {stop, Error}
     end;
@@ -163,7 +186,7 @@ init([out, FsId, SessId]) ->
             Reply = nkmedia_fs_cmd:call(FsId, Dest, <<"&park">>, CallOpts),
             gen_server:cast(Self, {originate, Reply})
         end),
-    State = #state{fs_id=FsId, sess_id=SessId, originate=Caller},
+    State = #state{fs_id=FsId, uuid=SessId, originate=Caller},
     ?LLOG(info, "new session (~p)", [self()], State),
     %% Call will reach nkmedia_core_sip now and will call us
     {ok, State, ?TIMEOUT}.
@@ -174,12 +197,14 @@ init([out, FsId, SessId]) ->
     {noreply, #state{}} | {reply, term(), #state{}} |
     {stop, Reason::term(), #state{}} | {stop, Reason::term(), Reply::term(), #state{}}.
 
+handle_call(get_uuid, _From, #state{uuid=UUID}=State) ->
+    {reply, {ok, UUID}, State, ?TIMEOUT};
+
 handle_call(get_sdp, From, #state{sdp=undefined}=State) ->
     {noreply, State#state{wait_sdp=From}, ?TIMEOUT};
 
 handle_call(get_sdp, _From, #state{sdp=SDP}=State) ->
     {reply, {ok, SDP}, State, ?TIMEOUT};
-
 
 handle_call({sip_invite, Handle, Dialog, SDP}, _From, #state{wait_sdp=Wait}=State) ->
     nklib_util:reply(Wait, {ok, SDP}),
@@ -206,7 +231,7 @@ handle_call(Msg, _From, State) ->
 -spec handle_cast(term(), #state{}) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
-handle_cast({originate, {ok, SessId}}, #state{sess_id=SessId}=State) ->
+handle_cast({originate, {ok, UUID}}, #state{uuid=UUID}=State) ->
     ?LLOG(info, "originate OK", [], State),
     {noreply, ok, State, ?TIMEOUT};
 

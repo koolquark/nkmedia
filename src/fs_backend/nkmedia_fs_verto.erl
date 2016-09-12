@@ -63,12 +63,15 @@
 %% @doc Starts a new verto session and place an inbound call with the same 
 %% CallId as the SessId.
 -spec start_in(id(), nkmedia_fs_engine:id(), nkmedia:offer()) ->
-    {ok, SDP::binary()} | {error, term()}.
+    {ok, UUID::binary(), SDP::binary()} | {error, term()}.
 
 start_in(SessId, FsId, Offer) ->
     case start(SessId, FsId) of
         {ok, SessPid} ->
-            invite(SessPid, SessId, Offer#{callee_id=><<"nkmedia_in">>});
+            case invite(SessPid, SessId, Offer#{callee_id=><<"nkmedia_in">>}) of
+                {ok, SDP} -> {ok, SessId, SDP};
+                {error, Error} -> {erro, Error}
+            end;
         {error, Error} ->
             {error, Error}
     end.
@@ -77,12 +80,15 @@ start_in(SessId, FsId, Offer) ->
 %% @doc Starts a new verto session and generates an outbound call with the same
 %% CallId as the SessId. Must call answer_out/3.
 -spec start_out(id(), nkmedia_fs_engine:id(), map()) ->
-    {ok, SDP::binary()} | {error, term()}.
+    {ok, UUID::binary(), SDP::binary()} | {error, term()}.
 
 start_out(SessId, FsId, Opts) ->
     case start(SessId, FsId) of
         {ok, SessPid} ->
-            outbound(SessPid, SessId, Opts);
+            case outbound(SessPid, SessId, Opts) of
+                {ok, SDP} -> {ok, SessId, SDP};
+                {error, Error} -> {erro, Error}
+            end;
         {error, Error} ->
             {error, Error}
     end.
