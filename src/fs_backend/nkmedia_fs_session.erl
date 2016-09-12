@@ -22,7 +22,7 @@
 -module(nkmedia_fs_session).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/2, answer/3, cmd/3, stop/2]).
+-export([start/2, offer/3, answer/3, cmd/3, stop/2]).
 -export([handle_call/3, handle_cast/2, fs_event/3, send_bridge/2]).
 
 -export_type([session/0, type/0, opts/0, cmd/0]).
@@ -104,8 +104,6 @@ send_bridge(Remote, Local) ->
 
 
 
-
-
 %% ===================================================================
 %% Callbacks
 %% ===================================================================
@@ -126,9 +124,10 @@ start(Type, Session) ->
             },
             Session2 = ?SESSION(Update, Session),
             case get_engine(Session2) of
-                {ok, #{offer:=Offer}=Session3} ->
-                    start_offeree(Type, Offer, Session3);
-                {ok, Session3} ->
+                {ok, #{backend_role:=offeree}=Session3} ->
+                    % Wait for the offer (it could has been updated by a callback)
+                    {ok, Session3};
+                {ok, #{backend_role:=offerer}=Session3} ->
                     start_offerer(Type, Session3);
                 {error, Error} ->
                     {error, Error, Session2}
@@ -138,10 +137,32 @@ start(Type, Session) ->
     end.
 
 
+%% @private Someone set the offer
+-spec offer(type(), nkmedia:offer(), session()) ->
+    {ok, session()} | {error, nkservice:error(), session()} | continue.
+
+offer(_Type, _Offer, #{backend_role:=offerer}) ->
+    % We generated the offer
+    continue;
+
+offer(Type, Offer, Session) ->
+    case start_offeree(Type, Offer, Session) of
+        {ok, Session2} ->
+            {ok, Offer, Session2};
+        {error, Error, Session2} ->
+            {error, Error, Session2}
+    end.
+
+
+
 %% @private We generated the offer, let's process the answer
 
 -spec answer(type(), nkmedia:answer(), session()) ->
     {ok, session()} | {error, nkservice:error(), session()}.
+
+answer(_Type, _Answer, #{backend_role:=offeree}) ->
+    % We generated the answer
+    continue;
 
 answer(Type, Answer, #{session_id:=SessId, offer:=Offer}=Session) ->
     SdpType = maps:get(sdp_type, Offer, webrtc),
@@ -149,7 +170,12 @@ answer(Type, Answer, #{session_id:=SessId, offer:=Offer}=Session) ->
     case Mod:answer_out(SessId, Answer) of
         ok ->
             wait_park(Session),
-            do_start_type(Type, Session);
+            case do_start_type(Type, Session) of
+                {ok, Session2} ->
+                    {ok, Answer, Session2};
+                {error, Error, Session2} ->
+                    {error, Error, Session2}
+            end;
         {error, Error} ->
             {error, Error, Session}
     end.
@@ -182,8 +208,8 @@ cmd(media, Opts, Session) ->
             {error, Error, Session}
     end;
 
-cmd(mcu_layout, #{mcu_layout:=Layout}, 
-       #{type:=mcu, type_ext:=#{room_id:=Room}=Ext, nkmedia_fs_id:=FsId}=Session) ->
+cmd(mcu_layout, #{mcu_layout:=Layout}, #{type:=mcu}=Session) ->
+    #{type_ext:=#{room_id:=Room}=Ext, nkmedia_fs_id:=FsId} = Session,
     case nkmedia_fs_cmd:conf_layout(FsId, Room, Layout) of
         ok  ->
             update_type(mcu, Ext#{mcu_layout=>Layout}),
@@ -210,7 +236,8 @@ stop(_Reason, Session) ->
 
 
 %% @private Called from nkmedia_fs_callbacks
-handle_cast({bridge_stop, PeerId}, #{nkmedia_fs_bridged_to:=PeerId}=Session) ->
+handle_cast({bridge_stop, PeerId}, 
+            #{type:=bridge, type_ext:=#{peer_id:=PeerId}}=Session) ->
     ?LLOG(info, "received bridge stop from ~s", [PeerId], Session),
     case nkmedia_session:bridge_stop(PeerId, Session) of
         {ok, Session2} ->
@@ -242,9 +269,8 @@ handle_call({bridge, PeerId}, _From, Session) ->
     case fs_bridge(PeerId, Session) of
         ok ->
             update_type(bridge, #{peer_id=>PeerId}),
-            Session2 = ?SESSION(#{nkmedia_fs_bridged_to=>PeerId}, Session),
             ?LLOG(info, "received remote ~s bridge request", [PeerId], Session),
-            {reply, ok, Session2};
+            {reply, ok, Session};
         {error, Error} ->
             ?LLOG(notice, "error when received remote ~s bridge: ~p", 
                   [PeerId, Error], Session),
@@ -322,7 +348,7 @@ do_type(park, _Opts, #{type:=park}=Session) ->
     
 do_type(park, _Opts, Session) ->
     Session2 = reset_type(Session),
-    case fs_transfer("park", Session) of
+    case fs_transfer("park", Session2) of
         ok ->
             {ok, #{}, Session2};
         {error, Error} ->
@@ -344,11 +370,11 @@ do_type(mcu, Opts, Session) ->
         {ok, Room0} -> nklib_util:to_binary(Room0);
         error -> nklib_util:uuid_4122()
     end,
-    RoomType = maps:get(room_type, Opts, <<"video-mcu-stereo">>),
+    RoomType = maps:get(room_profile, Opts, <<"video-mcu-stereo">>),
     Cmd = [<<"conference:">>, Room, <<"@">>, RoomType],
-    case fs_transfer(Cmd, Session) of
+    case fs_transfer(Cmd, Session2) of
         ok ->
-            TypeExt = #{room_id=>Room, room_type=>RoomType},
+            TypeExt = #{room_id=>Room, room_profile=>RoomType},
             {ok, TypeExt, Session2};
         {error, Error} ->
             {error, Error, Session2}
@@ -359,8 +385,7 @@ do_type(bridge, #{peer_id:=PeerId}, #{session_id:=SessId}=Session) ->
     case session_call(PeerId, {bridge, SessId}) of
         ok ->
             ?LLOG(info, "bridged accepted at ~s", [PeerId], Session),
-            Session3 = ?SESSION(#{nkmedia_fs_bridged_to=>PeerId}, Session2),
-            {ok, #{peer_id=>PeerId}, Session3};
+            {ok, #{peer_id=>PeerId}, Session2};
         {error, Error} ->
             ?LLOG(notice, "bridged not accepted at ~s", [PeerId], Session),
             {error, Error, Session2}
@@ -372,7 +397,9 @@ do_type(_Type, _Opts, Session) ->
 
 %% @private
 get_fs_answer(Offer, #{nkmedia_fs_id:=FsId, session_id:=SessId}=Session) ->
-    case nkmedia_fs_verto:start_in(SessId, FsId, Offer) of
+    Type = maps:get(sdp_type, Offer, webrtc),
+    Mod = fs_mod(Type),
+    case Mod:start_in(SessId, FsId, Offer) of
         {ok, SDP} ->
             wait_park(Session),
             Answer = #{
@@ -442,21 +469,21 @@ check_record(Opts, Session) ->
 
 %% @private
 -spec reset_type(session()) ->
-    {ok, session()} | {error, term()}.
+    session().
 
 reset_type(#{session_id:=SessId}=Session) ->
     % TODO: Check player
     case Session of
-        #{nkmedia_fs_bridged_to:=PeerId} ->
+        #{type:=bridge, type_ext:=#{peer_id:=PeerId}} ->
             ?LLOG(info, "sending bridge stop to ~s", [PeerId], Session),
             session_cast(PeerId, {bridge_stop, SessId}),
             % In case we were linked
             nkmedia_session:unlink_session(self(), PeerId),
-            Session2 = ?SESSION_RM(nkmedia_fs_bridged_to, Session);
+            ok;
         _ ->
-            Session2 = Session
+            ok
     end,
-    Session2.
+    Session.
 
 
 %% @private
@@ -496,13 +523,6 @@ do_fs_event(parked, park, _Session) ->
 
 do_fs_event(parked, _Type, Session) ->
     ?LLOG(notice, "received parked in ~p!", [_Type], Session),
-    % case Session of
-    %     #{park_after_bridge:=true} ->
-    %         nkmedia_session:unlink_session(self()),
-    %         nkmedia_session:ext_ops(self(), #{type=>park});
-    %     _ ->
-    %         nkmedia_session:stop(self(), peer_hangup)
-    % end;
     nkmedia_session:stop(self(), peer_hangup);
 
 do_fs_event({bridge, PeerId}, bridge, Session) ->

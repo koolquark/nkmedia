@@ -114,7 +114,7 @@ start(Type, Session) ->
                 {ok, Session3} ->
                     case get_janus_op(Session3) of
                         {ok, #{backend_role:=offeree}=Session4} ->
-                            % Wait for the offer
+                            % Wait for the offer (can be updated by a callback)
                             {ok, Session4};
                         {ok, #{backend_role:=offerer}=Session4} ->
                             start_offerer(Type, Session4);
@@ -177,7 +177,6 @@ answer(listen, Answer, #{nkmedia_janus_pid:=Pid}=Session) ->
 
 % For other types, do nothing special
 answer(_Type, _Answer, _Session) ->
-    lager:error("ANS: ~p", [_Type]),
     continue.
 
 

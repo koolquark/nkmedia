@@ -179,6 +179,21 @@ plugin_deps() ->
 %% ===================================================================
 
 
+a() ->
+    ConfigA = #{backend=>nkmedia_fs, room_id=>"mcu1"},
+    {ok, SessId, _SessPid} = start_session(mcu, ConfigA),
+    {ok, Offer} = nkmedia_session:get_offer(SessId),
+    
+    ConfigB = #{backend=>nkmedia_fs, master_id=>SessId, offer=>Offer, room_id=>"mcu2 "},
+    {ok, _SessIdB, _} = start_session(mcu, ConfigB).
+
+
+
+    % {nkmedia_verto, Pid} = find_user(1008),
+    % SessLink = {nkmedia_session, SessId, SessPid},
+    % nkmedia_verto:invite(Pid, SessId, Offer, SessLink).
+
+
 invite(Dest, Type, Opts) ->
     Opts2 = maps:merge(#{backend => nkmedia_kms}, Opts),
     start_invite(Dest, Type, Opts2).
@@ -236,11 +251,12 @@ nkmedia_verto_login(Login, Pass, Verto) ->
 nkmedia_verto_invite(_SrvId, CallId, Offer, Verto) ->
     #{dest:=Dest} = Offer,
     Offer2 = nkmedia_util:filter_codec(video, vp8, Offer),
+    Offer3 = nkmedia_util:filter_codec(audio, opus, Offer2),
     Reg = {nkmedia_verto, CallId, self()},
-    case incoming(Dest, Offer2, Reg, #{no_answer_trickle_ice => true}) of
+    case incoming(Dest, Offer3, Reg, #{no_answer_trickle_ice => true}) of
         {ok, SessId, SessPid} ->
             {ok, {nkmedia_session, SessId, SessPid}, Verto};
-        {error, Reason} ->
+        {rejected, Reason} ->
             lager:notice("Verto invite rejected ~p", [Reason]),
             {rejected, Reason, Verto}
     end.
@@ -268,7 +284,7 @@ nkmedia_janus_invite(_SrvId, CallId, Offer, Janus) ->
     case incoming(Dest, Offer, Reg, #{no_answer_trickle_ice => true}) of
         {ok, SessId, SessPid} ->
             {ok, {nkmedia_session, SessId, SessPid}, Janus};
-        {error, Reason} ->
+        {rejected, Reason} ->
             lager:notice("Janus invite rejected: ~p", [Reason]),
             {rejected, Reason, Janus}
     end.
@@ -302,22 +318,31 @@ sip_register(Req, Call) ->
 
 
 
-% Version that generates a Janus proxy before going on
+% 
 nkmedia_sip_invite(_SrvId, _Dest, Offer, SipLink, _Req, _Call) ->
-    ConfigA = incoming_config(nkmedia_janus, Offer, SipLink, #{}),
-    {ok, SessId, SessPid} = start_session(proxy, ConfigA),
-    {ok, Offer2} = nkmedia_session:cmd(SessId, get_proxy_offer, #{}),
+    ConfigA = incoming_config(nkmedia_fs, Offer, SipLink, #{}),
+    {ok, SessId, SessPid} = start_session(echo, ConfigA),
     SessLink = {nkmedia_session, SessId, SessPid},
-    case find_user(a) of
-        {nkmedia_verto, Pid} ->
-            {ok, Link} = nkmedia_verto:invite(Pid, SessId, Offer2, SessLink),
-            {ok, _} = nkmedia_session:register(SessId, Link);
-        {nkmedia_janus, Pid} ->
-            {ok, Link} = nkmedia_janus_proto:invite(Pid, SessId, Offer2, SessLink),
-            {ok, _} = nkmedia_session:register(SessId, Link);
-        not_found ->
-            {rejected, user_not_found}
-    end.
+    {ok, SessLink}.
+
+
+
+% % Version that generates a Janus proxy before going on
+% nkmedia_sip_invite(_SrvId, _Dest, Offer, SipLink, _Req, _Call) ->
+%     ConfigA = incoming_config(nkmedia_janus, Offer, SipLink, #{}),
+%     {ok, SessId, SessPid} = start_session(proxy, ConfigA),
+%     {ok, Offer2} = nkmedia_session:cmd(SessId, get_proxy_offer, #{}),
+%     SessLink = {nkmedia_session, SessId, SessPid},
+%     case find_user(a) of
+%         {nkmedia_verto, Pid} ->
+%             {ok, Link} = nkmedia_verto:invite(Pid, SessId, Offer2, SessLink),
+%             {ok, _} = nkmedia_session:register(SessId, Link);
+%         {nkmedia_janus, Pid} ->
+%             {ok, Link} = nkmedia_janus_proto:invite(Pid, SessId, Offer2, SessLink),
+%             {ok, _} = nkmedia_session:register(SessId, Link);
+%         not_found ->
+%             {rejected, user_not_found}
+%     end.
 
 
 
@@ -406,13 +431,29 @@ incoming(<<"k", Num/binary>>, Offer, Reg, Opts) ->
     {ok, _, _} = start_invite(Num, bridge, ConfigB),
     {ok, SessId, SessPid};
 
-incoming(<<"aa">>, Offer, Reg, Opts) ->
+incoming(<<"proxy-test">>, Offer, Reg, Opts) ->
     ConfigA1 = incoming_config(nkmedia_janus, Offer, Reg, Opts),
     {ok, SessId, SessPid} = start_session(proxy, ConfigA1),
     {ok, #{offer:=Offer2}} = nkmedia_session:cmd(SessId, get_proxy_offer, #{}),
 
-    ConfigB = slave_config(nkmedia_janus, SessId, Opts#{offer=>Offer2}),
-    {ok, _, _} = start_session(echo, ConfigB),
+    % % This should work, but Juanus fails with a ICE failed message
+    % ConfigB = slave_config(nkmedia_janus, SessId, Opts#{offer=>Offer2}),
+    % {ok, _, _} = start_session(echo, ConfigB),
+
+    % % This, however works:
+    % {nkmedia_janus, Pid} = find_user(a),
+    % SessLink = {nkmedia_session, SessId, SessPid},
+    % {ok, _} = nkmedia_janus_proto:invite(Pid, SessId, Offer2, SessLink),
+
+    % % Doint the answering by hand fails with the same error
+    % {ok, SessB, _} = start_session(publish, #{backend=>nkmedia_janus, offer=>Offer2}),
+    % {ok, Answer2} = nkmedia_session:get_answer(SessB),
+    % nkmedia_session:set_answer(SessId, Answer2),
+
+    ConfigB = slave_config(nkmedia_fs, SessId, Opts#{offer=>Offer2}),
+    {ok, _, _} = start_session(mcu, ConfigB),
+
+
     {ok, SessId, SessPid};
 
 

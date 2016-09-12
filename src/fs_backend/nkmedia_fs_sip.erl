@@ -22,7 +22,7 @@
 -module(nkmedia_fs_sip).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start_out/3, answer_out/2]).
+-export([start_in/3, start_out/3, answer_out/2]).
 -export([nkmedia_sip_invite/2, nkmedia_sip_bye/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
@@ -32,6 +32,7 @@
 
 -define(TIMEOUT, 60000).
 
+-include_lib("nklib/include/nklib.hrl").
 
 %% ===================================================================
 %% Types
@@ -44,13 +45,22 @@
 
 
 %% @doc
+-spec start_in(nkmedia_session:id(), nkmedia_fs:id(), binary()) ->
+    {ok, binary()} | {error, term()}.
+
+start_in(SessId, FsId, SDP) ->
+    {ok, Pid} = gen_server:start(?MODULE, [in, FsId, SessId, SDP], []),
+    nkservice_util:call(Pid, get_sdp).
+
+
+%% @doc
 %% nkmedia_sip will find any process registered under {nkmedia_sip, call, SessId}
 %% and {nkmedia_sip_dialog, Dialog} and will send messages
 -spec start_out(nkmedia_session:id(), nkmedia_fs:id(), map()) ->
     {ok, binary()} | {error, term()}.
 
 start_out(SessId, FsId, #{}) ->
-    {ok, Pid} = gen_server:start(?MODULE, [FsId, SessId, #{}], []),
+    {ok, Pid} = gen_server:start(?MODULE, [out, FsId, SessId], []),
     nkservice_util:call(Pid, get_sdp).
 
 
@@ -121,7 +131,25 @@ find(SessId) ->
     {ok, tuple()} | {ok, tuple(), timeout()|hibernate} |
     {stop, term()} | ignore.
 
-init([FsId, SessId, _Opts]) ->
+init([in, FsId, SessId, SDP]) ->
+    true = nklib_proc:reg({?MODULE, SessId}),
+    case nkmedia_fs_engine:get_config(FsId) of
+        {ok, #{host:=Host, base:=Base}} ->
+            Uri = #uri{
+                scheme = sip,
+                domain = Host,
+                port = Base+2,
+                user = <<"nkmedia_in">>
+            },
+            I = nkmedia_core:invite(Uri, SDP),
+            lager:error("I: ~p", [I]),
+            State = #state{fs_id=FsId, sess_id=SessId},
+            {ok, State};
+        {error, Error} ->
+            {stop, Error}
+    end;
+
+init([out, FsId, SessId]) ->
     true = nklib_proc:reg({?MODULE, SessId}),
     Host = nklib_util:to_host(nkmedia_app:get(erlang_ip)),
     Port = nkmedia_app:get(sip_port),

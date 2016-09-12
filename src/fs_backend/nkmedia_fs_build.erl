@@ -345,7 +345,8 @@ run_sip() -> <<"
     <!-- Let calls hit the dialplan before selecting codec for the a-leg -->
     <param name=\"inbound-late-negotiation\" value=\"true\"/>
     <param name=\"nonce-ttl\" value=\"60\"/>
-    <param name=\"auth-calls\" value=\"$${internal_auth_calls}\"/>
+    <!--<param name=\"auth-calls\" value=\"$${internal_auth_calls}\"/>-->
+    <param name=\"auth-calls\" value=\"false\"/>
     <param name=\"inbound-reg-force-matching-username\" value=\"true\"/>
     <param name=\"auth-all-packets\" value=\"false\"/>
     <param name=\"ext-rtp-ip\" value=\"$${nk_ext_ip}\"/>

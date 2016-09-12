@@ -815,7 +815,7 @@ do_set_offer(Offer, #state{type=Type, session=Session}=State) ->
                         wait_offer = []
                     },
                     ?LLOG(info, "offer set", [], State3),
-                    % ?LLOG(info, "offer:\n~s", [maps:get(sdp, Offer2, <<>>)], State3),
+                    ?LLOG(info, "offer:\n~s", [maps:get(sdp, Offer2, <<>>)], State3),
                     {ok, State3};
                 {ignore, State2} ->
                     {ok, State2};
@@ -843,7 +843,6 @@ do_set_answer(Answer, #state{type=Type, session=Session}=State) ->
             Session2 = ?SESSION(#{answer=>Answer}, Session),
             {ok, State#state{session=Session2, answer_candidates=[]}};
         _ ->
-            ?LLOG(warning, "set ans", [], State),
             case handle(nkmedia_session_answer, [Type, Answer], State) of
                 {ok, Answer2, State2} ->
                     #state{wait_answer=Wait, session=Session2} = State2,
@@ -854,7 +853,7 @@ do_set_answer(Answer, #state{type=Type, session=Session}=State) ->
                         wait_answer = []
                     },
                     ?LLOG(info, "answer set", [], State3),
-                    % ?LLOG(info, "answer:\n~s", [maps:get(sdp, Answer2, <<>>)], State3),
+                    ?LLOG(info, "answer:\n~s", [maps:get(sdp, Answer2, <<>>)], State3),
                     case Session of
                         #{master_peer:=MasterId, session_id:=Id} ->
                             ?LLOG(notice, "calling set_slave_answer for ~s", 
