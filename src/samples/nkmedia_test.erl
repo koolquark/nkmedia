@@ -180,12 +180,13 @@ plugin_deps() ->
 
 
 a() ->
-    ConfigA = #{backend=>nkmedia_fs, room_id=>"mcu1"},
-    {ok, SessId, _SessPid} = start_session(mcu, ConfigA),
+    ConfigA = #{backend=>nkmedia_kms, no_offer_trickle_ice=>true, sdp_type=>rtp},
+    {ok, SessId, _SessPid} = start_session(play, ConfigA),
     {ok, Offer} = nkmedia_session:get_offer(SessId),
     
-    ConfigB = #{backend=>nkmedia_kms, master_id=>SessId, offer=>Offer},
-    {ok, _SessIdB, _} = start_session(publish, ConfigB#{room_id=>sfu}).
+    ConfigB = #{backend=>nkmedia_fs, master_id=>SessId, 
+                set_master_answer=>true, offer=>Offer},
+    {ok, _SessIdB, _} = start_session(mcu, ConfigB#{room_id=>m1}).
 
 
 
@@ -353,7 +354,7 @@ nkmedia_sip_invite(_SrvId, _Dest, Offer, SipLink, _Req, _Call) ->
 
 incoming(<<"je">>, Offer, Reg, Opts) ->
     Config = incoming_config(nkmedia_janus, Offer, Reg, Opts),
-    start_session(echo, Config);
+    start_session(echo, Config#{no_offer_trickle_ice=>true});
 
 incoming(<<"fe">>, Offer, Reg, Opts) ->
     Config = incoming_config(nkmedia_fs, Offer, Reg, Opts),
@@ -369,11 +370,11 @@ incoming(<<"kp">>, Offer, Reg, Opts) ->
 
 incoming(<<"m1">>, Offer, Reg, Opts) ->
     Config = incoming_config(nkmedia_fs, Offer, Reg, Opts),
-    start_session(mcu, Config#{room_id=>"mcu1"});
+    start_session(mcu, Config#{room_id=>"m1"});
 
 incoming(<<"m2">>, Offer, Reg, Opts) ->
     Config = incoming_config(nkmedia_fs, Offer, Reg, Opts),
-    start_session(mcu, Config#{room_id=>"mcu2"});
+    start_session(mcu, Config#{room_id=>"m2"});
 
 incoming(<<"pj1">>, Offer, Reg, Opts) ->
     nkmedia_room:start(test, #{room_id=>sfu, backend=>nkmedia_janus}),
@@ -401,7 +402,7 @@ incoming(<<"play">>, Offer, Reg, Opts) ->
 incoming(<<"d", Num/binary>>, Offer, Reg, Opts) ->
     ConfigA = incoming_config(p2p, Offer, Reg, Opts),
     {ok, SessId, SessPid} = start_session(p2p, ConfigA),
-    ConfigB = slave_config(p2p, SessId, Opts#{offer=>Offer}),
+    ConfigB = slave_config(p2p, SessId, Opts#{offer=>Offer, set_master_answer=>true}),
     {ok, _, _} = start_invite(Num, p2p, ConfigB),
     {ok, SessId, SessPid};
 
@@ -412,14 +413,15 @@ incoming(<<"j", Num/binary>>, Offer, Reg, Opts) ->
         _ -> ConfigA1
     end,
     {ok, SessId, SessPid} = start_session(proxy, ConfigA2),
-    ConfigB = slave_config(nkmedia_janus, SessId, Opts),
+    % Avoid copying no_answer_trickle_ice here
+    ConfigB = slave_config(nkmedia_janus, SessId, #{set_master_answer=>true}),
     % we start the second sesson without offer, to be an 'offerer'
-    % it will detect that it is a bridge, and call the cmd get_proxy_offer
+    % it will detect that it is a slave proxy, and will call the cmd get_proxy_offer
     % to 'make' the offer
     % in start_invite we get this 'B offer' and send the invite with it
     % when it answers, the answer is sent to back to the proxy, that generates
     % the proxy answer
-    {ok, _, _} = start_invite(Num, bridge, ConfigB),
+    {ok, _, _} = start_invite(Num, proxy, ConfigB),
     {ok, SessId, SessPid};
 
 incoming(<<"f", Num/binary>>, Offer, Reg, Opts) ->

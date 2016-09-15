@@ -22,7 +22,7 @@
 -module(nkmedia_fs_session).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/2, offer/3, answer/3, cmd/3, stop/2]).
+-export([start/3, offer/4, answer/4, cmd/3, stop/2]).
 -export([handle_call/3, handle_cast/2, fs_event/3]).
 
 -export_type([session/0, type/0, opts/0, cmd/0]).
@@ -112,11 +112,11 @@ fs_event(SessId, FsId, Event) ->
 
 
 %% @private
--spec start(nkmedia_session:type(), session()) ->
+-spec start(nkmedia_session:type(), nkmedia:role(), session()) ->
     {ok, session()} |
     {error, nkservice:error(), session()} | continue().
 
-start(Type, Session) ->
+start(Type, Role, Session) ->
     case is_supported(Type) of
         true ->
             Update = #{
@@ -126,10 +126,10 @@ start(Type, Session) ->
             },
             Session2 = ?SESSION(Update, Session),
             case get_engine(Session2) of
-                {ok, #{backend_role:=offeree}=Session3} ->
+                {ok, Session3} when Role==offeree ->
                     % Wait for the offer (it could has been updated by a callback)
                     {ok, Session3};
-                {ok, #{backend_role:=offerer}=Session3} ->
+                {ok, Session3} when Role==offerer ->
                     start_offerer(Type, Session3);
                 {error, Error} ->
                     {error, Error, Session2}
@@ -140,14 +140,14 @@ start(Type, Session) ->
 
 
 %% @private Someone set the offer
--spec offer(type(), nkmedia:offer(), session()) ->
+-spec offer(type(), nkmedia:role(), nkmedia:offer(), session()) ->
     {ok, session()} | {error, nkservice:error(), session()} | continue.
 
-offer(_Type, _Offer, #{backend_role:=offerer}) ->
+offer(_Type, offerer, _Offer, _Session) ->
     % We generated the offer
     continue;
 
-offer(Type, Offer, Session) ->
+offer(Type, offeree, Offer, Session) ->
     case start_offeree(Type, Offer, Session) of
         {ok, Session2} ->
             {ok, Offer, Session2};
@@ -158,15 +158,14 @@ offer(Type, Offer, Session) ->
 
 
 %% @private We generated the offer, let's process the answer
-
--spec answer(type(), nkmedia:answer(), session()) ->
+-spec answer(type(), nkmedia:role(), nkmedia:answer(), session()) ->
     {ok, session()} | {error, nkservice:error(), session()}.
 
-answer(_Type, _Answer, #{backend_role:=offeree}) ->
+answer(_Type, offeree, _Answer, _Session) ->
     % We generated the answer
     continue;
 
-answer(Type, Answer, #{nkmedia_fs_uuid:=UUID, offer:=Offer}=Session) ->
+answer(Type, offerer, Answer, #{nkmedia_fs_uuid:=UUID, offer:=Offer}=Session) ->
     SdpType = maps:get(sdp_type, Offer, webrtc),
     Mod = fs_mod(SdpType),
     case Mod:answer_out(UUID, Answer) of

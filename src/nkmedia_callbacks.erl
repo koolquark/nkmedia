@@ -28,10 +28,10 @@
 		 nkmedia_session_event/3, nkmedia_session_reg_event/4,
 		 nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2, 
 		 nkmedia_session_handle_info/2]).
--export([nkmedia_session_start/2, nkmedia_session_stop/2,
-	     nkmedia_session_offer/3, nkmedia_session_answer/3, 
-		 nkmedia_session_slave_answer/2, nkmedia_session_cmd/3, 
-	     nkmedia_session_candidate/2, nkmedia_session_peer_candidate/2,
+-export([nkmedia_session_start/3, nkmedia_session_stop/2,
+	     nkmedia_session_offer/4, nkmedia_session_answer/4, 
+		 % nkmedia_session_slave_answer/2, nkmedia_session_peer_candidate/2,
+		 nkmedia_session_cmd/3, nkmedia_session_candidate/2,
 	     nkmedia_session_bridge_stop/2]).
 -export([nkmedia_call_init/2, nkmedia_call_terminate/2, 
 		 nkmedia_call_resolve/3, nkmedia_call_invite/5, nkmedia_call_cancel/3, 
@@ -166,40 +166,42 @@ nkmedia_session_terminate(_Reason, Session) ->
 
 
 %% @private
--spec nkmedia_session_start(nkmedia_session:type(), session()) ->
+-spec nkmedia_session_start(nkmedia_session:type(), nkmedia:role(), session()) ->
 	{ok, session()} |
 	{error, nkservice:error(), session()} | continue().
 
-nkmedia_session_start(_Type, Session) ->
+nkmedia_session_start(_Type, _Role, Session) ->
 	{ok, Session}.
 
 
 %% @private
 %% Plugin can update the offer
--spec nkmedia_session_offer(nkmedia_session:type(), nkmedia:offer(), session()) ->
+-spec nkmedia_session_offer(nkmedia_session:type(), nkmedia:role(), 
+							nkmedia:offer(), session()) ->
 	{ok, nkmedia:offer(), session()} | {ignore, session()} | 
 	{error, nkservice:error(), session()} | continue().
 
-nkmedia_session_offer(_Type, Offer, Session) ->
+nkmedia_session_offer(_Type, _Role, Offer, Session) ->
 	{ok, Offer, Session}.
 
 
 %% @private
 %% Plugin can update the answer
--spec nkmedia_session_answer(nkmedia_session:type(), nkmedia:answer(), session()) ->
+-spec nkmedia_session_answer(nkmedia_session:type(), nkmedia:role(), 
+							 nkmedia:answer(), session()) ->
 	{ok, nkmedia:answer(), session()} | {ignore, session()} | 
 	{error, nkservice:error(), session()} | continue().
 
-nkmedia_session_answer(_Type, Answer, Session) ->
+nkmedia_session_answer(_Type, _Role, Answer, Session) ->
 	{ok, Answer, Session}.
 
 
-%% @private
--spec nkmedia_session_slave_answer(nkmedia:answer(), session()) ->
-	{ok, nkmedia:answer(), session()} | {ignore, session()} | continue().
+% %% @private
+% -spec nkmedia_session_slave_answer(nkmedia:answer(), session()) ->
+% 	{ok, nkmedia:answer(), session()} | {ignore, session()} | continue().
 
-nkmedia_session_slave_answer(Answer, Session) ->
-	{ok, Answer, Session}.
+% nkmedia_session_slave_answer(Answer, Session) ->
+% 	{ok, Answer, Session}.
 
 
 %% @private
@@ -219,12 +221,12 @@ nkmedia_session_candidate(Candidate, Session) ->
 	{continue, [Candidate, Session]}.
 
 
-%% @private
--spec nkmedia_session_peer_candidate(nkmedia:candidate(), session()) ->
-	{ok, nkmedia:candidate(), session()} | {ignore, session()} | continue().
+% %% @private
+% -spec nkmedia_session_peer_candidate(nkmedia:candidate(), session()) ->
+% 	{ok, nkmedia:candidate(), session()} | {ignore, session()} | continue().
 
-nkmedia_session_peer_candidate(Candidate, Session) ->
-	{ok, Candidate, Session}.
+% nkmedia_session_peer_candidate(Candidate, Session) ->
+% 	{ok, Candidate, Session}.
 
 
 %% @private%% @doc Called when the status of the session changes

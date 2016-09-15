@@ -280,7 +280,7 @@ candidate(Id, Candidate) ->
     ok | {error, term()}.
 
 candidate_callee(Id, Candidate) ->
-    do_cast(Id, {candidate_callee, callee, Candidate}).
+    do_cast(Id, {candidate, callee, Candidate}).
 
 
 %% @private

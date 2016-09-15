@@ -297,7 +297,6 @@ nkmedia_session_reg_event(_SessId, {nkmedia_janus, CallId, Pid}, Event, Session)
                             lager:error("Error setting Janus answer: ~p", [Error])
                     end;
                 offerer ->
-                    lager:error("OWN"),
                     % This is our own answer!
                     ok
             end;

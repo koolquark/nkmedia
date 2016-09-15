@@ -25,7 +25,7 @@
 -module(nkmedia_janus_session).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/2, offer/3, answer/3, candidate/2, peer_candidate/2, cmd/3, stop/2]).
+-export([start/3, offer/4, answer/4, candidate/2, cmd/3, stop/2]).
 -export([handle_call/3, handle_cast/2]).
 
 -export_type([session/0, type/0, opts/0, cmd/0]).
@@ -64,9 +64,7 @@
     echo     |
     proxy    |
     publish  |
-    listen   |
-    bridge   |
-    play.
+    listen.
 
 
 -type opts() ::
@@ -89,13 +87,13 @@
 
 
 %% @private
--spec start(nkmedia_session:type(), session()) ->
+-spec start(nkmedia_session:type(), nkmedia:role(), session()) ->
     {ok, session()} |
     {error, nkservice:error(), session()} | continue().
 
 
 %% Special case as 'B' leg of a proxy
-start(bridge, #{backend_role:=offerer, master_peer:=MasterId}=Session) -> 
+start(proxy, offerer, #{master_peer:=MasterId}=Session) -> 
     case nkmedia_session:cmd(MasterId, get_proxy_offer, #{}) of
         {ok, #{janus_id:=Id, offer:=Offer}} ->
             Update = #{backend=>nkmedia_janus, nkmedia_janus_id=>Id},
@@ -106,17 +104,17 @@ start(bridge, #{backend_role:=offerer, master_peer:=MasterId}=Session) ->
             {error, Error, Session}
     end;
 
-start(Type, Session) -> 
+start(Type, Role, Session) -> 
     case is_supported(Type) of
         true ->
             Session2 = ?SESSION(#{backend=>nkmedia_janus}, Session),
             case get_mediaserver(Session2) of
                 {ok, Session3} ->
                     case get_janus_op(Session3) of
-                        {ok, #{backend_role:=offeree}=Session4} ->
+                        {ok, Session4} when Role==offeree ->
                             % Wait for the offer (can be updated by a callback)
                             {ok, Session4};
-                        {ok, #{backend_role:=offerer}=Session4} ->
+                        {ok, Session4} when Role==offerer ->
                             start_offerer(Type, Session4);
                         {error, Error} ->
                             {error, Error, Session2}
@@ -130,14 +128,14 @@ start(Type, Session) ->
 
 
 %% @private Someone set the offer
--spec offer(type(), nkmedia:offer(), session()) ->
+-spec offer(type(), nkmedia:role(), nkmedia:offer(), session()) ->
     {ok, session()} | {error, nkservice:error(), session()} | continue.
 
-offer(_Type, _Offer, #{backend_role:=offerer}) ->
+offer(_Type, offerer, _Offer, _Session) ->
     % We generated the offer
     continue;
 
-offer(Type, Offer, Session) ->
+offer(Type, offeree, Offer, Session) ->
     case start_offeree(Type, Offer, Session) of
         {ok, Session2} ->
             {ok, Offer, Session2};
@@ -148,16 +146,16 @@ offer(Type, Offer, Session) ->
 
 
 %% @private Someone set the answer
--spec answer(type(), nkmedia:answer(), session()) ->
+-spec answer(type(), nkmedia:role(), nkmedia:answer(), session()) ->
     {ok, session()} | {error, nkservice:error(), session()} | continue.
 
-answer(bridge, Answer, Session) ->
+answer(proxy, offerer, Answer, Session) ->
     lager:error("CALLER SET ANSWER B"),
     % We are the 'B' side of the proxy, do nothing because the answer will be sent
     % to the master automatically
     {ok, Answer, Session};
 
-answer(proxy, Answer, #{backend_role:=offeree, nkmedia_janus_pid:=Pid}=Session) ->
+answer(proxy, offeree, Answer, #{nkmedia_janus_pid:=Pid}=Session) ->
     % We are the 'A' side of the proxy
     lager:error("CALLER SET ANSWER A"),
     case nkmedia_janus_op:answer(Pid, Answer) of
@@ -167,7 +165,7 @@ answer(proxy, Answer, #{backend_role:=offeree, nkmedia_janus_pid:=Pid}=Session) 
             {error, Error, Session}
     end;
 
-answer(listen, Answer, #{nkmedia_janus_pid:=Pid}=Session) ->
+answer(listen, offerer, Answer, #{nkmedia_janus_pid:=Pid}=Session) ->
     case nkmedia_janus_op:answer(Pid, Answer) of
         ok ->
             {ok, Answer, Session};
@@ -176,7 +174,7 @@ answer(listen, Answer, #{nkmedia_janus_pid:=Pid}=Session) ->
     end;
 
 % For other types, do nothing special
-answer(_Type, _Answer, _Session) ->
+answer(_Type, _Role, _Answer, _Session) ->
     continue.
 
 
@@ -185,38 +183,45 @@ answer(_Type, _Answer, _Session) ->
 -spec candidate(nkmedia:candidate(), session()) ->
     {ok, session()} | continue.
 
+candidate(Candidate, #{type:=proxy, backend_role:=offerer}=Session) ->
+    #{master_peer:=MasterId} = Session,
+    lager:error("PROXY CANDIDATE"),
+    session_cast(MasterId, {proxy_candidate, Candidate}),
+    {ok, Session};
+
 candidate(Candidate, #{nkmedia_janus_pid:=Pid}=Session) ->
+    lager:warning("JANUS CANDIDATE"),
     nkmedia_janus_op:candidate(Pid, Candidate),
     {ok, Session}.
 
 
-%% @private
--spec peer_candidate(nkmedia:candidate(), session()) ->
-    {ok, session()} | continue.
+% %% @private
+% -spec peer_candidate(nkmedia:candidate(), session()) ->
+%     {ok, session()} | continue.
 
-peer_candidate(#candidate{type=Type}=Candidate, #{type:=bridge}=Session) ->
-    case Session of
-        #{backend_role:=offerer, slave_peer:=_, nkmedia_janus_pid:=Pid} ->
-            case Type of
-                offer ->
-                    nkmedia_janus_op:candidate(Pid, Candidate);
-                answer ->
-                    ?LLOG(error, "received answer peer candidate in offerer", 
-                          [], Session)
-            end;
-        #{backend_role:=offeree, master_peer:=MasterId} ->
-            case Type of
-                answer ->
-                    session_cast(MasterId, {proxy_candidate, Candidate});
-                offer ->
-                    ?LLOG(error, "received offer peer candidate in offeree", 
-                          [], Session)
-            end
-    end,
-    {ok, Session};
+% peer_candidate(#candidate{type=Type}=Candidate, #{type:=bridge}=Session) ->
+%     case Session of
+%         #{backend_role:=offerer, slave_peer:=_, nkmedia_janus_pid:=Pid} ->
+%             case Type of
+%                 offer ->
+%                     nkmedia_janus_op:candidate(Pid, Candidate);
+%                 answer ->
+%                     ?LLOG(error, "received answer peer candidate in offerer", 
+%                           [], Session)
+%             end;
+%         #{backend_role:=offeree, master_peer:=MasterId} ->
+%             case Type of
+%                 answer ->
+%                     session_cast(MasterId, {proxy_candidate, Candidate});
+%                 offer ->
+%                     ?LLOG(error, "received offer peer candidate in offeree", 
+%                           [], Session)
+%             end
+%     end,
+%     {ok, Session};
 
-peer_candidate(_Candidate, _Session) ->
-    continue.
+% peer_candidate(_Candidate, _Session) ->
+%     continue.
 
 
 %% @private
@@ -291,8 +296,9 @@ handle_call(get_publisher, _From, Session) ->
 
 %% @private
 handle_cast({proxy_candidate, Candidate}, #{nkmedia_janus_pid:=Pid}=Session) ->
+    lager:error("RECEIVED PROXY CANDIDATE"),
     nkmedia_janus_op:candidate_callee(Pid, Candidate),
-    {ok, Session}.
+    {noreply, Session}.
 
 
 
@@ -314,7 +320,6 @@ is_supported(_) -> false.
     {ok, session()} |
     {error, nkservice:error(), session()} | continue().
 
-%% We are the 'B' leg of the proxy
 start_offerer(listen, #{publisher_id:=Publisher, nkmedia_janus_pid:=Pid}=Session) ->
     case get_room(listen, Session) of
         {ok, RoomId} ->
@@ -368,7 +373,12 @@ start_offeree(proxy, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
         _ ->
             case nkmedia_janus_op:Fun(Pid, Offer) of
                 {ok, Offer2} ->
-                    Session2 = ?SESSION(#{nkmedia_janus_proxy_offer=>Offer2}, Session),
+                    Update = #{
+                        nkmedia_janus_proxy_offer => Offer2,
+                        % when we receive answer from slave, we must process it
+                        no_answer_trickle_ice => false
+                    },
+                    Session2 = ?SESSION(Update, Session),
                     set_media(Session2);
                 {error, Error} ->
                     {error, Error, Session}

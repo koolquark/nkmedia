@@ -28,7 +28,7 @@
 -module(nkmedia_kms_session).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/2, offer/3, answer/3, candidate/2, cmd/3, stop/2]).
+-export([start/3, offer/4, answer/4, candidate/2, cmd/3, stop/2]).
 -export([handle_call/3, handle_cast/2]).
 
 
@@ -99,21 +99,21 @@
 
 
 %% @private
--spec start(nkmedia_session:type(), session()) ->
+-spec start(nkmedia_session:type(), nkmedia:role(), session()) ->
     {ok, session()} |
     {error, nkservice:error(), session()} | continue().
 
-start(Type, Session) -> 
+start(Type, Role, Session) -> 
     case is_supported(Type) of
         true ->
             Session2 = ?SESSION(#{backend=>nkmedia_kms}, Session),
             case get_pipeline(Type, Session2) of
                 {ok, Session3} ->
                     case nkmedia_kms_session_lib:create_proxy(Session3) of
-                        {ok, #{backend_role:=offeree}=Session4} ->
+                        {ok, Session4} when Role==offeree ->
                             % Wait for the offer (it could has been updated by a callback)
                             {ok, Session4};
-                        {ok, #{backend_role:=offerer}=Session4} ->
+                        {ok, Session4} when Role==offerer ->
                             start_offerer(Type, Session4);
                         {error, Error} ->
                             {error, Error, Session3}
@@ -127,14 +127,14 @@ start(Type, Session) ->
 
 
 %% @private Someone set the offer
--spec offer(type(), nkmedia:offer(), session()) ->
+-spec offer(type(), nkmedia:role(), nkmedia:offer(), session()) ->
     {ok, session()} | {error, nkservice:error(), session()} | continue.
 
-offer(_Type, _Offer, #{backend_role:=offerer}) ->
+offer(_Type, offerer, _Offer, _Session) ->
     % We generated the offer
     continue;
 
-offer(Type, Offer, Session) ->
+offer(Type, offeree, Offer, Session) ->
     case start_offeree(Type, Offer, Session) of
         {ok, Session2} ->
             {ok, Offer, Session2};
@@ -143,15 +143,15 @@ offer(Type, Offer, Session) ->
     end.
 
 
-%% @private
--spec answer(type(), nkmedia:answer(), session()) ->
+%% @private We generated the offer, let's process the answer
+-spec answer(type(), nkmedia:role(), nkmedia:answer(), session()) ->
     {ok, session()} | {error, nkservice:error(), session()}.
 
-answer(_Type, _Answer, #{backend_role:=offeree}) ->
+answer(_Type, offeree, _Answer, _Session) ->
     % We generated the answer
     continue;
 
-answer(Type, Answer, Session) ->
+answer(Type, offerer, Answer, Session) ->
     case nkmedia_kms_session_lib:set_answer(Answer, Session) of
         ok ->
             case do_start_type(Type, Session) of
@@ -272,13 +272,13 @@ handle_call(get_room, _From, Session) ->
 
  
 %% @private
-handle_cast(#candidate{}=Candidate, #{backend_role:=Role}=Session) ->
-    Type = case Role of
-        offerer -> offer;
-        offeree -> answer
-    end,
-    nkmedia_session:candidate(self(), Candidate#candidate{type=Type}),
-    {noreply, Session};
+% handle_cast(#candidate{}=Candidate, #{backend_role:=_Role}=Session) ->
+%     % Type = case Role of
+%     %     offerer -> offer;
+%     %     offeree -> answer
+%     % end,
+%     nkmedia_session:candidate(self(), Candidate),
+%     {noreply, Session};
 
 handle_cast({bridge_stop, PeerId}, 
             #{type:=bridge, type_ext:=#{peer_id:=PeerId}}=Session) ->

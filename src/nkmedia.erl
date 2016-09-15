@@ -22,7 +22,7 @@
 
 -module(nkmedia).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export_type([offer/0, answer/0, candidate/0]).
+-export_type([offer/0, answer/0, role/0, candidate/0]).
 -export_type([engine_id/0, engine_config/0]).
 
 -include("nkmedia.hrl").
@@ -56,6 +56,8 @@
 		backend => atom()
 	}.
 
+-type role() ::
+	offerer | offeree.
 
 
 -type engine_id() :: binary().
