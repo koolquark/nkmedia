@@ -419,6 +419,12 @@ run_dialplan() ->
             <action application=\"park\"/>
         </condition>
     </extension>
+    <extension name=\"nkmedia_outbound\">
+        <condition field=\"destination_number\" expression=\"^nkmedia_out$\">
+            <action application=\"set\" data=\"nkmedia_session_id=${call_uuid}\"/>
+            <action application=\"park\"/>
+        </condition>
+    </extension>
     <extension name=\"nkmedia_sip_inbound\">
         <condition field=\"destination_number\" expression=\"^nkmedia_sip_in_(.*)$\">
             <action application=\"set\" data=\"nkmedia_session_id=$1\"/>

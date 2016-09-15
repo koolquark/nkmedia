@@ -33,8 +33,8 @@
 %% r02 uses last 14.04 with correct libssl1.0.2
 
 -define(KMS_COMP, <<"netcomposer">>).
--define(KMS_VSN, <<"6.5.0">>).
--define(KMS_REL, <<"r02">>).
+-define(KMS_VSN, <<"6.6.1">>).
+-define(KMS_REL, <<"r01">>).
 
 
 
@@ -139,19 +139,33 @@ base_name(Config) ->
     list_to_binary([Comp, "/nk_kurento_base:", Vsn, "-", Rel]).
 
 
+% %% @private 6.5.0 r02
+% base_dockerfile(_Vsn) -> 
+% <<"
+% FROM ubuntu:14.04
+% RUN apt-get update && apt-get install -y wget vim nano telnet && \\
+%     echo \"deb http://ubuntu.kurento.org trusty kms6\" | tee /etc/apt/sources.list.d/kurento.list && \\
+%     wget -O - http://ubuntu.kurento.org/kurento.gpg.key | apt-key add - && \\
+%     apt-get update && \\
+%     apt-get -y install kurento-media-server-6.0 && \\
+%     apt-get -y upgrade && \\
+%     apt-get clean && rm -rf /var/lib/apt/lists/*
+% ">>.
+
+
 %% @private
 base_dockerfile(_Vsn) -> 
 <<"
 FROM ubuntu:14.04
 RUN apt-get update && apt-get install -y wget vim nano telnet && \\
-    echo \"deb http://ubuntu.kurento.org trusty kms6\" | tee /etc/apt/sources.list.d/kurento.list && \\
+    echo \"deb http://ubuntu.kurento.org trusty-dev kms6\" | tee /etc/apt/sources.list.d/kurento.list && \\
     wget -O - http://ubuntu.kurento.org/kurento.gpg.key | apt-key add - && \\
     apt-get update && \\
     apt-get -y install kurento-media-server-6.0 && \\
-    apt-get -y upgrade && \\
+    apt-get -y install kms-crowddetector-6.0 kms-platedetector-6.0 kms-pointerdetector-6.0 && \\
+    apt-get -y dist-upgrade && \\
     apt-get clean && rm -rf /var/lib/apt/lists/*
 ">>.
-
 
 
 %% ===================================================================
@@ -192,7 +206,7 @@ cp $CONF/WebRtcEndpoint.conf.ini $CONF/WebRtcEndpoint.conf.ini.0
 cat > $CONF/WebRtcEndpoint.conf.ini <<EOF\n", WebRTC/binary, "\nEOF
 
 # Remove ipv6 local loop until ipv6 is supported
-#cat /etc/hosts | sed '/::1/d' | tee /etc/hosts > /dev/null
+cat /etc/hosts | sed '/::/d' | tee /etc/hosts
 
 exec /usr/bin/kurento-media-server 2>&1
 ">>.

@@ -45,7 +45,7 @@
 -include_lib("nkservice/include/nkservice.hrl").
 -include_lib("nksip/include/nksip.hrl").
 
--define(MAX_ICE_TIME, 1000).
+-define(MAX_ICE_TIME, 5000).
 -define(MAX_CALL_TIME, 5000).
 
 %% ===================================================================
@@ -722,8 +722,7 @@ terminate(Reason, State) ->
 %% ===================================================================
 
 %% @private
-do_start(#state{type=Type, backend_role=Role, session=Session}=State) ->
-    ?LLOG(notice, "session start: ~p, ~p", [Role, maps:remove(offer, Session)], State),
+do_start(#state{type=Type}=State) ->
     case handle(nkmedia_session_start, [Type], State) of
         {ok, State2} ->
             case check_offer(State2) of
@@ -915,7 +914,7 @@ do_offer_candidate(#candidate{last=true}, #state{offer_candidates=[]}=State) ->
     State;
 
 do_offer_candidate(Candidate, #state{offer_candidates=last}=State) ->
-    ?LLOG(notice, "ignoring late offer candidate", [Candidate], State),
+    ?LLOG(notice, "ignoring late offer candidate ~p", [Candidate], State),
     State;
 
 do_offer_candidate(#candidate{last=true}, State) ->

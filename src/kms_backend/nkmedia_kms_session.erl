@@ -28,7 +28,7 @@
 -module(nkmedia_kms_session).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/2, answer/3, candidate/2, cmd/3, stop/2]).
+-export([start/2, offer/3, answer/3, candidate/2, cmd/3, stop/2]).
 -export([handle_call/3, handle_cast/2]).
 
 
@@ -60,13 +60,9 @@
         nkmedia_kms_proxy => endpoint(),
         nkmedia_kms_endpoint => endpoint(),
         nkmedia_kms_endpoint_type => webtrc | rtp,
-        nkmedia_kms_role => offerer | offeree,
         nkmedia_kms_source => endpoint(),
         nkmedia_kms_recorder => endpoint(),
-        nkmedia_kms_player => endpoint(),
-        nkmedia_kms_bridged_to => session_id(),
-        nkmedia_kms_publish_to => nkmedia_room:id(),
-        nkmedia_kms_listen_to => nkmedia_room:id()
+        nkmedia_kms_player => endpoint()
     }.
 
 
@@ -114,9 +110,10 @@ start(Type, Session) ->
             case get_pipeline(Type, Session2) of
                 {ok, Session3} ->
                     case nkmedia_kms_session_lib:create_proxy(Session3) of
-                        {ok, #{offer:=Offer}=Session4} ->
-                            start_offeree(Type, Offer, Session4);
-                        {ok, Session4} ->
+                        {ok, #{backend_role:=offeree}=Session4} ->
+                            % Wait for the offer (it could has been updated by a callback)
+                            {ok, Session4};
+                        {ok, #{backend_role:=offerer}=Session4} ->
                             start_offerer(Type, Session4);
                         {error, Error} ->
                             {error, Error, Session3}
@@ -129,20 +126,46 @@ start(Type, Session) ->
     end.
 
 
+%% @private Someone set the offer
+-spec offer(type(), nkmedia:offer(), session()) ->
+    {ok, session()} | {error, nkservice:error(), session()} | continue.
+
+offer(_Type, _Offer, #{backend_role:=offerer}) ->
+    % We generated the offer
+    continue;
+
+offer(Type, Offer, Session) ->
+    case start_offeree(Type, Offer, Session) of
+        {ok, Session2} ->
+            {ok, Offer, Session2};
+        {error, Error, Session2} ->
+            {error, Error, Session2}
+    end.
+
+
 %% @private
 -spec answer(type(), nkmedia:answer(), session()) ->
     {ok, session()} | {error, nkservice:error(), session()}.
 
+answer(_Type, _Answer, #{backend_role:=offeree}) ->
+    % We generated the answer
+    continue;
+
 answer(Type, Answer, Session) ->
     case nkmedia_kms_session_lib:set_answer(Answer, Session) of
         ok ->
-            do_start_type(Type, Session);
+            case do_start_type(Type, Session) of
+                {ok, Session2} ->
+                    {ok, Answer, Session2};
+                {error, Error, Session2} ->
+                    {error, Error, Session2}
+            end;
         {error, Error} ->
             {error, Error, Session}
     end.
 
 
-%% @private We received a candidate from the client
+%% @private We received a candidate for the backend
 -spec candidate(nkmedia:candidate(), session()) ->
     {ok, session()} | continue.
 
@@ -236,16 +259,15 @@ handle_call({bridge, PeerSessId, PeerProxy, Opts},
     case connect_from_peer(PeerProxy, Opts, Session) of
         {ok, Session2} ->
             update_type(bridge, #{peer_id=>PeerSessId}),
-            Session3 = ?SESSION(#{nkmedia_kms_bridged_to=>PeerSessId}, Session2),
-            {reply, {ok, Proxy}, Session3};
+            {reply, {ok, Proxy}, Session2};
         {error, Error} ->
             {reply, {error, Error}, Session}
     end;
 
-handle_call(get_publisher, _From, #{nkmedia_kms_publish_to:=RoomId}=Session) ->
+handle_call(get_room, _From, #{type_ext:=#{room_id:=RoomId}}=Session) ->
     {reply, {ok, RoomId}, Session};
 
-handle_call(get_publisher, _From, Session) ->
+handle_call(get_room, _From, Session) ->
     {reply, {error, not_publishing}, Session}.
 
  
@@ -258,7 +280,8 @@ handle_cast(#candidate{}=Candidate, #{backend_role:=Role}=Session) ->
     nkmedia_session:candidate(self(), Candidate#candidate{type=Type}),
     {noreply, Session};
 
-handle_cast({bridge_stop, PeerId}, #{nkmedia_kms_bridged_to:=PeerId}=Session) ->
+handle_cast({bridge_stop, PeerId}, 
+            #{type:=bridge, type_ext:=#{peer_id:=PeerId}}=Session) ->
     case nkmedia_session:bridge_stop(PeerId, Session) of
         {ok, Session2} ->
             Session3 = reset_type(Session2),
@@ -393,8 +416,7 @@ do_type(bridge, #{peer_id:=PeerId}=Opts, Session) ->
         {ok, PeerProxy} ->
             case connect_from_peer(PeerProxy, Opts, Session2) of
                 {ok, Session3} ->
-                    Session4 = ?SESSION(#{nkmedia_kms_bridged_to=>PeerId}, Session3),
-                    {ok, #{peer_id=>PeerId}, Session4};
+                    {ok, #{peer_id=>PeerId}, Session3};
                 {error, Error} ->
                     {error, Error, Session2}
             end;
@@ -410,8 +432,7 @@ do_type(publish, Opts, #{session_id:=SessId}=Session) ->
             Update = {started_publisher, SessId, #{pid=>self()}},
             %% TODO: Link with room
             {ok, _RoomPid} = nkmedia_room:update(RoomId, Update),
-            Session3 = ?SESSION(#{nkmedia_kms_publish_to=>RoomId}, Session2),
-            {ok, #{room_id=>RoomId}, Session3};
+            {ok, #{room_id=>RoomId}, Session2};
         {error, Error} ->
             {error, Error, Session2}
     end;
@@ -426,8 +447,7 @@ do_type(listen, #{publisher_id:=PeerId}=Opts, #{session_id:=SessId}=Session) ->
                     %% TODO: Link with room
                     {ok, _RoomPid} = nkmedia_room:update(RoomId, Update),
                     TypeExt = #{room_id=>RoomId, publisher_id=>PeerId},
-                    Session4 = ?SESSION(#{nkmedia_kms_listen_to=>RoomId}, Session3),
-                    {ok, TypeExt, Session4};
+                    {ok, TypeExt, Session3};
                 {error, Error} ->
                     {error, Error, Session2}
             end;
@@ -480,7 +500,7 @@ get_pipeline(publish, #{room_id:=RoomId}=Session) ->
     get_pipeline_from_room(RoomId, Session);
 
 get_pipeline(listen, #{publisher_id:=PeerId}=Session) ->
-    case get_peer_publisher(PeerId) of
+    case get_peer_room(PeerId) of
         {ok, RoomId} ->
             Session2 = ?SESSION(#{room_id=>RoomId}, Session),
             get_pipeline_from_room(RoomId, Session2);
@@ -555,6 +575,7 @@ check_record(Opts, Session) ->
 
 
 %% @private
+%% Must set new type after calling this
 -spec reset_type(session()) ->
     {ok, session()} | {error, term()}.
 
@@ -564,27 +585,24 @@ reset_type(#{session_id:=SessId}=Session) ->
         _ -> Session2 = Session
     end,
     case Session2 of
-        #{nkmedia_kms_bridged_to:=PeerId} ->
+        #{type:=bridge, type_ext:=#{peer_id:=PeerId}} ->
             session_cast(PeerId, {bridge_stop, SessId}),
             % In case we were linked
-            nkmedia_session:unlink_session(self(), PeerId),
-            Session3 = ?SESSION_RM(nkmedia_kms_bridged_to, Session2);
+            nkmedia_session:unlink_session(self(), PeerId);
         _ ->
-            Session3 = Session2
+            ok
     end,
-    case Session3 of
-        #{nkmedia_kms_publish_to:=RoomId} ->
+    case Session2 of
+        #{type:=publish, type_ext:=#{room_id:=RoomId}} ->
             Update = {stopped_publisher, SessId, #{}},
-            nkmedia_room:update_async(RoomId, Update),
-            Session4 = ?SESSION_RM(nkmedia_kms_publish_to, Session3);
-        #{nkmedia_kms_listen_to:=RoomId} ->
+            nkmedia_room:update_async(RoomId, Update);
+        #{type:=listen, type_ext:=#{room_id:=RoomId}} ->
             Update = {stopped_listener, SessId, #{}},
-            nkmedia_room:update_async(RoomId, Update),
-            Session4 = ?SESSION_RM(nkmedia_kms_listen_to, Session3);
+            nkmedia_room:update_async(RoomId, Update);
         _ ->
-            Session4 = Session3
+            ok
     end,
-    Session4.
+    Session2.
 
 
 %% @private
@@ -636,12 +654,12 @@ get_room(Type, Opts, #{srv_id:=SrvId, nkmedia_kms_id:=KmsId}=Session) ->
                 {ok, _} ->
                     {error, different_mediaserver};
                 {error, room_not_found} ->
-                    Opts = #{
+                    RoomOpts = #{
                         room_id => RoomId,
                         backend => nkmedia_kms, 
                         nkmedia_kms => KmsId
                     },
-                    case nkmedia_room:start(SrvId, Opts) of
+                    case nkmedia_room:start(SrvId, RoomOpts) of
                         {ok, RoomId, _} ->
                             {ok, RoomId};
                         {error, Error} ->
@@ -669,7 +687,7 @@ get_room_id(Type, Opts, _Session) ->
         error when Type==listen ->
             case Opts of
                 #{publisher_id:=Publisher} ->
-                    case get_peer_publisher(Publisher) of
+                    case get_peer_room(Publisher) of
                         {ok, RoomId} -> {ok, RoomId};
                         {error, _Error} -> {error, invalid_publisher}
                     end;
@@ -693,11 +711,11 @@ get_peer_proxy(SessId, _Session) ->
 
 
 %% @private
--spec get_peer_publisher(session_id()) ->
+-spec get_peer_room(session_id()) ->
     {ok, nkmedia_room:id()} | {error, nkservice:error()}.
 
-get_peer_publisher(SessId) ->
-    session_call(SessId, get_publisher).
+get_peer_room(SessId) ->
+    session_call(SessId, get_room).
 
 
 %% @private

@@ -390,8 +390,8 @@ update_status(NewStatus, #state{id=Id, status=OldStatus, conn=Pid}=State) ->
 parse_event(<<"NkMEDIA">>, #{?NK_ID:=_CallId}, State) ->
     ?LLOG(info, "event 'NkMEDIA'", [], State);
     
-parse_event(<<"CHANNEL_PARK">>, #{?NK_ID:=SessId}=Ev, State) ->
-	lager:error("EV: ~p", [Ev]),
+parse_event(<<"CHANNEL_PARK">>, #{?NK_ID:=SessId}, State) ->
+	% lager:error("EV: ~p", [Ev]),
 	send_event(SessId, parked, State);
 
 parse_event(<<"CHANNEL_HANGUP">>, #{?NK_ID:=SessId}, State) ->

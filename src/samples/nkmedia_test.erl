@@ -184,8 +184,8 @@ a() ->
     {ok, SessId, _SessPid} = start_session(mcu, ConfigA),
     {ok, Offer} = nkmedia_session:get_offer(SessId),
     
-    ConfigB = #{backend=>nkmedia_fs, master_id=>SessId, offer=>Offer, room_id=>"mcu2 "},
-    {ok, _SessIdB, _} = start_session(mcu, ConfigB).
+    ConfigB = #{backend=>nkmedia_kms, master_id=>SessId, offer=>Offer},
+    {ok, _SessIdB, _} = start_session(publish, ConfigB#{room_id=>sfu}).
 
 
 
@@ -388,6 +388,11 @@ incoming(<<"pj2">>, Offer, Reg, Opts) ->
         room_bitrate => 100000
     },
     start_session(publish, Config2);
+
+incoming(<<"pk1">>, Offer, Reg, Opts) ->
+    nkmedia_room:start(test, #{room_id=>sfu, backend=>nkmedia_kms}),
+    Config = incoming_config(nkmedia_kms, Offer, Reg, Opts),
+    start_session(publish, Config#{room_id=>sfu});
 
 incoming(<<"play">>, Offer, Reg, Opts) ->
     Config = incoming_config(nkmedia_kms, Offer, Reg, Opts),

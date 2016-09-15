@@ -235,7 +235,7 @@ gelf(C, Src, Short) ->
     Msg = #{
         source => Src,
         message => Short,
-        full_message => base64:encode(crypto:rand_bytes(10000))
+        full_message => base64:encode(crypto:rand_bytes(10))
     },
     nkservice_api_client:cmd(C, core, session, log, Msg).
 
