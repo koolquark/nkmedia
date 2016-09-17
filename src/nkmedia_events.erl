@@ -38,8 +38,7 @@
 -spec send_event(nkservice:id(), atom(), binary(), atom(), map()) ->
     ok.
 
-send_event(SrvId, Class, Id, Type, Body)
-        when Class==session; Class==call; Class==room ->
+send_event(SrvId, Class, Id, Type, Body) ->
     lager:info("MEDIA EVENT (~s:~s:~s): ~p", [Class, Type, Id, Body]),
     RegId = #reg_id{
         srv_id = SrvId,     
@@ -49,6 +48,7 @@ send_event(SrvId, Class, Id, Type, Body)
         obj_id = Id
     },
     nkservice_events:send(RegId, Body).
+
 
 
 %% ===================================================================
@@ -111,44 +111,6 @@ call_event(CallId, Event, #{srv_id:=SrvId}=Call) ->
             ok
     end,
     {ok, Call}.
-
-
-
-%% @private
--spec room_event(nkmedia_room:id(), nkmedia_room:event(), nkmedia_room:room()) ->
-	{ok, nkmedia_room:room()}.
-
-room_event(RoomId, Event, #{srv_id:=SrvId}=Room) ->
-    Send = case Event of
-    	{started, Room} ->
-    		Data = maps:with([audio_codec, video_codec, bitrate, class, backend], Room),
-    		{started, Data};
-    	{destroyed, Reason} ->
-            {Code, Txt} = SrvId:error_code(Reason),
-            {destroyed, #{code=>Code, reason=>Txt}};
-        {started_publisher, Publisher, Opts} ->
-            User = maps:get(user, Opts, <<>>),
-        	{started_publisher, #{session_id=>Publisher, user=>User}};
-        {stopped_publisher, Publisher, Opts} ->
-            User = maps:get(user, Opts, <<>>),
-        	{stopped_publisher, #{session_id=>Publisher, user=>User}};
-        {started_listener, Listener, Opts} ->
-            User = maps:get(user, Opts, <<>>),
-            Peer = maps:get(peer_id, Opts, <<>>),
-        	{started_listener, #{session_id=>Listener, peer_id=>Peer, user=>User}};
-        {stopped_listener, Listener, Opts} ->
-            User = maps:get(user, Opts, <<>>),
-        	{stopped_listener, #{session_id=>Listener, user=>User}};
-        _ ->
-        	ignore
-    end,
-    case Send of
-        {EvType, Body} ->
-            send_event(SrvId, room, RoomId, EvType, Body);
-        ignore ->
-            ok
-    end,
-    {ok, Room}.
 
 
 

@@ -48,6 +48,9 @@
 -define(MAX_ICE_TIME, 5000).
 -define(MAX_CALL_TIME, 5000).
 
+-define(DEBUG_MEDIA, true).
+
+
 %% ===================================================================
 %% Types
 %% ===================================================================
@@ -388,9 +391,7 @@ init([#{session_id:=Id, type:=Type, srv_id:=SrvId}=Session]) ->
     MasterId = maps:get(master_id, Session, undefined),
     % If there is no offer, the backed must make one (offerer)
     % If there is an offer, the backend must make the answer (offeree)
-    % unless this is a slave session, where the offer is not from the
-    % client, but from other session. We are an offerer (we 'made' the offer)
-    % and wait an answer from the client
+    % unless this is a slave p2p session
     Role = case maps:is_key(offer, Session) of
         true when Type==p2p, MasterId/=undefined -> offerer;
         true -> offeree;
@@ -403,7 +404,7 @@ init([#{session_id:=Id, type:=Type, srv_id:=SrvId}=Session]) ->
         start_time => nklib_util:l_timestamp()
     },
     Session3 = case Type of
-        p2p -> Session2#{backend=>p2p};
+        p2p -> Session2#{backend=>p2p, set_master_answer=>true};
         _ -> Session2
     end,
     State1 = #state{
@@ -537,42 +538,6 @@ handle_cast({client_candidate, Candidate}, State) ->
 handle_cast({backend_candidate, Candidate}, State) ->
     noreply(do_backend_candidate(Candidate, State));
 
-
-
-
-
-% handle_cast({candidate, #candidate{type=offer}=Candidate}, State) ->
-%     noreply(do_offer_candidate(Candidate, State));
-
-% handle_cast({candidate, #candidate{type=answer}=Candidate}, State) ->
-%     noreply(do_answer_candidate(Candidate, State));
-
-% % We assume that if a candidate has no type, it is from the client (not the backend)
-% handle_cast({candidate, Candidate}, #state{backend_role=offeree}=State) ->
-%     handle_cast({candidate, Candidate#candidate{type=offer}}, State);
-
-% handle_cast({candidate, Candidate}, #state{backend_role=offerer}=State) ->
-%     handle_cast({candidate, Candidate#candidate{type=answer}}, State);
-
-% handle_cast({peer_candidate, PeerId, Candidate}, #state{session=Session}=State) ->
-%     case 
-%         {ok, PeerId} == maps:find(slave_peer, Session) orelse 
-%         {ok, PeerId} == maps:get(master_peer, Session)
-%     of
-%         true ->
-%             case handle(nkmedia_session_peer_candidate, [Candidate], State) of
-%                 {ok, Candidate2, State2} ->
-%                     handle_cast({candidate, Candidate2}, State2);
-%                 {ignore, State2} ->
-%                     noreply(State2)
-%             end;
-%         false ->
-%             ?LLOG(notice, "received candidate from unknown peer ~s", [PeerId], State),
-%             noreply(State)
-%     end;
-
-
-
 handle_cast({link_to_master, MasterId, PidB}, State) ->
     % We are Slave of MasterId
     ?LLOG(info, "linked to master ~s", [MasterId], State),
@@ -668,14 +633,6 @@ handle_info({timeout, _, client_ice_timeout}, State) ->
 handle_info({timeout, _, backend_ice_timeout}, State) ->
     ?LLOG(info, "Backend ICE timeout", [], State),
     noreply(do_backend_candidate(#candidate{last=true}, State));
-
-% handle_info({timeout, _, offer_ice_timeout}, State) ->
-%     ?LLOG(info, "Offer ICE timeout", [], State),
-%     noreply(do_offer_candidate(#candidate{last=true}, State));
-
-% handle_info({timeout, _, answer_ice_timeout}, State) ->
-%     ?LLOG(info, "Answer ICE timeout", [], State),
-%     noreply(do_answer_candidate(#candidate{last=true}, State));
 
 handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, #state{id=Id}=State) ->
     case links_down(Ref, State) of
@@ -835,8 +792,14 @@ do_set_offer(Offer, #state{type=Type, backend_role=Role, session=Session}=State)
                         wait_offer = []
                     },
                     ?LLOG(info, "offer set", [], State3),
-                    ?LLOG(info, "offer:\n~s", [maps:get(sdp, Offer2, <<>>)], State3),
-                    {ok, State3};
+                    debug_media("offer:\n~s", [maps:get(sdp, Offer2, <<>>)], State3),
+                    State4 = case Role of
+                        offerer ->
+                            event({offer, Offer2}, State3);
+                        offeree ->
+                            State3
+                    end,
+                    {ok, State4};
                 {ignore, State2} ->
                     {ok, State2};
                 {error, Error, State2} ->
@@ -885,7 +848,7 @@ do_set_answer(Answer, #state{type=Type, backend_role=Role, session=Session}=Stat
                         wait_answer = []
                     },
                     ?LLOG(info, "answer set", [], State3),
-                    ?LLOG(info, "answer:\n~s", [maps:get(sdp, Answer2, <<>>)], State3),
+                    debug_media("answer:\n~s", [maps:get(sdp, Answer2, <<>>)], State3),
                     State4 = case Session of
                         #{set_master_answer:=true, master_peer:=MasterId} ->
                             ?LLOG(notice, "calling set_answer for ~s", 
@@ -908,14 +871,23 @@ do_set_answer(Answer, #state{type=Type, backend_role=Role, session=Session}=Stat
 do_client_candidate(Candidate, #state{client_candidates=trickle}=State) ->
     % We are not storing candidates (we are using Trickle ICE)
     % Send the candidate to the backend
-    #candidate{a_line=Line} = Candidate,
+    #candidate{a_line=Line, last=Last} = Candidate,
     case handle(nkmedia_session_candidate, [Candidate], State) of
+        {ok, State2} when Last->
+            debug_media("sent last client candidate to backend", [], State),
+            State2;
         {ok, State2} ->
-            ?LLOG(info, "sent client candidate ~s to backend", [Line], State),
+            debug_media("sent client candidate ~s to backend", [Line], State),
             State2;
         {continue, #state{session=#{master_peer:=MasterId}}=State2} ->
-            ?LLOG(info, "sent client candidate ~s to MASTER", [Line], State),
+            % If we receive a client candidate, a no backend takes it,
+            % let's send it to my salve as a backend candidate. 
+            debug_media("sent client candidate ~s to MASTER", [Line], State),
             backend_candidate(MasterId, Candidate),
+            State2;
+        {continue, #state{session=#{slave_peer:=SlaveId}}=State2} ->
+            debug_media("sent client candidate ~s to SLAVE", [Line], State),
+            backend_candidate(SlaveId, Candidate),
             State2;
         {continue, State2} ->
             ?LLOG(notice, "unmanaged offer candidate!", [], State2),
@@ -947,7 +919,7 @@ do_client_candidate(#candidate{last=true}, #state{backend_role=offeree}=State) -
     candidate_offer(Candidates, State#state{client_candidates=last});
 
 do_client_candidate(Candidate, #state{client_candidates=Candidates}=State) ->
-    ?LLOG(info, "storing client candidate ~s", [Candidate#candidate.a_line], State),
+    debug_media("storing client candidate ~s", [Candidate#candidate.a_line], State),
     Candidates2 = [Candidate|Candidates],
     State#state{client_candidates=Candidates2}.
 
@@ -956,8 +928,13 @@ do_client_candidate(Candidate, #state{client_candidates=Candidates}=State) ->
 do_backend_candidate(Candidate, #state{backend_candidates=trickle}=State) ->
     % We are not storing candidates (we are using Trickle ICE)
     % Send the client to the client
-    #candidate{a_line=Line} = Candidate,
-    ?LLOG(info, "sent backend candidate ~s to client (event)", [Line], State),
+    #candidate{a_line=Line, last=Last} = Candidate,
+    case Last of
+        true ->
+            debug_media("sent backend candidate ~s to client (event)", [Line], State);
+        false ->
+            debug_media("sent last backend candidate to client (event)", [], State)
+    end,
     event({candidate, Candidate}, State);
 
 do_backend_candidate(#candidate{last=true}, #state{backend_candidates=last}=State) ->
@@ -985,7 +962,7 @@ do_backend_candidate(#candidate{last=true}, #state{backend_role=offeree}=State) 
     candidate_answer(Candidates, State#state{backend_candidates=last});
 
 do_backend_candidate(Candidate, #state{backend_candidates=Candidates}=State) ->
-    ?LLOG(info, "storing backend candidate ~s", [Candidate#candidate.a_line], State),
+    debug_media("storing backend candidate ~s", [Candidate#candidate.a_line], State),
     Candidates2 = [Candidate|Candidates],
     State#state{backend_candidates=Candidates2}.
 
@@ -1024,148 +1001,6 @@ candidate_answer(Candidates, #state{session=Session}=State) ->
             stop(self(), Error),
             State3
     end.
-
-
-
-
-% %% @private
-% do_offer_candidate(Candidate, 
-%                    #state{offer_candidates=trickle, backend_role=offerer}=State) ->
-%     % We are not storing candidates (we are using Trickle ICE)
-%     % The backend made the offer, so this offer candidate is from the backend and 
-%     % must be announced to the client or peer session
-%     case State of
-%         #state{session=#{slave_peer:=SlaveId, session_id:=Id}} ->
-%             peer_candidate(SlaveId, Id, Candidate),
-%             State;
-%         _ ->
-%             event({candidate, Candidate}, State)
-%     end;
-
-% do_offer_candidate(Candidate, 
-%                    #state{offer_candidates=trickle, backend_role=offeree}=State) ->
-%     % The backend made the answer, so this offer candidate is from the client 
-%     % to the backend
-%     % (or for my p2p peer, that is my 'backend')
-%     case State of
-%         #state{session=#{backend:=p2p, slave_peer:=SlaveId, session_id:=Id}} ->
-%             peer_candidate(SlaveId, Id, Candidate),
-%             State;
-%         _ ->
-%             % Send the candidate to the backend
-%             case handle(nkmedia_session_candidate, [Candidate], State) of
-%                 {ok, State2} ->
-%                     State2;
-%                 {continue, State2} ->
-%                     ?LLOG(notice, "unmanaged offer candidate!", [], State2),
-%                     State2
-%             end
-%     end;
-
-% do_offer_candidate(#candidate{last=true}, #state{offer_candidates=last}=State) ->
-%     State;
-
-% do_offer_candidate(#candidate{last=true}, #state{offer_candidates=[]}=State) ->
-%     ?LLOG(warning, "no received offer candidates!", [], State),
-%     stop(self(), no_ice_candidates),
-%     State;
-
-% do_offer_candidate(Candidate, #state{offer_candidates=last}=State) ->
-%     ?LLOG(notice, "ignoring late offer candidate ~p", [Candidate], State),
-%     State;
-
-% do_offer_candidate(#candidate{last=true}, State) ->
-%     #state{offer_candidates=Candidates, session=Session} = State,
-%     #{offer:=#{sdp:=SDP1}=Offer} = Session,
-%     SDP2 = nksip_sdp_util:add_candidates(SDP1, Candidates),
-%     Offer2 = Offer#{sdp:=nksip_sdp:unparse(SDP2), trickle_ice=>false},
-%     State2 = State#state{
-%         session = ?SESSION(#{offer=>Offer2}, Session), 
-%         offer_candidates = last
-%     },
-%     ?LLOG(notice, "last offer candidate received", [], State),
-%     case check_offer(State2) of
-%         {ok, State3} ->
-%             State3;
-%         {error, Error, State3} ->
-%             ?LLOG(notice, "ICE error after last candidate: ~p", [Error], State),
-%             stop(self(), Error)
-%     end,
-%     State3;
-
-% do_offer_candidate(Candidate, #state{offer_candidates=Candidates}=State) ->
-%     Candidates2 = [Candidate|Candidates],
-%     State#state{offer_candidates=Candidates2}.
-
-
-% %% @private
-% do_answer_candidate(Candidate, 
-%                     #state{answer_candidates=trickle, backend_role=offerer}=State) ->
-%     % We are not storing candidates (we are using Tricle ICE)
-%     % The backend made the offer, so this answer candidate is from the client 
-%     % to the backend
-%     % (or for my p2p peer, that is my 'backend')
-%     case State of
-%         #state{session=#{backend:=p2p, master_peer:=MasterId, session_id:=Id}} ->
-%             peer_candidate(MasterId, Id, Candidate),
-%             State;
-%         _ ->
-%             % Send the candidate to the backend
-%             case handle(nkmedia_session_candidate, [Candidate], State) of
-%                 {ok, State2} ->
-%                     State2;
-%                 {continue, State2} ->
-%                     ?LLOG(notice, "unmanaged answer candidate!", [], State2),
-%                     State2
-%             end
-%     end;
-
-% do_answer_candidate(Candidate, 
-%                     #state{answer_candidates=trickle, backend_role=offeree}=State) ->
-%     % The backend made the answer, so this answer candidate is from the backend,
-%     % so it must be announced to the client (or my peer session)
-%     case State of
-%         #state{session=#{master_peer:=MasterId, session_id:=Id}} ->
-%             peer_candidate(MasterId, Id, Candidate),
-%             State;
-%         _ ->
-%             event({candidate, Candidate}, State)
-%     end;
-
-% do_answer_candidate(#candidate{last=true}, #state{answer_candidates=last}=State) ->
-%     State;
-
-% do_answer_candidate(Candidate, #state{answer_candidates=last}=State) ->
-%     ?LLOG(notice, "ignoring late answer candidate ~p", [Candidate], State),
-%     State;
-
-% do_answer_candidate(#candidate{last=true}, #state{answer_candidates=[]}=State) ->
-%     ?LLOG(warning, "no received answer candidates!", [], State),
-%     stop(self(), no_ice_candidates),
-%     State;
-
-% do_answer_candidate(#candidate{last=true}, State) ->
-%     #state{answer_candidates=Candidates, session=Session} = State,
-%     #{answer:=#{sdp:=SDP1}=Answer} = Session,
-%     SDP2 = nksip_sdp_util:add_candidates(SDP1, Candidates),
-%     Answer2 = Answer#{sdp:=nksip_sdp:unparse(SDP2), trickle_ice=>false},
-%     State2 = State#state{
-%         session = ?SESSION(#{answer=>Answer2}, Session), 
-%         answer_candidates = last
-%     },
-%     ?LLOG(notice, "last answer candidate received", [], State),
-%     case check_answer(State2) of
-%         {ok, State3} ->
-%             State3;
-%         {error, Error, State3} ->
-%             ?LLOG(notice, "ICE error after last candidate: ~p", [Error], State),
-%             stop(self(), Error)
-%     end,
-%     State3;
-
-% do_answer_candidate(Candidate, #state{answer_candidates=Candidates}=State) ->
-%     Candidates2 = [Candidate|Candidates],
-%     State#state{answer_candidates=Candidates2}.
 
 
 
@@ -1337,7 +1172,9 @@ links_fold(Fun, Acc, #state{links=Links}) ->
     nklib_links:fold(Fun, Acc, Links).
 
 
-
-
-
+-ifdef(DEBUG_MEDIA).
+debug_media(Txt, List, State) -> ?LLOG(info, Txt, List, State).
+-else.
+debug_media(_Txt, _List, _State) -> ok.
+-endif.
 

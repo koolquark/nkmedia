@@ -38,11 +38,6 @@
 		 nkmedia_call_event/3, nkmedia_call_reg_event/4, nkmedia_session_reg_down/4,
 		 nkmedia_call_handle_call/3, nkmedia_call_handle_cast/2, 
 		 nkmedia_call_handle_info/2]).
--export([nkmedia_room_init/2, nkmedia_room_terminate/2, 
-		 nkmedia_room_event/3, nkmedia_room_reg_event/4, nkmedia_room_reg_down/4,
-		 nkmedia_room_tick/2,
-		 nkmedia_room_handle_call/3, nkmedia_room_handle_cast/2, 
-		 nkmedia_room_handle_info/2]).
 -export([error_code/1]).
 -export([api_cmd/2, api_syntax/4]).
 -export([api_server_cmd/2, api_server_reg_down/3, 
@@ -118,13 +113,14 @@ error_code(already_answered) 		->  {2024, <<"Already answered">>};
 error_code(originator_cancel)		-> 	{2025, <<"Originator cancel">>};
 error_code(peer_hangup)				-> 	{2026, <<"Peer hangup">>};
 
-error_code(room_not_found)			->  {2030, <<"Room not found">>};
-error_code(room_already_exists)	    ->  {2031, <<"Room already exists">>};
-error_code(room_destroyed)          ->  {2032, <<"Room destroyed">>};
-error_code(no_participants)		    ->  {2033, <<"No remaining participants">>};
-error_code(unknown_publisher)	    ->  {2034, <<"Unknown publisher">>};
-error_code(invalid_publisher)       ->  {2035, <<"Invalid publisher">>};
-error_code(publisher_stopped)       ->  {2036, <<"Publisher stopped">>};
+error_code(room_srv_not_started)	->  {2030, <<"Room plugin not started">>};
+error_code(room_not_found)			->  {2031, <<"Room not found">>};
+error_code(room_already_exists)	    ->  {2032, <<"Room already exists">>};
+error_code(room_destroyed)          ->  {2033, <<"Room destroyed">>};
+error_code(no_room_members)		    ->  {2034, <<"No remaining room members">>};
+error_code(unknown_publisher)	    ->  {2035, <<"Unknown publisher">>};
+error_code(invalid_publisher)       ->  {2036, <<"Invalid publisher">>};
+error_code(publisher_stopped)       ->  {2037, <<"Publisher stopped">>};
 
 error_code(call_error)       		->  {2040, <<"Call error">>};
 error_code(bridge_stop)       		->  {2041, <<"Bridge stop">>};
@@ -421,91 +417,6 @@ nkmedia_call_handle_info(Msg, Call) ->
 	{noreply, Call}.
 
 
-%% ===================================================================
-%% Room Callbacks
-%% ===================================================================
-
--type room_id() :: nkmedia_room:id().
--type room() :: nkmedia_room:room().
-
-
-%% @doc Called when a new room starts
--spec nkmedia_room_init(room_id(), room()) ->
-	{ok, room()} | {error, term()}.
-
-nkmedia_room_init(_Id, #{class:=_, backend:=_}=Room) ->
-	{ok, Room};
-
-nkmedia_room_init(_Id, _Room) ->
-	{error, not_implemented}.
-
-%% @doc Called when the room stops
--spec nkmedia_room_terminate(Reason::term(), room()) ->
-	{ok, room()}.
-
-nkmedia_room_terminate(_Reason, Room) ->
-	{ok, Room}.
-
-
-%% @doc Called when the periodic tick fires
--spec nkmedia_room_tick(room_id(), room()) ->
-	{ok, room()} | continue().
-
-nkmedia_room_tick(_RoomId, Room) ->
-	{ok, Room}.
-
-
-%% @doc Called when the status of the room changes
--spec nkmedia_room_event(room_id(), nkmedia_room:event(), room()) ->
-	{ok, room()} | continue().
-
-nkmedia_room_event(RoomId, Event, Room) ->
-	nkmedia_events:room_event(RoomId, Event, Room).
-
-
-%% @doc Called when the status of the room changes, for each registered
-%% process to the room
--spec nkmedia_room_reg_event(room_id(),	nklib:link(), nkmedia_room:event(), room()) ->
-	{ok, room()} | continue().
-
-nkmedia_room_reg_event(_RoomId, _Link, _Event, Room) ->
-	{ok, Room}.
-
-
-%% @doc Called when a registered process fails
--spec nkmedia_room_reg_down(room_id(), nklib:link(), term(), room()) ->
-	{ok, room()} | {stop, Reason::term(), room()} | continue().
-
-nkmedia_room_reg_down(_RoomId, _Link, _Reason, Session) ->
-	{stop, registered_down, Session}.
-
-
-%% @doc
--spec nkmedia_room_handle_call(term(), {pid(), term()}, room()) ->
-	{reply, term(), room()} | {noreply, room()} | continue().
-
-nkmedia_room_handle_call(Msg, _From, Room) ->
-	lager:error("Module nkmedia_room received unexpected call: ~p", [Msg]),
-	{noreply, Room}.
-
-
-%% @doc
--spec nkmedia_room_handle_cast(term(), room()) ->
-	{noreply, room()} | continue().
-
-nkmedia_room_handle_cast(Msg, Room) ->
-	lager:error("Module nkmedia_room received unexpected cast: ~p", [Msg]),
-	{noreply, Room}.
-
-
-%% @doc
--spec nkmedia_room_handle_info(term(), room()) ->
-	{noreply, room()} | continue().
-
-nkmedia_room_handle_info(Msg, Room) ->
-	lager:warning("Module nkmedia_room received unexpected info: ~p", [Msg]),
-	{noreply, Room}.
-
 
 %% ===================================================================
 %% API CMD
@@ -534,7 +445,7 @@ api_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
 %% API Server Callbacks
 %% ===================================================================
 
-%% @private
+%% @private Launch class media (api_cmd/2 will be called)
 api_server_cmd(#api_req{class = <<"media">>}=Req, State) ->
 	nkservice_api:launch(Req, State);
 	

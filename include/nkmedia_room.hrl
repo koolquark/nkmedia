@@ -18,33 +18,17 @@
 %%
 %% -------------------------------------------------------------------
 
--ifndef(NKMEDIA_HRL_).
--define(NKMEDIA_HRL_, 1).
+-ifndef(NKMEDIA_ROOM_HRL_).
+-define(NKMEDIA_ROOM_HRL_, 1).
 
 %% ===================================================================
 %% Defines
 %% ===================================================================
 
 
-% -define(WS_TIMEOUT, 60*60*1000).
+-define(ROOM(Map, Room), maps:merge(Room, Map)).
+-define(ROOM_RM(Key, Room), maps:remove(Key, Room)).
 
--define(SUPPORTED_FS, [<<"v1.6.5-r01">>]).
--define(SUPPORTED_JANUS, [<<"master-r01">>]).
-
--define(DEF_WAIT_TIMEOUT, 60).
--define(DEF_READY_TIMEOUT, 24*60*60).
--define(DEF_RING_TIMEOUT, 30).
--define(MAX_RING_TIMEOUT, 180).
-
-
-
--define(DEF_SYNC_TIMEOUT, 30000).
-
--define(FS_DEF_BASE, 50000).
--define(JANUS_DEF_BASE, 50010).
-
--define(SESSION(Map, Session), maps:merge(Session, Map)).
--define(SESSION_RM(Key, Session), maps:remove(Key, Session)).
 
 
 %% ===================================================================

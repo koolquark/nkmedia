@@ -60,9 +60,9 @@ syntax(<<"session">>, <<"start">>, Syntax, Defaults, Mandatory) ->
             bitrate => {integer, 0, none},
             room_id => binary,
             publisher_id => binary,
-            use_audio => boolean,
-            use_video => boolean,
-            use_data => boolean,
+            mute_audio => boolean,
+            mute_video => boolean,
+            mute_data => boolean,
             room_bitrate => {integer, 0, none},
             room_audio_codec => {enum, [opus, isac32, isac16, pcmu, pcma]},
             room_video_codec => {enum , [vp8, vp9, h264]}
@@ -75,9 +75,9 @@ syntax(<<"session">>, <<"update">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             bitrate => integer,
-            use_audio => boolean,
-            use_video => boolean,
-            use_data => boolean,
+            mute_audio => boolean,
+            mute_video => boolean,
+            mute_data => boolean,
             record => boolean,
             publisher_id => binary
         },

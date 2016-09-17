@@ -144,6 +144,7 @@ nkmedia_room_handle_call({?MODULE, get, _Filters}, _From,
     {reply, {ok, Reply}, Room};
 
 nkmedia_room_handle_call(_Msg, _From, _Room) ->
+    lager:error("MSF1"),
     continue.
 
 

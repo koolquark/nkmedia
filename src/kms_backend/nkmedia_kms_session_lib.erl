@@ -379,12 +379,12 @@ create_player(Uri, Opts, #{nkmedia_kms_player:=_}=Session) ->
 
 create_player(Uri, Opts, Session) ->
     Medias = lists:flatten([
-        case maps:get(use_audio, Opts, true) of
-            true -> <<"AUDIO">>;
+        case maps:get(mute_audio, Opts, false) of
+            false -> <<"AUDIO">>;
             _ -> []
         end,
-        case maps:get(use_video, Opts, true) of
-            true -> <<"VIDEO">>;
+        case maps:get(mute_video, Opts, false) of
+            false -> <<"VIDEO">>;
             _ -> []
         end
     ]),
@@ -682,16 +682,16 @@ get_sinks(EP, Session) ->
 
 get_create_medias(Opts) ->
     Medias = lists:flatten([
-        case maps:get(use_audio, Opts, true) of
-            true -> <<"AUDIO">>;
+        case maps:get(mute_audio, Opts, false) of
+            false -> <<"AUDIO">>;
             _ -> []
         end,
-        case maps:get(use_video, Opts, true) of
-            true -> <<"VIDEO">>;
+        case maps:get(mute_video, Opts, false) of
+            false -> <<"VIDEO">>;
             _ -> []
         end,
-        case maps:get(use_data, Opts, true) of
-            true -> <<"DATA">>;
+        case maps:get(mute_data, Opts, false) of
+            false -> <<"DATA">>;
             _ -> []
         end
     ]),
@@ -707,18 +707,18 @@ get_create_medias(Opts) ->
     {[media_type()], [media_type()]}.
 
 get_update_medias(Opts) ->
-    Audio = maps:get(use_audio, Opts, none),
-    Video = maps:get(use_video, Opts, none),
-    Data = maps:get(use_data, Opts, none),
+    MuteAudio = maps:get(mute_audio, Opts, none),
+    MuteVideo = maps:get(mute_video, Opts, none),
+    MuteData = maps:get(mute_data, Opts, none),
     Add = lists:flatten([
-        case Audio of true -> <<"AUDIO">>; _ -> [] end,
-        case Video of true -> <<"VIDEO">>; _ -> [] end,
-        case Data of true -> <<"DATA">>; _ -> [] end
+        case MuteAudio of false -> <<"AUDIO">>; _ -> [] end,
+        case MuteVideo of false -> <<"VIDEO">>; _ -> [] end,
+        case MuteData of false -> <<"DATA">>; _ -> [] end
     ]),
     Rem = lists:flatten([
-        case Audio of false -> <<"AUDIO">>; _ -> [] end,
-        case Video of false -> <<"VIDEO">>; _ -> [] end,
-        case Data of false -> <<"DATA">>; _ -> [] end
+        case MuteAudio of true -> <<"AUDIO">>; _ -> [] end,
+        case MuteVideo of true -> <<"VIDEO">>; _ -> [] end,
+        case MuteData of true -> <<"DATA">>; _ -> [] end
     ]),
     {Add, Rem}.
 

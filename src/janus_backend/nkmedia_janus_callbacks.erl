@@ -54,7 +54,7 @@
 
 
 plugin_deps() ->
-    [nkmedia].
+    [nkmedia, nkmedia_room].
 
 
 plugin_group() ->
@@ -232,51 +232,31 @@ nkmedia_room_init(Id, Room) ->
     Class = maps:get(class, Room, sfu),
     case maps:get(backend, Room, nkmedia_janus) of
         nkmedia_janus when Class==sfu ->
-            case nkmedia_janus_room:init(Id, Room) of
-                {ok, State} ->
-                    Room2 = Room#{
-                        class => sfu,
-                        backend => nkmedia_janus,
-                        nkmedia_janus => State,
-                        publishers => #{},
-                        listeners => #{}
-                    },
-                    {ok, Room2};
-                {error, Error} ->
-                    {error, Error}
-            end;
+            nkmedia_janus_room:init(Id, Room);
         _ ->
             {ok, Room}
     end.
 
 
 %% @private
-nkmedia_room_terminate(Reason, Room) ->
-    case state(Room) of
-        error ->
-            {ok, Room};
-        State ->
-            {ok, State2} = nkmedia_janus_room:terminate(Reason, Room, State),
-            {ok, ?ROOM(#{nkmedia_janus=>State2}, Room)}
-    end.
+nkmedia_room_terminate(Reason, #{nkmedia_janus_id:=_}=Room) ->
+    nkmedia_janus_room:terminate(Reason, Room);
+
+nkmedia_room_terminate(_Reason, Room) ->
+    {ok, Room}.
 
 
 %% @private
-nkmedia_room_tick(RoomId, Room) ->
-    case state(Room) of
-        error ->
-            continue;
-        State ->
-            {ok, State2} = nkmedia_janus_room:nkmedia_room_tick(RoomId, Room, State),
-            {continue, [RoomId, ?ROOM(#{nkmedia_janus=>State2}, Room)]}
-    end.
+nkmedia_room_tick(RoomId, #{nkmedia_janus_id:=_}=Room) ->
+    nkmedia_janus_room:tick(RoomId, Room);
+
+nkmedia_room_tick(_RoomId, _Room) ->
+    continue.
 
 
 %% @private
 nkmedia_room_handle_cast({nkmedia_janus, Msg}, Room) ->
-    {noreply, State2} = 
-        nkmedia_janus_room:nkmedia_room_handle_cast(Msg, Room, state(Room)),
-    {noreply, ?ROOM(#{nkmedia_janus=>State2}, Room)};
+    nkmedia_janus_room:handle_cast(Msg, Room);
 
 nkmedia_room_handle_cast(_Msg, _Room) ->
     continue.
@@ -323,14 +303,6 @@ nkdocker_notify(_MonId, _Op) ->
 %% ===================================================================
 %% Internal
 %% ===================================================================
-
-
-%% @private
-state(#{nkmedia_janus:=State}) ->
-    State;
-
-state(_) ->
-    error.
 
 
 

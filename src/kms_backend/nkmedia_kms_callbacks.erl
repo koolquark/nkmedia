@@ -36,7 +36,7 @@
 -export([nkdocker_notify/2]).
 
 -include_lib("nkservice/include/nkservice.hrl").
--include("../../include/nkmedia.hrl").
+-include("../../include/nkmedia_room.hrl").
 
 
 %% ===================================================================
@@ -52,7 +52,7 @@
 
 
 plugin_deps() ->
-    [nkmedia].
+    [nkmedia, nkmedia_room].
 
 
 plugin_group() ->

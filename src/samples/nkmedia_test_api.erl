@@ -229,6 +229,10 @@ msglog_send(C, Room, Msg) ->
 msglog_get(C, Room) ->
     nkservice_api_client:cmd(C, media, room, msglog_get, #{room_id=>Room}).
 
+msglog_subscribe(C, Room) ->
+    Spec = #{class=>media, subclass=>room, obj_id=>Room},
+    nkservice_api_client:cmd(C, core, event, subscribe, Spec).
+
 
 %% Gelf
 gelf(C, Src, Short) ->

@@ -73,9 +73,9 @@
 
 -type media_opts() ::
     #{
-        use_audio => boolean(),     % Mute outgoing audio/video/data
-        use_video => boolean(),
-        use_data => boolean(),
+        mute_audio => boolean(),     % Mute outgoing audio/video/data
+        mute_video => boolean(),
+        mute_data => boolean(),
         bitrate => integer(),       % Limit receiving bitrate
         record => boolean(),   
         user_id => binary(),        % For events
@@ -1112,8 +1112,8 @@ do_to_sip_answer(#{sdp:=SDP}, From, State) ->
 
 %% @private
 do_sip_media(#{record:=_}, #state{handle_id=Handle, opts=Opts}=State) ->
-    Audio = maps:get(use_audio, Opts, true),
-    Video = maps:get(use_video, Opts, true),
+    Audio = maps:get(mute_audio, Opts, false),
+    Video = maps:get(mute_video, Opts, false),
     Body1 = #{
         request => recording,
         audio => Audio,
@@ -1436,16 +1436,16 @@ do_cast(SessId, Msg) ->
 %% @private
 media_body(Opts) ->
     Body = [
-        case maps:find(use_audio, Opts) of
-            {ok, Audio} -> {audio, Audio};
+        case maps:find(mute_audio, Opts) of
+            {ok, Audio} -> {audio, not Audio};
             error -> []
         end,
-        case maps:find(use_video, Opts) of
-            {ok, Video} -> {video, Video};
+        case maps:find(mute_video, Opts) of
+            {ok, Video} -> {video, not Video};
             error -> []
         end,
-        case maps:find(use_data, Opts) of
-            {ok, Data} -> {data, Data};
+        case maps:find(mut_data, Opts) of
+            {ok, Data} -> {data, not Data};
             error -> []
         end,
         case maps:find(bitrate, Opts) of

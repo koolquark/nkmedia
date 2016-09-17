@@ -172,40 +172,6 @@ syntax(<<"call">>, <<"hangup">>, Syntax, Defaults, Mandatory) ->
 		[call_id|Mandatory]
 	};
 
-syntax(<<"room">>, <<"create">>, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{
-            class => atom,
-            room_id => binary,
-            backend => atom,
-            bitrate => {integer, 0, none},
-            audio_codec => {enum, [opus, isac32, isac16, pcmu, pcma]},
-            video_codec => {enum , [vp8, vp9, h264]}
-        },
-        Defaults,
-        [class|Mandatory]
-    };
-
-syntax(<<"room">>, <<"destroy">>, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{room_id => binary},
-        Defaults,
-        [room_id|Mandatory]
-    };
-
-syntax(<<"room">>, <<"list">>, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{service => fun nkservice_api:parse_service/1},
-        Defaults, 
-        Mandatory
-    };
-
-syntax(<<"room">>, <<"info">>, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{room_id => binary},
-        Defaults, 
-        [room_id|Mandatory]
-    };
 
 syntax(_Sub, _Cmd, Syntax, Defaults, Mandatory) ->
 	{Syntax, Defaults, Mandatory}.
@@ -220,14 +186,7 @@ offer() ->
         caller_name => binary,
         caller_id => binary,
         callee_name => binary,
-        callee_id => binary,
-        use_audio => boolean,
-        use_stereo => boolean,
-        use_video => boolean,
-        use_screen => boolean,
-        use_data => boolean,
-        in_bw => {integer, 0, none}, 
-        out_bw => {integer, 0, none}
+        callee_id => binary
      }.
 
 
@@ -235,12 +194,7 @@ offer() ->
 answer() ->
 	#{
 		sdp => binary,
-		sdp_type => {enum, [rtp, webrtc]},
-        use_audio => boolean,
-        use_stereo => boolean,
-        use_video => boolean,
-        use_screen => boolean,
-        use_data => boolean
+		sdp_type => {enum, [rtp, webrtc]}
      }.
 
 
