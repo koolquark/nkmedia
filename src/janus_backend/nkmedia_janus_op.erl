@@ -33,7 +33,7 @@
 -export([listen/4, listen_switch/3, unlisten/1]).
 -export([from_sip/2, to_sip/2]).
 -export([nkmedia_sip_register/2, nkmedia_sip_invite/2]).
--export([answer/2, media/2, media_callee/2, candidate/2, candidate_callee/2]).
+-export([answer/2, media/2, media_peer/2, candidate/2, candidate_peer/2]).
 -export([get_all/0, stop_all/0, janus_event/4]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
@@ -260,11 +260,11 @@ media(Id, Update) ->
 
 
 %% @doc Updates a peer session
--spec media_callee(id(), media_opts()) ->
+-spec media_peer(id(), media_opts()) ->
     ok | {error, nkservice:error()}.
 
-media_callee(Id, Update) ->
-    do_call(Id, {media_callee, Update}).
+media_peer(Id, Update) ->
+    do_call(Id, {media_peer, Update}).
 
 
 %% @doc Sends an ICE candidate to Janus
@@ -276,10 +276,10 @@ candidate(Id, Candidate) ->
 
 
 %% @doc Sends an ICE candidate to Janus
--spec candidate_callee(pid(), nkmedia:candidate()) ->
+-spec candidate_peer(pid(), nkmedia:candidate()) ->
     ok | {error, term()}.
 
-candidate_callee(Id, Candidate) ->
+candidate_peer(Id, Candidate) ->
     do_cast(Id, {candidate, callee, Candidate}).
 
 
@@ -492,10 +492,14 @@ handle_call({media, Opts}, _From, #state{status=Status}=State) ->
             reply_stop({error, invalid_state}, State)
     end;
 
-handle_call({media_callee, Opts}, _From, #state{status=videocall}=State) ->
+handle_call({media_peer, Opts}, _From, #state{status=videocall}=State) ->
     do_videocall_media(Opts, callee, State);
    
+handle_call({media_peer, Opts}, _From, #state{wait=videocall_answer}=State) ->
+    do_videocall_media(Opts, callee, State);
+
 handle_call(_Msg, _From, State) -> 
+    % lager:error("STATUS: ~p ~p", [State#state.status, State#state.wait]),
     reply({error, invalid_state}, State).
     
 

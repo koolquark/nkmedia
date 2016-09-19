@@ -19,8 +19,8 @@
 %% -------------------------------------------------------------------
 
 %% @doc Session Management
-%% Run inside nkmedia_session to extend its capabilities
-%% For each operation, starts and monitors a new nkmedia_janus_op process
+%% Bitrate referes to "received" bitrate
+
 
 -module(nkmedia_janus_session).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
@@ -155,16 +155,30 @@ offer(Type, offeree, Offer, Session) ->
     {ok, session()} | {error, nkservice:error(), session()} | continue.
 
 answer(proxy, offerer, Answer, Session) ->
-    % lager:error("CALLER SET ANSWER B"),
     % We are the 'B' side of the proxy, do nothing because the answer will be sent
     % to the master automatically
-    {ok, Answer, Session};
+    % {ok, Answer, Session};
+    case set_default_media_proxy(Session) of
+        {ok, Session2} ->
+            lager:error("B SIDE1"),
+            {ok, Answer, Session2};
+        {error, Error, Session2} ->
+            lager:error("B SIDE2: ~p", [Error]),
+            {error, Error, Session2}
+    end;
 
 answer(proxy, offeree, Answer, #{nkmedia_janus_pid:=Pid}=Session) ->
-    % We are the 'A' side of the proxy
+    % We are the 'A' side of the proxy. Answer it from B.
+    lager:error("A SIDE"),
     case nkmedia_janus_op:answer(Pid, Answer) of
         {ok, Answer2} ->
-            {ok, Answer2, Session};
+            % {ok, Answer2, Session};
+            case set_default_media(Session) of
+                {ok, Session2} ->
+                    {ok, Answer2, Session2};
+                {error, Error, Session2} ->
+                    {error, Error, Session2}
+            end;
         {error, Error} ->
             {error, Error, Session}
     end;
@@ -189,7 +203,7 @@ answer(_Type, _Role, _Answer, _Session) ->
 
 candidate(Candidate, #{type:=proxy, backend_role:=offerer}=Session) ->
     #{master_peer:=MasterId} = Session,
-    lager:error("PROXY CANDIDATE"),
+    % lager:error("PROXY CANDIDATE"),
     session_cast(MasterId, {proxy_candidate, Candidate}),
     {ok, Session};
 
@@ -205,8 +219,8 @@ candidate(Candidate, #{nkmedia_janus_pid:=Pid}=Session) ->
 -spec cmd(cmd(), Opts::map(), session()) ->
     {ok, Reply::term(), session()} | {error, term(), session()} | continue().
 
-cmd(media, Opts, #{type:=proxy, master_peer:=MasterId}=Session) ->
-    case set_media_proxy(Opts, MasterId, Session) of
+cmd(media, Opts, #{type:=proxy, backend_role:=offerer}=Session) ->
+    case set_media_proxy(Opts, Session) of
         {ok, Session2} ->
             {ok, #{}, Session2};
         {error, Error, Session2} ->
@@ -269,7 +283,8 @@ handle_call(get_room_id, _From, Session) ->
     {reply, {error, invalid_publisher}, Session};
 
 handle_call({set_media_proxy, Data}, _From, #{nkmedia_janus_pid:=Pid}=Session) ->
-    case nkmedia_janus_op:media_callee(Pid, Data) of
+    lager:error("PR: ~p", [Data]),
+    case nkmedia_janus_op:media_peer(Pid, Data) of
         ok ->
             {reply, ok, Session};
         {error, Error} ->
@@ -279,8 +294,8 @@ handle_call({set_media_proxy, Data}, _From, #{nkmedia_janus_pid:=Pid}=Session) -
 
 %% @private
 handle_cast({proxy_candidate, Candidate}, #{nkmedia_janus_pid:=Pid}=Session) ->
-    lager:error("RECEIVED PROXY CANDIDATE"),
-    nkmedia_janus_op:candidate_callee(Pid, Candidate),
+    % lager:error("RECEIVED PROXY CANDIDATE"),
+    nkmedia_janus_op:candidate_peer(Pid, Candidate),
     {noreply, Session}.
 
 
@@ -332,11 +347,11 @@ start_offerer(_, Session) ->
     {error, nkservice:error(), session()} | continue().
 
 start_offeree(echo, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
-    % io:format("OFF:\n~s", [maps:get(sdp, Offer)]),
     case nkmedia_janus_op:echo(Pid, Offer) of
         {ok, Answer} ->
             % io:format("ANS:\n~s", [maps:get(sdp, Answer)]),
-            set_media(set_answer(Answer, Session));
+            Session2 = set_answer(Answer, Session),
+            set_default_media(Session2);
         {error, Error} ->
             {error, Error, Session}
     end;
@@ -361,8 +376,8 @@ start_offeree(proxy, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
                         % when we receive answer from slave, we must process it
                         no_answer_trickle_ice => false
                     },
-                    Session2 = ?SESSION(Update, Session),
-                    set_media(Session2);
+                    % Media will be set on answer
+                    {ok, ?SESSION(Update, Session)};
                 {error, Error} ->
                     {error, Error, Session}
             end
@@ -375,17 +390,14 @@ start_offeree(publish, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
                 {ok, Answer} ->
                     notify_publisher(RoomId, Session),
                     update_type(publish, #{room_id=>RoomId}),
-                    Media = maps:merge(?DEFAULT_MEDIA, Session),
-                    set_media(Media, set_answer(Answer, Session));
+                    Session2 = set_answer(Answer, Session),
+                    set_default_media(Session2);
                 {error, Error} ->
                     {error, Error, Session}
             end;
         {error, Error} ->
             {error, Error, Session}
     end;
-
-start_offeree(callee, _Offer, Session) ->
-    {ok, Session};
 
 start_offeree(_Type, _Offer, _Session) ->
     continue.
@@ -543,13 +555,16 @@ set_offer(Offer, Session) ->
 set_answer(Answer, Session) ->
     ?SESSION(#{answer=>Answer}, Session).
 
+
 %% @private
 session_call(SessId, Msg) ->
     nkmedia_session:do_call(SessId, {nkmedia_janus, Msg}).
 
+
 %% @private
 session_cast(SessId, Msg) ->
     nkmedia_session:do_cast(SessId, {nkmedia_janus, Msg}).
+
 
 %% @private
 update_type(Type, TypeExt) ->
@@ -557,8 +572,9 @@ update_type(Type, TypeExt) ->
 
 
 %% @private
-set_media(Session) ->
-    set_media(Session, Session).
+set_default_media(Session) ->
+    Opts = maps:merge(?DEFAULT_MEDIA, Session),
+    set_media(Opts, Session).
 
 
 %% @private
@@ -567,6 +583,7 @@ set_media(Opts, #{nkmedia_janus_pid:=Pid}=Session) ->
         none ->
             {ok, Session};
         {Data, Session2} ->
+            lager:error("MEDIA: ~p", [Data]),
             case nkmedia_janus_op:media(Pid, Data) of
                 ok ->
                     {ok, Session2};
@@ -576,8 +593,14 @@ set_media(Opts, #{nkmedia_janus_pid:=Pid}=Session) ->
     end.
 
 
+%% @private
+set_default_media_proxy(Session) ->
+    Opts = maps:merge(?DEFAULT_MEDIA, Session),
+    set_media_proxy(Opts, Session).
+
+
 % %% @private
-set_media_proxy(Opts, MasterId, Session) ->
+set_media_proxy(Opts, #{master_peer:=MasterId}=Session) ->
     case get_media(Opts, Session) of
         none ->
             {ok, Session};

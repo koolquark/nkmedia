@@ -366,7 +366,7 @@ nkmedia_sip_invite(_SrvId, _Dest, Offer, SipLink, _Req, _Call) ->
 incoming(<<"je">>, Offer, Reg, Opts) ->
     % Can update mute_audio, mute_video, record, bitrate
     Config = incoming_config(nkmedia_janus, Offer, Reg, Opts),
-    start_session(echo, Config);
+    start_session(echo, Config#{bitrate=>100000});
 
 incoming(<<"fe">>, Offer, Reg, Opts) ->
     Config = incoming_config(nkmedia_fs, Offer, Reg, Opts),
@@ -424,9 +424,9 @@ incoming(<<"j", Num/binary>>, Offer, Reg, Opts) ->
         {nkmedia_sip, _, _} -> ConfigA1#{sdp_type=>rtp};
         _ -> ConfigA1
     end,
-    {ok, SessId, SessLink} = start_session(proxy, ConfigA2),
+    {ok, SessId, SessLink} = start_session(proxy, ConfigA2#{bitrate=>100000}),
     ConfigB = slave_config(nkmedia_janus, SessId, Opts),
-    ok = start_invite(Num, proxy, ConfigB),
+    ok = start_invite(Num, proxy, ConfigB#{bitrate=>150000}),
     {ok, SessId, SessLink};
 
 incoming(<<"f", Num/binary>>, Offer, Reg, Opts) ->
