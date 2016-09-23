@@ -343,10 +343,10 @@ cert_key = /usr/local/share/janus/certs/mycert.key
 ;force-rtcp-mux = true              ; Default false
 
 [nat]
-;stun_server = stun.voip.eutelia.it
-;stun_port = 3478
-nice_debug = false
-;ice_lite = true
+stun_server = stun.voip.eutelia.it
+stun_port = 3478
+;nice_debug = true
+ice_lite = true
 ;ice_tcp = true
 nat_1_1_mapping = $EXT_IP          ; All host candidates will have (only) this
 ;turn_server = myturnserver.com
@@ -444,7 +444,7 @@ config_sip() -> <<"
 [general]
 ; local_ip = 1.2.3.4        ; Guessed if omitted
 keepalive_interval = 120    ; OPTIONS, 0 to disable
-behind_nat = no             ; Use STUN
+behind_nat = yes            ; Use STUN
 ; user_agent = Cool WebRTC Gateway
 register_ttl = 3600
 ">>.

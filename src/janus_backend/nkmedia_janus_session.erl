@@ -55,6 +55,7 @@
         nkmedia_janus_id => nkmedia_janus_engine:id(),
         nkmedia_janus_pid => pid(),
         nkmedia_janus_mon => reference(),
+        nkmedia_janus_proxy_type => videocall | from_sip | to_sip,
         nkmedia_janus_proxy_offer => nkmedia:offer()
     }.
 
@@ -154,10 +155,9 @@ offer(Type, offeree, Offer, Session) ->
 -spec answer(type(), nkmedia:role(), nkmedia:answer(), session()) ->
     {ok, session()} | {error, nkservice:error(), session()} | continue.
 
-answer(proxy, offerer, Answer, Session) ->
+answer(proxy, offerer, Answer, #{nkmedia_janus_proxy_type:=videocall}=Session) ->
     % We are the 'B' side of the proxy, do nothing because the answer will be sent
     % to the master automatically
-    % {ok, Answer, Session};
     case set_default_media_proxy(Session) of
         {ok, Session2} ->
             lager:error("B SIDE1"),
@@ -167,17 +167,35 @@ answer(proxy, offerer, Answer, Session) ->
             {error, Error, Session2}
     end;
 
+answer(proxy, offerer, Answer, Session) ->
+    % We are the 'B' side of a SIP  proxy
+    lager:error("SIP B"),
+    {ok, Answer, Session};
+
 answer(proxy, offeree, Answer, #{nkmedia_janus_pid:=Pid}=Session) ->
     % We are the 'A' side of the proxy. Answer it from B.
-    lager:error("A SIDE"),
     case nkmedia_janus_op:answer(Pid, Answer) of
         {ok, Answer2} ->
-            % {ok, Answer2, Session};
-            case set_default_media(Session) of
-                {ok, Session2} ->
-                    {ok, Answer2, Session2};
-                {error, Error, Session2} ->
-                    {error, Error, Session2}
+            case Session of
+                #{nkmedia_janus_proxy_type:=videocall} ->
+                    case set_default_media(Session) of
+                        {ok, Session2} ->
+                            {ok, Answer2, Session2};
+                        {error, Error, Session2} ->
+                            {error, Error, Session2}
+                    end;
+                _ ->
+                    case Session of
+                        #{record:=true} ->
+                            case set_media(Session, Session) of
+                                {ok, Session3} ->
+                                    {ok, Answer2, Session3};
+                                {error, Error, Session3} ->
+                                    {error, Error, Session3}
+                            end;
+                        _ ->
+                            {ok, Answer2, Session}
+                    end
             end;
         {error, Error} ->
             {error, Error, Session}
@@ -203,7 +221,6 @@ answer(_Type, _Role, _Answer, _Session) ->
 
 candidate(Candidate, #{type:=proxy, backend_role:=offerer}=Session) ->
     #{master_peer:=MasterId} = Session,
-    % lager:error("PROXY CANDIDATE"),
     session_cast(MasterId, {proxy_candidate, Candidate}),
     {ok, Session};
 
@@ -237,7 +254,7 @@ cmd(media, Opts, #{type:=Type}=Session) when Type==echo; Type==proxy; Type==publ
 
 cmd(listen_switch, #{publisher_id:=Publisher}, #{type:=listen}=Session) ->
     #{nkmedia_janus_pid:=Pid, type_ext:=#{room_id:=RoomId}=Ext} = Session,
-    case nkmedia_janus_op:listen_switch(Pid, Publisher, #{}) of
+    case nkmedia_janus_op:listen_switch(Pid, Publisher) of
         ok ->
             notify_listener(RoomId, Publisher, Session),
             update_type(listen, Ext#{publisher_id=>Publisher}),
@@ -283,7 +300,7 @@ handle_call(get_room_id, _From, Session) ->
     {reply, {error, invalid_publisher}, Session};
 
 handle_call({set_media_proxy, Data}, _From, #{nkmedia_janus_pid:=Pid}=Session) ->
-    lager:error("PR: ~p", [Data]),
+    lager:error("Media peer: ~p", [Data]),
     case nkmedia_janus_op:media_peer(Pid, Data) of
         ok ->
             {reply, ok, Session};
@@ -295,7 +312,12 @@ handle_call({set_media_proxy, Data}, _From, #{nkmedia_janus_pid:=Pid}=Session) -
 %% @private
 handle_cast({proxy_candidate, Candidate}, #{nkmedia_janus_pid:=Pid}=Session) ->
     % lager:error("RECEIVED PROXY CANDIDATE"),
-    nkmedia_janus_op:candidate_peer(Pid, Candidate),
+    case Session of
+        #{nkmedia_janus_proxy_type:=videocall} ->
+            nkmedia_janus_op:candidate_peer(Pid, Candidate);
+        _ ->
+            nkmedia_janus_op:candidate(Pid, Candidate)
+    end,
     {noreply, Session}.
 
 
@@ -321,7 +343,7 @@ is_supported(_) -> false.
 start_offerer(listen, #{publisher_id:=Publisher, nkmedia_janus_pid:=Pid}=Session) ->
     case get_room(listen, Session) of
         {ok, RoomId} ->
-            case nkmedia_janus_op:listen(Pid, RoomId, Publisher, #{}) of
+            case nkmedia_janus_op:listen(Pid, RoomId, Publisher) of
                 {ok, Offer} ->
                     notify_listener(RoomId, Publisher, Session),
                     update_type(listen, #{room_id=>RoomId, publisher_id=>Publisher}),
@@ -351,6 +373,7 @@ start_offeree(echo, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
         {ok, Answer} ->
             % io:format("ANS:\n~s", [maps:get(sdp, Answer)]),
             Session2 = set_answer(Answer, Session),
+            % {ok, Session2};
             set_default_media(Session2);
         {error, Error} ->
             {error, Error, Session}
@@ -359,6 +382,7 @@ start_offeree(echo, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
 start_offeree(proxy, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
     OfferType = maps:get(sdp_type, Offer, webrtc),
     OutType = maps:get(sdp_type, Session, webrtc),
+    lager:error("OUT: ~p", [OutType]),
     Fun = case {OfferType, OutType} of
         {webrtc, webrtc} -> videocall;
         {webrtc, rtp} -> to_sip;
@@ -372,6 +396,7 @@ start_offeree(proxy, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
             case nkmedia_janus_op:Fun(Pid, Offer) of
                 {ok, Offer2} ->
                     Update = #{
+                        nkmedia_janus_proxy_type => Fun,
                         nkmedia_janus_proxy_offer => Offer2,
                         % when we receive answer from slave, we must process it
                         no_answer_trickle_ice => false
@@ -386,7 +411,7 @@ start_offeree(proxy, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
 start_offeree(publish, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
     case get_room(publish, Session) of
         {ok, RoomId} ->
-            case nkmedia_janus_op:publish(Pid, RoomId, Offer, #{}) of
+            case nkmedia_janus_op:publish(Pid, RoomId, Offer) of
                 {ok, Answer} ->
                     notify_publisher(RoomId, Session),
                     update_type(publish, #{room_id=>RoomId}),
@@ -461,27 +486,22 @@ get_room(Type, #{nkmedia_janus_id:=JanusId}=Session) ->
 -spec get_room_id(publish|listen, session()) ->
     {ok, nkmedia_room:id()} | {error, term()}.
 
-get_room_id(Type, #{srv_id:=SrvId}=Session) ->
-    case nkservice_srv:has_plugin(SrvId, nkmedia_room) of
-        true ->
-            case maps:find(room_id, Session) of
-                {ok, RoomId} -> 
-                    {ok, nklib_util:to_binary(RoomId)};
-                error when Type==publish -> 
-                    {ok, nklib_util:uuid_4122()};
-                error when Type==listen ->
-                    case Session of
-                        #{publisher_id:=Publisher} ->
-                            case session_call(Publisher, get_room_id) of
-                                {ok, RoomId} -> {ok, RoomId};
-                                {error, _Error} -> {error, invalid_publisher}
-                            end;
-                        _ ->
-                            {error, {missing_field, publisher_id}}
-                    end
-            end;
-        false ->
-            {error, room_srv_not_started}
+get_room_id(Type, Session) ->
+    case maps:find(room_id, Session) of
+        {ok, RoomId} -> 
+            {ok, nklib_util:to_binary(RoomId)};
+        error when Type==publish -> 
+            {ok, nklib_util:uuid_4122()};
+        error when Type==listen ->
+            case Session of
+                #{publisher_id:=Publisher} ->
+                    case session_call(Publisher, get_room_id) of
+                        {ok, RoomId} -> {ok, RoomId};
+                        {error, _Error} -> {error, invalid_publisher}
+                    end;
+                _ ->
+                    {error, {missing_field, publisher_id}}
+            end
     end.
 
 
@@ -576,7 +596,7 @@ set_default_media(Session) ->
     Opts = maps:merge(?DEFAULT_MEDIA, Session),
     set_media(Opts, Session).
 
-
+        
 %% @private
 set_media(Opts, #{nkmedia_janus_pid:=Pid}=Session) ->
     case get_media(Opts, Session) of
@@ -601,16 +621,21 @@ set_default_media_proxy(Session) ->
 
 % %% @private
 set_media_proxy(Opts, #{master_peer:=MasterId}=Session) ->
-    case get_media(Opts, Session) of
-        none ->
-            {ok, Session};
-        {Data, Session2} ->
-            case session_call(MasterId, {set_media_proxy, Data}) of
-                ok ->
-                    {ok, Session2};
-                {error, Error} ->
-                    {error, Error, Session2}
-            end
+    case Session of
+        #{nkmedia_janus_proxy_type:=videocall} ->
+            case get_media(Opts, Session) of
+                none ->
+                    {ok, Session};
+                {Data, Session2} ->
+                    case session_call(MasterId, {set_media_proxy, Data}) of
+                        ok ->
+                            {ok, Session2};
+                        {error, Error} ->
+                            {error, Error, Session2}
+                    end
+            end;
+        _ ->
+            {error, set_media_not_allowed}
     end.
 
 

@@ -29,8 +29,8 @@
 
 -export([start/2, stop/1, videocall/2, echo/2, play/3]).
 -export([list_rooms/1, create_room/3, destroy_room/2]).
--export([publish/4, unpublish/1]).
--export([listen/4, listen_switch/3, unlisten/1]).
+-export([publish/3, unpublish/1]).
+-export([listen/3, listen_switch/2, unlisten/1]).
 -export([from_sip/2, to_sip/2]).
 -export([nkmedia_sip_register/2, nkmedia_sip_invite/2]).
 -export([answer/2, media/2, media_peer/2, candidate/2, candidate_peer/2]).
@@ -80,15 +80,6 @@
         record => boolean(),   
         user_id => binary(),        % For events
         info => term()
-    }.
-
-
--type listen_opts() ::
-    #{
-        audio => boolean(),
-        video => boolean(),
-        data => boolean(),
-        user_id => binary()
     }.
 
 
@@ -183,11 +174,11 @@ destroy_room(Id, Room) ->
 
 %% @doc Starts a conection to a videoroom.
 %% caller_id is taked from offer.
--spec publish(id(), room(), nkmedia:offer(), media_opts()) ->
+-spec publish(id(), room(), nkmedia:offer()) ->
     {ok, nkmedia:answer()} | {error, nkservice:error()}.
 
-publish(Id, Room, Offer, Opts) ->
-    do_call(Id, {publish, to_room(Room), Offer, Opts}).
+publish(Id, Room, Offer) ->
+    do_call(Id, {publish, to_room(Room), Offer}).
 
 
 %% @doc Starts a conection to a videoroom.
@@ -200,20 +191,20 @@ unpublish(Id) ->
 
 
 %% @doc Starts a conection to a videoroom
--spec listen(id(), room(), nkmedia_session:id(), listen_opts()) ->
+-spec listen(id(), room(), nkmedia_session:id()) ->
     {ok, nkmedia:offer()} | {error, nkservice:error()}.
 
-listen(Id, Room, Listen, Opts) ->
-    do_call(Id, {listen, to_room(Room), Listen, Opts}).
+listen(Id, Room, Listen) ->
+    do_call(Id, {listen, to_room(Room), Listen}).
 
 
 %% @doc Answers a listen
--spec listen_switch(id(), nkmedia_session:id(), listen_opts()) ->
+-spec listen_switch(id(), nkmedia_session:id()) ->
     ok | {error, nkservice:error()}.
 
-listen_switch(Id, Listen, Opts) ->
+listen_switch(Id, Listen) ->
     Listen2 = nklib_util:to_binary(Listen),
-    do_call(Id, {listen_switch, Listen2, Opts}).
+    do_call(Id, {listen_switch, Listen2}).
 
 
 %% @doc
@@ -367,7 +358,7 @@ nkmedia_sip_invite(User, Req) ->
     sip_contact :: nklib:uri(),
     offer :: nkmedia:offer(),
     from :: {pid(), term()},
-    opts :: map(),
+    % opts :: map(),
     timer :: reference()
 }).
 
@@ -406,7 +397,7 @@ handle_call({echo, Offer}, _From, #state{status=wait}=State) ->
     do_echo(Offer, State);
 
 handle_call({play, File, Opts}, _From, #state{status=wait}=State) -> 
-    do_play(File, State#state{opts=Opts});
+    do_play(File, Opts, State);
 
 handle_call({videocall, Offer}, From, #state{status=wait}=State) -> 
     do_videocall(Offer, From, State);
@@ -415,23 +406,22 @@ handle_call(list_rooms, _From, #state{status=wait}=State) ->
     do_list_rooms(State);
 
 handle_call({create_room, Room, Opts}, _From, #state{status=wait}=State) -> 
-    do_create_room(State#state{room=Room, opts=Opts});
+    do_create_room(Room, Opts, State);
 
 handle_call({destroy_room, Room}, _From, #state{status=wait}=State) -> 
-    do_destroy_room(State#state{room=Room});
+    do_destroy_room(Room, State);
 
-handle_call({publish, Room, Offer, Opts}, _From, #state{status=wait}=State) -> 
-    do_publish(Offer, State#state{room=Room, opts=Opts});
+handle_call({publish, Room, Offer}, _From, #state{status=wait}=State) -> 
+    do_publish(Offer, Room, State);
 
 handle_call(upublish, _From, #state{status=publish}=State) -> 
     do_unpublish(State);
 
 handle_call({listen, Room, Listen, Opts}, _From, #state{status=wait}=State) -> 
-    do_listen(Listen, State#state{room=Room, opts=Opts});
+    do_listen(Listen, Room, Opts, State);
 
-handle_call({listen_switch, Listen, Opts}, _From, #state{status=listen}=State) -> 
-    #state{opts=Opts0} = State,
-    do_listen_switch(Listen, State#state{opts=maps:merge(Opts0, Opts)});
+handle_call({listen_switch, Listen}, _From, #state{status=listen}=State) -> 
+    do_listen_switch(Listen, State);
 
 handle_call(unlisten, _From, #state{status=listen}=State) -> 
     do_unlisten(State);
@@ -475,10 +465,10 @@ handle_call({answer, Answer}, From, State) ->
         {wait, to_sip_answer} ->
             do_to_sip_answer(Answer, From, State);
         _ ->
-            reply_stop({error, invalid_state}, State)
+            reply_stop({error, invalid_state1}, State)
     end;
 
-handle_call({media, Opts}, _From, #state{status=Status}=State) ->
+handle_call({media, Opts}, _From, #state{status=Status, wait=Wait}=State) ->
     case Status of
         echo -> 
             do_echo_media(Opts, State);
@@ -488,19 +478,26 @@ handle_call({media, Opts}, _From, #state{status=Status}=State) ->
             do_publish_media(Opts, State);
         sip ->
             do_sip_media(Opts, State);
+        from_sip ->
+            do_sip_media(Opts, State);
         _ ->
-            reply_stop({error, invalid_state}, State)
+            ?LLOG(warning, "media error: ~p, ~p", [Status, Wait], State),
+            reply_stop({error, invalid_state2}, State)
     end;
 
-handle_call({media_peer, Opts}, _From, #state{status=videocall}=State) ->
-    do_videocall_media(Opts, callee, State);
-   
-handle_call({media_peer, Opts}, _From, #state{wait=videocall_answer}=State) ->
-    do_videocall_media(Opts, callee, State);
+handle_call({media_peer, Opts}, _From, #state{status=Status, wait=Wait}=State) ->
+    case {Status, Wait} of
+        {videocall, _} ->
+            do_videocall_media(Opts, callee, State);
+        {wait, videocall} ->
+            do_videocall_media(Opts, callee, State);
+        _ ->
+            ?LLOG(warning, "media_peer error: ~p, ~p", [Status, Wait], State),
+            reply({error, invalid_state3}, State)
+    end;
 
 handle_call(_Msg, _From, State) -> 
-    % lager:error("STATUS: ~p ~p", [State#state.status, State#state.wait]),
-    reply({error, invalid_state}, State).
+    reply({error, invalid_state4}, State).
     
 
 %% @private
@@ -677,7 +674,7 @@ do_echo_media(Opts, #state{handle_id=Handle}=State) ->
 
 
 %% @private Create session and join
-do_play(File, State) ->
+do_play(File, _Opts, State) ->
     {ok, Handle} = attach(recordplay, State),
     State2 = State#state{handle_id=Handle},
     case message(Handle, #{request=>update}, #{}, State2) of
@@ -819,7 +816,7 @@ do_list_rooms(State) ->
 
 
 %% @private
-do_create_room(#state{room=Room, opts=Opts}=State) ->
+do_create_room(Room, Opts, State) ->
     {ok, Handle} = attach(videoroom, State),
     RoomId = to_room_id(Room),
     Body = #{
@@ -838,7 +835,7 @@ do_create_room(#state{room=Room, opts=Opts}=State) ->
     case message(Handle, Body, #{}, State) of
         {ok, Msg, _} ->
             #{<<"videoroom">>:=<<"created">>, <<"room">>:=RoomId} = Msg,
-            reply_stop(ok, State);
+            reply_stop(ok, State#state{room=Room});
         {error, Error} ->
             reply_stop({error, Error}, State)
     end.
@@ -846,7 +843,7 @@ do_create_room(#state{room=Room, opts=Opts}=State) ->
 
 %% @private
 %% Connected peers will receive event from Janus and will stop
-do_destroy_room(#state{room=Room}=State) ->
+do_destroy_room(Room, State) ->
     {ok, Handle} = attach(videoroom, State),
     RoomId = to_room_id(Room),
     Body = #{request => destroy, room => RoomId},
@@ -866,7 +863,7 @@ do_destroy_room(#state{room=Room}=State) ->
 %% ===================================================================
 
 %% @private Create session and join
-do_publish(#{sdp:=SDP}, #state{room=Room, id=SessId} = State) ->
+do_publish(#{sdp:=SDP}, Room, #state{id=SessId} = State) ->
     {ok, Handle} = attach(videoroom, State),
     RoomId = to_room_id(Room),
     Feed = erlang:phash2(SessId),
@@ -879,7 +876,7 @@ do_publish(#{sdp:=SDP}, #state{room=Room, id=SessId} = State) ->
     },
     case message(Handle, Body, #{}, State) of
         {ok, #{<<"videoroom">>:=<<"joined">>, <<"id">>:=Feed}, _} ->
-            State2 = State#state{handle_id=Handle},
+            State2 = State#state{handle_id=Handle, room=Room},
             do_publish_2(SDP, State2);
         {error, Error} ->
             ?LLOG(notice, "publish error1: ~p", [Error], State),
@@ -931,7 +928,7 @@ do_publish_media(Opts, #state{handle_id=Handle}=State) ->
 
 
 %% @private Create session and join
-do_listen(Listen, #state{room=Room}=State) ->
+do_listen(Listen, Room, _Opts, State) ->
     {ok, Handle} = attach(videoroom, State),
     Feed = erlang:phash2(Listen),
     Body2 = #{
@@ -942,7 +939,7 @@ do_listen(Listen, #state{room=Room}=State) ->
     },
     case message(Handle, Body2, #{}, State) of
         {ok, #{<<"videoroom">>:=<<"attached">>}, #{<<"sdp">>:=SDP}} ->
-            State2 = State#state{handle_id=Handle},
+            State2 = State#state{handle_id=Handle, room=Room},
             reply({ok, sdp(SDP)}, wait(listen_answer, State2));
         {error, Error} ->
             ?LLOG(notice, "listen error2: ~p", [Error], State),
@@ -1115,15 +1112,15 @@ do_to_sip_answer(#{sdp:=SDP}, From, State) ->
 
 
 %% @private
-do_sip_media(#{record:=_}, #state{handle_id=Handle, opts=Opts}=State) ->
+do_sip_media(#{record:=_}=Opts, #state{handle_id=Handle}=State) ->
     Audio = maps:get(mute_audio, Opts, false),
     Video = maps:get(mute_video, Opts, false),
     Body1 = #{
         request => recording,
-        audio => Audio,
-        video => Video,
-        peer_audio => Audio,
-        peer_video => Video
+        audio => not Audio,
+        video => not Video,
+        peer_audio => not Audio,
+        peer_video => not Video
     },
     Body2 = case Opts of
         #{record:=true, filename:=Filename} ->
@@ -1190,20 +1187,20 @@ do_event(Id, Handle, {event, <<"accepted">>, _, #{<<"sdp">>:=SDP}}, State) ->
             State2 = State#state{from=undefined},
             noreply(status(videocall, State2));
         #state{status=wait, wait=to_sip_reply, sess_id=Id, handle_id=Handle} ->
-            #state{from=From, opts=Opts} = State,
+            #state{from=From} = State,
             State2 = State#state{from=undefined},
             gen_server:reply(From, {ok, sdp(SDP)}),
-            case Opts of
-                #{record:=true} ->
-                    case do_sip_media(#{record=>true}, State2) of
-                        {reply, ok, State3, _} ->
-                            noreply(status(sip, State3));
-                        {error, _Error, State3} ->
-                            {stop, normal, State3}
-                    end;
-                _ ->
-                    noreply(status(sip, State2))
-            end;
+            % case Opts of
+            %     #{record:=true} ->
+            %         case do_sip_media(#{record=>true}, State2) of
+            %             {reply, ok, State3, _} ->
+            %                 noreply(status(sip, State3));
+            %             {error, _Error, State3} ->
+            %                 {stop, normal, State3}
+            %         end;
+            %     _ ->
+                    noreply(status(sip, State2));
+            % end;
         _ ->
             ?LLOG(warning, "unexpected incomingcall!", [], State),
             {stop, normal, State}

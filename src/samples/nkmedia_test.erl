@@ -75,7 +75,7 @@
 %%     is sent to master, where a final answer is generated.
 %%     If the master sends a candidate, it is captured by the janus backend
 %%     If the peer sends a candidate, it is captured by the janus session
-%%     (in nkmedia_jaus_session:candidate/2) and sent to Janus
+%%     (in nkmedia_jaus_session:candidate/2) and sent to the master to be sent to Janus
 %%
 %%   - Call through FS/KMS
 
@@ -85,27 +85,22 @@
 %%  - Register a SIP Phone
 %%    The registrations is allowed and the domain is forced to 'nkmedia'
 
-%%    - Incoming SIP
+%%    - Incoming SIP (Janus version)
 %%      When a call arrives, we create a proxy session with janus  
-%%      and register the nkmedia-generated 'sip link' with it
-%%      This way, when the proxy has an answer it is sent back to the SIP caller,
-%%      also if the session stops
-%%      We then register the invited Verto or Janus with the session, so that
-%%      they can sen the answer to the proxy
+%%      and register the nkmedia-generated 'sip link' with it.
+%%      We then start a second 'slave' proxy sesssion, and proceed with the invite
 %%
-%%    - Outcoming SIP
-%%      As a Verto/Janus originator, we start a call (j, f, k) that happens to
+%%    - Outcoming SIP (Janus version)
+%%      As a Verto/Janus originator, we start a call with j that happens to
 %%      resolve to a registered SIP endpoint.
-%%      We start a second (slave, offerer, without offer) session, but with sdp_type=rtp
-%%      and asks for the offer. It 
+%%      We start a second (slave, offerer, without offer) session, but with sdp_type=rtp.
+%%      We get the offer and invite as usual
 
 
 %% NOTES
 %%
 %% - Janus doest not currently work if we buffer candidates. 
-%%   Works for Verto clients (that has candidates in it) and Janus without trickle
-%%   But if the Janus client uses trickle, must no use no_offer_trickle_ice
-
+%%   (not usually neccesary, since it accets trickle ice)
 
 
 
@@ -148,7 +143,7 @@ start() ->
         janus_proxy=> "janus_proxy:all:8990",
         kurento_proxy => "kmss:all:8433, kms:all:8888",
         nksip_trace => {console, all},
-        sip_listen => "sip:all:9012",
+        sip_listen => "sip:all:8060",
         api_gelf_server => "c2.netc.io",
         log_level => debug
     },
@@ -331,11 +326,29 @@ sip_register(Req, Call) ->
 
 
 
-% 
-nkmedia_sip_invite(_SrvId, _Dest, Offer, SipLink, _Req, _Call) ->
-    ConfigA = incoming_config(nkmedia_fs, Offer, SipLink, #{}),
-    {ok, _SessId, SessLink} = start_session(echo, ConfigA),
-    {ok, SessLink}.
+% Version that calls an echo... does not work!
+nkmedia_sip_invite(_SrvId, <<"je">>, Offer, SipLink, _Req, _Call) ->
+    ConfigA = incoming_config(nkmedia_janus, Offer, SipLink, #{}),
+    {ok, SessId, SessLink} = start_session(proxy, ConfigA),
+    ConfigB = slave_config(nkmedia_janus, SessId, #{}),
+    {ok, SessId2, _SessLink2} = start_session(proxy, ConfigB),
+    {ok, Offer2} = nkmedia_session:get_offer(SessId2),
+    ConfigC = slave_config(nkmedia_janus, SessId2, #{}),
+    start_session(echo, ConfigC#{offer=>Offer2}),
+    {ok, SessLink};
+
+% Version that calls another user using Janus proxy
+nkmedia_sip_invite(_SrvId, <<"j", Dest/binary>>, Offer, SipLink, _Req, _Call) ->
+    ConfigA = incoming_config(nkmedia_janus, Offer, SipLink, #{}),
+    {ok, SessId, SessLink} = start_session(proxy, ConfigA),
+    ConfigB = slave_config(nkmedia_janus, SessId, #{}),
+    ok = start_invite(Dest, proxy, ConfigB),
+    {ok, SessLink};
+
+nkmedia_sip_invite(_SrvId, _Dest, _Offer, _SipLink, _Req, _Call) ->
+    {rejected, decline}.
+
+
 
 
 

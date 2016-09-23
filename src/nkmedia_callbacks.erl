@@ -124,7 +124,7 @@ error_code(publisher_stopped)       ->  {2037, <<"Publisher stopped">>};
 
 error_code(call_error)       		->  {2040, <<"Call error">>};
 error_code(bridge_stop)       		->  {2041, <<"Bridge stop">>};
-error_code(peer_stopped)       		->  {2041, <<"Peer session stopped">>};
+error_code(peer_stopped)       		->  {2042, <<"Peer session stopped">>};
 
 error_code(no_active_recorder) 		->  {2050, <<"No active recorder">>};
 error_code(record_start_error) 		->  {2051, <<"Record start error">>};
@@ -132,6 +132,7 @@ error_code(record_start_error) 		->  {2051, <<"Record start error">>};
 error_code(no_active_player) 		->  {2060, <<"No active player">>};
 error_code(player_start_error) 		->  {2061, <<"Player start error">>};
 
+error_code(set_media_not_allowed) 	->  {2070, <<"Update media not allowed">>};
 
 % error_code(Code) when is_integer(Code) -> get_q850(Code);
 error_code(_) -> continue.
