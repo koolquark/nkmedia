@@ -28,9 +28,9 @@
          handle_cast/2, handle_info/2]).
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkMEDIA FS SIP (~s) "++Txt, [State#state.uuid | Args])).
+    lager:Type("NkMEDIA FS SIP (~s) "++Txt, [State#state.session_id | Args])).
 
--define(TIMEOUT, 60000).
+-define(TIMEOUT, 200000).
 
 -include_lib("nklib/include/nklib.hrl").
 
@@ -45,6 +45,9 @@
 
 
 %% @doc
+%% We place a SIP-class SDP into FS and get an answer
+
+
 -spec start_in(nkmedia_session:id(), nkmedia_fs:id(), nkmedia:offer()) ->
     {ok, UUID::binary(), SDP::binary()} | {error, term()}.
 
@@ -52,18 +55,24 @@ start_in(SessId, FsId, #{sdp:=SDP}) ->
     {ok, Pid} = gen_server:start(?MODULE, [in, FsId, SessId, SDP], []),
     case nkservice_util:call(Pid, get_uuid) of
         {ok, UUID} ->
-            case nkservice_util:call(Pid, get_sdp) of
+            Reply = case nkservice_util:call(Pid, get_sdp) of
                 {ok, SDP2} -> {ok, UUID, SDP2};
                 {error, Error} -> {error, Error}
-            end;
+            end,
+            gen_server:cast(Pid, stop),
+            Reply;
         {error, Error} ->
             {error, Error}
     end.
 
 
 %% @doc
-%% nkmedia_sip will find any process registered under {nkmedia_sip, call, SessId}
-%% and {nkmedia_sip_dialog, Dialog} and will send messages
+%% Generates an SIP request from FS to us
+%% FS will send an INVITE to us, using this module in the URI
+%% It will be captured at nkmedia_core:sip_invite/3, and nkmedia_sip_invite/3
+%% will be called, calling us with the SDP
+%% We reply 'ringing' to FS. We return the SDP
+%% Later on, nkmedia_fs_session will call answer_out/2
 -spec start_out(nkmedia_session:id(), nkmedia_fs:id(), map()) ->
     {ok, UUID::binary(), SDP::binary()} | {error, term()}.
 
@@ -129,12 +138,13 @@ find(SessId) ->
 
 -record(state, {
     fs_id :: nkmedia_fs_engine:id(),
+    session_id :: nkmedia_session:id(),
     uuid :: binary(),
-    originate :: pid(),
     handle :: binary(),
     dialog :: binary(),
     sdp :: nkmedia:sdp(),
-    wait_sdp :: {pid(), term()}
+    wait_sdp :: {pid(), term()},
+    timer :: reference()
 }).
 
 
@@ -145,6 +155,8 @@ find(SessId) ->
 
 init([in, FsId, SessId, SDP]) ->
     true = nklib_proc:reg({?MODULE, SessId}),
+    State1 = #state{fs_id = FsId, session_id = SessId},
+    ?LLOG(info, "process start (inbound)", [], State1),
     case nkmedia_fs_engine:get_config(FsId) of
         {ok, #{host:=Host, base:=Base}} ->
             Uri = #uri{
@@ -157,13 +169,13 @@ init([in, FsId, SessId, SDP]) ->
             Opts = [{body, SDP2}, auto_2xx_ack, {meta, [body, {header, <<"x-uuid">>}]}],
             case nksip_uac:invite(nkmedia_core, Uri, Opts) of
                 {ok, 200, [{dialog, Dialog}, {body, SDP_B}, {{header, _}, UUID}]} ->
-                    State = #state{
-                        fs_id = FsId, 
+                    State2 = State1#state{
                         uuid = UUID,
                         dialog = Dialog,
                         sdp = nksip_sdp:unparse(SDP_B)
                     },
-                    {ok, State};
+                    erlang:send_after(5000, self(), in_timeout),
+                    {ok, State2};
                 Other ->
                     lager:error("invalid response from FS INVITE: ~p", [Other]),
                     {stop, fs_error}
@@ -177,19 +189,19 @@ init([out, FsId, SessId]) ->
     Host = nklib_util:to_host(nkmedia_app:get(erlang_ip)),
     Port = nkmedia_app:get(sip_port),
     Proxy = <<Host/binary, ":", (nklib_util:to_binary(Port))/binary, ";transport=tcp">>,
-    Vars = [{<<"nkstatus">>, <<"outbound">>}], 
+    Vars = [{<<"nkstatus">>, <<"outbound">>}, {<<"nkmedia_session_id">>, SessId}], 
     CallOpts = #{vars=>Vars, call_id=>SessId},
     Dest = <<"sofia/internal/nkmedia_fs_sip-", SessId/binary, "@", Proxy/binary>>,
     Self = self(),
-    Caller = spawn_link(
+    spawn_link(
         fun() ->
             Reply = nkmedia_fs_cmd:call(FsId, Dest, <<"&park">>, CallOpts),
             gen_server:cast(Self, {originate, Reply})
         end),
-    State = #state{fs_id=FsId, uuid=SessId, originate=Caller},
-    ?LLOG(info, "new session (~p)", [self()], State),
-    %% Call will reach nkmedia_core_sip now and will call us
-    {ok, State, ?TIMEOUT}.
+    State = #state{fs_id=FsId, session_id=SessId, uuid=SessId},
+    ?LLOG(info, "process start (outbound)", [], State),
+    erlang:send_after(?TIMEOUT, self(), out_timeout),
+    {ok, State}.
 
 
 %% @private
@@ -198,13 +210,13 @@ init([out, FsId, SessId]) ->
     {stop, Reason::term(), #state{}} | {stop, Reason::term(), Reply::term(), #state{}}.
 
 handle_call(get_uuid, _From, #state{uuid=UUID}=State) ->
-    {reply, {ok, UUID}, State, ?TIMEOUT};
+    {reply, {ok, UUID}, State};
 
 handle_call(get_sdp, From, #state{sdp=undefined}=State) ->
-    {noreply, State#state{wait_sdp=From}, ?TIMEOUT};
+    {noreply, State#state{wait_sdp=From}};
 
 handle_call(get_sdp, _From, #state{sdp=SDP}=State) ->
-    {reply, {ok, SDP}, State, ?TIMEOUT};
+    {reply, {ok, SDP}, State};
 
 handle_call({sip_invite, Handle, Dialog, SDP}, _From, #state{wait_sdp=Wait}=State) ->
     nklib_util:reply(Wait, {ok, SDP}),
@@ -215,7 +227,7 @@ handle_call({sip_invite, Handle, Dialog, SDP}, _From, #state{wait_sdp=Wait}=Stat
         sdp = SDP,
         wait_sdp = undefined
     },
-    {reply, {reply, ringing}, State2, ?TIMEOUT};
+    {reply, {reply, ringing}, State2};
 
 handle_call({answer, Answer}, _From, #state{handle=Handle}=State) ->
     #{sdp:=SDP} = Answer,
@@ -224,7 +236,7 @@ handle_call({answer, Answer}, _From, #state{handle=Handle}=State) ->
 
 handle_call(Msg, _From, State) ->
     lager:error("Module ~p received unexpected call ~p", [?MODULE, Msg]),
-    {noreply, State, ?TIMEOUT}.
+    {noreply, State}.
 
 
 %% @private
@@ -233,23 +245,30 @@ handle_call(Msg, _From, State) ->
 
 handle_cast({originate, {ok, UUID}}, #state{uuid=UUID}=State) ->
     ?LLOG(info, "originate OK", [], State),
-    {noreply, ok, State, ?TIMEOUT};
+    {noreply, ok, State};
 
 handle_cast({originate, {error, Error}}, State) ->
     ?LLOG(info, "originate error: ~p", [Error], State),
     {stop, normal, State};
 
+handle_cast(stop, State) ->
+    {stop, normal, State};
+
 handle_cast(Msg, State) -> 
     lager:error("Module ~p received unexpected cast ~p", [?MODULE, Msg]),
-    {noreply, State, ?TIMEOUT}.
+    {noreply, State}.
 
 
 %% @private
 -spec handle_info(term(), #state{}) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
-handle_info(timeout, State) ->
-    ?LLOG(warning, "timeout!", [], State),
+handle_info(in_timeout, State) -> 
+    ?LLOG(warning, "inbound timeout", [], State),
+    {stop, normal, State};
+
+handle_info(out_timeout, State) -> 
+    ?LLOG(warning, "outbound timeout", [], State),
     {stop, normal, State};
 
 handle_info(Info, State) -> 
@@ -269,8 +288,8 @@ code_change(_OldVsn, State, _Extra) ->
 -spec terminate(term(), #state{}) ->
     ok.
 
-terminate(_Reason, _State) ->
-    ok.
+terminate(Reason, State) ->
+    ?LLOG(notice, "process stop: ~p", [Reason], State).
     
 
 

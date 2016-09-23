@@ -31,8 +31,7 @@
 -export([nkmedia_session_start/3, nkmedia_session_stop/2,
 	     nkmedia_session_offer/4, nkmedia_session_answer/4, 
 		 % nkmedia_session_slave_answer/2, nkmedia_session_peer_candidate/2,
-		 nkmedia_session_cmd/3, nkmedia_session_candidate/2,
-	     nkmedia_session_bridge_stop/2]).
+		 nkmedia_session_cmd/3, nkmedia_session_candidate/2]).
 -export([nkmedia_call_init/2, nkmedia_call_terminate/2, 
 		 nkmedia_call_resolve/3, nkmedia_call_invite/5, nkmedia_call_cancel/3, 
 		 nkmedia_call_event/3, nkmedia_call_reg_event/4, nkmedia_session_reg_down/4,
@@ -292,15 +291,6 @@ nkmedia_session_handle_info(Msg, Session) ->
 
 nkmedia_session_stop(_Reason, Session) ->
 	{ok, Session}.
-
-
-%% @private Called when a bridged session stops.
--spec nkmedia_session_bridge_stop(Peer::session_id(), session()) ->
-	{ok, session()} | {stop, session()}.
-
-nkmedia_session_bridge_stop(_Reason, Session) ->
-	% {ok, Session}.
-	{stop, Session}.
 
 
 

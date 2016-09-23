@@ -422,7 +422,7 @@ conn_handle_info(Msg, _NkPort, State) ->
     ok.
 
 conn_stop(Reason, _NkPort, State) ->
-    session_event(stop, State),
+    session_event(verto_stop, State),
     ?LLOG(info, "connection stop: ~p", [Reason], State).
 
 
@@ -488,7 +488,7 @@ process_server_resp(#session_op{type=invite}, {error, Code, Error},
 
 process_server_resp(#session_op{type=hangup, from=From}, {ok, _}, _Msg, _NkPort, State) ->
     nklib_util:reply(From, ok),
-    {stop, normal, session_event({hangup, 16}, State)};
+    {stop, normal, session_event(verto_hangup, State)};
 
 process_server_resp(#session_op{type=hangup}, {error, Code, Error}, _Msg, _NkPort, State) ->
     ?LLOG(info, "error response to hangup: ~p (~s)", [Code, Error], State),
@@ -552,7 +552,7 @@ process_server_req(<<"verto.bye">>, Msg, NkPort, State) ->
     #{<<"params">>:=#{<<"callID">>:=_CallId}} = Msg,
     Msg2 = nkmedia_fs_util:verto_resp(<<"verto.bye">>, Msg),
     _ = send(Msg2, NkPort, State),
-    {stop, normal, session_event({hangup, 16}, State)};
+    {stop, normal, session_event(verto_hangup, State)};
 
 %% Sent when FS detects another session for the same session id
 process_server_req(<<"verto.punt">>, _Msg, _NkPort, State) ->
@@ -662,13 +662,13 @@ make_msg(Id, cmd, Cmd, _State) ->
 %% @private
 originate(CallId, Opts, #state{fs_id=FsId, sess_id=SessId, originates=Pids}=State) ->
     Dest = <<"verto.rtc/u:", SessId/binary>>,
-    Vars = [{<<"nkstatus">>, <<"outbound">>}], 
+    Vars = [{<<"nkstatus">>, <<"outbound">>}, {<<"nkmedia_session_id">>, SessId}], 
     Opts2 = Opts#{vars => Vars, call_id=>CallId, timeout=>5*60},
     Self = self(),
     Pid = spawn_link(
         fun() ->
-            % case nkmedia_fs_cmd:call(FsId, Dest, <<"&park">>, Opts2) of
-            case nkmedia_fs_cmd:call(FsId, Dest, <<"nkmedia_out">>, Opts2) of
+            case nkmedia_fs_cmd:call(FsId, Dest, <<"&park">>, Opts2) of
+            % case nkmedia_fs_cmd:call(FsId, Dest, <<"nkmedia_out">>, Opts2) of
                 {ok, CallId} -> 
                     ok;
                 {error, Error} -> 

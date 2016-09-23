@@ -120,9 +120,10 @@ nkmedia_fs_get_mediaserver(SrvId) ->
 error_code(fs_error)             ->  {2300, <<"Freeswitch internal error">>};
 error_code(fs_get_answer_error)  ->  {2301, <<"Freeswitch get answer error">>};
 error_code(fs_get_offer_error)   ->  {2302, <<"Freeswitch get offer error">>};
-error_code(fs_channel_stop)      ->  {2303, <<"Freeswitch channel stop">>};
-error_code(fs_transfer_error)    ->  {2304, <<"Freeswitch transfer error">>};
-error_code(fs_bridge_error)      ->  {2305, <<"Freeswitch bridge error">>};
+error_code(fs_channel_parked)    ->  {2303, <<"Freeswitch channel parked">>};
+error_code(fs_channel_stop)      ->  {2304, <<"Freeswitch channel stop">>};
+error_code(fs_transfer_error)    ->  {2305, <<"Freeswitch transfer error">>};
+error_code(fs_bridge_error)      ->  {2306, <<"Freeswitch bridge error">>};
 error_code(_)                    ->  continue.
 
 

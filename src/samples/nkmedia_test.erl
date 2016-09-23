@@ -77,8 +77,18 @@
 %%     If the peer sends a candidate, it is captured by the janus session
 %%     (in nkmedia_jaus_session:candidate/2) and sent to the master to be sent to Janus
 %%
-%%   - Call through FS/KMS
-
+%%   - Call through FS
+%%     A session master is created and parked, and then a slave is created as bridge.
+%%     (set_master_answer is false). It contacts the first to launch the fs bridge
+%%     If the bridge stops, the other side parks
+%%     Depending on stop_after_peer (default true) the other side will hangup
+%%     You can update the call 
+%%
+%%   - Invite with Janus
+%%     Used for listeners. See invite_listen
+%%
+%%   - Invite with FS, KMS
+%%     Allows the mediaserver to make the offer, an then start any session
 
 
 
@@ -99,6 +109,7 @@
 
 %% NOTES
 %%
+%% - Janus client does not send candidates when it is a direct call (?)
 %% - Janus doest not currently work if we buffer candidates. 
 %%   (not usually neccesary, since it accets trickle ice)
 
@@ -211,7 +222,7 @@ a() ->
 
 
 invite(Dest, Type, Opts) ->
-    Opts2 = maps:merge(#{backend => nkmedia_kms}, Opts),
+    Opts2 = maps:merge(#{backend => nkmedia_fs}, Opts),
     start_invite(Dest, Type, Opts2).
 
 
@@ -345,6 +356,12 @@ nkmedia_sip_invite(_SrvId, <<"j", Dest/binary>>, Offer, SipLink, _Req, _Call) ->
     ok = start_invite(Dest, proxy, ConfigB),
     {ok, SessLink};
 
+% Version using FS
+nkmedia_sip_invite(_SrvId, <<"fe">>, Offer, SipLink, _Req, _Call) ->
+    ConfigA = incoming_config(nkmedia_fs, Offer, SipLink, #{}),
+    {ok, _SessId, SessLink} = start_session(mcu, ConfigA#{room_id=>m1}),
+    {ok, SessLink};
+
 nkmedia_sip_invite(_SrvId, _Dest, _Offer, _SipLink, _Req, _Call) ->
     {rejected, decline}.
 
@@ -368,9 +385,6 @@ nkmedia_sip_invite(_SrvId, _Dest, _Offer, _SipLink, _Req, _Call) ->
 %         not_found ->
 %             {rejected, user_not_found}
 %     end.
-
-
-
 
 %% ===================================================================
 %% Internal
@@ -444,9 +458,9 @@ incoming(<<"j", Num/binary>>, Offer, Reg, Opts) ->
 
 incoming(<<"f", Num/binary>>, Offer, Reg, Opts) ->
     ConfigA = incoming_config(nkmedia_fs, Offer, Reg, Opts),
-    {ok, SessId, SessLink} = start_session(park, ConfigA),
+    {ok, SessId, SessLink} = start_session(park, ConfigA#{stop_after_peer=>true}),
     ConfigB = slave_config(nkmedia_fs, SessId, Opts),
-    ok = start_invite(Num, bridge, ConfigB),
+    ok = start_invite(Num, bridge, ConfigB#{stop_after_peer=>true}),
     {ok, SessId, SessLink};
 
 incoming(<<"k", Num/binary>>, Offer, Reg, Opts) ->
@@ -535,9 +549,6 @@ start_invite(Dest, Type, Config) ->
     end.
 
 
-
-
-
 %% @private
 find_user(User) ->
     User2 = nklib_util:to_binary(User),
@@ -559,9 +570,6 @@ find_user(User) ->
                     end
             end
     end.
-
-
-
 
 
 

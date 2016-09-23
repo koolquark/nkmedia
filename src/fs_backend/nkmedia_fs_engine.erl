@@ -61,7 +61,8 @@
 	<<"TRAP">>
 ]).
 
--define(NK_ID, <<"variable_nkmedia_session_id">>).
+-define(NK_ID, <<"nkmedia_session_id">>).
+-define(NK_ID_VAR, <<"variable_nkmedia_session_id">>).
 
 -include("../../include/nkmedia.hrl").
 
@@ -387,20 +388,18 @@ update_status(NewStatus, #state{id=Id, status=OldStatus, conn=Pid}=State) ->
 % 	State;
 
 %% @private
-parse_event(<<"NkMEDIA">>, #{?NK_ID:=_CallId}, State) ->
-    ?LLOG(info, "event 'NkMEDIA'", [], State);
-    
-parse_event(<<"CHANNEL_PARK">>, #{?NK_ID:=SessId}, State) ->
-	% lager:error("EV: ~p", [Ev]),
+parse_event(<<"CHANNEL_PARK">>, #{?NK_ID_VAR:=SessId}, State) ->
 	send_event(SessId, parked, State);
 
-parse_event(<<"CHANNEL_HANGUP">>, #{?NK_ID:=SessId}, State) ->
-	send_event(SessId, stop, State);
+parse_event(<<"CHANNEL_HANGUP">>, #{?NK_ID_VAR:=SessId}, State) ->
+	send_event(SessId, hangup, State);
 
-parse_event(<<"CHANNEL_DESTROY">>, #{?NK_ID:=SessId}, State) ->
-	send_event(SessId, stop, State);
+parse_event(<<"CHANNEL_DESTROY">>, #{?NK_ID_VAR:=SessId}, State) ->
+	send_event(SessId, destroy, State);
 
-parse_event(<<"CHANNEL_BRIDGE">>, #{?NK_ID:=SessIdA}=Data, #state{id=FsId}=State) ->
+parse_event(<<"CHANNEL_BRIDGE">>, #{?NK_ID_VAR:=SessIdA}=Data, #state{id=FsId}=State) ->
+	% io:format("DATA: ~s\n", [nklib_json:encode_pretty(Data)]),
+    _CallIdA = maps:get(<<"Bridge-A-Unique-ID">>, Data),
     CallIdB = maps:get(<<"Bridge-B-Unique-ID">>, Data),
     {ok, SessIdB} = nkmedia_fs_cmd:get_var(FsId, CallIdB, ?NK_ID),
     send_event(SessIdA, {bridge, SessIdB}, State),
@@ -415,18 +414,24 @@ parse_event(<<"conference::maintenance">>, Data, State) ->
         	<<"Action">> := <<"add-member">>,
             <<"Unique-ID">> := CallId,
             <<"Member-ID">> := MemberId,
-            <<"Conference-Name">> := ConfName
+            <<"Conference-Name">> := ConfName,
+            <<"Caller-Destination-Number">> := Dest
         } ->
+        	SessId = case Dest of
+        		<<"nkmedia_sip_in_", Rest/binary>> -> Rest;
+        		_ -> CallId
+        	end,
         	Conf = #{
         		room_name => ConfName,
         		room_member_id => MemberId
         	},
-        	send_event(CallId, {mcu, Conf}, State);
+        	send_event(SessId, {mcu, Conf}, State);
         _ ->
             ok
     end;
 
 parse_event(Name, _Data, State) ->
+	% io:format("DATA: ~s\n", [nklib_json:encode_pretty(_Data)]),
     ?LLOG(warning, "unexpected event: ~s", [Name], State).
 
 

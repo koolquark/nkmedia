@@ -417,8 +417,8 @@ handle_call({publish, Room, Offer}, _From, #state{status=wait}=State) ->
 handle_call(upublish, _From, #state{status=publish}=State) -> 
     do_unpublish(State);
 
-handle_call({listen, Room, Listen, Opts}, _From, #state{status=wait}=State) -> 
-    do_listen(Listen, Room, Opts, State);
+handle_call({listen, Room, Listen}, _From, #state{status=wait}=State) -> 
+    do_listen(Listen, Room, State);
 
 handle_call({listen_switch, Listen}, _From, #state{status=listen}=State) -> 
     do_listen_switch(Listen, State);
@@ -496,7 +496,8 @@ handle_call({media_peer, Opts}, _From, #state{status=Status, wait=Wait}=State) -
             reply({error, invalid_state3}, State)
     end;
 
-handle_call(_Msg, _From, State) -> 
+handle_call(Msg, _From, #state{status=Status, wait=Wait}=State) -> 
+    ?LLOG(warning, "invalid state: ~p, ~p, ~p", [Msg, Status, Wait], State),
     reply({error, invalid_state4}, State).
     
 
@@ -928,7 +929,7 @@ do_publish_media(Opts, #state{handle_id=Handle}=State) ->
 
 
 %% @private Create session and join
-do_listen(Listen, Room, _Opts, State) ->
+do_listen(Listen, Room, State) ->
     {ok, Handle} = attach(videoroom, State),
     Feed = erlang:phash2(Listen),
     Body2 = #{

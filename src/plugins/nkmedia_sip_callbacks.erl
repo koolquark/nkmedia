@@ -383,7 +383,6 @@ nkmedia_call_reg_event(_CallId, _Link, _Event, _Call) ->
 %% @private
 nkmedia_session_reg_event(_SessId, {nkmedia_sip_in, {Handle, _Dialog}, _SipPid}, 
                           {answer, #{sdp:=SDP}}, Session) ->
-    lager:error("ANSWER IN"),
     SDP2 = nksip_sdp:parse(SDP),
     case nksip_request:reply({answer, SDP2}, Handle) of
         ok ->
