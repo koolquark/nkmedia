@@ -24,8 +24,11 @@
 %%
 %% When Verto or Janus call to the machine (e, fe, p, m1, etc.) they start a new
 %% API connection, and create the session over it. They program the event system
-%% do that answers and stops are detected in api_client_fun.
-%% If they send BYE, verto_bye and janus_by are overloaded here also.
+%% so that answers and stops are detected in api_client_fun.
+%% If they send BYE, verto_bye and janus_by are overloaded to stop the session.
+%% If the sesison stops, the stop event is detected at nkmedia_api_events and
+%% an API event is sent, and captured in api_client_fun.
+
 %% 
 %% For a listener, start_invite is used, that generates a session over the API,
 %% gets the offer over the wire a do a standard (as in nkmedia_test) invite, directly
@@ -143,39 +146,49 @@ get_client() ->
 %% Session
 
 session_stop(C, SessId) ->
-    sess_cmd(C, stop, SessId, #{}).
+    sess_cmd(C, SessId, stop, #{}).
 
 session_info(C, SessId) ->
-    sess_cmd(C, info, SessId, #{}).
+    sess_cmd(C, SessId, info, #{}).
 
 session_answer(C, SessId, Answer) ->
-    sess_cmd(C, set_answer, SessId, #{answer=>Answer}).
+    sess_cmd(C, SessId, set_answer, #{answer=>Answer}).
+
+session_candidate(C, SessId, #candidate{last=true}) ->
+    sess_cmd(C, SessId, set_candidate_end, #{});
+
+session_candidate(C, SessId, #candidate{a_line=Line, m_id=Id, m_index=Index}) ->
+    Data = #{sdpMid=>Id, sdpMLineIndex=>Index, candidate=>Line},
+    sess_cmd(C, SessId, set_candidate, Data).
 
 session_list(C) ->
     nkservice_api_client:cmd(C, media, session, list, #{}).
 
-sess_cmd(C, Cmd, SessId, Data) ->
+sess_cmd(C, SessId, Cmd, Data) ->
     Data2 = Data#{session_id=>SessId},
     nkservice_api_client:cmd(C, media, session, Cmd, Data2).
 
 
-%% Update
+%% Cmds
 
-update_media(C, SessId, Data) ->
-    update(C, SessId, media, Data).
+cmd_media(C, SessId, Data) ->
+    cmd(C, SessId, media, Data).
 
-update_layout(C, SessId, Layout) ->
+cmd_record(C, SessId, Data) ->
+    cmd(C, SessId, record, Data).
+
+cmd_layout(C, SessId, Layout) ->
     Layout2 = nklib_util:to_binary(Layout),
-    update(C, SessId, mcu_layout, #{mcu_layout=>Layout2}).
+    cmd(C, SessId, mcu_layout, #{mcu_layout=>Layout2}).
 
-update_type(C, SessId, Type, Data) ->
-    update(C, SessId, session_type, Data#{session_type=>Type}).
+cmd_type(C, SessId, Type, Data) ->
+    cmd(C, SessId, session_type, Data#{session_type=>Type}).
 
-update_listen(C, SessId, Publisher) ->
-    update(C, SessId, listen_switch, #{publisher_id=>Publisher}).
+cmd_listen(C, SessId, Publisher) ->
+    cmd(C, SessId, listen_switch, #{publisher_id=>Publisher}).
 
-update(C, SessId, Type, Data) ->
-    sess_cmd(C, update, SessId, Data#{update_type=>Type}).
+cmd(C, SessId, Cmd, Data) ->
+    sess_cmd(C, cmd, SessId, Data#{cmd=>Cmd}).
 
 
 %% Room
@@ -290,23 +303,20 @@ nkmedia_verto_login(Login, Pass, Verto) ->
 
 % @private Called when we receive INVITE from Verto
 % We start a session (registered with the API server) and
-% the verto session is registerd as {test_session, Id, Pid}
+% the verto session is registerd as {api_test_session, Id, Pid}
 % When we are called, we are registered as {nkmedia_session...}
 nkmedia_verto_invite(_SrvId, CallId, Offer, #{test_api_server:=Ws}=Verto) ->
     #{dest:=Dest} = Offer,
-    Base = #{
-        offer => Offer,
-        events_body => #{
-            verto_call_id => CallId,
-            verto_pid => pid2bin(self())
-        }
+    Events = #{
+        verto_call_id => CallId,
+        verto_pid => pid2bin(self())
     },
-    case send_call(Dest, Ws, Base) of
+    case incoming(Dest, Offer, Ws, Events, #{no_answer_trickle_ice => true}) of
         {ok, Link} ->
             {ok, Link, Verto};
         {answer, Answer, Link} ->
             {answer, Answer, Link, Verto};
-        {rejected, Reason} ->
+        {error, Reason} ->
             lager:notice("Verto invite rejected ~p", [Reason]),
             {rejected, Reason, Verto}
     end;
@@ -326,7 +336,7 @@ nkmedia_verto_answer(_CallId, _Link, _Answer, Verto) ->
 
 
 % @private Called when we receive BYE from Verto
-nkmedia_verto_bye(_CallId, {test_session, SessId, WsPid}, Verto) ->
+nkmedia_verto_bye(_CallId, {api_test_session, SessId, WsPid}, Verto) ->
     #{test_api_server:=WsPid} = Verto,
     lager:info("Verto Session BYE for ~s (~p)", [SessId, WsPid]),
     {ok, _} = session_stop(WsPid, SessId),
@@ -358,22 +368,28 @@ nkmedia_janus_registered(User, Janus) ->
 % @private Called when we receive INVITE from Janus
 nkmedia_janus_invite(_SrvId, CallId, Offer, #{test_api_server:=Ws}=Janus) ->
     #{dest:=Dest} = Offer,
-    Base = #{
-        offer => Offer,
-        events_body => #{
-            janus_call_id => CallId,
-            janus_pid => pid2bin(self())
-        }
+    Events = #{
+        janus_call_id => CallId,
+        janus_pid => pid2bin(self())
     },
-    case send_call(Dest, Ws, Base) of
+    case incoming(Dest, Offer, Ws, Events, #{no_answer_trickle_ice => true}) of
         {ok, Link} ->
             {ok, Link, Janus};
         {answer, Answer, Link} ->
             {answer, Answer, Link, Janus};
-        {rejected, Reason} ->
+        {error, Reason} ->
             lager:notice("Janus invite rejected: ~p", [Reason]),
             {rejected, Reason, Janus}
     end.
+
+
+%% @private
+nkmedia_janus_candidate(_CallId, {api_test_session, SessId, WsPid}, Candidate, Janus) ->
+    {ok, _} = session_candidate(WsPid, SessId, Candidate),
+    {ok, Janus};
+
+nkmedia_janus_candidate(_CallId, _Link, _Candidate, _Janus) ->
+    continue.
 
 
 %% @private
@@ -387,7 +403,7 @@ nkmedia_janus_answer(_CallId, _Link, _Answer, Janus) ->
 
 
 %% @private BYE from Janus
-nkmedia_janus_bye(_CallId, {test_session, SessId, WsPid}, Janus) ->
+nkmedia_janus_bye(_CallId, {api_test_session, SessId, WsPid}, Janus) ->
     lager:notice("Janus Session BYE for ~s (~p)", [SessId, WsPid]),
     {ok, _} = session_stop(WsPid, SessId),
     {ok, Janus};
@@ -413,107 +429,91 @@ nkmedia_janus_terminate(_Reason, Janus) ->
 %% ===================================================================
 
 %% @private
-send_call(<<"e">>, WsPid, Base) ->
-    Config = Base#{
-        type => echo,
-        backend => nkmedia_janus, 
-        record => false
-    },
+incoming(<<"je">>, Offer, WsPid, Events, Opts) ->
+    Config = incoming_config(nkmedia_janus, echo, Offer, Events, Opts),
     start_session(WsPid, Config);
 
-send_call(<<"fe">>, WsPid, Base) ->
-    Config = Base#{
-        type => echo,
-        backend => nkmedia_fs
-    },
+incoming(<<"fe">>, Offer, WsPid, Events, Opts) ->
+    Config = incoming_config(nkmedia_kms, echo, Offer, Events, Opts),
     start_session(WsPid, Config);
 
-send_call(<<"ke">>, WsPid, Base) ->
-    Config = Base#{
-        type => echo,
-        backend => nkmedia_kms
-    },
+incoming(<<"ke">>, Offer, WsPid, Events, Opts) ->
+    Config = incoming_config(nkmedia_kms, echo, Offer, Events, Opts),
     start_session(WsPid, Config);
 
-send_call(<<"m1">>, WsPid, Base) ->
-    Config = Base#{type=>mcu, room_id=>"mcu1"},
+incoming(<<"m1">>, Offer, WsPid, Events, Opts) ->
+    Config = incoming_config(nkmedia_kms, mcu, Offer, Events, Opts#{room_id=>m1}),
     start_session(WsPid, Config);
 
-send_call(<<"m2">>, WsPid, Base) ->
-    Config = Base#{type=>mcu, room_id=>"mcu2"},
+incoming(<<"m2">>, Offer, WsPid, Events, Opts) ->
+    Config = incoming_config(nkmedia_kms, mcu, Offer, Events, Opts#{room_id=>m2}),
     start_session(WsPid, Config);
 
-send_call(<<"p">>, WsPid, Base) ->
-    Config = Base#{
-        type => publish,
-        room_audio_codec => pcma,
-        room_video_codec => vp9,
-        room_bitrate => 100000
-    },
-    start_session(WsPid, Config);
+% incoming(<<"d", Num/binary>>, WsPid, Base) ->
+%     % We share the same session, with both caller and callee registered to it
+%     start_invite(WsPid, Num, Base#{type=>p2p});
 
-send_call(<<"p2">>, WsPid, Base) ->
-    nkmedia_room:start(test, #{room_id=><<"sfu">>}),
-    Config = Base#{type=>publish, room_id=><<"sfu">>},
-    start_session(WsPid, Config);
+% incoming(<<"j", Num/binary>>, WsPid, Base) ->
+%     start_invite(WsPid, Num, Base#{type=>proxy});
 
-send_call(<<"d", Num/binary>>, WsPid, Base) ->
-    % We share the same session, with both caller and callee registered to it
-    start_invite(WsPid, Num, Base#{type=>p2p});
+% incoming(<<"f", Num/binary>>, WsPid, Base) ->
+%     ConfigA = Base#{
+%         type => park,
+%         park_after_bridge => true
+%     },
+%     {answer, AnswerA, SessLinkA} = start_session(WsPid, ConfigA),
+%     {api_test_session, SessIdA, WsPid} = SessLinkA,
+%     ConfigB = #{type=>call, master_id=>SessIdA, park_after_bridge=>false},
+%     spawn(
+%         fun() -> 
+%             case start_invite(WsPid, Num, ConfigB) of
+%                 {ok, _SessLinkB} ->
+%                     ok;
+%                 {rejected, Error} ->
+%                     lager:notice("Error in start_invite: ~p", [Error]),
+%                     nkmedia_session:stop(SessIdA)
+%             end
+%         end),
+%     {answer, AnswerA, SessLinkA};
 
-send_call(<<"j", Num/binary>>, WsPid, Base) ->
-    start_invite(WsPid, Num, Base#{type=>proxy});
-
-send_call(<<"f", Num/binary>>, WsPid, Base) ->
-    ConfigA = Base#{
-        type => park,
-        park_after_bridge => true
-    },
-    {answer, AnswerA, SessLinkA} = start_session(WsPid, ConfigA),
-    {test_session, SessIdA, WsPid} = SessLinkA,
-    ConfigB = #{type=>call, master_id=>SessIdA, park_after_bridge=>false},
-    spawn(
-        fun() -> 
-            case start_invite(WsPid, Num, ConfigB) of
-                {ok, _SessLinkB} ->
-                    ok;
-                {rejected, Error} ->
-                    lager:notice("Error in start_invite: ~p", [Error]),
-                    nkmedia_session:stop(SessIdA)
-            end
-        end),
-    {answer, AnswerA, SessLinkA};
-
-send_call(_, _WsPid, _Base) ->
-    {rejected, no_destination}.
+incoming(_, _Offer, _WsPid, _Events, _Opts) ->
+    {error, no_destination}.
 
 
-start_session(WsPid, Data) when is_pid(WsPid) ->
-    case nkservice_api_client:cmd(WsPid, media, session, start, Data) of
+
+%% @private
+incoming_config(Backend, Type, Offer, Events, Opts) ->
+    Opts#{
+        backend => Backend, 
+        type => Type, 
+        offer => Offer, 
+        events_body => Events
+    }.
+
+
+start_session(WsPid, Config) when is_pid(WsPid) ->
+    case nkservice_api_client:cmd(WsPid, media, session, start, Config) of
         {ok, #{<<"session_id">>:=SessId}=Res} -> 
             case Res of
                 #{<<"answer">>:=#{<<"sdp">>:=SDP}} ->
-                    {answer, #{sdp=>SDP}, {test_session, SessId, WsPid}};
+
+                    {answer, #{sdp=>SDP}, {api_test_session, SessId, WsPid}};
                 #{<<"offer">>:=#{<<"sdp">>:=SDP}} ->
-                    {offer, #{sdp=>SDP}, {test_session, SessId, WsPid}};
-                _ ->
-                    {offer, maps:get(offer, Data), {test_session, SessId, WsPid}}
+                    {offer, #{sdp=>SDP}, {api_test_session, SessId, WsPid}};
+                O ->
+                    lager:error("ANS: ~p", [O]),
+                    {ok, {api_test_session, SessId, WsPid}}
             end;
         {error, {_Code, Txt}} -> 
             {error, Txt}
     end.
-
-% start_session(User, Data) ->
-%     WsPid = connect(User),
-%     true = is_pid(WsPid),
-%     start_session(WsPid, Data).
 
 
 %% @private
 start_invite(WsPid, Num, Config) ->
     Dest = nkmedia_test:find_user(Num),
     {offer, Offer, SessLink} = start_session(WsPid, Config),
-    {test_session, SessId, _WsPid} = SessLink,
+    {api_test_session, SessId, _WsPid} = SessLink,
     {ok, SessPid} = nkmedia_session:find(SessId), 
     case Dest of 
         {webrtc, {nkmedia_verto, VertoPid}} ->
@@ -536,6 +536,7 @@ start_invite(WsPid, Num, Config) ->
 
 %% @private
 api_client_fun(#api_req{class = <<"core">>, cmd = <<"event">>, data = Data}, UserData) ->
+    lager:error("API FUN"),
     Class = maps:get(<<"class">>, Data),
     Sub = maps:get(<<"subclass">>, Data, <<"*">>),
     Type = maps:get(<<"type">>, Data, <<"*">>),
@@ -582,7 +583,7 @@ api_client_fun(#api_req{class = <<"core">>, cmd = <<"event">>, data = Data}, Use
     {ok, #{}, UserData};
 
 api_client_fun(_Req, UserData) ->
-    lager:notice("TEST CLIENT req: ~p", [lager:pr(_Req, ?MODULE)]),
+    lager:error("TEST CLIENT req: ~p", [lager:pr(_Req, ?MODULE)]),
     {error, not_implemented, UserData}.
 
 

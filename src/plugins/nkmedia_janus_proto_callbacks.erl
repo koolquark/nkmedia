@@ -25,7 +25,7 @@
          plugin_start/2, plugin_stop/2]).
 -export([nkmedia_janus_init/2, nkmedia_janus_registered/2,
          nkmedia_janus_invite/4, nkmedia_janus_answer/4, nkmedia_janus_bye/3,
-         nkmedia_janus_candidate/2,
+         nkmedia_janus_candidate/4,
          nkmedia_janus_start/3, nkmedia_janus_terminate/2,
          nkmedia_janus_handle_call/3, nkmedia_janus_handle_cast/2,
          nkmedia_janus_handle_info/2]).
@@ -175,14 +175,14 @@ nkmedia_janus_start(SessId, Answer, Janus) ->
 
 
 %% @doc Called when an SDP candidate is received
--spec nkmedia_janus_candidate(nkmedia:candidate(), janus()) ->
+-spec nkmedia_janus_candidate(call_id(), nklib:link(), nkmedia:candidate(), janus()) ->
     {ok, janus()}.
 
-nkmedia_janus_candidate(Candidate, #{link:={nkmedia_session, SessId, _Pid}}=Janus) ->
+nkmedia_janus_candidate(_CallId, {nkmedia_session, SessId, _Pid}, Candidate, Janus) ->
     ok = nkmedia_session:candidate(SessId, Candidate),
     {ok, Janus};
 
-nkmedia_janus_candidate(_Candidate, Janus) ->
+nkmedia_janus_candidate(_CallId, _Link, _Candidate, Janus) ->
     lager:info("Janus Proto ignoring ICE Candidate (no session)"),
     {ok, Janus}.
 

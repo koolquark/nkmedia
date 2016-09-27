@@ -103,7 +103,7 @@ nkmedia_room_terminate(_Reason, Room) ->
     {ok, room()} | continue().
 
 nkmedia_room_event(RoomId, Event, Room) ->
-    nkmedia_room_api:event(RoomId, Event, Room).
+    nkmedia_room_api_events:event(RoomId, Event, Room).
 
 
 %% @doc Called when the status of the room changes, for each registered
@@ -174,7 +174,7 @@ api_cmd(_Req, _State) ->
 %% @privat
 api_syntax(#api_req{class = <<"media">>, subclass = <<"room">>, cmd=Cmd}, 
            Syntax, Defaults, Mandatory) ->
-    nkmedia_room_api:syntax(Cmd, Syntax, Defaults, Mandatory);
+    nkmedia_room_api_syntax:syntax(Cmd, Syntax, Defaults, Mandatory);
     
 api_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
     continue.

@@ -22,7 +22,7 @@
 
 -module(nkmedia_api_syntax).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([syntax/5]).
+-export([syntax/5, session_fields/0, offer/0, answer/0]).
 
 
 
@@ -30,20 +30,72 @@
 %% Syntax
 %% ===================================================================
 
+
+%% @private
+session_fields() ->
+	[
+		session_id, 
+		offer,
+		answer,
+		no_offer_trickle_ice,
+		no_answer_trickle_ice,
+		ice_timeout,
+		sdp_type,
+		backend,
+		master_id,
+		set_master_answer,
+		stop_after_peer,
+		wait_timeout,
+		ready_timeout,
+		user_id,
+		user_session,
+		backend_role,
+		type,
+		type_ext,
+		master_peer,
+		slave_peer,
+
+		room_id,
+		publisher_id,
+		mute_audio,
+        mute_video,
+        mute_data,
+        bitrate,
+        record,
+        record_uri,
+        player_uri
+    ].
+
+
 %% @private
 syntax(<<"session">>, <<"start">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
-			session_id => binary,
 			type => atom,							%% p2p, proxy...
+			session_id => binary,
 			offer => offer(),
-			master_id => binary,
+        	no_offer_trickle_ice => atom,
+        	no_answer_trickle_ice => atom,
+        	ice_timeout => {integer, 100, 30000},
             sdp_type => {enum, [webrtc, rtp]},		%% For generated SDP only
+			backend => atom,						%% nkmedia_janus, etc.
+			master_id => binary,
+			set_master_answer => boolean,
+			stop_after_peer => boolean,
 			subscribe => boolean,
 			events_body => any,
 			wait_timeout => {integer, 1, none},
 			ready_timeout => {integer, 1, none},
-			backend => atom							%% nkmedia_janus, etc.
+
+	        room_id => binary,
+	        publisher_id => binary,
+			mute_audio => boolean,
+        	mute_video => boolean,
+        	mute_data => boolean,
+        	bitrate => integer, 
+        	record => boolean,
+        	record_uri => binary,
+        	player_uri => binary
 		},
 		Defaults,
 		[type|Mandatory]
@@ -51,11 +103,7 @@ syntax(<<"session">>, <<"start">>, Syntax, Defaults, Mandatory) ->
 
 syntax(<<"session">>, <<"stop">>, Syntax, Defaults, Mandatory) ->
 	{
-		Syntax#{
-			session_id => binary,
-			code => integer,
-			reason => binary
-		},
+		Syntax#{session_id => binary},
 		Defaults,
 		[session_id|Mandatory]
 	};
@@ -78,8 +126,8 @@ syntax(<<"session">>, <<"set_candidate">>, Syntax, Defaults, Mandatory) ->
 			sdpMLineIndex => integer,
 			candidate => binary
 		},
-		Defaults,
-		[session_id, sdpMid, sdpMLineIndex, candidate|Mandatory]
+		Defaults#{sdpMid=><<>>},
+		[session_id, sdpMLineIndex, candidate|Mandatory]
 	};
 
 syntax(<<"session">>, <<"set_candidate_end">>, Syntax, Defaults, Mandatory) ->
@@ -92,14 +140,20 @@ syntax(<<"session">>, <<"set_candidate_end">>, Syntax, Defaults, Mandatory) ->
 		[session_id|Mandatory]
 	};
 
-syntax(<<"session">>, <<"update">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"session">>, <<"cmd">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
-			update_type => atom
+			cmd => atom,
+			mute_audio => boolean,
+			mute_video => boolean,
+			mute_data => boolean,
+			bitrate => integer,
+			operation => atom,
+			position => integer
 		},
 		Defaults,
-		[session_id, update_type|Mandatory]
+		[session_id, cmd|Mandatory]
 	};
 
 syntax(<<"session">>, <<"info">>, Syntax, Defaults, Mandatory) ->
@@ -114,62 +168,6 @@ syntax(<<"session">>, <<"list">>, Syntax, Defaults, Mandatory) ->
 		Syntax,
 		Defaults,
 		Mandatory
-	};
-
-syntax(<<"call">>, <<"start">>, Syntax, Defaults, Mandatory) ->
-	{
-		Syntax#{
-			call_id => binary,
-			callee => binary,
-			type => atom,
-			offer => offer(),
-			meta => any,
-			session_id => binary,
-			ring_time => {integer, 1, none},
-			events_body => any
-		},
-		Defaults,
-		[callee|Mandatory]
-	};
-
-syntax(<<"call">>, <<"ringing">>, Syntax, Defaults, Mandatory) ->
-	{
-		Syntax#{
-			call_id => binary,
-			answer => answer()
-		},
-		Defaults,
-		[call_id|Mandatory]
-	};
-
-
-syntax(<<"call">>, <<"answered">>, Syntax, Defaults, Mandatory) ->
-	{
-		Syntax#{
-			call_id => binary,
-			answer => answer(),
-			subscribe => boolean,
-			events_body => any
-		},
-		Defaults,
-		[call_id|Mandatory]
-	};
-
-syntax(<<"call">>, <<"rejected">>, Syntax, Defaults, Mandatory) ->
-	{
-		Syntax#{call_id => binary},
-		Defaults,
-		[call_id|Mandatory]
-	};
-
-syntax(<<"call">>, <<"hangup">>, Syntax, Defaults, Mandatory) ->
-	{
-		Syntax#{
-			call_id => binary,
-			reason => binary
-		},
-		Defaults,
-		[call_id|Mandatory]
 	};
 
 
@@ -196,5 +194,9 @@ answer() ->
 		sdp => binary,
 		sdp_type => {enum, [rtp, webrtc]}
      }.
+
+
+
+
 
 

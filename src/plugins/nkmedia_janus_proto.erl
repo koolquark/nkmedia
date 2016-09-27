@@ -446,28 +446,35 @@ process_client_req(keepalive, Msg, NkPort, #state{session_id=SessionId}=State) -
     send(Resp, NkPort, State);
 
 process_client_req(trickle, Msg, NkPort, #state{session_id=SessionId}=State) ->
+    #state{call_id=CallId} = State,
     #{
         <<"candidate">> := CandidateGroup, 
         <<"session_id">> := SessionId, 
         <<"handle_id">> := _Handle
     } = Msg,
-    Type = case State of
-        #state{janus=#{role:=caller}} -> offer;
-        #state{janus=#{role:=callee}} -> answer
-    end,
+    % Type = case State of
+    %     #state{janus=#{role:=caller}} -> offer;
+    %     #state{janus=#{role:=callee}} -> answer
+    % end,
     Candidate = case CandidateGroup of
         #{
             <<"sdpMid">> := MId,
             <<"sdpMLineIndex">> := MIndex,
             <<"candidate">> := ALine
         } ->
-            #candidate{m_id=MId, m_index=MIndex, a_line=ALine, type=Type};
+            #candidate{m_id=MId, m_index=MIndex, a_line=ALine};
         #{
             <<"completed">> := true
         } ->
-            #candidate{last=true, type=Type}
+            #candidate{last=true}
     end,
-    {ok, State2} = handle(nkmedia_janus_candidate, [Candidate], State),
+    case links_get(CallId, State) of
+        {ok, Link} ->
+            {ok, State2} = 
+                handle(nkmedia_janus_candidate, [CallId, Link, Candidate], State);
+        not_found ->
+            State2 = error(not_found_on_accept)
+    end,
     Resp = make_resp(#{janus=>ack, session_id=>SessionId}, Msg),
     send(Resp, NkPort, State2);
 

@@ -650,7 +650,6 @@ set_media(Opts, #{nkmedia_janus_pid:=Pid}=Session) ->
         none ->
             {ok, Session};
         {Data, Session2} ->
-            lager:error("MEDIA: ~p", [Data]),
             case nkmedia_janus_op:media(Pid, Data) of
                 ok ->
                     {ok, Session2};

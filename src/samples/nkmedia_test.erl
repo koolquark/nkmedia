@@ -238,6 +238,7 @@ invite_listen(Room, Pos, Dest) ->
     start_invite(Dest, listen, Config).
 
 
+
 cmd(SessId, Cmd, Opts) ->
     nkmedia_session:cmd(SessId, Cmd, Opts).
 
@@ -259,6 +260,35 @@ cmd_listen(SessId, Pos) ->
     {ok, #{publishers:=Pubs}} = nkmedia_room:get_room(Room),
     Pub = lists:nth(Pos, maps:keys(Pubs)),
     nkmedia_session:cmd(SessId, listen_switch, #{publisher_id=>Pub}).
+
+
+play_to_mcu() ->
+    ConfigA = #{backend=>nkmedia_kms, sdp_type=>rtp, publisher_id=><<"b3ff402a-3d7f-c697-78af-38c9862f00d9">>},
+    {ok, SessIdA, _SessLinkA} = start_session(listen, ConfigA),
+    {ok, Offer} = nkmedia_session:get_offer(SessIdA),
+    ConfigB = #{
+        backend => nkmedia_fs, 
+        offer => Offer, 
+        master_id => SessIdA, 
+        set_master_answer => true,
+        room_id => m1
+    },
+    {ok, _SessIdB, _SessLinkB} = start_session(mcu, ConfigB).
+
+
+
+play_to_janus() ->
+    ConfigA = #{backend=>nkmedia_kms, no_offer_trickle_ice=>true},
+    {ok, SessIdA, _SessLinkA} = start_session(play, ConfigA),
+    {ok, Offer} = nkmedia_session:get_offer(SessIdA),
+    ConfigB = #{
+        backend => nkmedia_janus, 
+        offer => Offer, 
+        master_id => SessIdA, 
+        set_master_answer => true,
+        room_id => sfu
+    },
+    {ok, _SessIdB, _SessLinkB} = start_session(publish, ConfigB).
 
 
 
@@ -363,6 +393,12 @@ nkmedia_sip_invite(_SrvId, <<"j", Dest/binary>>, Offer, SipLink, _Req, _Call) ->
 nkmedia_sip_invite(_SrvId, <<"fe">>, Offer, SipLink, _Req, _Call) ->
     ConfigA = incoming_config(nkmedia_fs, Offer, SipLink, #{}),
     {ok, _SessId, SessLink} = start_session(mcu, ConfigA#{room_id=>m1}),
+    {ok, SessLink};
+
+% Version using KMS
+nkmedia_sip_invite(_SrvId, <<"ke">>, Offer, SipLink, _Req, _Call) ->
+    ConfigA = incoming_config(nkmedia_kms, Offer, SipLink, #{}),
+    {ok, _SessId, SessLink} = start_session(echo, ConfigA),
     {ok, SessLink};
 
 nkmedia_sip_invite(_SrvId, _Dest, _Offer, _SipLink, _Req, _Call) ->
@@ -600,119 +636,5 @@ speed(_Acc, 0) ->
 speed(Acc, Pos) ->
     #{a:=1, b:=2, c:=3, d:=4} = maps:merge(Acc, #{a=>1, b=>2}),
     speed(Acc, Pos-1).
-
-
-
-
-
-
-% % Version that generates a Janus proxy before going on
-% nkmedia_sip_invite(_SrvId, Dest, Offer, SipLink, _Req, _Call) ->
-%     % {Codecs, SDP2} = nksip_sdp_util:extract_codecs(SDP),
-%     % Codecs2 = nksip_sdp_util:remove_codec(video, h264, Codecs),
-%     % SDP3 = nksip_sdp:unparse(nksip_sdp_util:insert_codecs(Codecs2, SDP2)),
-
-%      Base = #{
-%         offer => Offer,
-%         register => SipLink,
-%         backend => nkmedia_kms
-%     },
-%     % We create a session registered with SipLink, so will detect the
-%     % answer and stops in nkmedia_sip_callbacks:nkmedia_session_reg_event().
-%     % We return the session link, so that if we receive a BYE, 
-%     % nkmedia_sip_callbacks:sip_bye() will call nkmedia_session:stop()
-%     case incoming(Dest, Base) of
-%         {ok, SessId, SessPid} ->
-%             {ok, {nkmedia_session, SessId, SessPid}};
-%         {error, Error} ->
-%             {rejected, Error}
-%     end.
-    
-% %     nkmedia_sip:register_incoming(Req, {nkmedia_session, SessId}),
-
-
-% % Version that generates a Janus proxy before going on
-% nkmedia_sip_invite(_SrvId, Dest, Offer, SipLink, _Req, _Call) ->
-%     Base = #{
-%         offer => Offer, 
-%         register => SipLink, 
-%         backend => nkmedia_janus
-%     },
-%     {Base2, SessLink} = insert_janus_proxy(Base),
-%     case incoming(Dest, Base2) of
-%         {ok, _, _} ->
-%             {ok, SessLink};
-%         {error, Error} ->
-%             {rejected, Error}
-%     end.
-
-
-
-% insert_janus_proxy(Base) ->
-%     Base2 = Base#{backend => nkmedia_janus},
-%     {ok, SessId, SessPid} = start_session(proxy, Base#{}),
-%     {ok, Offer2} = nkmedia_session:cmd(SessId, get_proxy_offer, #{}),
-%     Base3 = maps:remove(register, Base2),
-%     Base4 = Base3#{offer=>Offer2, master_id=>SessId, set_master_answer=>true},
-%     {Base4, {nkmedia_session, SessId, SessPid}}.
-
-
-
-
-
-    % {nkmedia_session, SessId, _} = Link2,
-    % nkmedia_sip:register_incoming(Req, {nkmedia_session, SessId}),
-    % % Since we are registering as {nkmedia_session, ..}, the second session
-    % % will be linked with the first, and will send answer back
-    % % We return {ok, Link} or {rejected, Reason}
-    % % nkmedia_sip will store that Link
-    % case incoming(Dest, #{offer=>Offer2, peer_id=>SessId}) of
-    %     {ok, {nkmedia_session, SessId2, _SessPid2}} ->
-    %         {ok, {nkmedia_session, SessId2}};
-    %     {rejected, Rejected} ->
-    %         {rejected, Rejected}
-    % end.
-
-
-
-
-
-
-
-% % Version that go directly to FS
-% nkmedia_sip_invite(_SrvId, {sip, Dest, _}, Offer, Req, _Call) ->
-%     {ok, Handle} = nksip_request:get_handle(Req),
-%     {ok, Dialog} = nksip_dialog:get_handle(Req),
-%     Link = {nkmedia_sip, {Handle, Dialog}, self()},
-%     incoming(Offer#{dest=>Dest}, Link).
-
-
-% % Version that calls Verto Directly
-% nkmedia_sip_invite(SrvId, {sip, Dest, _}, Offer, Req, _Call) ->
-%     case find_user(Dest) of
-%         {webrtc, WebRTC} ->
-%             {ok, Handle} = nksip_request:get_handle(Req),
-%             {ok, Dialog} = nksip_dialog:get_handle(Req),
-%             Config = #{
-%                 offer => Offer,
-%                 register => {nkmedia_sip, {Handle, Dialog}, self()}
-%             },
-%             {offer, Offer2, Link2} = start_session(proxy, Config),
-%             {nkmedia_session, SessId2, _} = Link2,
-%             case WebRTC of
-%                 {nkmedia_verto, VertoPid} ->
-%                     % Verto will send the answer or hangup to the session
-%                     ok = nkmedia_verto:invite(VertoPid, SessId, Offer2, 
-%                                               {nkmedia_session, SessId, SessPid}),
-%                     {ok, _} = 
-%                         nkmedia_session:register(SessId, {nkmedia_verto, Pid}),
-%                     {ok, Link2};
-%                 {error, Error} ->
-%                     {rejected, Error}
-%             end;
-%         not_found ->
-%             {rejected, user_not_found}
-%     end.
-
 
 

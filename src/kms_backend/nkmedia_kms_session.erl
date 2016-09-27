@@ -252,7 +252,7 @@ handle_call({bridge, PeerSessId, PeerProxy, Opts},
     ok = connect_to_proxy(Opts, Session),
     case connect_from_peer(PeerProxy, Session) of
         {ok, Session2} ->
-            ?LLOG(warning, "remote connect ~s to us", [PeerProxy], Session),
+            ?LLOG(info, "remote connect ~s to us", [PeerProxy], Session),
             update_type(bridge, #{peer_id=>PeerSessId}),
             {reply, {ok, Proxy}, Session2};
         {error, Error} ->
@@ -405,7 +405,7 @@ do_type(bridge, #{peer_id:=PeerId}=Opts, Session) ->
     case session_call(PeerId, {bridge, SessId, Proxy, Opts}) of
         {ok, PeerProxy} ->
             ok = connect_to_proxy(Opts, Session2),
-            ?LLOG(warning, "connecting from ~s", [PeerProxy], Session),
+            ?LLOG(info, "connecting from ~s", [PeerProxy], Session),
             case connect_from_peer(PeerProxy, Session2) of
                 {ok, Session3} ->
                     {ok, #{peer_id=>PeerId}, Session3};
