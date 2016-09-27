@@ -185,17 +185,7 @@ answer(proxy, offeree, Answer, #{nkmedia_janus_pid:=Pid}=Session) ->
                             {error, Error, Session2}
                     end;
                 _ ->
-                    case Session of
-                        #{record:=true} ->
-                            case set_media(Session, Session) of
-                                {ok, Session3} ->
-                                    {ok, Answer2, Session3};
-                                {error, Error, Session3} ->
-                                    {error, Error, Session3}
-                            end;
-                        _ ->
-                            {ok, Answer2, Session}
-                    end
+                    {ok, Answer2, Session}
             end;
         {error, Error} ->
             {error, Error, Session}
@@ -269,6 +259,26 @@ cmd(get_proxy_offer, _, Session) ->
             {ok, #{janus_id=>Id, offer=>Offer}, Session};
         _ ->
             {error, invalid_session, Session}
+    end;
+
+cmd(record, Opts, Session) ->
+    case maps:get(operation, Opts, start) of
+        start ->
+            case start_record(Opts, Session) of
+                {ok, Session2} ->
+                    {ok, #{}, Session2};
+                {error, Error} ->
+                    {error, Error, Session}
+            end;
+        stop ->
+            case stop_record(Session) of
+                ok ->
+                    {ok, #{}, Session};
+                {error, Error} ->
+                    {error, Error, Session}
+            end;
+        _ ->
+            {error, invalid_parameters, Session}
     end;
 
 cmd(_Update, _Opts, _Session) ->
@@ -592,6 +602,43 @@ update_type(Type, TypeExt) ->
 
 
 %% @private
+start_record(#{record_uri:=<<"file://", File/binary>>}, Session) ->
+    Data = #{record=>true, filename=>File},
+    case Session of
+        #{type:=proxy, backend_role:=offerer, master_peer:=MasterId} ->
+            case session_call(MasterId, {set_media_proxy, Data}) of
+                ok ->
+                    {ok, Session};
+                {error, Error} ->
+                    {error, Error}
+            end;
+        #{nkmedia_janus_pid:=Pid} ->
+            case nkmedia_janus_op:media(Pid, Data) of
+                ok ->
+                    {ok, Session};
+                {error, Error} ->
+                    {error, Error}
+            end
+    end;
+    
+start_record(#{uri:=Uri}=Opts, Session) ->
+    start_record(Opts#{record_uri=>Uri}, Session);
+
+start_record(Opts, Session) ->
+    {Name1, Session2} = nkmedia_session:get_session_file(Session),
+    Name2 = filename:join(<<"/tmp/record">>, Name1),
+    start_record(Opts#{record_uri=><<"file://", Name2/binary>>}, Session2).
+
+
+%% @private
+stop_record(#{type:=proxy, backend_role:=offerer, master_peer:=MasterId}) ->
+   session_call(MasterId, {set_media_proxy, #{record=>false}});
+
+stop_record(#{nkmedia_janus_pid:=Pid}) ->
+    nkmedia_janus_op:media(Pid, #{record=>false}).
+
+
+%% @private
 set_default_media(Session) ->
     Opts = maps:merge(?DEFAULT_MEDIA, Session),
     set_media(Opts, Session).
@@ -641,14 +688,10 @@ set_media_proxy(Opts, #{master_peer:=MasterId}=Session) ->
 
 %% @private
 get_media(Opts, Session) ->
-    Keys = [mute_audio, mute_video, mute_data, bitrate, record],
+    Keys = [mute_audio, mute_video, mute_data, bitrate],
     case maps:with(Keys, Opts) of
         Data when map_size(Data) == 0 ->
             none;
-        #{record:=true}=Data ->
-            {Name, Session2} = nkmedia_session:get_session_file(Session),
-            File = filename:join(<<"/tmp/record">>, Name),
-            {Data#{filename => File}, Session2};
         Data ->
             {Data, Session}
     end.
