@@ -222,7 +222,7 @@ a() ->
 
 
 invite(Dest, Type, Opts) ->
-    Opts2 = maps:merge(#{backend => nkmedia_fs}, Opts),
+    Opts2 = maps:merge(#{backend => nkmedia_kms}, Opts),
     start_invite(Dest, Type, Opts2).
 
 
@@ -238,20 +238,23 @@ invite_listen(Room, Pos, Dest) ->
     start_invite(Dest, listen, Config).
 
 
-update_media(SessId, Media) ->
+cmd(SessId, Cmd, Opts) ->
+    nkmedia_session:cmd(SessId, Cmd, Opts).
+
+cmd_media(SessId, Media) ->
     nkmedia_session:cmd(SessId, media, Media).
 
 
-update_type(SessId, Type, Opts) ->
+cmd_type(SessId, Type, Opts) ->
     nkmedia_session:cmd(SessId, session_type, Opts#{session_type=>Type}).
 
 
-update_layout(SessId, Layout) ->
+cmd_layout(SessId, Layout) ->
     Layout2 = nklib_util:to_binary(Layout),
     nkmedia_session:cmd(SessId, mcu_layout, #{mcu_layout=>Layout2}).
 
 
-update_listen(SessId, Pos) ->
+cmd_listen(SessId, Pos) ->
     {ok, listen, #{room_id:=Room}, _} = nkmedia_session:get_type(SessId),
     {ok, #{publishers:=Pubs}} = nkmedia_room:get_room(Room),
     Pub = lists:nth(Pos, maps:keys(Pubs)),
@@ -429,14 +432,14 @@ incoming(<<"jp2">>, Offer, Reg, Opts) ->
     },
     start_session(publish, Config2);
 
-incoming(<<"pk1">>, Offer, Reg, Opts) ->
+incoming(<<"kp1">>, Offer, Reg, Opts) ->
     nkmedia_room:start(test, #{room_id=>sfu, backend=>nkmedia_kms}),
     Config = incoming_config(nkmedia_kms, Offer, Reg, Opts),
     start_session(publish, Config#{room_id=>sfu});
 
-incoming(<<"play">>, Offer, Reg, Opts) ->
+incoming(<<"kp2">>, Offer, Reg, Opts) ->
     Config = incoming_config(nkmedia_kms, Offer, Reg, Opts),
-    start_session(play, Config);
+    start_session(publish, Config);
 
 incoming(<<"d", Num/binary>>, Offer, Reg, Opts) ->
     ConfigA = incoming_config(p2p, Offer, Reg, Opts),
@@ -457,18 +460,25 @@ incoming(<<"j", Num/binary>>, Offer, Reg, Opts) ->
     {ok, SessId, SessLink};
 
 incoming(<<"f", Num/binary>>, Offer, Reg, Opts) ->
+    % You can use stop_after_peer=>true on A and/or B legs
     ConfigA = incoming_config(nkmedia_fs, Offer, Reg, Opts),
-    {ok, SessId, SessLink} = start_session(park, ConfigA#{stop_after_peer=>true}),
+    {ok, SessId, SessLink} = start_session(park, ConfigA#{}),
     ConfigB = slave_config(nkmedia_fs, SessId, Opts),
-    ok = start_invite(Num, bridge, ConfigB#{stop_after_peer=>true}),
+    ok = start_invite(Num, bridge, ConfigB),
     {ok, SessId, SessLink};
 
 incoming(<<"k", Num/binary>>, Offer, Reg, Opts) ->
+    % You can use stop_after_peer=>true on A and/or B legs
+    % Muting audio or here has no effect on A, but will be copied from B
     ConfigA = incoming_config(nkmedia_kms, Offer, Reg, Opts),
     {ok, SessId, SessLink} = start_session(park, ConfigA),
     ConfigB = slave_config(nkmedia_kms, SessId, Opts),
-    ok = start_invite(Num, bridge, ConfigB),
+    ok = start_invite(Num, bridge, ConfigB#{mute_video=>true}),
     {ok, SessId, SessLink};
+
+incoming(<<"play">>, Offer, Reg, Opts) ->
+    Config = incoming_config(nkmedia_kms, Offer, Reg, Opts),
+    start_session(play, Config);
 
 incoming(<<"proxy-test">>, Offer, Reg, Opts) ->
     ConfigA1 = incoming_config(nkmedia_janus, Offer, Reg, Opts),

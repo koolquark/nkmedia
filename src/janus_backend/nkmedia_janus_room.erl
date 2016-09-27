@@ -110,7 +110,7 @@ terminate(_Reason, Room) ->
     {ok, room()} | {stop, nkservice:error(), room()}.
 
 tick(RoomId, #{nkmedia_janus_id:=JanusId}=Room) ->
-    case length(get_publishers(Room)) of
+    case length(nkmedia_room:get_role(publisher, Room)) of
         0 ->
             nkmedia_room:stop(self(), timeout);
         _ ->
@@ -131,7 +131,7 @@ tick(RoomId, #{nkmedia_janus_id:=JanusId}=Room) ->
     {noreply, room()}.
 
 handle_cast({participants, Num}, Room) ->
-    case length(get_publishers(Room)) of
+    case length(nkmedia_room:get_role(publisher, Room)) of
         Num -> 
             ok;
         Other ->
@@ -199,9 +199,4 @@ destroy_room(#{nkmedia_janus_id:=JanusId, room_id:=RoomId}) ->
             {error, Error}
     end.
 
-
-%% @private
-get_publishers(#{members:=Members}) ->
-    [Id ||  
-        {Id, Info} <- maps:to_list(Members), publisher==maps:get(role, Info, other)].
 

@@ -26,6 +26,7 @@
 -export([start/2, stop/1, stop/2, get_room/1, started_member/3, stopped_member/2]).
 -export([send_event/2, register/2, unregister/2, get_all/0]).
 -export([find/1, do_call/2, do_call/3, do_cast/2]).
+-export([get_role/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
 -export_type([id/0, room/0, event/0]).
@@ -195,6 +196,7 @@ get_all() ->
         {{Id, Backend}, Pid}<- nklib_proc:values(?MODULE)].
 
 
+
 % ===================================================================
 %% gen_server behaviour
 %% ===================================================================
@@ -334,6 +336,12 @@ terminate(Reason, State) ->
 % ===================================================================
 %% Internal
 %% ===================================================================
+
+
+%% @private
+get_role(Role, #{members:=Members}) ->
+    [Id ||  
+        {Id, Info} <- maps:to_list(Members), {ok, Role}==maps:find(role, Info)].
 
 %% @private
 do_started_member(SessId, Info, #state{room=#{members:=Members}=Room}=State) ->

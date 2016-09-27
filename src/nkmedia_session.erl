@@ -45,7 +45,7 @@
 -include_lib("nkservice/include/nkservice.hrl").
 -include_lib("nksip/include/nksip.hrl").
 
--define(MAX_ICE_TIME, 5000).
+-define(MAX_ICE_TIME, 2000).
 -define(MAX_CALL_TIME, 5000).
 
 -define(DEBUG_MEDIA, true).
@@ -912,7 +912,7 @@ do_backend_candidate(Candidate, #state{backend_candidates=last}=State) ->
 do_backend_candidate(#candidate{last=true}, #state{backend_role=offerer}=State) ->
     % This candidate is for an offer
     #state{backend_candidates=Candidates} = State,
-    ?LLOG(notice, "last backend offer candidate received", [], State),
+    ?LLOG(info, "last backend offer candidate received", [], State),
     candidate_offer(Candidates, State#state{backend_candidates=last});
 
 do_backend_candidate(#candidate{last=true}, #state{backend_role=offeree}=State) ->
@@ -930,7 +930,7 @@ do_backend_candidate(Candidate, #state{backend_candidates=Candidates}=State) ->
 %% @private
 candidate_offer(Candidates, #state{session=Session}=State) ->
     #{offer:=#{sdp:=SDP1}=Offer} = Session,
-    SDP2 = nksip_sdp_util:add_candidates(SDP1, Candidates),
+    SDP2 = nksip_sdp_util:add_candidates(SDP1, lists:reverse(lists:sort(Candidates))),
     Offer2 = Offer#{sdp:=nksip_sdp:unparse(SDP2), trickle_ice=>false},
     ?LLOG(notice, "generating new offer with ~p received candidates", 
           [length(Candidates)], State),

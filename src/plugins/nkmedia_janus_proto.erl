@@ -796,10 +796,10 @@ print(Txt, [#{}=Map], State) ->
             Map
     end,
     print(Txt, [nklib_json:encode_pretty(Map2)], State),
-    % case SDP of
-    %     none -> ok;
-    %     _ -> ?LLOG(info, "SDP\n~s\n", [_SDP], State)
-    % end,
+    case _SDP of
+        none -> ok;
+        _ -> io:format("Janus SDP\n~s\n", [_SDP])
+    end,
     ok;
 print(Txt, Args, State) ->
     ?LLOG(info, Txt, Args, State).

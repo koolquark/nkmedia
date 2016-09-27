@@ -22,20 +22,25 @@
 -module(nkmedia_kms_room).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([init/2, terminate/3, nkmedia_room_tick/3]).
+-export([init/2, terminate/2, tick/2]).
 
 -define(LLOG(Type, Txt, Args, Room),
-    lager:Type("NkMEDIA Room ~s (~p) "++Txt, 
-               [maps:get(room_id, Room), maps:get(class, Room) | Args])).
+    lager:Type("NkMEDIA Kms Room ~s "++Txt, [maps:get(room_id, Room) | Args])).
+
+-include("../../include/nkmedia_room.hrl").
 
 
 %% ===================================================================
 %% Types
 %% ===================================================================
 
--type state() ::
+
+-type room_id() :: nkmedia_room:id().
+
+-type room() ::
+    nkmedia_room:room() |
     #{
-        kms_id => nkmedia_kms:id()
+        nkmedia_kms_id => nkmedia_kms:id()
     }.
 
 
@@ -51,57 +56,60 @@
 %% Callbacks
 %% ===================================================================
 
-%% @doc Creates a new room
--spec init(nkmedia_room:id(), nkmedia_room:room()) ->
-    {ok, state()} | {error, term()}.
 
-init(_Id, #{srv_id:=SrvId}=Config) ->
-    case get_kms(SrvId, Config) of
-        {ok, KmsId} ->
-            {ok, #{kms_id=>KmsId}};
-        error ->
+
+%% @doc Creates a new room
+-spec init(room_id(), room()) ->
+    {ok, room()} | {error, term()}.
+
+init(_RoomId, Room) ->
+    case get_kms(Room) of
+        {ok, Room2} ->
+            Room3 = ?ROOM(#{class=>sfu, backend=>nkmedia_kms}, Room2),
+            {ok, Room3};
+       error ->
             {error, mediaserver_not_available}
     end.
 
 
 %% @doc
--spec terminate(term(), state(), nkmedia_room:room()) ->
-    ok | {error, term()}.
+-spec terminate(term(), room()) ->
+    {ok, room()} | {error, term()}.
 
-terminate(_Reason, Room, State) ->
+terminate(_Reason, Room) ->
     ?LLOG(info, "stopping, destroying room", [], Room),
-    {ok, State}.
+    {ok, Room}.
+
 
 
 %% @private
-nkmedia_room_tick(_Id, Room, State) ->
-    #{publishers:=Publish} = Room,
-    case map_size(Publish) of
+-spec tick(room_id(), room()) ->
+    {ok, room()} | {stop, nkservice:error(), room()}.
+
+tick(_RoomId, Room) ->
+    case length(nkmedia_room:get_role(publisher, Room)) of
         0 ->
             nkmedia_room:stop(self(), timeout);
         _ ->
             ok
     end,
-    {ok, State}.
+    {ok, Room}.
 
-
-%% @private
-% nkmedia_room_handle_cast({participants, Num}, Room, State) ->
 
 
 % ===================================================================
 %% Internal
 %% ===================================================================
 
-%% @private
-get_kms(_SrvId, #{nkmedia_kms:=KmsId}=Room) ->
-    ?LLOG(notice, "using provided engine: ~s", [KmsId], Room),
-    {ok, KmsId};
 
-get_kms(SrvId, _Config) ->
+%% @private
+get_kms(#{nkmedia_kms_id:=_}=Room) ->
+    {ok, Room};
+
+get_kms(#{srv_id:=SrvId}=Room) ->
     case SrvId:nkmedia_kms_get_mediaserver(SrvId) of
         {ok, KmsId} ->
-            {ok, KmsId};
+            {ok, ?ROOM(#{nkmedia_kms_id=>KmsId}, Room)};
         {error, _Error} ->
             error
     end.

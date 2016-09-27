@@ -185,27 +185,17 @@ answer(Type, offerer, Answer, #{nkmedia_fs_uuid:=UUID, offer:=Offer}=Session) ->
     {ok, Reply::term(), session()} | {error, term(), session()} | continue().
 
 cmd(session_type, #{session_type:=Type}=Opts, Session) ->
-    case check_record(Opts, Session) of
-        {ok, Session2} ->
-            case do_type(Type, Opts, Session2) of
-                {ok, TypeExt, Session3} -> 
-                    update_type(Type, TypeExt),
-                    {ok, TypeExt, Session3};
-                {error, Error, Session3} ->
-                    {error, Error, Session3}
-            end;
-        {error, Error} ->
-            {error, Error, Session}
+    case do_type(Type, Opts, Session) of
+        {ok, TypeExt, Session2} -> 
+            update_type(Type, TypeExt),
+            {ok, TypeExt, Session2};
+        {error, Error, Session2} ->
+            {error, Error, Session2}
     end;
 
-cmd(media, Opts, Session) ->
-    case check_record(Opts, Session) of
-        {ok, Session2} ->
-            %% TODO: update medias
-            {ok, #{}, Session2};
-        {error, Error} ->
-            {error, Error, Session}
-    end;
+cmd(media, _Opts, Session) ->
+    %% TODO: update medias
+    {error, not_implemented, Session};
 
 cmd(mcu_layout, #{mcu_layout:=Layout}, #{type:=mcu}=Session) ->
     #{type_ext:=#{room_id:=Room}=Ext, nkmedia_fs_id:=FsId} = Session,
@@ -325,17 +315,12 @@ start_offeree(Type, Offer, Session) ->
     {ok, session()} | {error, nkservice:error(), session()}.
 
 do_start_type(Type, Session) ->
-    case check_record(Session, Session) of
-        {ok, Session2} ->
-            case do_type(Type, Session2, Session2) of
-                {ok, TypeExt, Session3} ->
-                    update_type(Type, TypeExt),
-                    {ok, Session3};
-                {error, Error, Session3} ->
-                    {error, Error, Session3}
-            end;
-        {error, Error} ->
-            {error, Error, Session}
+    case do_type(Type, Session, Session) of
+        {ok, TypeExt, Session2} ->
+            update_type(Type, TypeExt),
+            {ok, Session2};
+        {error, Error, Session2} ->
+            {error, Error, Session2}
     end.
 
 
@@ -454,22 +439,6 @@ get_engine(#{srv_id:=SrvId}=Session) ->
             {ok, ?SESSION(#{nkmedia_fs_id=>Id}, Session)};
         {error, Error} ->
             {error, Error}
-    end.
-
-
-%% @private Adds or removed medias in the EP -> Proxy path
--spec check_record(map(), session()) ->
-    {ok, session()} | {error, term()}.
-
-check_record(Opts, Session) ->
-    case Opts of
-        #{record:=true} ->
-            % TODO start record
-            {ok, Session};
-        #{record:=false} ->
-            {ok, Session};
-        _ ->
-            {ok, Session}
     end.
 
 
