@@ -18,55 +18,19 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc Room Plugin API Syntax
--module(nkmedia_room_api_syntax).
+%% @doc NkMEDIA external API
+-module(nkmedia_kms_api_syntax).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
+-export([syntax/5]).
 
--export([syntax/4]).
-
-% -include_lib("nkservice/include/nkservice.hrl").
 
 
 %% ===================================================================
 %% Syntax
 %% ===================================================================
 
-syntax(<<"create">>, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{
-            class => atom,
-            room_id => binary,
-            backend => atom,
-            bitrate => {integer, 0, none},
-            audio_codec => {enum, [opus, isac32, isac16, pcmu, pcma]},
-            video_codec => {enum , [vp8, vp9, h264]}
-        },
-        Defaults,
-        [class|Mandatory]
-    };
 
-syntax(<<"destroy">>, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{room_id => binary},
-        Defaults,
-        [room_id|Mandatory]
-    };
 
-syntax(<<"list">>, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{service => fun nkservice_api:parse_service/1},
-        Defaults, 
-        Mandatory
-    };
-
-syntax(<<"info">>, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{room_id => binary},
-        Defaults, 
-        [room_id|Mandatory]
-    };
-
-syntax(_Cmd, Syntax, Defaults, Mandatory) ->
+%% @private
+syntax(_Sub, _Cmd, Syntax, Defaults, Mandatory) ->
     {Syntax, Defaults, Mandatory}.
-
-

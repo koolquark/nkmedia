@@ -28,6 +28,7 @@
 
 -define(ROOM(Map, Room), maps:merge(Room, Map)).
 -define(ROOM_RM(Key, Room), maps:remove(Key, Room)).
+-define(ROOM_MERGE(Map, Room), maps:merge(Map, Room)).
 
 
 

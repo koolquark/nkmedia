@@ -28,6 +28,7 @@
 -export([nkmedia_room_init/2, nkmedia_room_handle_call/3]).
 -export([api_cmd/2, api_syntax/4]).
 
+-include("../../include/nkmedia_room.hrl").
 -include_lib("nkservice/include/nkservice.hrl").
 
 
@@ -79,7 +80,7 @@ send_msg(RoomId, Msg) when is_map(Msg) ->
     end.
 
 
-%% @doc Sends a message to the room
+%% @doc Get all msgs
 -spec get_msgs(nkmedia_room:id(), filters()) ->
     {ok, [msg()]} | {error, term()}.
 
@@ -95,18 +96,18 @@ get_msgs(RoomId, Filters) ->
 
 %% @private
 plugin_deps() ->
-    [nkmedia].
+    [nkmedia_room].
 
 
 %% @private
 plugin_start(Config, #{name:=Name}) ->
-    lager:info("Plugin NkMEDIA RoomMsgLog (~s) starting", [Name]),
+    lager:info("Plugin NkMEDIA ROOM MsgLog (~s) starting", [Name]),
     {ok, Config}.
 
 
 %% @private
 plugin_stop(Config, #{name:=Name}) ->
-    lager:info("Plugin NkMEDIA RoomMsgLog (~p) stopping", [Name]),
+    lager:info("Plugin NkMEDIA ROOM MsgLog (~p) stopping", [Name]),
     {ok, Config}.
 
 
@@ -144,7 +145,6 @@ nkmedia_room_handle_call({?MODULE, get, _Filters}, _From,
     {reply, {ok, Reply}, Room};
 
 nkmedia_room_handle_call(_Msg, _From, _Room) ->
-    lager:error("MSF1"),
     continue.
 
 
@@ -180,7 +180,7 @@ api_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
 
 %% @private
 update(State, Room) ->
-    Room#{?MODULE:=State}.
+    ?ROOM(#{?MODULE=>State}, Room).
 
 
 do_api_cmd(<<"msglog_send">>, ApiReq, State) ->

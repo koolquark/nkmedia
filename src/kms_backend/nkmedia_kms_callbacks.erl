@@ -30,8 +30,7 @@
          nkmedia_session_offer/4, nkmedia_session_answer/4, nkmedia_session_cmd/3, 
          nkmedia_session_candidate/2,
          nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2]).
--export([nkmedia_room_init/2, nkmedia_room_terminate/2, nkmedia_room_tick/2
-    ]).
+-export([nkmedia_room_init/2, nkmedia_room_terminate/2, nkmedia_room_tick/2]).
 -export([api_cmd/2, api_syntax/4]).
 -export([nkdocker_notify/2]).
 
@@ -156,10 +155,10 @@ nkmedia_session_answer(_Type, _Role, _Answer, _Session) ->
 
 
 %% @private
-nkmedia_session_cmd(Update, Opts, #{nkmedia_kms_id:=_}=Session) ->
-   nkmedia_kms_session:cmd(Update, Opts, Session);
+nkmedia_session_cmd(Cmd, Opts, #{nkmedia_kms_id:=_}=Session) ->
+   nkmedia_kms_session:cmd(Cmd, Opts, Session);
 
-nkmedia_session_cmd(_Update, _Opts, _Session) ->
+nkmedia_session_cmd(_Cmd, _Opts, _Session) ->
     continue.
 
 
@@ -202,10 +201,14 @@ nkmedia_session_handle_cast(_Msg, _Session) ->
 
 %% @private
 nkmedia_room_init(Id, Room) ->
-    Class = maps:get(class, Room, sfu),
     case maps:get(backend, Room, nkmedia_kms) of
-        nkmedia_kms when Class==sfu ->
-            nkmedia_kms_room:init(Id, Room);
+        nkmedia_kms ->
+            case maps:get(class, Room, sfu) of
+                sfu ->
+                    nkmedia_kms_room:init(Id, Room);
+                _ ->
+                    {ok, Room}
+            end;
         _ ->
             {ok, Room}
     end.
@@ -251,7 +254,7 @@ api_cmd(_Req, _State) ->
 %% @private
 api_syntax(#api_req{class = <<"media">>}=Req, Syntax, Defaults, Mandatory) ->
     #api_req{subclass=Sub, cmd=Cmd} = Req,
-    {S2, D2, M2} = nkmedia_kms_api:syntax(Sub, Cmd, Syntax, Defaults, Mandatory),
+    {S2, D2, M2} = nkmedia_kms_api_syntax:syntax(Sub, Cmd, Syntax, Defaults, Mandatory),
     {continue, [Req, S2, D2, M2]};
 
 api_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->

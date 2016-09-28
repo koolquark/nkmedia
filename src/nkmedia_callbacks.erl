@@ -162,8 +162,8 @@ nkmedia_session_terminate(_Reason, Session) ->
 	{error, nkservice:error(), session()} | continue().
 
 nkmedia_session_start(_Type, _Role, Session) ->
-	{ok, Session}.
-
+	{error, not_implemented, Session}.
+	
 
 %% @private
 %% Plugin can update the offer

@@ -311,7 +311,7 @@ recorder_op(start, Opts, #{nkmedia_kms_recorder:=_}=Session) ->
     {ok, Session2} = recorder_op(stop, Opts, Session),
     recorder_op(start, Opts, ?SESSION_RM(nkmedia_kms_recorder, Session2));
 
-recorder_op(start, #{record_uri:=Uri}=Opts, #{nkmedia_kms_proxy:=Proxy}=Session) ->
+recorder_op(start, #{uri:=Uri}=Opts, #{nkmedia_kms_proxy:=Proxy}=Session) ->
     Profile = maps:get(mediaProfile, Opts, <<"WEBM">>),
     Params = #{uri=>nklib_util:to_binary(Uri), mediaProfile=>Profile},
     ?LLOG(notice, "started recording: ~p", [Params], Session),
@@ -327,9 +327,6 @@ recorder_op(start, #{record_uri:=Uri}=Opts, #{nkmedia_kms_proxy:=Proxy}=Session)
         {error, Error} ->
            {error, Error, Session}
     end;
-
-recorder_op(start, #{uri:=Uri}=Opts, Session) ->
-    recorder_op(start, Opts#{record_uri=>Uri}, Session);
 
 recorder_op(start, Opts, Session) ->
     {Uri, Session2} = make_record_uri(Session),
@@ -368,13 +365,13 @@ make_record_uri(Session) ->
 %% @private
 %% Player supports play, pause, stop, getPosition, getVideoInfo, setPosition (position)
 -spec player_op(term(), map(), session()) ->
-    {ok, term(), session()} | {error, nkservice:error()}.
+    {ok, term(), session()} | {error, nkservice:error(), session()}.
 
 player_op(start, Opts, #{nkmedia_kms_player:=_}=Session) ->
     {ok, _, Session2} = player_op(stop, Opts, Session),
     player_op(start, Opts, ?SESSION_RM(nkmedia_kms_player, Session2));
 
-player_op(start, #{player_uri:=Uri}=Opts, Session) ->
+player_op(start, #{uri:=Uri}=Opts, Session) ->
     Medias = lists:flatten([
         case maps:get(mute_audio, Opts, false) of
             false -> <<"AUDIO">>;
@@ -394,16 +391,18 @@ player_op(start, #{player_uri:=Uri}=Opts, Session) ->
                 {ok, Session2} ->
                     ok = invoke(ObjId, play, #{}, Session2),
                     Session3 = ?SESSION(#{nkmedia_kms_player=>ObjId}, Session2),
-                    {ok, #{player_uri=>Uri}, Session3};
+                    case player_op(get_info, #{}, Session3) of
+                        {ok, Info, Session4} ->
+                            {ok, Info#{uri=>Uri}, Session4};
+                        {error, Error, Session4} ->
+                            {error, Error, Session4}
+                    end;
                 {error, Error} ->
                     {error, Error, Session}
             end;
         {error, Error} ->
            {error, Error, Session}
     end;
-
-player_op(start, #{uri:=Uri}=Opts, Session) ->
-    player_op(start, Opts#{player_uri=>Uri}, Session);
 
 player_op(start, Opts, Session) ->
     Uri = <<"http://files.kurento.org/video/format/sintel.webm">>,
@@ -440,7 +439,7 @@ player_op(get_info, _Opts, #{nkmedia_kms_player:=PlayerEP}=Session) ->
                 first_position => Start,
                 last_position => Stop
             },
-            {ok, #{player_info=>Data2}, Session};
+            {ok, Data2, Session};
         _ ->
             ?LLOG(warning, "unknown player info: ~p", [Data], Session),
             {ok, #{}, Session}

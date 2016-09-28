@@ -39,7 +39,7 @@
     ok.
 
 send_event(SrvId, Class, Id, Type, Body) ->
-    lager:info("MEDIA EVENT (~s:~s:~s): ~p", [Class, Type, Id, Body]),
+    lager:notice("MEDIA EVENT (~s:~s:~s): ~p", [Class, Type, Id, Body]),
     RegId = #reg_id{
         srv_id = SrvId,     
         class = <<"media">>, 
@@ -63,8 +63,8 @@ send_event(SrvId, Class, Id, Type, Body) ->
 event(SessId, {answer, Answer}, Session) ->
     do_send_event(SessId, answer, #{answer=>Answer}, Session);
 
-event(SessId, {session_type, Type, Ext}, Session) ->
-    do_send_event(SessId, session_type, Ext#{type=>Type}, Session);
+event(SessId, {type, Type, Ext}, Session) ->
+    do_send_event(SessId, type, Ext#{type=>Type}, Session);
 
 event(SessId, {candidate, #candidate{last=true}}, Session) ->
     do_send_event(SessId, candidate_end, #{}, Session);
@@ -78,7 +78,7 @@ event(SessId, {info, Info}, Session) ->
 
 event(SessId, {stop, Reason}, #{srv_id:=SrvId}=Session) ->
     {Code, Txt} = SrvId:error_code(Reason),
-    do_send_event(SessId, stop, #{code=>Code, reason=>Txt}, Session);
+    do_send_event(SessId, destroyed, #{code=>Code, reason=>Txt}, Session);
 
 event(_SessId, _Event, Session) ->
     {ok, Session}.

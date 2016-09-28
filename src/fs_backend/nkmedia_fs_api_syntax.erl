@@ -18,46 +18,22 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc Room Plugin API
--module(nkmedia_room_api_events).
+%% @doc 
+-module(nkmedia_fs_api_syntax).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([event/3]).
+-export([syntax/5]).
 
 % -include_lib("nkservice/include/nkservice.hrl").
 
 
+
 %% ===================================================================
-%% Events
+%% Syntax
 %% ===================================================================
 
 
 %% @private
--spec event(nkmedia_room:id(), nkmedia_room:event(), nkmedia_room:room()) ->
-    {ok, nkmedia_room:room()}.
-
-event(RoomId, started, Room) ->
-    Data = maps:with([audio_codec, video_codec, bitrate, class, backend], Room),
-    send_event(RoomId, started, Data, Room);
-
-event(RoomId, {stopped, Reason}, #{srv_id:=SrvId}=Room) ->
-    {Code, Txt} = SrvId:error_code(Reason),
-    send_event(RoomId, destroyed, #{code=>Code, reason=>Txt}, Room);
-
-event(RoomId, {started_member, SessId, Info}, Room) ->
-    send_event(RoomId, started_member, Info#{session_id=>SessId}, Room);
-
-event(RoomId, {stopped_member, SessId, Info}, Room) ->
-    send_event(RoomId, stopped_member, Info#{session_id=>SessId}, Room);
-
-event(_RoomId, _Event, Room) ->
-    {ok, Room}.
-
-
-%% @private
-send_event(RoomId, Type, Body, #{srv_id:=SrvId}=Room) ->
-    nkmedia_api_events:send_event(SrvId, room, RoomId, Type, Body),
-    {ok, Room}.
-
-
+syntax(_Sub, _Cmd, Syntax, Defaults, Mandatory) ->
+    {Syntax, Defaults, Mandatory}.
 

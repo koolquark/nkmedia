@@ -79,9 +79,8 @@ init(_RoomId, Room) ->
     case get_janus(Room) of
         {ok, Room2} ->
             case create_room(Room2) of
-                ok ->
-                    Room3 = ?ROOM(#{class=>sfu, backend=>nkmedia_janus}, Room2),
-                    {ok, Room3};
+                {ok, Room3} ->
+                    {ok, ?ROOM(#{class=>sfu, backend=>nkmedia_janus}, Room3)};
                 {error, Error} ->
                     {error, Error}
             end;
@@ -110,7 +109,7 @@ terminate(_Reason, Room) ->
     {ok, room()} | {stop, nkservice:error(), room()}.
 
 tick(RoomId, #{nkmedia_janus_id:=JanusId}=Room) ->
-    case length(nkmedia_room:get_role(publisher, Room)) of
+    case length(nkmedia_room:get_all_with_role(publisher, Room)) of
         0 ->
             nkmedia_room:stop(self(), timeout);
         _ ->
@@ -131,7 +130,7 @@ tick(RoomId, #{nkmedia_janus_id:=JanusId}=Room) ->
     {noreply, room()}.
 
 handle_cast({participants, Num}, Room) ->
-    case length(nkmedia_room:get_role(publisher, Room)) of
+    case length(nkmedia_room:get_all_with_role(publisher, Room)) of
         Num -> 
             ok;
         Other ->
@@ -172,17 +171,24 @@ get_janus(#{srv_id:=SrvId}=Room) ->
 
 %% @private
 -spec create_room(room()) ->
-    ok | {error, term()}.
+    {ok, room()} | {error, term()}.
 
 create_room(#{nkmedia_janus_id:=JanusId, room_id:=RoomId}=Room) ->
+    Merge = #{audio_codec=>opus, video_codec=>vp8, bitrate=>500000},
+    Room2 = ?ROOM_MERGE(Merge, Room),
     Opts = #{        
-        audiocodec => maps:get(audio_codec, Room, opus),
-        videocodec => maps:get(video_codec, Room, vp8),
-        bitrate => maps:get(bitrate, Room, 500000)
+        audiocodec => maps:get(audio_codec, Room2),
+        videocodec => maps:get(video_codec, Room2),
+        bitrate => maps:get(bitrate, Room2)
     },
     case nkmedia_janus_op:start(JanusId, RoomId) of
         {ok, Pid} ->
-            nkmedia_janus_op:create_room(Pid, RoomId, Opts);
+            case nkmedia_janus_op:create_room(Pid, RoomId, Opts) of
+                ok ->
+                    {ok, Room2};
+                {error, Error} ->
+                    {error, Error}
+            end;
         {error, Error} ->
             {error, Error}
     end.

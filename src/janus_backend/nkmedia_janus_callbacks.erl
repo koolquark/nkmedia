@@ -34,7 +34,7 @@
          nkmedia_session_handle_info/2]).
 -export([nkmedia_room_init/2, nkmedia_room_terminate/2, nkmedia_room_tick/2,
          nkmedia_room_handle_cast/2]).
--export([api_cmd/2, api_syntax/4]).
+-export([api_syntax/4]).
 -export([nkdocker_notify/2]).
 
 -include_lib("nkservice/include/nkservice.hrl").
@@ -229,10 +229,14 @@ nkmedia_session_handle_info(_Msg, _Session) ->
 
 %% @private
 nkmedia_room_init(Id, Room) ->
-    Class = maps:get(class, Room, sfu),
     case maps:get(backend, Room, nkmedia_janus) of
-        nkmedia_janus when Class==sfu ->
-            nkmedia_janus_room:init(Id, Room);
+        nkmedia_janus  ->
+            case maps:get(class, Room, sfu) of
+                sfu ->
+                    nkmedia_janus_room:init(Id, Room);
+                _ ->
+                    {ok, Room}
+            end;
         _ ->
             {ok, Room}
     end.
@@ -268,19 +272,19 @@ nkmedia_room_handle_cast(_Msg, _Room) ->
 %% API
 %% ===================================================================
 
-%% @private
-api_cmd(#api_req{class = <<"media">>}=Req, State) ->
-    #api_req{subclass=Sub, cmd=Cmd} = Req,
-    nkmedia_janus_api:cmd(Sub, Cmd, Req, State);
+% %% @private
+% api_cmd(#api_req{class = <<"media">>}=Req, State) ->
+%     #api_req{subclass=Sub, cmd=Cmd} = Req,
+%     nkmedia_janus_api:cmd(Sub, Cmd, Req, State);
 
-api_cmd(_Req, _State) ->
-    continue.
+% api_cmd(_Req, _State) ->
+%     continue.
 
 
 %% @private
 api_syntax(#api_req{class = <<"media">>}=Req, Syntax, Defaults, Mandatory) ->
     #api_req{subclass=Sub, cmd=Cmd} = Req,
-    {S2, D2, M2} = nkmedia_janus_api:syntax(Sub, Cmd, Syntax, Defaults, Mandatory),
+    {S2, D2, M2} = nkmedia_janus_api_syntax:syntax(Sub, Cmd, Syntax, Defaults, Mandatory),
     {continue, [Req, S2, D2, M2]};
 
 api_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->

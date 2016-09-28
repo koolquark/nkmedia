@@ -22,7 +22,7 @@
 -module(nkmedia_room_api).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([cmd/4]).
+-export([cmd/3]).
 
 -include_lib("nkservice/include/nkservice.hrl").
 
@@ -32,7 +32,7 @@
 %% ===================================================================
 
 
-cmd(<<"room">>, <<"create">>, #api_req{srv_id=SrvId, data=Data}, State) ->
+cmd(<<"create">>, #api_req{srv_id=SrvId, data=Data}, State) ->
     case nkmedia_room:start(SrvId, Data) of
         {ok, Id, _Pid} ->
             {ok, #{room_id=>Id}, State};
@@ -40,28 +40,26 @@ cmd(<<"room">>, <<"create">>, #api_req{srv_id=SrvId, data=Data}, State) ->
             {error, Error, State}
     end;
 
-cmd(<<"room">>, <<"destroy">>, #api_req{data=#{room_id:=Id}}, State) ->
-    case nkmedia_room:stop(Id, user_stop) of
+cmd(<<"destroy">>, #api_req{data=#{room_id:=Id}}, State) ->
+    case nkmedia_room:stop(Id, api_stop) of
         ok ->
             {ok, #{}, State};
         {error, Error} ->
             {error, Error, State}
     end;
 
-cmd(<<"room">>, <<"list">>, _Req, State) ->
+cmd(<<"list">>, _Req, State) ->
     Ids = [#{room_id=>Id, class=>Class} || {Id, Class, _Pid} <- nkmedia_room:get_all()],
     {ok, Ids, State};
 
-cmd(<<"room">>, <<"info">>, #api_req{data=#{room_id:=RoomId}}, State) ->
-    case nkmedia_room:get_room(RoomId) of
-        {ok, Room} ->
-            Keys = [audio_codec, video_codec, bitrate, class, backend, 
-                    publishers, listeners],
-            {ok, maps:with(Keys, Room), State};
+cmd(<<"info">>, #api_req{data=#{room_id:=RoomId}}, State) ->
+    case nkmedia_room:get_info(RoomId) of
+        {ok, Info} ->
+            {ok, Info, State};
         {error, Error} ->
             {error, Error, State}
     end;
 
-cmd(_SrvId, _Other, _Data, State) ->
-    {error, unknown_command, State}.
+cmd(_Cmd, _Data, _State) ->
+    continue.
 

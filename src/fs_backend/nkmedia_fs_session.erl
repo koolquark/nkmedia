@@ -184,7 +184,7 @@ answer(Type, offerer, Answer, #{nkmedia_fs_uuid:=UUID, offer:=Offer}=Session) ->
 -spec cmd(cmd(), Opts::map(), session()) ->
     {ok, Reply::term(), session()} | {error, term(), session()} | continue().
 
-cmd(session_type, #{session_type:=Type}=Opts, Session) ->
+cmd(type, #{type:=Type}=Opts, Session) ->
     case do_type(Type, Opts, Session) of
         {ok, TypeExt, Session2} -> 
             update_type(Type, TypeExt),
@@ -193,15 +193,20 @@ cmd(session_type, #{session_type:=Type}=Opts, Session) ->
             {error, Error, Session2}
     end;
 
-cmd(media, _Opts, Session) ->
-    %% TODO: update medias
+cmd(start_record, _Opts, Session) ->
     {error, not_implemented, Session};
 
-cmd(mcu_layout, #{mcu_layout:=Layout}, #{type:=mcu}=Session) ->
+cmd(stop_record, _Opts, Session) ->
+    {error, not_implemented, Session};
+
+cmd(media, _Opts, Session) ->
+    {error, not_implemented, Session};
+
+cmd(layout, #{layout:=Layout}, #{type:=mcu}=Session) ->
     #{type_ext:=#{room_id:=Room}=Ext, nkmedia_fs_id:=FsId} = Session,
     case nkmedia_fs_cmd:conf_layout(FsId, Room, Layout) of
         ok  ->
-            update_type(mcu, Ext#{mcu_layout=>Layout}),
+            update_type(mcu, Ext#{layout=>Layout}),
             {ok, #{}, Session};
         {error, Error} ->
             {error, Error, Session}
@@ -395,7 +400,7 @@ get_fs_answer(Offer, #{nkmedia_fs_id:=FsId, session_id:=SessId}=Session) ->
             Answer = #{
                 sdp => SDP,
                 trickle_ice => false,
-                sdp_type => webrtc,
+                sdp_type => Type,
                 backend => nkmedia_fs
             },
             Session2 = ?SESSION(#{answer=>Answer, nkmedia_fs_uuid=>UUID}, Session),

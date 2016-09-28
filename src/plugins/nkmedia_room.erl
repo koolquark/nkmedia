@@ -23,10 +23,11 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([start/2, stop/1, stop/2, get_room/1, started_member/3, stopped_member/2]).
--export([send_event/2, register/2, unregister/2, get_all/0]).
+-export([start/2, stop/1, stop/2, get_room/1, get_info/1]).
+-export([started_member/3, started_member/4, stopped_member/2]).
+-export([send_event/2, restart_timer/1, register/2, unregister/2, get_all/0]).
+-export([get_all_with_role/2]).
 -export([find/1, do_call/2, do_call/3, do_cast/2]).
--export([get_role/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
 -export_type([id/0, room/0, event/0]).
@@ -73,11 +74,8 @@
     #{
         role => publisher | listener,
         user_id => binary(),
-        link => nklib:link(),
         peer_id => session_id()
     }.
-
-
 
 -type event() :: 
     started |
@@ -105,9 +103,11 @@ start(Srv, Config) ->
                 {ok, SrvId} ->
                     Config3 = Config2#{room_id=>RoomId, srv_id=>SrvId},
                     case SrvId:nkmedia_room_init(RoomId, Config3) of
-                        {ok, Config4} ->
+                        {ok, #{backend:=_}=Config4} ->
                             {ok, Pid} = gen_server:start(?MODULE, [Config4], []),
                             {ok, RoomId, Pid};
+                        {ok, _} ->
+                            {error, not_implemented};
                         {error, Error} ->
                             {error, Error}
                     end;
@@ -142,11 +142,40 @@ get_room(Id) ->
 
 
 %% @doc
+-spec get_info(id()) ->
+    {ok, room()} | {error, term()}.
+
+get_info(Id) ->
+    case get_room(Id) of
+        {ok, Room} ->
+            Keys = [
+                class, 
+                backend,
+                members, 
+                audio_codec, 
+                video_codec, 
+                bitrate
+            ],
+            {ok, maps:with(Keys, Room)};
+        {error, Error} ->
+            {error, Error}
+    end.
+
+
+%% @doc
 -spec started_member(id(), session_id(), member_info()) ->
     ok | {error, term()}.
 
 started_member(RoomId, SessId, MemberInfo) ->
-    do_cast(RoomId, {started_member, SessId, MemberInfo}).
+    started_member(RoomId, SessId, MemberInfo, undefined).
+
+
+%% @doc
+-spec started_member(id(), session_id(), member_info(), pid()|undefined) ->
+    ok | {error, term()}.
+
+started_member(RoomId, SessId, MemberInfo, Pid) ->
+    do_cast(RoomId, {started_member, SessId, MemberInfo, Pid}).
 
 
 %% @doc
@@ -163,6 +192,14 @@ stopped_member(RoomId, SessId) ->
 
 send_event(Id, Event) ->
     do_cast(Id, {send_event, Event}).
+
+
+%% @private
+-spec restart_timer(id()) ->
+    ok | {error, term()}.
+
+restart_timer(Id) ->
+    do_cast(Id, restart_timer).
 
 
 %% @doc Registers a process with the room
@@ -194,7 +231,6 @@ unregister(RoomId, Link) ->
 get_all() ->
     [{Id, Backend, Pid} || 
         {{Id, Backend}, Pid}<- nklib_proc:values(?MODULE)].
-
 
 
 % ===================================================================
@@ -230,7 +266,7 @@ init([#{srv_id:=SrvId, room_id:=RoomId}=Room]) ->
     },
     ?LLOG(notice, "started", [], State),
     State2 = do_event(started, State),
-    {ok, restart_timer(State2)}.
+    {ok, do_restart_timer(State2)}.
 
 
 %% @private
@@ -253,11 +289,14 @@ handle_call(Msg, From, State) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
 %% @private
-handle_cast({started_member, SessId, Info}, State) ->
-    {noreply, do_started_member(SessId, Info, State)};
+handle_cast({started_member, SessId, Info, Pid}, State) ->
+    {noreply, do_started_member(SessId, Info, Pid, State)};
 
 handle_cast({stopped_member, SessId}, State) ->
     {noreply, do_stopped_member(SessId, State)};
+
+handle_cast(restart_timer, State) ->
+    {noreply, do_restart_timer(State)};
 
 handle_cast({send_event, Event}, State) ->
     {noreply, do_event(Event, State)};
@@ -287,7 +326,7 @@ handle_cast(Msg, State) ->
 handle_info(room_tick, #state{id=RoomId}=State) ->
     case handle(nkmedia_room_tick, [RoomId], State) of
         {ok, State2} ->
-            {noreply, restart_timer(State2)};
+            {noreply, do_restart_timer(State2)};
         {stop, Reason, State2} ->
             do_stop(Reason, State2)
     end;
@@ -339,24 +378,22 @@ terminate(Reason, State) ->
 
 
 %% @private
-get_role(Role, #{members:=Members}) ->
+get_all_with_role(Role, #{members:=Members}) ->
     [Id ||  
         {Id, Info} <- maps:to_list(Members), {ok, Role}==maps:find(role, Info)].
 
 %% @private
-do_started_member(SessId, Info, #state{room=#{members:=Members}=Room}=State) ->
+do_started_member(SessId, Info, Pid, #state{room=#{members:=Members}=Room}=State) ->
     State2 = links_remove(SessId, State),
-    State3 = case Info of
-        #{link:=Link} ->
-            Pid = nklib_links:get_pid(Link),
+    State3 = case is_pid(Pid) of
+        true ->
             links_add(SessId, member, Pid, State2);
         _ ->
             State2
     end,
-    Info2 = maps:remove(link, Info),
-    Room2 = ?ROOM(#{members=>maps:put(SessId, Info2, Members)}, Room),
+    Room2 = ?ROOM(#{members=>maps:put(SessId, Info, Members)}, Room),
     State4 = State3#state{room=Room2},
-    do_event({started_member, SessId, Info2}, State4).
+    do_event({started_member, SessId, Info}, State4).
 
 
 %% @private
@@ -438,7 +475,10 @@ do_cast(Id, Msg) ->
 do_stop(_Reason, #state{stop_sent=true}=State) ->
     {stop, normal, State};
 
-do_stop(Reason, State) ->
+do_stop(Reason, #state{room=#{members:=Members}}=State) ->
+    lists:foreach(
+        fun({SessId, _}) -> nkmedia_session:stop(SessId, room_destroyed) end,
+        maps:to_list(Members)),
     State2 = do_event({stopped, Reason}, State#state{stop_sent=true}),
     % Allow events to be processed
     timer:sleep(100),
@@ -493,7 +533,7 @@ links_fold(Fun, Acc, #state{links=Links}) ->
 
 
 %% @private
-restart_timer(#state{timer=Timer}=State) ->
+do_restart_timer(#state{timer=Timer}=State) ->
     nklib_util:cancel_timer(Timer),
     Time = 1000 * ?CHECK_TIME,
     State#state{timer=erlang:send_after(Time, self(), room_tick)}.

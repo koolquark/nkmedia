@@ -70,7 +70,7 @@ start_in(SessId, FsId, Offer) ->
         {ok, SessPid} ->
             case invite(SessPid, SessId, Offer#{callee_id=><<"nkmedia_in">>}) of
                 {ok, SDP} -> {ok, SessId, SDP};
-                {error, Error} -> {erro, Error}
+                {error, Error} -> {error, Error}
             end;
         {error, Error} ->
             {error, Error}
@@ -87,7 +87,7 @@ start_out(SessId, FsId, Opts) ->
         {ok, SessPid} ->
             case outbound(SessPid, SessId, Opts) of
                 {ok, SDP} -> {ok, SessId, SDP};
-                {error, Error} -> {erro, Error}
+                {error, Error} -> {error, Error}
             end;
         {error, Error} ->
             {error, Error}

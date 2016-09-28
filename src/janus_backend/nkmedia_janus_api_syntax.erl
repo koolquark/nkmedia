@@ -18,32 +18,15 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc NkMEDIA external API
+%% @doc NkMEDIA external API Syntax
 
--module(nkmedia_janus_api).
+-module(nkmedia_janus_api_syntax).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([cmd/4, syntax/5]).
+-export([syntax/5]).
 
 
 -include_lib("nkservice/include/nkservice.hrl").
 -include("../../include/nkmedia.hrl").
-
-
-%% ===================================================================
-%% Types
-%% ===================================================================
-
-
-%% ===================================================================
-%% Commands
-%% ===================================================================
-
-%% @doc
--spec cmd(binary(), binary(), #api_req{}, State::map()) ->
-    {ok, map(), State::map()} | {error, nkservice:error(), State::map()}.
-
-cmd(_Sub, _Cmd, _Data, _State) ->
-    continue.
 
 
 %% ===================================================================
@@ -53,33 +36,12 @@ cmd(_Sub, _Cmd, _Data, _State) ->
 
 
 %% @private
-syntax(<<"session">>, <<"start">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"session">>, <<"create">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
-            record => boolean,
-            bitrate => {integer, 0, none},
-            room_id => binary,
-            publisher_id => binary,
-            mute_audio => boolean,
-            mute_video => boolean,
-            mute_data => boolean,
             room_bitrate => {integer, 0, none},
             room_audio_codec => {enum, [opus, isac32, isac16, pcmu, pcma]},
             room_video_codec => {enum , [vp8, vp9, h264]}
-        },
-        Defaults,
-        Mandatory
-    };
-
-syntax(<<"session">>, <<"update">>, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{
-            bitrate => integer,
-            mute_audio => boolean,
-            mute_video => boolean,
-            mute_data => boolean,
-            record => boolean,
-            publisher_id => binary
         },
         Defaults,
         Mandatory
@@ -88,9 +50,9 @@ syntax(<<"session">>, <<"update">>, Syntax, Defaults, Mandatory) ->
 syntax(<<"room">>, <<"create">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
-            room_bitrate => {integer, 0, none},
-            room_audio_codec => {enum, [opus, isac32, isac16, pcmu, pcma]},
-            room_video_codec => {enum , [vp8, vp9, h264]}
+            bitrate => {integer, 0, none},
+            audio_codec => {enum, [opus, isac32, isac16, pcmu, pcma]},
+            video_codec => {enum , [vp8, vp9, h264]}
         },
         Defaults,
         Mandatory

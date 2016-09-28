@@ -57,21 +57,23 @@ session_fields() ->
 
 		room_id,
 		publisher_id,
+		layout,
+		loops,
+		uri,
 		mute_audio,
         mute_video,
         mute_data,
-        bitrate,
-        record,
-        record_uri,
-        player_uri
+        bitrate
     ].
 
 
 %% @private
-syntax(<<"session">>, <<"start">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"session">>, <<"create">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			type => atom,							%% p2p, proxy...
+			wait_reply => boolean,
+
 			session_id => binary,
 			offer => offer(),
         	no_offer_trickle_ice => atom,
@@ -87,21 +89,22 @@ syntax(<<"session">>, <<"start">>, Syntax, Defaults, Mandatory) ->
 			wait_timeout => {integer, 1, none},
 			ready_timeout => {integer, 1, none},
 
+			% Type-specific
 	        room_id => binary,
 	        publisher_id => binary,
+	        layout => binary,
+	        loops => {integer, 0, none},
+        	uri => binary,
 			mute_audio => boolean,
         	mute_video => boolean,
         	mute_data => boolean,
-        	bitrate => integer, 
-        	record => boolean,
-        	record_uri => binary,
-        	player_uri => binary
+        	bitrate => integer
 		},
 		Defaults,
 		[type|Mandatory]
 	};
 
-syntax(<<"session">>, <<"stop">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"session">>, <<"destroy">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{session_id => binary},
 		Defaults,
@@ -118,7 +121,131 @@ syntax(<<"session">>, <<"set_answer">>, Syntax, Defaults, Mandatory) ->
 		[session_id, answer|Mandatory]
 	};
 
-syntax(<<"session">>, <<"set_candidate">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"session">>, <<"get_offer">>, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{session_id => binary},
+		Defaults,
+		[session_id|Mandatory]
+	};
+
+syntax(<<"session">>, <<"get_answer">>, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{session_id => binary},
+		Defaults,
+		[session_id|Mandatory]
+	};
+
+syntax(<<"session">>, <<"media">>, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{
+			session_id => binary,
+			mute_audio => boolean,
+			mute_video => boolean,
+			mute_data => boolean,
+			bitrate => integer
+		},
+		Defaults,
+		[session_id|Mandatory]
+	};
+
+syntax(<<"session">>, <<"type">>, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{
+			session_id => binary,
+			type => atom,
+
+			% Type specific
+			room_id => binary,
+			publisher_id => binary,
+        	uri => binary,
+        	layout => binary
+		},
+		Defaults,
+		[session_id, type|Mandatory]
+	};
+
+syntax(<<"session">>, <<"start_record">>, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{
+			session_id => binary,
+			uri => binary
+		},
+		Defaults,
+		[session_id|Mandatory]
+	};
+
+syntax(<<"session">>, <<"stop_record">>, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{
+			session_id => binary
+		},
+		Defaults,
+		[session_id|Mandatory]
+	};
+
+syntax(<<"session">>, <<"pause_record">>, Syntax, Defaults, Mandatory) ->
+    {
+        Syntax#{session_id=>binary},
+        Defaults,
+        [session_id|Mandatory]
+    };
+
+syntax(<<"session">>, <<"resume_record">>, Syntax, Defaults, Mandatory) ->
+    {
+        Syntax#{session_id=>binary},
+        Defaults,
+        [session_id|Mandatory]
+    };
+
+syntax(<<"session">>, <<"pause">>, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{session_id => binary},
+		Defaults,
+		[session_id|Mandatory]
+	};
+
+syntax(<<"session">>, <<"stop">>, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{session_id => binary},
+		Defaults,
+		[session_id|Mandatory]
+	};
+
+syntax(<<"session">>, <<"resume">>, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{session_id => binary},
+		Defaults,
+		[session_id|Mandatory]
+	};
+
+syntax(<<"session">>, <<"get_position">>, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{session_id => binary},
+		Defaults,
+		[session_id|Mandatory]
+	};
+
+syntax(<<"session">>, <<"set_position">>, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{
+			session_id => binary,
+			position => {integer, 0, none}
+		},
+		Defaults,
+		[session_id, position|Mandatory]
+	};
+
+syntax(<<"session">>, <<"layout">>, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{
+			session_id => binary,
+			layout => binary
+		},
+		Defaults,
+		[session_id, layout|Mandatory]
+	};
+
+syntax(<<"session">>, <<"candidate">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
@@ -130,7 +257,7 @@ syntax(<<"session">>, <<"set_candidate">>, Syntax, Defaults, Mandatory) ->
 		[session_id, sdpMLineIndex, candidate|Mandatory]
 	};
 
-syntax(<<"session">>, <<"set_candidate_end">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"session">>, <<"candidate_end">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
@@ -138,22 +265,6 @@ syntax(<<"session">>, <<"set_candidate_end">>, Syntax, Defaults, Mandatory) ->
 		},
 		Defaults#{role=>caller},
 		[session_id|Mandatory]
-	};
-
-syntax(<<"session">>, <<"cmd">>, Syntax, Defaults, Mandatory) ->
-	{
-		Syntax#{
-			session_id => binary,
-			cmd => atom,
-			mute_audio => boolean,
-			mute_video => boolean,
-			mute_data => boolean,
-			bitrate => integer,
-			operation => atom,
-			position => integer
-		},
-		Defaults,
-		[session_id, cmd|Mandatory]
 	};
 
 syntax(<<"session">>, <<"info">>, Syntax, Defaults, Mandatory) ->
@@ -180,11 +291,7 @@ offer() ->
 	#{
 		sdp => binary,
 		sdp_type => {enum, [rtp, webrtc]},
-		dest => binary,
-        caller_name => binary,
-        caller_id => binary,
-        callee_name => binary,
-        callee_id => binary
+		trickle_ice => boolean
      }.
 
 
@@ -192,7 +299,8 @@ offer() ->
 answer() ->
 	#{
 		sdp => binary,
-		sdp_type => {enum, [rtp, webrtc]}
+		sdp_type => {enum, [rtp, webrtc]},
+		trickle_ice => boolean
      }.
 
 

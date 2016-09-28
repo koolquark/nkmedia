@@ -198,7 +198,7 @@ nkmedia_session_handle_cast(_Msg, _Session) ->
 %% @private
 api_syntax(#api_req{class = <<"media">>}=Req, Syntax, Defaults, Mandatory) ->
     #api_req{subclass=Sub, cmd=Cmd} = Req,
-    {S2, D2, M2} = syntax(Sub, Cmd, Syntax, Defaults, Mandatory),
+    {S2, D2, M2} = nkmedia_fs_api_syntax:syntax(Sub, Cmd, Syntax, Defaults, Mandatory),
     {continue, [Req, S2, D2, M2]};
 
 api_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
@@ -220,35 +220,6 @@ nkdocker_notify(_MonId, _Op) ->
 %% ===================================================================
 %% Internal
 %% ===================================================================
-
-
-%% @private
-syntax(<<"session">>, <<"start">>, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{
-            room_id => binary,
-            mcu_layout => binary,
-            park_after_bridge => boolean
-        },
-        Defaults,
-        Mandatory
-    };
-
-syntax(<<"session">>, <<"update">>, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{
-            type => atom,
-            session_type => atom,
-            room_id => binary,
-            mcu_layout => binary
-        },
-        Defaults,
-        Mandatory
-    };
-
-syntax(_Sub, _Cmd, Syntax, Defaults, Mandatory) ->
-    {Syntax, Defaults, Mandatory}.
-
 
 
 %% @private

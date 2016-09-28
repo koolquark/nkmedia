@@ -39,12 +39,7 @@
 		sdp => binary(),
 		sdp_type => rtp | webrtc,
 		trickle_ice => boolean(),	% Default false, all candidates must be in SDP
-		backend => atom(),
-		dest => binary(),
-        caller_name => binary(),
-        caller_id => binary(),
-        callee_name => binary(),
-        callee_id => binary()
+		backend => atom()
 	}.
 
 

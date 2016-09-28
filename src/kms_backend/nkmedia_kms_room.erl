@@ -65,8 +65,7 @@
 init(_RoomId, Room) ->
     case get_kms(Room) of
         {ok, Room2} ->
-            Room3 = ?ROOM(#{class=>sfu, backend=>nkmedia_kms}, Room2),
-            {ok, Room3};
+            {ok, ?ROOM(#{class=>sfu, backend=>nkmedia_kms}, Room2)};
        error ->
             {error, mediaserver_not_available}
     end.
@@ -87,7 +86,7 @@ terminate(_Reason, Room) ->
     {ok, room()} | {stop, nkservice:error(), room()}.
 
 tick(_RoomId, Room) ->
-    case length(nkmedia_room:get_role(publisher, Room)) of
+    case length(nkmedia_room:get_all_with_role(publisher, Room)) of
         0 ->
             nkmedia_room:stop(self(), timeout);
         _ ->

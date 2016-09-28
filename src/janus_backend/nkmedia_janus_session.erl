@@ -242,12 +242,32 @@ cmd(media, Opts, #{type:=Type}=Session) when Type==echo; Type==proxy; Type==publ
             {error, Error, Session2}
     end;
 
-cmd(listen_switch, #{publisher_id:=Publisher}, #{type:=listen}=Session) ->
+cmd(type, #{type:=listen, publisher_id:=Publisher}, #{type:=listen}=Session) ->
     #{nkmedia_janus_pid:=Pid, type_ext:=#{room_id:=RoomId}=Ext} = Session,
     case nkmedia_janus_op:listen_switch(Pid, Publisher) of
         ok ->
             notify_listener(RoomId, Publisher, Session),
             update_type(listen, Ext#{publisher_id=>Publisher}),
+            {ok, #{}, Session};
+        {error, Error} ->
+            {error, Error, Session}
+    end;
+
+cmd(type, _Opts, Session) ->
+    lager:error("O: ~p", [_Opts]),
+    {error, invalid_operation, Session};
+
+cmd(start_record, Opts, Session) ->
+    case start_record(Opts, Session) of
+        {ok, Session2} ->
+            {ok, #{}, Session2};
+        {error, Error} ->
+            {error, Error, Session}
+    end;
+ 
+cmd(stop_record, _Opts, Session) ->
+    case stop_record(Session) of
+        ok ->
             {ok, #{}, Session};
         {error, Error} ->
             {error, Error, Session}
@@ -261,27 +281,8 @@ cmd(get_proxy_offer, _, Session) ->
             {error, invalid_session, Session}
     end;
 
-cmd(record, Opts, Session) ->
-    case maps:get(operation, Opts, start) of
-        start ->
-            case start_record(Opts, Session) of
-                {ok, Session2} ->
-                    {ok, #{}, Session2};
-                {error, Error} ->
-                    {error, Error, Session}
-            end;
-        stop ->
-            case stop_record(Session) of
-                ok ->
-                    {ok, #{}, Session};
-                {error, Error} ->
-                    {error, Error, Session}
-            end;
-        _ ->
-            {error, invalid_parameters, Session}
-    end;
-
 cmd(_Update, _Opts, _Session) ->
+    lager:error("C"),
     continue.
 
 
@@ -546,12 +547,8 @@ create_room(RoomId, #{srv_id:=SrvId, nkmedia_janus_id:=JanusId}=Session) ->
 %% @private
 notify_publisher(RoomId, #{session_id:=SessId}=Session) ->
     UserId = maps:get(user_id, Session, <<>>),
-    Info = #{
-        role => publisher, 
-        user_id => UserId, 
-        link => {nkmedia_session, self()}
-    },
-    case nkmedia_room:started_member(RoomId, SessId, Info) of
+    Info = #{role => publisher, user_id => UserId},
+    case nkmedia_room:started_member(RoomId, SessId, Info, self()) of
         ok ->
             ok;
         {error, Error} ->
@@ -562,13 +559,8 @@ notify_publisher(RoomId, #{session_id:=SessId}=Session) ->
 %% @private
 notify_listener(RoomId, PeerId, #{session_id:=SessId}=Session) ->
     UserId = maps:get(user_id, Session, <<>>),
-    Info = #{
-        role => listener, 
-        user_id => UserId, 
-        peer_id => PeerId, 
-        link => {nkmedia_session, self()}
-    },
-    case nkmedia_room:started_member(RoomId, SessId, Info) of
+    Info = #{role => listener, user_id => UserId, peer_id => PeerId},
+    case nkmedia_room:started_member(RoomId, SessId, Info, self()) of
         ok ->
             ok;
         {error, Error} ->

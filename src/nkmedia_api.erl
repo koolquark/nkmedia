@@ -47,7 +47,7 @@
 %% as (nkmedia_session, SessId, SessPid)
 %% Registers the API session with the media session (as nkmedia_api, pid())
 %% Subscribes to events
-cmd(<<"session">>, <<"start">>, Req, State) ->
+cmd(<<"session">>, <<"create">>, Req, State) ->
 	#api_req{srv_id=SrvId, data=Data, user=User, session=UserSession} = Req,
 	#{type:=Type} = Data,
 	Config = Data#{
@@ -71,7 +71,7 @@ cmd(<<"session">>, <<"start">>, Req, State) ->
 			{error, Error, State}
 	end;
 
-cmd(<<"session">>, <<"stop">>, #api_req{data=Data}, State) ->
+cmd(<<"session">>, <<"destroy">>, #api_req{data=Data}, State) ->
 	#{session_id:=SessId} = Data,
 	nkmedia_session:stop(SessId),
 	{ok, #{}, State};
@@ -85,7 +85,39 @@ cmd(<<"session">>, <<"set_answer">>, #api_req{data=Data}, State) ->
 			{error, Error, State}
 	end;
 
-cmd(<<"session">>, <<"set_candidate">>, #api_req{data=Data}, State) ->
+cmd(<<"session">>, <<"get_offer">>, #api_req{data=#{session_id:=SessId}}, State) ->
+	case nkmedia_session:get_offer(SessId) of
+		{ok, Offer} ->
+			{ok, Offer, State};
+		{error, Error} ->
+			{error, Error, State}
+	end;
+
+cmd(<<"session">>, <<"get_answer">>, #api_req{data=#{session_id:=SessId}}, State) ->
+	case nkmedia_session:get_answer(SessId) of
+		{ok, Offer} ->
+			{ok, Offer, State};
+		{error, Error} ->
+			{error, Error, State}
+	end;
+
+cmd(<<"session">>, Cmd, #api_req{data=Data}, State)
+		when Cmd == <<"media">>; Cmd == <<"type">>;
+		     Cmd == <<"start_record">>; Cmd == <<"stop_record">>;
+		     Cmd == <<"pause_record">>; Cmd == <<"resume_record">>;
+		     Cmd == <<"pause">>; Cmd == <<"resume">>;
+		     Cmd == <<"get_position">>; Cmd == <<"set_position">>;
+		     Cmd == <<"layout">> ->
+ 	#{session_id:=SessId} = Data,
+ 	Cmd2 = binary_to_atom(Cmd, latin1),
+	case nkmedia_session:cmd(SessId, Cmd2, Data) of
+		{ok, Reply} ->
+			{ok, Reply, State};
+		{error, Error} ->
+			{error, Error, State}
+	end;
+
+cmd(<<"session">>, <<"candidate">>, #api_req{data=Data}, State) ->
 	#{
 		session_id := SessId, 
 		sdpMid := Id, 
@@ -100,20 +132,11 @@ cmd(<<"session">>, <<"set_candidate">>, #api_req{data=Data}, State) ->
 			{error, Error, State}
 	end;
 
-cmd(<<"session">>, <<"set_candidate_end">>, #api_req{data=Data}, State) ->
+cmd(<<"session">>, <<"candidate_end">>, #api_req{data=Data}, State) ->
 	#{session_id := SessId} = Data,
 	Candidate = #candidate{last=true},
 	case nkmedia_session:candidate(SessId, Candidate) of
 		ok ->
-			{ok, #{}, State};
-		{error, Error} ->
-			{error, Error, State}
-	end;
-
-cmd(<<"session">>, <<"cmd">>, #api_req{data=Data}, State) ->
-	#{session_id:=SessId, cmd:=Cmd} = Data,
-	case nkmedia_session:cmd(SessId, Cmd, Data) of
-		{ok, _} ->
 			{ok, #{}, State};
 		{error, Error} ->
 			{error, Error, State}
@@ -186,7 +209,10 @@ api_server_handle_cast(_Msg, _State) ->
 
 %% @private
 start_session(SrvId, Type, Config) ->
+	Wait = maps:get(wait_reply, Config, false),
 	case nkmedia_session:start(SrvId, Type, Config) of
+		{ok, SessId, Pid} when not Wait ->
+			{ok, SessId, Pid, #{}};
 		{ok, SessId, Pid} ->
 			case Config of
 				#{offer:=_, answer:=_} -> 

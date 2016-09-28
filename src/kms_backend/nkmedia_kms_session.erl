@@ -181,16 +181,7 @@ candidate(Candidate, Session) ->
 -spec cmd(cmd(), Opts::map(), session()) ->
     {ok, Reply::term(), session()} | {error, term(), session()} | continue().
 
-cmd(record, Opts, Session) ->
-    Op = maps:get(operation, Opts, start),
-    case nkmedia_kms_session_lib:recorder_op(Op, Opts, Session) of
-        {ok, Session2} ->
-            {ok, #{}, Session2};
-        {error, Error, Session2} ->
-            {error, Error, Session2}
-    end;
-
-cmd(session_type, #{session_type:=Type}=Opts, Session) ->
+cmd(type, #{type:=Type}=Opts, Session) ->
     case do_type(Type, Opts, Session) of
         {ok, TypeExt, Session2} -> 
             update_type(Type, TypeExt),
@@ -198,6 +189,33 @@ cmd(session_type, #{session_type:=Type}=Opts, Session) ->
         {error, Error, Session3} ->
             {error, Error, Session3}
     end;
+
+cmd(start_record, Opts, Session) ->
+    recorder_op(start, Opts, Session);
+
+cmd(stop_record, Opts, Session) ->
+    recorder_op(stop, Opts, Session);
+
+cmd(pause_record, Opts, Session) ->
+    recorder_op(pause, Opts, Session);
+
+cmd(resume_record, Opts, Session) ->
+    recorder_op(resume, Opts, Session);
+
+cmd(pause, Opts, Session) ->
+    player_op(pause, Opts, Session);
+
+cmd(resume, Opts, Session) ->
+    player_op(resume, Opts, Session);
+
+cmd(stop, Opts, Session) ->
+    player_op(stop, Opts, Session);
+
+cmd(get_position, Opts, Session) ->
+    player_op(stop, Opts, Session);
+
+cmd(set_position, #{position:=Pos}, Session) ->
+    player_op({set_position, Pos}, #{}, Session);
 
 cmd(connect, Opts, Session) ->
     do_type(connect, Opts, Session);
@@ -210,7 +228,7 @@ cmd(media, Opts, Session) ->
 cmd(play, Opts, Session) ->
     case maps:get(operation, Opts, start) of
         start ->
-            cmd(session_type, Opts#{session_type=>play}, Session);
+            cmd(type, Opts#{type=>play}, Session);
         Op ->
             nkmedia_kms_session_lib:player_op(Op, Opts, Session)
     end;
@@ -230,6 +248,7 @@ cmd(print_info, _Opts, #{session_id:=SessId}=Session) ->
     {ok, #{}, Session};
 
 cmd(_Update, _Opts, _Session) ->
+    lager:error("C: ~p", [_Update]),
     continue.
 
 
@@ -287,20 +306,22 @@ handle_cast({bridge_stop, PeerId}, Session) ->
     ?LLOG(notice, "ignoring bridge stop from ~s", [PeerId], Session),
     {noreply, Session};
 
-handle_cast({end_of_stream, Player}, #{nkmedia_kms_player:=Player}=Session) ->
-    case Session of
-        #{player_loops:=true} ->
+handle_cast({end_of_stream, Player}, 
+            #{nkmedia_kms_player:=Player, type_ext:=Ext}=Session) ->
+    case Ext of
+        #{loops:=0} ->
             case nkmedia_kms_session_lib:player_op(resume, #{}, Session) of
                 {ok, _, Session2} -> ok;
                 {error, Session2} -> ok
             end,
             {noreply, Session2};
-        #{player_loops:=Loops} when is_integer(Loops), Loops > 1 ->
+        #{loops:=Loops} when is_integer(Loops), Loops > 1 ->
             case nkmedia_kms_session_lib:player_op(resume, #{}, Session) of
                 {ok, _, Session2} -> ok;
                 {error, Session2} -> ok
             end,
-            {noreply, ?SESSION(#{player_loops=>Loops-1}, Session2)};
+            update_type(play, Ext#{loops=>Loops-1}),
+            {noreply, Session2};
         _ ->
             % Launch player stop event
             {noreply, Session}
@@ -460,11 +481,10 @@ do_type(connect, _Opts, #{peer_id:=PeerId}=Session) ->
 do_type(play, Opts, Session) ->
     Session2 = reset_type(Session),
     case nkmedia_kms_session_lib:player_op(start, Opts, Session2) of
-        {ok, #{player_uri:=Uri}, Session3} ->
-            Loops = maps:get(player_loops, Opts, false),
-            TypeExt = #{player_uri=>Uri, player_loops=>Loops},
-            Session4 = ?SESSION(#{player_loops=>Loops}, Session3),
-            {ok, TypeExt, Session4};
+        {ok, Info, Session3} ->
+            Loops = maps:get(loops, Opts, 0),
+            TypeExt = Info#{loops=>Loops},
+            {ok, TypeExt, Session3};
         {error, Error, Session3} ->
             {error, Error, Session3}
     end;
@@ -537,6 +557,23 @@ create_endpoint_offerer(#{sdp_type:=rtp}=Session) ->
 
 create_endpoint_offerer(Session) ->
     nkmedia_kms_session_lib:create_webrtc(#{}, Session).
+
+
+%% @private
+recorder_op(Op, Opts, Session) ->
+    case nkmedia_kms_session_lib:recorder_op(Op, Opts, Session) of
+        {ok, Session2} ->
+            {ok, #{}, Session2};
+        {error, Error, Session2} ->
+            {error, Error, Session2}
+    end.
+
+%% @private
+player_op(Op, Opts, #{type:=play}=Session) ->
+    nkmedia_kms_session_lib:player_op(Op, Opts, Session);
+
+player_op(_Op, _Opts, Session) ->
+    {error, invalid_operation, Session}.
 
 
 %% @private
@@ -667,12 +704,8 @@ create_room(RoomId, #{srv_id:=SrvId, nkmedia_kms_id:=KmsId}) ->
 %% @private
 notify_publisher(RoomId, #{session_id:=SessId}=Session) ->
     UserId = maps:get(user_id, Session, <<>>),
-    Info = #{
-        role => publisher, 
-        user_id => UserId, 
-        link => {nkmedia_session, self()}
-    },
-    case nkmedia_room:started_member(RoomId, SessId, Info) of
+    Info = #{role => publisher, user_id => UserId},
+    case nkmedia_room:started_member(RoomId, SessId, Info, self()) of
         ok ->
             ok;
         {error, Error} ->
@@ -683,13 +716,8 @@ notify_publisher(RoomId, #{session_id:=SessId}=Session) ->
 %% @private
 notify_listener(RoomId, PeerId, #{session_id:=SessId}=Session) ->
     UserId = maps:get(user_id, Session, <<>>),
-    Info = #{
-        role => listener, 
-        user_id => UserId, 
-        peer_id => PeerId, 
-        link => {nkmedia_session, self()}
-    },
-    case nkmedia_room:started_member(RoomId, SessId, Info) of
+    Info = #{role => listener, user_id => UserId, peer_id => PeerId},
+    case nkmedia_room:started_member(RoomId, SessId, Info, self()) of
         ok ->
             ok;
         {error, Error} ->

@@ -205,63 +205,44 @@ plugin_deps() ->
 %% ===================================================================
 
 
-a() ->
-    ConfigA = #{backend=>nkmedia_kms, no_offer_trickle_ice=>true, sdp_type=>rtp},
-    {ok, SessId, SessLink} = start_session(play, ConfigA),    
-    {ok, Offer} = nkmedia_session:get_offer(SessLink),
-    
-    ConfigB = #{backend=>nkmedia_fs, master_id=>SessId,
-                set_master_answer=>true, offer=>Offer},
-    {ok, _, _} = start_session(mcu, ConfigB#{room_id=>m1}).
-
-
-
-    % {nkmedia_verto, Pid} = find_user(1008),
-    % SessLink = {nkmedia_session, SessId, SessPid},
-    % nkmedia_verto:invite(Pid, SessId, Offer, SessLink).
-
-
+%% Invite
 invite(Dest, Type, Opts) ->
     Opts2 = maps:merge(#{backend => nkmedia_kms}, Opts),
     start_invite(Dest, Type, Opts2).
 
+invite_listen(Dest, Room, Pos) ->
+    {ok, PubId, Backend} = get_publisher(Room, Pos),
+    start_invite(Dest, listen, #{backend=>Backend, publisher_id=>PubId}).
+    
 
-invite_listen(Room, Pos, Dest) ->
-    {ok, #{backend:=Backend, members:=Members}} = nkmedia_room:get_room(Room),
-    Pubs = [P || {P, I} <- maps:to_list(Members), publisher==maps:get(role, I, none)],
-    Pub = lists:nth(Pos, Pubs),
-    Config = #{
-        backend => Backend,
-        publisher_id => Pub,
-        use_video => true
-    },
-    start_invite(Dest, listen, Config).
+%% Session
+media(SessId, Media) ->
+    cmd(SessId, media, Media).
 
+start_record(SessId, Opts) ->
+    cmd(SessId, start_record, Opts).
 
+stop_record(SessId) ->
+    cmd(SessId, stop_record, #{}).
+
+type(SessId, Type, Opts) ->
+    cmd(SessId, type, Opts#{type=>Type}).
+
+layout(SessId, Layout) ->
+    Layout2 = nklib_util:to_binary(Layout),
+    cmd(SessId, layout, #{layout=>Layout2}).
+
+switch(SessId, Pos) ->
+    {ok, listen, #{room_id:=Room}, _} = nkmedia_session:get_type(SessId),
+    {ok, PubId, _Backend} = get_publisher(Room, Pos),
+    cmd(SessId, type, #{type=>listen, publisher_id=>PubId}).
 
 cmd(SessId, Cmd, Opts) ->
     nkmedia_session:cmd(SessId, Cmd, Opts).
 
-cmd_media(SessId, Media) ->
-    nkmedia_session:cmd(SessId, media, Media).
 
 
-cmd_type(SessId, Type, Opts) ->
-    nkmedia_session:cmd(SessId, session_type, Opts#{session_type=>Type}).
-
-
-cmd_layout(SessId, Layout) ->
-    Layout2 = nklib_util:to_binary(Layout),
-    nkmedia_session:cmd(SessId, mcu_layout, #{mcu_layout=>Layout2}).
-
-
-cmd_listen(SessId, Pos) ->
-    {ok, listen, #{room_id:=Room}, _} = nkmedia_session:get_type(SessId),
-    {ok, #{publishers:=Pubs}} = nkmedia_room:get_room(Room),
-    Pub = lists:nth(Pos, maps:keys(Pubs)),
-    nkmedia_session:cmd(SessId, listen_switch, #{publisher_id=>Pub}).
-
-
+%% Tests
 play_to_mcu() ->
     ConfigA = #{backend=>nkmedia_kms, sdp_type=>rtp, publisher_id=><<"b3ff402a-3d7f-c697-78af-38c9862f00d9">>},
     {ok, SessIdA, _SessLinkA} = start_session(listen, ConfigA),
@@ -274,8 +255,6 @@ play_to_mcu() ->
         room_id => m1
     },
     {ok, _SessIdB, _SessLinkB} = start_session(mcu, ConfigB).
-
-
 
 play_to_janus() ->
     ConfigA = #{backend=>nkmedia_kms, no_offer_trickle_ice=>true},
@@ -386,7 +365,7 @@ nkmedia_sip_invite(_SrvId, <<"j", Dest/binary>>, Offer, SipLink, _Req, _Call) ->
     ConfigA = incoming_config(nkmedia_janus, Offer, SipLink, #{}),
     {ok, SessId, SessLink} = start_session(proxy, ConfigA),
     ConfigB = slave_config(nkmedia_janus, SessId, #{}),
-    ok = start_invite(Dest, proxy, ConfigB),
+    {ok, _} = start_invite(Dest, proxy, ConfigB),
     {ok, SessLink};
 
 % Version using FS
@@ -405,25 +384,6 @@ nkmedia_sip_invite(_SrvId, _Dest, _Offer, _SipLink, _Req, _Call) ->
     {rejected, decline}.
 
 
-
-
-
-% % Version that generates a Janus proxy before going on
-% nkmedia_sip_invite(_SrvId, _Dest, Offer, SipLink, _Req, _Call) ->
-%     ConfigA = incoming_config(nkmedia_janus, Offer, SipLink, #{}),
-%     {ok, SessId, SessPid} = start_session(proxy, ConfigA),
-%     {ok, Offer2} = nkmedia_session:cmd(SessId, get_proxy_offer, #{}),
-%     SessLink = {nkmedia_session, SessId, SessPid},
-%     case find_user(a) of
-%         {nkmedia_verto, Pid} ->
-%             {ok, Link} = nkmedia_verto:invite(Pid, SessId, Offer2, SessLink),
-%             {ok, _} = nkmedia_session:register(SessId, Link);
-%         {nkmedia_janus, Pid} ->
-%             {ok, Link} = nkmedia_janus_proto:invite(Pid, SessId, Offer2, SessLink),
-%             {ok, _} = nkmedia_session:register(SessId, Link);
-%         not_found ->
-%             {rejected, user_not_found}
-%     end.
 
 %% ===================================================================
 %% Internal
@@ -481,7 +441,7 @@ incoming(<<"d", Num/binary>>, Offer, Reg, Opts) ->
     ConfigA = incoming_config(p2p, Offer, Reg, Opts),
     {ok, SessId, SessLink} = start_session(p2p, ConfigA),
     ConfigB = slave_config(p2p, SessId, Opts#{offer=>Offer}),
-    ok = start_invite(Num, p2p, ConfigB),
+    {ok, _} = start_invite(Num, p2p, ConfigB),
     {ok, SessId, SessLink};
 
 incoming(<<"j", Num/binary>>, Offer, Reg, Opts) ->
@@ -492,7 +452,7 @@ incoming(<<"j", Num/binary>>, Offer, Reg, Opts) ->
     end,
     {ok, SessId, SessLink} = start_session(proxy, ConfigA2#{bitrate=>100000}),
     ConfigB = slave_config(nkmedia_janus, SessId, Opts),
-    ok = start_invite(Num, proxy, ConfigB#{bitrate=>150000}),
+    {ok, _} = start_invite(Num, proxy, ConfigB#{bitrate=>150000}),
     {ok, SessId, SessLink};
 
 incoming(<<"f", Num/binary>>, Offer, Reg, Opts) ->
@@ -500,7 +460,7 @@ incoming(<<"f", Num/binary>>, Offer, Reg, Opts) ->
     ConfigA = incoming_config(nkmedia_fs, Offer, Reg, Opts),
     {ok, SessId, SessLink} = start_session(park, ConfigA#{}),
     ConfigB = slave_config(nkmedia_fs, SessId, Opts),
-    ok = start_invite(Num, bridge, ConfigB),
+    {ok, _} = start_invite(Num, bridge, ConfigB),
     {ok, SessId, SessLink};
 
 incoming(<<"k", Num/binary>>, Offer, Reg, Opts) ->
@@ -509,7 +469,7 @@ incoming(<<"k", Num/binary>>, Offer, Reg, Opts) ->
     ConfigA = incoming_config(nkmedia_kms, Offer, Reg, Opts),
     {ok, SessId, SessLink} = start_session(park, ConfigA),
     ConfigB = slave_config(nkmedia_kms, SessId, Opts),
-    ok = start_invite(Num, bridge, ConfigB#{mute_video=>true}),
+    {ok, _} = start_invite(Num, bridge, ConfigB#{mute_video=>true}),
     {ok, SessId, SessLink};
 
 incoming(<<"play">>, Offer, Reg, Opts) ->
@@ -566,6 +526,7 @@ start_session(Type, Config) ->
     end.
 
 
+
 %% Creates a new 'B' session, gets an offer and invites a Verto, Janus or SIP endoint
 start_invite(Dest, Type, Config) ->
     case find_user(Dest) of
@@ -575,21 +536,21 @@ start_invite(Dest, Type, Config) ->
             {ok, Offer} = nkmedia_session:get_offer(SessId),
             {ok, InvLink} = nkmedia_verto:invite(VertoPid, SessId, Offer, SessLink),
             {ok, _} = nkmedia_session:register(SessId, InvLink),
-            ok;
+            {ok, SessId};
         {nkmedia_janus, JanusPid} ->
             Config2 = Config#{no_offer_trickle_ice=>true},
             {ok, SessId, SessLink} = start_session(Type, Config2),
             {ok, Offer} = nkmedia_session:get_offer(SessId),
             {ok, InvLink} = nkmedia_janus_proto:invite(JanusPid, SessId, Offer, SessLink),
             {ok, _} = nkmedia_session:register(SessId, InvLink),
-            ok;
+            {ok, SessId};
         {nkmedia_sip, Uri, Opts} ->
             Config2 = Config#{sdp_type=>rtp},
             {ok, SessId, SessLink} = start_session(Type, Config2),
             {ok, SipOffer} = nkmedia_session:get_offer(SessId),
             {ok, InvLink} = nkmedia_sip:send_invite(test, Uri, SipOffer, SessLink, Opts),
             {ok, _} = nkmedia_session:register(SessId, InvLink),
-            ok;
+            {ok, SessId};
         not_found ->
             {error, unknown_user}
     end.
@@ -617,6 +578,15 @@ find_user(User) ->
             end
     end.
 
+
+get_publisher(RoomId, Pos) ->
+    case nkmedia_room:get_room(RoomId) of
+        {ok, #{backend:=Backend}=Room} ->
+            Pubs = nkmedia_room:get_all_with_role(publisher, Room),
+            {ok, lists:nth(Pos, Pubs), Backend};
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 

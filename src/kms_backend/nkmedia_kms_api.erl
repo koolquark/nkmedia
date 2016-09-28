@@ -22,11 +22,10 @@
 
 -module(nkmedia_kms_api).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([cmd/4, syntax/5]).
-
+-export([cmd/4]).
 
 -include_lib("nkservice/include/nkservice.hrl").
--include("../../include/nkmedia.hrl").
+% -include_lib("nksip/include/nksip.hrl").
 
 
 %% ===================================================================
@@ -39,43 +38,23 @@
 %% ===================================================================
 
 %% @doc
--spec cmd(binary(), binary(), #api_req{}, State::map()) ->
-    {ok, map(), State::map()} | {error, nkservice:error(), State::map()}.
+-spec cmd(nkservice:id(), atom(), Data::map(), map()) ->
+	{ok, map(), State::map()} | {error, nkservice:error(), State::map()}.
 
-cmd(_Sub, _Cmd, _Data, _State) ->
-    continue.
+cmd(<<"session">>, Cmd, #api_req{data=Data}, State)
+		when Cmd == <<"pause_record">>; Cmd == <<"resume_record">> ->
+ 	#{session_id:=SessId} = Data,
+ 	Cmd2 = binary_to_atom(Cmd, latin1),
+	case nkmedia_session:cmd(SessId, Cmd2, Data) of
+		{ok, Reply} ->
+			{ok, Reply, State};
+		{error, Error} ->
+			{error, Error, State}
+	end;
 
 
-%% ===================================================================
-%% Syntax
-%% ===================================================================
+cmd(_SrvId, _Other, _Data, _State) ->
+	continue.
 
 
 
-%% @private
-syntax(<<"session">>, <<"start">>, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{
-        },
-        Defaults,
-        Mandatory
-    };
-
-syntax(<<"session">>, <<"update">>, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{
-        },
-        Defaults,
-        Mandatory
-    };
-
-syntax(<<"room">>, <<"create">>, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{
-        },
-        Defaults,
-        Mandatory
-    };
-
-syntax(_Sub, _Cmd, Syntax, Defaults, Mandatory) ->
-    {Syntax, Defaults, Mandatory}.

@@ -28,7 +28,8 @@
 -export([set_answer/2, set_type/3, cmd/3, cmd_async/3, info/2]).
 -export([stop/1, stop/2, stop_all/0]).
 -export([candidate/2]).
--export([register/2, unregister/2, link_from_slave/2, unlink_session/1, unlink_session/2]).
+-export([register/2, unregister/2]).
+-export([link_from_slave/2, unlink_session/1, unlink_session/2]).
 -export([get_all/0, get_session_file/1]).
 -export([set_slave_answer/3, backend_candidate/2]).
 -export([find/1, do_cast/2, do_call/2, do_call/3, do_info/2]).
@@ -45,7 +46,7 @@
 -include_lib("nkservice/include/nkservice.hrl").
 -include_lib("nksip/include/nksip.hrl").
 
--define(MAX_ICE_TIME, 2000).
+-define(MAX_ICE_TIME, 5000).
 -define(MAX_CALL_TIME, 5000).
 
 -define(DEBUG_MEDIA, true).
@@ -128,10 +129,10 @@
 -type event() ::
     {offer, nkmedia:offer()}                            | 
     {answer, nkmedia:answer()}                          | 
-    {session_type, atom(), map()}                       |
+    {type, atom(), map()}                               |
     {candidate, nkmedia:candidate()}                    |
     {info, binary()}                                    |   % User info
-    {stop, nkservice:error()} .                             % Session is about to hangup
+    {stop, nkservice:error()} .                          % Session is about to stop
 
 
 -type from() :: {pid(), term()}.
@@ -725,7 +726,7 @@ check_type(#state{type=OldType, type_ext=OldExt, session=Session}=State) ->
         #{type:=Type, type_ext:=Ext} ->
             State2 = State#state{type=Type, type_ext=Ext},
             ?LLOG(info, "session updated (~p)", [Ext], State2),
-            {ok, event({session_type, Type, Ext}, State2)}
+            {ok, event({type, Type, Ext}, State2)}
     end.
 
 

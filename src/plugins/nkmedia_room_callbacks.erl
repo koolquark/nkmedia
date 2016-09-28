@@ -165,7 +165,7 @@ nkmedia_room_handle_info(Msg, Room) ->
 
 %% @private
 api_cmd(#api_req{class = <<"media">>, subclass = <<"room">>, cmd=Cmd}=Req, State) ->
-    nkmedia_room_api:api_cmd(Cmd, Req, State);
+    nkmedia_room_api:cmd(Cmd, Req, State);
 
 api_cmd(_Req, _State) ->
     continue.
