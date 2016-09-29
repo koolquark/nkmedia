@@ -181,7 +181,8 @@ syntax(<<"session">>, <<"player_action">>, Syntax, Defaults, Mandatory) ->
 			session_id => binary,
 			action => atom,
 			uri => binary,
-			loops => {integer, 0, none}
+			loops => {integer, 0, none},
+			position => integer
 		},
 		Defaults,
 		[session_id|Mandatory]
@@ -191,7 +192,8 @@ syntax(<<"session">>, <<"room_action">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
-			action => atom
+			action => atom,
+			layout => binary
 		},
 		Defaults,
 		[session_id|Mandatory]

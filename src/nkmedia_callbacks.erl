@@ -35,7 +35,7 @@
 -export([error_code/1]).
 -export([api_cmd/2, api_syntax/4]).
 -export([api_server_cmd/2, api_server_reg_down/3, 
-	     api_server_handle_cast/2, api_server_handle_info/2]).
+	     api_server_handle_info/2]).
 -export([nkdocker_notify/2]).
 
 -include("nkmedia.hrl").
@@ -208,10 +208,6 @@ nkmedia_session_event(SessId, Event, Session) ->
 								media_session:event(), session()) ->
 	{ok, session()} | continue().
 
-nkmedia_session_reg_event(_SessId, {nkmedia_call, CallId, _CallPid}, {stop, Reason}, 						  Session) ->
-	nkmedia_call:hangup(CallId, Reason),
-	{ok, Session};
-
 nkmedia_session_reg_event(SessId, Link, Event, Session) ->
 	% lager:warning("RE: ~p, ~p", [Link, Event]),
 	nkmedia_api:nkmedia_session_reg_event(SessId, Link, Event, Session),
@@ -302,9 +298,9 @@ api_server_reg_down(Link, Reason, State) ->
 	nkmedia_api:api_server_reg_down(Link, Reason, State).
 
 
-%% @private
-api_server_handle_cast(Msg, State) ->
-	nkmedia_api:api_server_handle_cast(Msg, State).
+% %% @private
+% api_server_handle_cast(Msg, State) ->
+% 	nkmedia_api:api_server_handle_cast(Msg, State).
 
 
 %% @private

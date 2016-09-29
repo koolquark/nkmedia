@@ -28,6 +28,7 @@
          nkmedia_call_event/3, nkmedia_call_reg_event/4, 
          nkmedia_call_handle_call/3, nkmedia_call_handle_cast/2, 
          nkmedia_call_handle_info/2]).
+-export([nkmedia_session_reg_event/4]).
 -export([error_code/1]).
 -export([api_cmd/2, api_syntax/4]).
 
@@ -78,6 +79,21 @@ error_code(already_answered)        ->  {305006, "Already answered"};
 error_code(originator_cancel)       ->  {305007, "Originator cancel"};
 error_code(_) -> continue.
 
+
+
+%% ===================================================================
+%% Implemented Callbacks
+%% ===================================================================
+
+
+%% @private
+nkmedia_session_reg_event(_SessId, {nkmedia_call, CallId, _CallPid}, 
+                          {stop, Reason}, Session) ->
+    nkmedia_call:hangup(CallId, Reason),
+    {ok, Session};
+
+nkmedia_session_reg_event(_SessId, _Reg, _Ev, _Session) ->
+    continue.
 
 
 %% ===================================================================

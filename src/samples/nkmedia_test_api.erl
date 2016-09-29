@@ -139,11 +139,23 @@ get_client() ->
     C.
 
 
-
 %% Session
-% info, stop, list, media, type, get_offer, get_answer, set_answer(answer=>...)
-% switch(publisher_id=>...), layout(layout=>..), 
-% start_record, stop_, pause_, resume_
+media(C, S, Data) ->
+    cmd(C, S, update_media, Data).
+
+recorder(C, S, Data) ->
+    cmd(C, S, recorder_action, Data).
+
+player(C, S, Data) ->
+    cmd(C, S, player_action, Data).
+
+room(C, S, Data) ->
+    cmd(C, S, room_action, Data).
+
+type(C, S, Type, Data) ->
+    cmd(C, S, set_type, Data#{type=>Type}).
+
+% get_offer, get_answer, get_info, destroy, get_list, switch
 cmd(C, SessId, Cmd) ->
     cmd(C, SessId, Cmd, #{}).
 
@@ -152,11 +164,11 @@ cmd(C, SessId, Cmd, Data) ->
     nkservice_api_client:cmd(C, media, session, Cmd, Data2).
 
 candidate(C, SessId, #candidate{last=true}) ->
-    cmd(C, SessId, candidate_end, #{});
+    cmd(C, SessId, set_candidate_end, #{});
 
 candidate(C, SessId, #candidate{a_line=Line, m_id=Id, m_index=Index}) ->
     Data = #{sdpMid=>Id, sdpMLineIndex=>Index, candidate=>Line},
-    cmd(C, SessId, candidate, Data).
+    cmd(C, SessId, set_candidate, Data).
 
 
 
@@ -196,7 +208,7 @@ invite(Dest, Type, Opts) ->
     WsPid = get_client(),
     start_invite(Dest, WsPid, Opts#{type=>Type}).
 
-listen(Dest, Room, Pos) ->
+invite_listen(Dest, Room, Pos) ->
     {ok, PubId, Backend} = nkmedia_test:get_publisher(Room, Pos),
     invite(Dest, listen, #{backend=>Backend, publisher_id=>PubId}).
 
@@ -204,7 +216,7 @@ switch(SessId, Pos) ->
     {ok, listen, #{room_id:=Room}, _} = nkmedia_session:get_type(SessId),
     {ok, PubId, _Backend} = nkmedia_test:get_publisher(Room, Pos),
     C = get_client(),
-    cmd(C, SessId, type, #{type=>listen, publisher_id=>PubId}).
+    type(C, SessId, listen, #{publisher_id=>PubId}).
 
 
 
@@ -399,7 +411,7 @@ nkmedia_janus_terminate(_Reason, Janus) ->
 %% @private
 incoming(<<"je">>, Offer, WsPid, Events, Opts) ->
     Config = incoming_config(nkmedia_janus, echo, Offer, Events, Opts),
-    start_session(WsPid, Config#{bitrate=>100000, mute_audio=>true});
+    start_session(WsPid, Config#{bitrate=>100000, mute_audio=>false});
 
 incoming(<<"fe">>, Offer, WsPid, Events, Opts) ->
     Config = incoming_config(nkmedia_fs, echo, Offer, Events, Opts),
@@ -421,7 +433,7 @@ incoming(<<"jp1">>, Offer, WsPid, Events, Opts) ->
     RoomConfig = #{class=>sfu, room_id=>sfu, backend=>nkmedia_janus, bitrate=>100000},
     case room_create(WsPid, RoomConfig) of
         {ok, _} -> ok;
-        {error, {2032, _}} -> ok
+        {error, {304002, _}} -> ok
     end,
     Config = incoming_config(nkmedia_janus, publish, Offer, Events, Opts),
     start_session(WsPid, Config#{room_id=>sfu});
@@ -439,7 +451,7 @@ incoming(<<"kp1">>, Offer, WsPid, Events, Opts) ->
     RoomConfig = #{class=>sfu, room_id=>sfu, backend=>nkmedia_kms},
     case room_create(WsPid, RoomConfig) of
         {ok, _} -> ok;
-        {error, {2032, _}} -> ok
+        {error, {304002, _}} -> ok
     end,
     Config = incoming_config(nkmedia_kms, publish, Offer, Events, Opts),
     start_session(WsPid, Config#{room_id=>sfu});
@@ -535,7 +547,7 @@ api_client_fun(#api_req{class = <<"core">>, cmd = <<"event">>, data = Data}, Use
                 {janus, CallId, Pid} ->
                     nkmedia_janus_proto:answer(Pid, CallId, #{sdp=>SDP});
                 unknown ->
-                    lager:notice("TEST CLIENT ANSWER: ~p", [Data])
+                    lager:notice("TEST CLIENT ANSWER")
             end;
         {<<"media">>, <<"session">>, <<"destroyed">>} ->
             case Sender of

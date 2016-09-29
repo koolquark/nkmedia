@@ -345,7 +345,7 @@ recorder_op(stop, _Opts, #{nkmedia_kms_recorder:=RecorderEP}=Session) ->
     release(RecorderEP, Session),
     {ok, #{}, ?SESSION_RM(nkmedia_kms_recorder, Session)};
 
-recorder_op(get_actions, _Opts, #{nkmedia_kms_recorder:=_}=Session) ->
+recorder_op(get_actions, _Opts, Session) ->
     {ok, #{actions=>[start, stop, pause, resume, get_actions]}, Session};
 
 recorder_op(Action, _Opts, #{nkmedia_kms_recorder:=_}=Session) ->
@@ -462,7 +462,7 @@ player_op(set_position, #{position:=Pos}, #{nkmedia_kms_player:=PlayerEP}=Sessio
 player_op(set_position, _Ops, Session) ->
     {error, {missing_field, position}, Session};
 
-player_op(get_actions, _Opts, #{nkmedia_kms_player:=_}=Session) ->
+player_op(get_actions, _Opts, Session) ->
     Ac = [start, stop, pause, resume, get_info, get_position, set_position, get_actions], 
     {ok, #{actions=>Ac}, Session};
 

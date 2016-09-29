@@ -587,20 +587,10 @@ update_type(Type, TypeExt) ->
 
 %% @private
 recorder_action(start, Opts, Session) ->
-    case start_record(Opts, Session) of
-        {ok, Session2} ->
-            {ok, #{}, Session2};
-        {error, Error} ->
-            {error, Error, Session}
-    end;
+    start_record(Opts, Session);
 
 recorder_action(stop, _Opts, Session) ->
-    case stop_record(Session) of
-        ok ->
-            {ok, #{}, Session};
-        {error, Error} ->
-            {error, Error, Session}
-    end;
+    stop_record(Session);
 
 recorder_action(get_actions, _Opts, Session) ->
     {ok, #{actions=>[start, stop, get_actions]}, Session};
@@ -610,40 +600,49 @@ recorder_action(Action, _Opts, Session) ->
 
 
 %% @private
-start_record(#{record_uri:=<<"file://", File/binary>>}, Session) ->
+start_record(#{uri:=<<"file://", File/binary>>=Uri}, Session) ->
     Data = #{record=>true, filename=>File},
     case Session of
         #{type:=proxy, backend_role:=offerer, master_peer:=MasterId} ->
             case session_call(MasterId, {set_media_proxy, Data}) of
                 ok ->
-                    {ok, Session};
+                    {ok, #{uri=>Uri}, Session};
                 {error, Error} ->
-                    {error, Error}
+                    {error, Error, Session}
             end;
         #{nkmedia_janus_pid:=Pid} ->
             case nkmedia_janus_op:media(Pid, Data) of
                 ok ->
-                    {ok, Session};
+                    {ok, #{uri=>Uri}, Session};
                 {error, Error} ->
-                    {error, Error}
+                    {error, Error, Session}
             end
     end;
     
-start_record(#{uri:=Uri}=Opts, Session) ->
-    start_record(Opts#{record_uri=>Uri}, Session);
-
 start_record(Opts, Session) ->
     {Name1, Session2} = nkmedia_session:get_session_file(Session),
     Name2 = filename:join(<<"/tmp/record">>, Name1),
-    start_record(Opts#{record_uri=><<"file://", Name2/binary>>}, Session2).
+    start_record(Opts#{uri=><<"file://", Name2/binary>>}, Session2).
 
 
 %% @private
-stop_record(#{type:=proxy, backend_role:=offerer, master_peer:=MasterId}) ->
-   session_call(MasterId, {set_media_proxy, #{record=>false}});
-
-stop_record(#{nkmedia_janus_pid:=Pid}) ->
-    nkmedia_janus_op:media(Pid, #{record=>false}).
+stop_record(Session) ->
+   case Session of
+        #{type:=proxy, backend_role:=offerer, master_peer:=MasterId} ->
+            case session_call(MasterId, {set_media_proxy, #{record=>false}}) of
+                ok ->
+                    {ok, #{}, Session};
+                {error, Error} ->
+                    {error, Error, Session}
+            end;
+        #{nkmedia_janus_pid:=Pid} ->
+            case nkmedia_janus_op:media(Pid, #{record=>false}) of
+                ok ->
+                    {ok, #{}, Session};
+                {error, Error} ->
+                    {error, Error, Session}
+            end
+    end.
 
 
 %% @private
