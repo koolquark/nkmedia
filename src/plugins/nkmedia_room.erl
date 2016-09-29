@@ -364,10 +364,11 @@ terminate(Reason, State) ->
     case Reason of
         normal ->
             ?LLOG(info, "terminate: ~p", [Reason], State2),
-            _ = do_stop(normal, State2);
+            _ = do_stop(normal_termination, State2);
         _ ->
-            ?LLOG(notice, "terminate: ~p", [Reason], State2),
-            _ = do_stop(anormal_termination, State2)
+            Ref = nkmedia_lib:uid(),
+            ?LLOG(notice, "terminate error ~s: ~p", [Ref, Reason], State2),
+            _ = do_stop({internal_error, Ref}, State2)
     end,    
     timer:sleep(100),
     ok.

@@ -227,7 +227,7 @@ nkmedia_janus_handle_info(Msg, Janus) ->
 %% ===================================================================
 
 
-%% @private Error Codes -> 2150 range
+%% @private See nkservice_callabcks
 error_code(_)               -> continue.
 
 

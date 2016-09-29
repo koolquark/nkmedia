@@ -217,25 +217,28 @@ invite_listen(Dest, Room, Pos) ->
 
 %% Session
 media(SessId, Media) ->
-    cmd(SessId, media, Media).
+    cmd(SessId, update_media, Media).
 
-start_record(SessId, Opts) ->
-    cmd(SessId, start_record, Opts).
+recorder(SessId, Opts) ->
+    cmd(SessId, recorder_action, Opts).
 
-stop_record(SessId) ->
-    cmd(SessId, stop_record, #{}).
+player(SessId, Opts) ->
+    cmd(SessId, player_action, Opts).
 
 type(SessId, Type, Opts) ->
-    cmd(SessId, type, Opts#{type=>Type}).
+    cmd(SessId, set_type, Opts#{type=>Type}).
 
-layout(SessId, Layout) ->
+room(SessId, Opts) ->
+    cmd(SessId, room_action, Opts).
+
+room_layout(SessId, Layout) ->
     Layout2 = nklib_util:to_binary(Layout),
-    cmd(SessId, layout, #{layout=>Layout2}).
+    room(SessId, #{action=>layout, layout=>Layout2}).
 
 switch(SessId, Pos) ->
     {ok, listen, #{room_id:=Room}, _} = nkmedia_session:get_type(SessId),
     {ok, PubId, _Backend} = get_publisher(Room, Pos),
-    cmd(SessId, type, #{type=>listen, publisher_id=>PubId}).
+    type(SessId, listen, #{publisher_id=>PubId}).
 
 cmd(SessId, Cmd, Opts) ->
     nkmedia_session:cmd(SessId, Cmd, Opts).
@@ -377,7 +380,7 @@ nkmedia_sip_invite(_SrvId, <<"fe">>, Offer, SipLink, _Req, _Call) ->
 % Version using KMS
 nkmedia_sip_invite(_SrvId, <<"ke">>, Offer, SipLink, _Req, _Call) ->
     ConfigA = incoming_config(nkmedia_kms, Offer, SipLink, #{}),
-    {ok, _SessId, SessLink} = start_session(echo, ConfigA),
+    {ok, _SessId, SessLink} = start_session(play, ConfigA),
     {ok, SessLink};
 
 nkmedia_sip_invite(_SrvId, _Dest, _Offer, _SipLink, _Req, _Call) ->
@@ -469,7 +472,7 @@ incoming(<<"k", Num/binary>>, Offer, Reg, Opts) ->
     ConfigA = incoming_config(nkmedia_kms, Offer, Reg, Opts),
     {ok, SessId, SessLink} = start_session(park, ConfigA),
     ConfigB = slave_config(nkmedia_kms, SessId, Opts),
-    {ok, _} = start_invite(Num, bridge, ConfigB#{mute_video=>true}),
+    {ok, _} = start_invite(Num, bridge, ConfigB#{mute_video=>false}),
     {ok, SessId, SessLink};
 
 incoming(<<"play">>, Offer, Reg, Opts) ->

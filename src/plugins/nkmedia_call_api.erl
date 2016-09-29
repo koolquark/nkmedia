@@ -129,8 +129,8 @@ cmd(<<"call">>, <<"hangup">>, #api_req{data=Data}, State) ->
             {error, call_error, State}
     end;
 
-cmd(_SrvId, _Other, _Data, State) ->
-    {error, unknown_command, State}.
+cmd(_SrvId, Other, _Data, State) ->
+    {error, {unknown_command, Other}, State}.
 
 
 

@@ -79,56 +79,26 @@ plugin_stop(Config, #{name:=Name}) ->
 %% Error Codes
 %% ===================================================================
 
-%% @doc NkMEDIA - 2XXX range
+%% @doc See nkservice_callbacks.erl
 -spec error_code(term()) ->
 	{integer(), binary()} | continue.
 
+error_code(no_mediaserver) 			-> 	{300001, "No mediaserver available"};
+error_code(different_mediaserver) 	-> 	{300002, "Different mediaserver"};
 
-error_code(no_mediaserver) 			-> 	{2001, <<"No mediaserver available">>};
-error_code(different_mediaserver) 	-> 	{2002, <<"Different mediaserver">>};
-error_code(unknown_session_type) 	-> 	{2003, <<"Unknown session type">>};
-error_code(backed_error) 			-> 	{2004, <<"Backend error">>};
+error_code(offer_not_set) 			-> 	{300010, "Offer not set"};
+error_code(offer_already_set) 		-> 	{300011, "Offer already set"};
+error_code(answer_not_set) 			-> 	{300012, "Answer not set"};
+error_code(answer_already_set) 		-> 	{300013, "Answer already set"};
+error_code(no_ice_candidates) 		-> 	{300014, "No ICE candidates"};
 
-error_code(missing_offer) 			-> 	{2010, <<"Missing offer">>};
-error_code(duplicated_offer) 		-> 	{2011, <<"Duplicated offer">>};
-error_code(offer_not_set) 			-> 	{2012, <<"Offer not set">>};
-error_code(offer_already_set) 		-> 	{2013, <<"Offer already set">>};
-error_code(remote_offer_error) 		-> 	{2014, <<"Remote offer error">>};
-error_code(duplicated_answer) 		-> 	{2015, <<"Duplicated answer">>};
-error_code(answer_not_set) 			-> 	{2016, <<"Answer not set">>};
-error_code(answer_already_set) 		-> 	{2017, <<"Answer already set">>};
-error_code(no_ice_candidates) 		-> 	{2018, <<"No ICE candidates">>};
+error_code(bridge_stop)       		->  {300020, "Bridge stop"};
+error_code(peer_stopped)       		->  {300021, "Peer session stopped"};
 
-error_code(call_not_found) 			->  {2020, <<"Call not found">>};
-error_code(call_rejected)			->  {2021, <<"Call rejected">>};
-error_code(no_destination) 			->  {2022, <<"No destination">>};
-error_code(no_answer) 				->  {2023, <<"No answer">>};
-error_code(already_answered) 		->  {2024, <<"Already answered">>};
-error_code(originator_cancel)		-> 	{2025, <<"Originator cancel">>};
-error_code(peer_hangup)				-> 	{2026, <<"Peer hangup">>};
+error_code(no_active_recorder) 		->  {300030, "No active recorder"};
+error_code(no_active_player) 		->  {300031, "No active player"};
+error_code(no_active_room)	 		->  {300032, "No active room"};
 
-error_code(room_srv_not_started)	->  {2030, <<"Room plugin not started">>};
-error_code(room_not_found)			->  {2031, <<"Room not found">>};
-error_code(room_already_exists)	    ->  {2032, <<"Room already exists">>};
-error_code(room_destroyed)          ->  {2033, <<"Room destroyed">>};
-error_code(no_room_members)		    ->  {2034, <<"No remaining room members">>};
-error_code(unknown_publisher)	    ->  {2035, <<"Unknown publisher">>};
-error_code(invalid_publisher)       ->  {2036, <<"Invalid publisher">>};
-error_code(publisher_stopped)       ->  {2037, <<"Publisher stopped">>};
-
-error_code(call_error)       		->  {2040, <<"Call error">>};
-error_code(bridge_stop)       		->  {2041, <<"Bridge stop">>};
-error_code(peer_stopped)       		->  {2042, <<"Peer session stopped">>};
-
-error_code(no_active_recorder) 		->  {2050, <<"No active recorder">>};
-error_code(record_start_error) 		->  {2051, <<"Record start error">>};
-
-error_code(no_active_player) 		->  {2060, <<"No active player">>};
-error_code(player_start_error) 		->  {2061, <<"Player start error">>};
-
-error_code(set_media_not_allowed) 	->  {2070, <<"Update media not allowed">>};
-
-% error_code(Code) when is_integer(Code) -> get_q850(Code);
 error_code(_) -> continue.
 
 
@@ -160,6 +130,9 @@ nkmedia_session_terminate(_Reason, Session) ->
 -spec nkmedia_session_start(nkmedia_session:type(), nkmedia:role(), session()) ->
 	{ok, session()} |
 	{error, nkservice:error(), session()} | continue().
+
+nkmedia_session_start(p2p, _Role, Session) ->
+	{ok, ?SESSION(#{backend=>p2p}, Session)};
 
 nkmedia_session_start(_Type, _Role, Session) ->
 	{error, not_implemented, Session}.
@@ -201,7 +174,7 @@ nkmedia_session_answer(_Type, _Role, Answer, Session) ->
 	{error, term(), session()} | continue().
 
 nkmedia_session_cmd(_Cmd, _Opts, Session) ->
-	{error, invalid_operation, Session}.
+	{error, not_implemented, Session}.
 
 
 %% @private

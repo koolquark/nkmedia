@@ -465,7 +465,7 @@ handle_call({answer, Answer}, From, State) ->
         {wait, to_sip_answer} ->
             do_to_sip_answer(Answer, From, State);
         _ ->
-            reply_stop({error, invalid_state1}, State)
+            reply_stop({error, {internal_error, ?LINE}}, State)
     end;
 
 handle_call({media, Opts}, _From, #state{status=Status, wait=Wait}=State) ->
@@ -482,7 +482,7 @@ handle_call({media, Opts}, _From, #state{status=Status, wait=Wait}=State) ->
             do_sip_media(Opts, State);
         _ ->
             ?LLOG(warning, "media error: ~p, ~p", [Status, Wait], State),
-            reply_stop({error, invalid_state2}, State)
+            reply_stop({error, {internal_error, ?LINE}}, State)
     end;
 
 handle_call({media_peer, Opts}, _From, #state{status=Status, wait=Wait}=State) ->
@@ -491,14 +491,16 @@ handle_call({media_peer, Opts}, _From, #state{status=Status, wait=Wait}=State) -
             do_videocall_media(Opts, callee, State);
         {wait, videocall} ->
             do_videocall_media(Opts, callee, State);
+        {wait, videocall_answer} ->
+            do_videocall_media(Opts, callee, State);
         _ ->
             ?LLOG(warning, "media_peer error: ~p, ~p", [Status, Wait], State),
-            reply({error, invalid_state3}, State)
+            reply({error, {internal_error, ?LINE}}, State)
     end;
 
 handle_call(Msg, _From, #state{status=Status, wait=Wait}=State) -> 
     ?LLOG(warning, "invalid state: ~p, ~p, ~p", [Msg, Status, Wait], State),
-    reply({error, invalid_state4}, State).
+    reply({error, {internal_error, ?LINE}}, State).
     
 
 %% @private
@@ -1151,7 +1153,7 @@ do_sip_media(#{dtmf:=DTMF}, #state{handle_id=Handle}=State) ->
     end;
 
 do_sip_media(_Opts, State) ->
-    reply({error, invalid_parameters}, State).
+    reply({error, invalid_operation}, State).
 
 
 
@@ -1236,7 +1238,7 @@ do_event(_Id, _Handle, {event, <<"registration_failed">>, _, _}, State) ->
     {stop, normal, State};
 
 do_event(_Id, _Handle, {event, <<"hangup">>, _, _}, State) ->
-    ?LLOG(notice, "hangup from Janus", [], State),
+    ?LLOG(info, "hangup from Janus", [], State),
     {stop, normal, State};
 
 do_event(_Id, _Handle, 
@@ -1298,7 +1300,7 @@ message(Handle, Body, Jsep, #state{sess_id=SessId, conn=Pid}) ->
                         444 -> invalid_parameters;
                         _ -> 
                             lager:notice("Unknown Janus error (~p): ~s", [Code, Error]),
-                            janus_error
+                            {janus_error, Code, Error}
                     end,
                     {error, Error2};
                 _ ->

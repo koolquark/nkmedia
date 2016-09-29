@@ -614,7 +614,7 @@ make_msg(Id, {answer, CallId, Opts}, _State) ->
     {ok, nkmedia_fs_util:verto_req(Id, <<"verto.answer">>, Params)};
 
 make_msg(Id, {hangup, CallId, Reason}, #state{srv_id=SrvId}) ->
-    {Code, Text} = SrvId:error_code(Reason),
+    {Code, Text} = nkservice_util:error_code(SrvId, Reason),
     Params = #{<<"callID">>=>CallId, <<"causeCode">>=>Code, <<"cause">>=>Text},
     {ok, nkmedia_fs_util:verto_req(Id, <<"verto.bye">>, Params)}.
 

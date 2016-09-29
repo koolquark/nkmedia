@@ -102,12 +102,11 @@ cmd(<<"session">>, <<"get_answer">>, #api_req{data=#{session_id:=SessId}}, State
 	end;
 
 cmd(<<"session">>, Cmd, #api_req{data=Data}, State)
-		when Cmd == <<"media">>; Cmd == <<"type">>;
-		     Cmd == <<"start_record">>; Cmd == <<"stop_record">>;
-		     Cmd == <<"pause_record">>; Cmd == <<"resume_record">>;
-		     Cmd == <<"pause">>; Cmd == <<"resume">>;
-		     Cmd == <<"get_position">>; Cmd == <<"set_position">>;
-		     Cmd == <<"layout">> ->
+		when Cmd == <<"update_media">>; 
+			 Cmd == <<"set_type">>;
+		     Cmd == <<"recorder_action">>; 
+		     Cmd == <<"player_action">>; 
+		     Cmd == <<"room_action">> ->
  	#{session_id:=SessId} = Data,
  	Cmd2 = binary_to_atom(Cmd, latin1),
 	case nkmedia_session:cmd(SessId, Cmd2, Data) of
@@ -117,7 +116,7 @@ cmd(<<"session">>, Cmd, #api_req{data=Data}, State)
 			{error, Error, State}
 	end;
 
-cmd(<<"session">>, <<"candidate">>, #api_req{data=Data}, State) ->
+cmd(<<"session">>, <<"set_candidate">>, #api_req{data=Data}, State) ->
 	#{
 		session_id := SessId, 
 		sdpMid := Id, 
@@ -132,7 +131,7 @@ cmd(<<"session">>, <<"candidate">>, #api_req{data=Data}, State) ->
 			{error, Error, State}
 	end;
 
-cmd(<<"session">>, <<"candidate_end">>, #api_req{data=Data}, State) ->
+cmd(<<"session">>, <<"set_candidate_end">>, #api_req{data=Data}, State) ->
 	#{session_id := SessId} = Data,
 	Candidate = #candidate{last=true},
 	case nkmedia_session:candidate(SessId, Candidate) of
@@ -142,7 +141,7 @@ cmd(<<"session">>, <<"candidate_end">>, #api_req{data=Data}, State) ->
 			{error, Error, State}
 	end;
 
-cmd(<<"session">>, <<"info">>, #api_req{data=Data}, State) ->
+cmd(<<"session">>, <<"get_info">>, #api_req{data=Data}, State) ->
 	#{session_id:=SessId} = Data,
 	case nkmedia_session:get_session(SessId) of
 		{ok, Session} ->
@@ -153,13 +152,13 @@ cmd(<<"session">>, <<"info">>, #api_req{data=Data}, State) ->
 			{error, Error, State}
 	end;
 
-cmd(<<"session">>, <<"list">>, _Req, State) ->
+cmd(<<"session">>, <<"get_list">>, _Req, State) ->
 	Res = [#{session_id=>Id} || {Id, _Pid} <- nkmedia_session:get_all()],
 	{ok, Res, State};
 
 
-cmd(_SrvId, _Other, _Data, State) ->
-	{error, unknown_command, State}.
+cmd(_SrvId, Other, _Data, State) ->
+	{error, {unknown_command, Other}, State}.
 
 
 

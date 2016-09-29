@@ -526,7 +526,7 @@ process_client_msg(accept, _Body, Msg, NkPort, State) ->
     #{<<"jsep">>:=JSep} = Msg,
     #{<<"type">>:=<<"answer">>, <<"sdp">>:=SDP} = JSep,
     Trickle = maps:get(<<"trickle">>, JSep, true),
-    lager:warning("janus answer, trickle: ~p", [Trickle]),
+    ?LLOG(notice, "answer, trickle: ~p", [Trickle], State),
     Answer = #{sdp=>SDP, sdp_type=>webrtc, trickle_ice=>Trickle},
     case links_get(CallId, State) of
         {ok, Link} ->

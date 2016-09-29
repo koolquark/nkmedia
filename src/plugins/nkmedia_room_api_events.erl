@@ -41,7 +41,7 @@ event(RoomId, started, Room) ->
     send_event(RoomId, started, Data, Room);
 
 event(RoomId, {stopped, Reason}, #{srv_id:=SrvId}=Room) ->
-    {Code, Txt} = SrvId:error_code(Reason),
+    {Code, Txt} = nkservice_util:error_code(SrvId, Reason),
     send_event(RoomId, destroyed, #{code=>Code, reason=>Txt}, Room);
 
 event(RoomId, {started_member, SessId, Info}, Room) ->

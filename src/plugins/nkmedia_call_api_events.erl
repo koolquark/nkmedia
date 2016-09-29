@@ -51,7 +51,7 @@ event(CallId, {answer, _, _Answer}, Call) ->
     send_event(CallId, answer, #{}, Call);
 
 event(CallId, {hangup, Reason}, #{srv_id:=SrvId}=Call) ->
-    {Code, Txt} = SrvId:error_code(Reason),
+    {Code, Txt} = nkservice_util:error_code(SrvId, Reason),
     send_event(CallId, hangup, #{code=>Code, reason=>Txt}, Call);
 
 event(_CallId, _Event, Call) ->

@@ -648,10 +648,11 @@ terminate(Reason, State) ->
     case Reason of
         normal ->
             ?LLOG(info, "terminate: ~p", [Reason], State),
-            _ = do_stop(normal, State);
+            _ = do_stop(normal_termination, State);
         _ ->
-            ?LLOG(notice, "terminate: ~p", [Reason], State),
-            _ = do_stop(anormal_termination, State)
+            Ref = nklib_util:uid(),
+            ?LLOG(notice, "terminate error ~s: ~p", [Ref, Reason], State),
+            _ = do_stop({internal_error, Ref}, State)
     end,
     {ok, _State2} = handle(nkmedia_session_terminate, [Reason], State).
 

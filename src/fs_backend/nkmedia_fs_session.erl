@@ -184,7 +184,7 @@ answer(Type, offerer, Answer, #{nkmedia_fs_uuid:=UUID, offer:=Offer}=Session) ->
 -spec cmd(cmd(), Opts::map(), session()) ->
     {ok, Reply::term(), session()} | {error, term(), session()} | continue().
 
-cmd(type, #{type:=Type}=Opts, Session) ->
+cmd(set_type, #{type:=Type}=Opts, Session) ->
     case do_type(Type, Opts, Session) of
         {ok, TypeExt, Session2} -> 
             update_type(Type, TypeExt),
@@ -193,27 +193,27 @@ cmd(type, #{type:=Type}=Opts, Session) ->
             {error, Error, Session2}
     end;
 
-cmd(start_record, _Opts, Session) ->
+cmd(set_type, _Opts, Session) ->
+    {error, {missing_field, type}, Session};
+
+cmd(recorder_action, _Opts, Session) ->
     {error, not_implemented, Session};
 
-cmd(stop_record, _Opts, Session) ->
+cmd(player_action, _Opts, Session) ->
     {error, not_implemented, Session};
 
-cmd(media, _Opts, Session) ->
+cmd(update_media, _Opts, Session) ->
     {error, not_implemented, Session};
 
-cmd(layout, #{layout:=Layout}, #{type:=mcu}=Session) ->
-    #{type_ext:=#{room_id:=Room}=Ext, nkmedia_fs_id:=FsId} = Session,
-    case nkmedia_fs_cmd:conf_layout(FsId, Room, Layout) of
-        ok  ->
-            update_type(mcu, Ext#{layout=>Layout}),
-            {ok, #{}, Session};
-        {error, Error} ->
-            {error, Error, Session}
-    end;
+cmd(room_action, Opts, #{type:=mcu}=Session) ->
+    Action = maps:get(action, Opts, get_actions),
+    room_action(Action, Opts, Session);
 
-cmd(_Update, _Opts, _Session) ->
-    continue.
+cmd(room_action, _Opts, Session) ->
+    {error, no_active_room, Session};
+
+cmd(_Update, _Opts, Session) ->
+    {error, not_implemented, Session}.
 
 
 %% @private
@@ -386,8 +386,11 @@ do_type(bridge, #{peer_id:=PeerId}, Session) ->
 do_type(bridge, #{master_peer:=PeerId}=Opts, Session) ->
     do_type(bridge, Opts#{peer_id=>PeerId}, Session);
 
+do_type(bridge, _Opts, Session) ->
+    {error, {missing_field, peer_id}, Session};
+
 do_type(_Type, _Opts, Session) ->
-    {error, invalid_operation, Session}.
+    {error, not_implemented, Session}.
 
 
 %% @private
@@ -445,6 +448,27 @@ get_engine(#{srv_id:=SrvId}=Session) ->
         {error, Error} ->
             {error, Error}
     end.
+
+
+%% @private
+room_action(layout, #{layout:=Layout}, Session) ->
+    #{type_ext:=#{room_id:=Room}=Ext, nkmedia_fs_id:=FsId} = Session,
+    case nkmedia_fs_cmd:conf_layout(FsId, Room, Layout) of
+        ok  ->
+            update_type(mcu, Ext#{layout=>Layout}),
+            {ok, #{}, Session};
+        {error, Error} ->
+            {error, Error, Session}
+    end;
+
+room_action(layout, _Opts, Session) ->
+    {error, {missing_parameter, layout}, Session};
+
+room_action(get_actions, _Opts, Session) ->
+    {ok, #{actions=>[layout, get_actions]}, Session};
+
+room_action(Action, _Opts, Session) ->
+    {error, {invalid_action, Action}, Session}.
 
 
 %% @private. The type must be fixed again after calling this function

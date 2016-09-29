@@ -120,12 +120,12 @@ nkmedia_janus_get_mediaserver(SrvId) ->
 %% Implemented Callbacks - error
 %% ===================================================================
 
-%% @private Error Codes -> 22XX range
-error_code(janus_error)             ->  {2200, <<"Janus error">>};
-error_code(janus_connection_error)  ->  {2201, <<"Janus connection error">>};
-error_code(janus_session_down)      ->  {2202, <<"Janus op process down">>};
-error_code(janus_bye)               ->  {2203, <<"Janus bye">>};
-error_code(_)                       ->  continue.
+%% @private See nkservice_callbacks
+error_code({janus_error, Code, Txt})    ->  {301001, "Janus error ~p: ~s", Code, Txt};
+error_code(janus_connection_error)      ->  {301002, <<"Janus connection error">>};
+error_code(janus_session_down)          ->  {301003, <<"Janus op process down">>};
+error_code(janus_bye)                   ->  {301004, <<"Janus bye">>};
+error_code(_)                           ->  continue.
 
 
 %% ===================================================================

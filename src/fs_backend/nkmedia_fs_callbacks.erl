@@ -116,14 +116,15 @@ nkmedia_fs_get_mediaserver(SrvId) ->
 %% Implemented Callbacks - error
 %% ===================================================================
 
-%% @private Error Codes -> 23XX range
-error_code(fs_error)             ->  {2300, <<"Freeswitch internal error">>};
-error_code(fs_get_answer_error)  ->  {2301, <<"Freeswitch get answer error">>};
-error_code(fs_get_offer_error)   ->  {2302, <<"Freeswitch get offer error">>};
-error_code(fs_channel_parked)    ->  {2303, <<"Freeswitch channel parked">>};
-error_code(fs_channel_stop)      ->  {2304, <<"Freeswitch channel stop">>};
-error_code(fs_transfer_error)    ->  {2305, <<"Freeswitch transfer error">>};
-error_code(fs_bridge_error)      ->  {2306, <<"Freeswitch bridge error">>};
+%% @private See nkservice_callbacks
+error_code({fs_error, Error})    ->  {302001, "Freeswitch error: ~s", [Error]};
+error_code(fs_invite_error)      ->  {302002, "Freeswitch invite error"};
+error_code(fs_get_answer_error)  ->  {302003, "Freeswitch get answer error"};
+error_code(fs_get_offer_error)   ->  {302004, "Freeswitch get offer error"};
+error_code(fs_channel_parked)    ->  {302005, "Freeswitch channel parked"};
+error_code(fs_channel_stop)      ->  {302006, "Freeswitch channel stop"};
+error_code(fs_transfer_error)    ->  {302007, "Freeswitch transfer error"};
+error_code(fs_bridge_error)      ->  {302008, "Freeswitch bridge error"};
 error_code(_)                    ->  continue.
 
 

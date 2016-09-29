@@ -69,6 +69,13 @@ plugin_stop(Config, #{name:=Name}) ->
 -spec error_code(term()) ->
     {integer(), binary()} | continue.
 
+error_code(call_error)              ->  {305001, "Call error"};
+error_code(call_not_found)          ->  {305002, "Call not found"};
+error_code(call_rejected)           ->  {305003, "Call rejected"};
+error_code(no_destination)          ->  {305004, "No destination"};
+error_code(no_answer)               ->  {305005, "No answer"};
+error_code(already_answered)        ->  {305006, "Already answered"};
+error_code(originator_cancel)       ->  {305007, "Originator cancel"};
 error_code(_) -> continue.
 
 

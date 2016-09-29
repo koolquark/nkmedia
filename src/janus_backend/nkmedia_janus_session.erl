@@ -96,10 +96,11 @@
 %% Special case as 'B' leg of a proxy
 start(proxy, offerer, #{master_peer:=MasterId}=Session) -> 
     case nkmedia_session:cmd(MasterId, get_proxy_offer, #{}) of
-        {ok, #{janus_id:=Id, offer:=Offer}} ->
+        {ok, #{janus_id:=Id, proxy_type:=Type, offer:=Offer}} ->
             Update = #{
                 backend => nkmedia_janus, 
                 nkmedia_janus_id => Id,
+                nkmedia_janus_proxy_type => Type,
                 % We want to send the answer back to master session
                 no_answer_trickle_ice => false,
                 set_master_answer => true
@@ -163,13 +164,17 @@ answer(proxy, offerer, Answer, #{nkmedia_janus_proxy_type:=videocall}=Session) -
             lager:error("B SIDE1"),
             {ok, Answer, Session2};
         {error, Error, Session2} ->
-            lager:error("B SIDE2: ~p", [Error]),
             {error, Error, Session2}
     end;
 
+answer(proxy, offerer, Answer, #{nkmedia_janus_proxy_type:=Type}=Session) ->
+    % We are the 'B' side of a SIP  proxy
+    lager:error("SIP B: ~p", [Type]),
+    {ok, Answer, Session};
+
 answer(proxy, offerer, Answer, Session) ->
     % We are the 'B' side of a SIP  proxy
-    lager:error("SIP B"),
+    lager:error("SIP B NO TYPE"),
     {ok, Answer, Session};
 
 answer(proxy, offeree, Answer, #{nkmedia_janus_pid:=Pid}=Session) ->
@@ -226,7 +231,7 @@ candidate(Candidate, #{nkmedia_janus_pid:=Pid}=Session) ->
 -spec cmd(cmd(), Opts::map(), session()) ->
     {ok, Reply::term(), session()} | {error, term(), session()} | continue().
 
-cmd(media, Opts, #{type:=proxy, backend_role:=offerer}=Session) ->
+cmd(update_media, Opts, #{type:=proxy, backend_role:=offerer}=Session) ->
     case set_media_proxy(Opts, Session) of
         {ok, Session2} ->
             {ok, #{}, Session2};
@@ -234,7 +239,8 @@ cmd(media, Opts, #{type:=proxy, backend_role:=offerer}=Session) ->
             {error, Error, Session2}
     end;
 
-cmd(media, Opts, #{type:=Type}=Session) when Type==echo; Type==proxy; Type==publish ->
+cmd(update_media, Opts, #{type:=Type}=Session) 
+        when Type==echo; Type==proxy; Type==publish ->
     case set_media(Opts, Session) of
         {ok, Session2} ->
             {ok, #{}, Session2};
@@ -242,7 +248,7 @@ cmd(media, Opts, #{type:=Type}=Session) when Type==echo; Type==proxy; Type==publ
             {error, Error, Session2}
     end;
 
-cmd(type, #{type:=listen, publisher_id:=Publisher}, #{type:=listen}=Session) ->
+cmd(set_type, #{type:=listen, publisher_id:=Publisher}, #{type:=listen}=Session) ->
     #{nkmedia_janus_pid:=Pid, type_ext:=#{room_id:=RoomId}=Ext} = Session,
     case nkmedia_janus_op:listen_switch(Pid, Publisher) of
         ok ->
@@ -253,37 +259,24 @@ cmd(type, #{type:=listen, publisher_id:=Publisher}, #{type:=listen}=Session) ->
             {error, Error, Session}
     end;
 
-cmd(type, _Opts, Session) ->
-    lager:error("O: ~p", [_Opts]),
-    {error, invalid_operation, Session};
-
-cmd(start_record, Opts, Session) ->
-    case start_record(Opts, Session) of
-        {ok, Session2} ->
-            {ok, #{}, Session2};
-        {error, Error} ->
-            {error, Error, Session}
-    end;
- 
-cmd(stop_record, _Opts, Session) ->
-    case stop_record(Session) of
-        ok ->
-            {ok, #{}, Session};
-        {error, Error} ->
-            {error, Error, Session}
-    end;
+cmd(recorder_action, Opts, Session) ->
+    Action = maps:get(action, Opts, get_actions),
+    recorder_action(Action, Opts, Session);
 
 cmd(get_proxy_offer, _, Session) ->
     case Session of
-        #{nkmedia_janus_id:=Id, nkmedia_janus_proxy_offer:=Offer} ->
-            {ok, #{janus_id=>Id, offer=>Offer}, Session};
+        #{
+            nkmedia_janus_id := Id, 
+            nkmedia_janus_proxy_offer := Offer,
+            nkmedia_janus_proxy_type := Type
+        } ->
+            {ok, #{janus_id=>Id, proxy_type=>Type, offer=>Offer}, Session};
         _ ->
             {error, invalid_session, Session}
     end;
 
-cmd(_Update, _Opts, _Session) ->
-    lager:error("C"),
-    continue.
+cmd(_Update, _Opts, Session) ->
+    {error, not_implemented, Session}.
 
 
 %% @private
@@ -311,7 +304,7 @@ handle_call(get_room_id, _From, Session) ->
     {reply, {error, invalid_publisher}, Session};
 
 handle_call({set_media_proxy, Data}, _From, #{nkmedia_janus_pid:=Pid}=Session) ->
-    lager:error("Media peer: ~p", [Data]),
+    % lager:error("Media peer: ~p", [Data]),
     case nkmedia_janus_op:media_peer(Pid, Data) of
         ok ->
             {reply, ok, Session};
@@ -393,7 +386,6 @@ start_offeree(echo, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
 start_offeree(proxy, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
     OfferType = maps:get(sdp_type, Offer, webrtc),
     OutType = maps:get(sdp_type, Session, webrtc),
-    lager:error("OUT: ~p", [OutType]),
     Fun = case {OfferType, OutType} of
         {webrtc, webrtc} -> videocall;
         {webrtc, rtp} -> to_sip;
@@ -594,6 +586,30 @@ update_type(Type, TypeExt) ->
 
 
 %% @private
+recorder_action(start, Opts, Session) ->
+    case start_record(Opts, Session) of
+        {ok, Session2} ->
+            {ok, #{}, Session2};
+        {error, Error} ->
+            {error, Error, Session}
+    end;
+
+recorder_action(stop, _Opts, Session) ->
+    case stop_record(Session) of
+        ok ->
+            {ok, #{}, Session};
+        {error, Error} ->
+            {error, Error, Session}
+    end;
+
+recorder_action(get_actions, _Opts, Session) ->
+    {ok, #{actions=>[start, stop, get_actions]}, Session};
+
+recorder_action(Action, _Opts, Session) ->
+    {error, {invalid_action, Action}, Session}.
+
+
+%% @private
 start_record(#{record_uri:=<<"file://", File/binary>>}, Session) ->
     Data = #{record=>true, filename=>File},
     case Session of
@@ -673,7 +689,7 @@ set_media_proxy(Opts, #{master_peer:=MasterId}=Session) ->
                     end
             end;
         _ ->
-            {error, set_media_not_allowed}
+            {error, invalid_operation, Session}
     end.
 
 

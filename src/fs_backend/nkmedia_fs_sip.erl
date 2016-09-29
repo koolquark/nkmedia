@@ -178,7 +178,7 @@ init([in, FsId, SessId, SDP]) ->
                     {ok, State2};
                 Other ->
                     lager:error("invalid response from FS INVITE: ~p", [Other]),
-                    {stop, fs_error}
+                    {stop, fs_invite_error}
             end;
         {error, Error} ->
             {stop, Error}

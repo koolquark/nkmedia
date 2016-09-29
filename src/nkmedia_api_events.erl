@@ -77,7 +77,7 @@ event(SessId, {info, Info}, Session) ->
     do_send_event(SessId, info, #{info=>Info}, Session);
 
 event(SessId, {stop, Reason}, #{srv_id:=SrvId}=Session) ->
-    {Code, Txt} = SrvId:error_code(Reason),
+    {Code, Txt} = nkservice_util:error_code(SrvId, Reason),
     do_send_event(SessId, destroyed, #{code=>Code, reason=>Txt}, Session);
 
 event(_SessId, _Event, Session) ->

@@ -253,9 +253,9 @@ nkmedia_verto_handle_info(Msg, Verto) ->
 %% ===================================================================
 
 
-%% @private Error Codes -> 2130 range
-error_code(verto_bye)       -> {2130, <<"Verto bye">>};
-error_code(verto_rejected)  -> {2131, <<"Verto rejected">>};
+%% @private See nkservice_callbacks
+error_code(verto_bye)       -> {306001, "Verto bye"};
+error_code(verto_rejected)  -> {306002, "Verto rejected"};
 error_code(_) -> continue.
 
 

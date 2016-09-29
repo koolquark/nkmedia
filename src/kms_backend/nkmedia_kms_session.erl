@@ -181,7 +181,7 @@ candidate(Candidate, Session) ->
 -spec cmd(cmd(), Opts::map(), session()) ->
     {ok, Reply::term(), session()} | {error, term(), session()} | continue().
 
-cmd(type, #{type:=Type}=Opts, Session) ->
+cmd(set_type, #{type:=Type}=Opts, Session) ->
     case do_type(Type, Opts, Session) of
         {ok, TypeExt, Session2} -> 
             update_type(Type, TypeExt),
@@ -190,48 +190,28 @@ cmd(type, #{type:=Type}=Opts, Session) ->
             {error, Error, Session3}
     end;
 
-cmd(start_record, Opts, Session) ->
-    recorder_op(start, Opts, Session);
+cmd(set_type, _Opts, Session) ->
+    {error, {missing_field, type}, Session};
 
-cmd(stop_record, Opts, Session) ->
-    recorder_op(stop, Opts, Session);
+cmd(recorder_action, Opts, Session) ->
+    Action = maps:get(action, Opts, get_actions),
+    nkmedia_kms_session_lib:recorder_op(Action, Opts, Session);
 
-cmd(pause_record, Opts, Session) ->
-    recorder_op(pause, Opts, Session);
-
-cmd(resume_record, Opts, Session) ->
-    recorder_op(resume, Opts, Session);
-
-cmd(pause, Opts, Session) ->
-    player_op(pause, Opts, Session);
-
-cmd(resume, Opts, Session) ->
-    player_op(resume, Opts, Session);
-
-cmd(stop, Opts, Session) ->
-    player_op(stop, Opts, Session);
-
-cmd(get_position, Opts, Session) ->
-    player_op(stop, Opts, Session);
-
-cmd(set_position, #{position:=Pos}, Session) ->
-    player_op({set_position, Pos}, #{}, Session);
+cmd(player_action, Opts, Session) ->
+    case maps:get(action, Opts, get_actions) of
+        start ->
+            cmd(set_type, Opts#{type=>play}, Session);
+        Action ->
+            nkmedia_kms_session_lib:player_op(Action, Opts, Session)
+    end;
 
 cmd(connect, Opts, Session) ->
     do_type(connect, Opts, Session);
    
 %% Updates media in EP -> Proxy path only (to "mute")
-cmd(media, Opts, Session) ->
+cmd(update_media, Opts, Session) ->
     ok = nkmedia_kms_session_lib:update_media(Opts, Session),
     {ok, #{}, Session};
-
-cmd(play, Opts, Session) ->
-    case maps:get(operation, Opts, start) of
-        start ->
-            cmd(type, Opts#{type=>play}, Session);
-        Op ->
-            nkmedia_kms_session_lib:player_op(Op, Opts, Session)
-    end;
 
 cmd(get_stats, Opts, Session) ->
     Type1 = maps:get(media_type, Opts, <<"VIDEO">>),
@@ -247,9 +227,9 @@ cmd(print_info, _Opts, #{session_id:=SessId}=Session) ->
     nkmedia_kms_session_lib:print_info(SessId, Session),
     {ok, #{}, Session};
 
-cmd(_Update, _Opts, _Session) ->
-    lager:error("C: ~p", [_Update]),
-    continue.
+cmd(_Update, _Opts, Session) ->
+    lager:error("A: ~p", [_Update]),
+    {error, not_implemented, Session}.
 
 
 %% @private
@@ -440,6 +420,9 @@ do_type(bridge, #{peer_id:=PeerId}=Opts, Session) ->
 do_type(bridge, #{master_peer:=PeerId}=Opts, Session) ->
     do_type(bridge, Opts#{peer_id=>PeerId}, Session);
 
+do_type(bridge, _Opts, Session) ->
+    {error, {missing_field, peer_id}, Session};
+
 do_type(publish, Opts, Session) ->
     Session2 = reset_type(Session),
     case get_room(publish, Opts, Session) of
@@ -490,7 +473,7 @@ do_type(play, Opts, Session) ->
     end;
 
 do_type(_Op, _Opts, Session) ->
-    {error, invalid_operation, Session}.
+    {error, not_implemented, Session}.
 
 
 %% @private 
@@ -557,23 +540,6 @@ create_endpoint_offerer(#{sdp_type:=rtp}=Session) ->
 
 create_endpoint_offerer(Session) ->
     nkmedia_kms_session_lib:create_webrtc(#{}, Session).
-
-
-%% @private
-recorder_op(Op, Opts, Session) ->
-    case nkmedia_kms_session_lib:recorder_op(Op, Opts, Session) of
-        {ok, Session2} ->
-            {ok, #{}, Session2};
-        {error, Error, Session2} ->
-            {error, Error, Session2}
-    end.
-
-%% @private
-player_op(Op, Opts, #{type:=play}=Session) ->
-    nkmedia_kms_session_lib:player_op(Op, Opts, Session);
-
-player_op(_Op, _Opts, Session) ->
-    {error, invalid_operation, Session}.
 
 
 %% @private

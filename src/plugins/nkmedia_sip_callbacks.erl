@@ -190,13 +190,13 @@ nkmedia_sip_invite_answered(_Id, _Answer) ->
 %% Implemented Callbacks - Error
 %% ===================================================================
 
-%% @private Error Codes -> 2110 range
-error_code(sip_bye)         -> {2110, <<"SIP Bye">>};
-error_code(sip_cancel)      -> {2111, <<"SIP Cancel">>};
-error_code(sip_no_sdp)      -> {2112, <<"SIP Missing SDP">>};
-error_code(sip_send_error)  -> {2113, <<"SIP Send Error">>};
-error_code(sip_reply_error) -> {2114, <<"SIP Reply Error">>};
-error_code(no_sip_data)     -> {2115, <<"No SIP Data">>};
+%% @private See nkservice_callbacks
+error_code(sip_bye)         -> {308001, "SIP Bye"};
+error_code(sip_cancel)      -> {308002, "SIP Cancel"};
+error_code(sip_no_sdp)      -> {308003, "SIP Missing SDP"};
+error_code(sip_send_error)  -> {308004, "SIP Send Error"};
+error_code(sip_reply_error) -> {308005, "SIP Reply Error"};
+error_code(no_sip_data)     -> {308006, "No SIP Data"};
 error_code(_) -> continue.
 
 

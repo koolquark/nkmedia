@@ -115,12 +115,8 @@ nkmedia_kms_get_mediaserver(SrvId) ->
 %% Implemented Callbacks - error
 %% ===================================================================
 
-%% @private Error Codes -> 24XX range
-error_code(kms_error)             ->  {2400, <<"Kurento internal error">>};
-error_code({kms_error, Code, Txt})->  {2401, {"Kurento error (~p): ~s", [Code, Txt]}};
-error_code(kms_connection_error)  ->  {2410, <<"Kurento connection error">>};
-error_code(kms_session_down)      ->  {2411, <<"Kurento op process down">>};
-error_code(kms_bye)               ->  {2412, <<"Kurento bye">>};
+%% @private See nkservice_callbacks
+error_code({kms_error, Code, Txt})->  {303001, {"Kurento error ~p: ~s", [Code, Txt]}};
 error_code(_) -> continue.
 
 

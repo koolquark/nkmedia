@@ -65,9 +65,16 @@ plugin_stop(Config, #{name:=Name}) ->
 %% Error Codes
 %% ===================================================================
 
-%% @doc NkMEDIA - 21XX range
+%% @doc See nkservice_callbacks
 -spec error_code(term()) ->
     {integer(), binary()} | continue.
+
+error_code(room_not_found)          ->  {304001, "Room not found"};
+error_code(room_already_exists)     ->  {304002, "Room already exists"};
+error_code(room_destroyed)          ->  {304003, "Room destroyed"};
+error_code(no_room_members)         ->  {304004, "No remaining room members"};
+error_code(invalid_publisher)       ->  {304005, "Invalid publisher"};
+error_code(publisher_stop)          ->  {304006, "Publisher stopped"};
 
 error_code(_) -> continue.
 

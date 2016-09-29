@@ -305,10 +305,10 @@ add_ice_candidate(Candidate, #{nkmedia_kms_endpoint:=EP}=Session) ->
 %% Profiles: KURENTO_SPLIT_RECORDER , MP4, MP4_AUDIO_ONLY, MP4_VIDEO_ONLY, 
 %%           WEBM, WEBM_AUDIO_ONLY, WEBM_VIDEO_ONLY, JPEG_VIDEO_ONLY
 -spec recorder_op(atom(), map(), session()) ->
-    {ok, session()} | {error, nkservice:error(), session()}.
+    {ok, map(), session()} | {error, nkservice:error(), session()}.
 
 recorder_op(start, Opts, #{nkmedia_kms_recorder:=_}=Session) ->
-    {ok, Session2} = recorder_op(stop, Opts, Session),
+    {ok, _, Session2} = recorder_op(stop, Opts, Session),
     recorder_op(start, Opts, ?SESSION_RM(nkmedia_kms_recorder, Session2));
 
 recorder_op(start, #{uri:=Uri}=Opts, #{nkmedia_kms_proxy:=Proxy}=Session) ->
@@ -323,30 +323,33 @@ recorder_op(start, #{uri:=Uri}=Opts, #{nkmedia_kms_proxy:=Proxy}=Session) ->
             subscribe(ObjId, 'Recording', Session),
             ok = do_connect(Proxy, ObjId, all, Session),
             ok = invoke(ObjId, record, #{}, Session),
-            {ok, ?SESSION(#{nkmedia_kms_recorder=>ObjId}, Session)};
+            {ok, Params, ?SESSION(#{nkmedia_kms_recorder=>ObjId}, Session)};
         {error, Error} ->
            {error, Error, Session}
     end;
 
 recorder_op(start, Opts, Session) ->
     {Uri, Session2} = make_record_uri(Session),
-    recorder_op(start, Opts#{record_uri=>Uri}, Session2);
+    recorder_op(start, Opts#{uri=>Uri}, Session2);
 
 recorder_op(pause, _Opts, #{nkmedia_kms_recorder:=RecorderEP}=Session) ->
     ok = invoke(RecorderEP, pause, #{}, Session),
-    {ok, Session};
+    {ok, #{}, Session};
 
 recorder_op(resume, _Opts, #{nkmedia_kms_recorder:=RecorderEP}=Session) ->
     ok = invoke(RecorderEP, record, #{}, Session),
-    {ok, Session};
+    {ok, #{}, Session};
 
 recorder_op(stop, _Opts, #{nkmedia_kms_recorder:=RecorderEP}=Session) ->
     invoke(RecorderEP, stop, #{}, Session),
     release(RecorderEP, Session),
-    {ok, ?SESSION_RM(nkmedia_kms_recorder, Session)};
+    {ok, #{}, ?SESSION_RM(nkmedia_kms_recorder, Session)};
 
-recorder_op(_, _Opts, #{nkmedia_kms_recorder:=_}=Session) ->
-    {error, invalid_operation, Session};
+recorder_op(get_actions, _Opts, #{nkmedia_kms_recorder:=_}=Session) ->
+    {ok, #{actions=>[start, stop, pause, resume, get_actions]}, Session};
+
+recorder_op(Action, _Opts, #{nkmedia_kms_recorder:=_}=Session) ->
+    {error, {invalid_action, Action}, Session};
 
 recorder_op(_, _Opts, Session) ->
     {error, no_active_recorder, Session}.
@@ -391,12 +394,7 @@ player_op(start, #{uri:=Uri}=Opts, Session) ->
                 {ok, Session2} ->
                     ok = invoke(ObjId, play, #{}, Session2),
                     Session3 = ?SESSION(#{nkmedia_kms_player=>ObjId}, Session2),
-                    case player_op(get_info, #{}, Session3) of
-                        {ok, Info, Session4} ->
-                            {ok, Info#{uri=>Uri}, Session4};
-                        {error, Error, Session4} ->
-                            {error, Error, Session4}
-                    end;
+                    {ok, #{uri=>Uri}, Session3};
                 {error, Error} ->
                     {error, Error, Session}
             end;
@@ -406,10 +404,10 @@ player_op(start, #{uri:=Uri}=Opts, Session) ->
 
 player_op(start, Opts, Session) ->
     Uri = <<"http://files.kurento.org/video/format/sintel.webm">>,
-    player_op(start, Opts#{player_uri=>Uri, player_loops=>2}, Session);
+    player_op(start, Opts#{uri=>Uri, loops=>2}, Session);
 
 % player_op(start, _Opts, _Session) ->
-%     {error, {missing_field, player_uri}};
+%     {error, {missing_field, uri}, Session};
 
 player_op(pause, _Opts, #{nkmedia_kms_player:=PlayerEP}=Session) ->
     ok = invoke(PlayerEP, pause, #{}, Session),
@@ -453,7 +451,7 @@ player_op(get_position, _Opts, #{nkmedia_kms_player:=PlayerEP}=Session) ->
             {error, Error, Session}
     end;
 
-player_op({set_position, Pos}, _Opts, #{nkmedia_kms_player:=PlayerEP}=Session) ->
+player_op(set_position, #{position:=Pos}, #{nkmedia_kms_player:=PlayerEP}=Session) ->
     case invoke(PlayerEP, setPosition, #{position=>Pos}, Session) of
         ok ->
             {ok, #{}, Session};
@@ -461,8 +459,15 @@ player_op({set_position, Pos}, _Opts, #{nkmedia_kms_player:=PlayerEP}=Session) -
             {error, Error, Session}
     end;
 
-player_op(_, _Opts, #{nkmedia_kms_player:=_}=Session) ->
-    {error, invalid_operation, Session};
+player_op(set_position, _Ops, Session) ->
+    {error, {missing_field, position}, Session};
+
+player_op(get_actions, _Opts, #{nkmedia_kms_player:=_}=Session) ->
+    Ac = [start, stop, pause, resume, get_info, get_position, set_position, get_actions], 
+    {ok, #{actions=>Ac}, Session};
+
+player_op(Action, _Opts, #{nkmedia_kms_player:=_}=Session) ->
+    {error, {invalid_action, Action}, Session};
 
 player_op(_, _Opts, Session) ->
     {error, no_active_player, Session}.
@@ -596,7 +601,6 @@ do_disconnect(Elem, SinkEP, [Type|Rest], Session) ->
     ok.
 
 park(#{nkmedia_kms_proxy:=Proxy, nkmedia_kms_endpoint:=EP}=Session) ->
-    lager:error("STOP MEDIA"),
     ok = do_disconnect(EP, Proxy, all, Session),
     case Session of
         #{nkmedia_kms_source:=Source} ->
