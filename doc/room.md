@@ -110,6 +110,10 @@ mute_data|Mute the data channel
 bitrate|Bitrate to use
 
 
+**Events**
+
+When creating a session, the user connection is automatically subscribed to receive all events related to the session.
+
 **Master/Slave sessions**
 
 When you start a session using the `master_id` key poiting to another existing session, this session will become a _slave_ of that _master_ session. This means:
