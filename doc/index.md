@@ -13,21 +13,22 @@
 * [Core API](api_commands.md)
 * [Core API Events](api_events.md)
 * Plugins API
-  * [nkmedia_janus](janus.md)
+  * [nkmedia_janus](janusi.md)
   * [nkmedia_fs](fs.md)
-  * nkmedia_kms
+  * [nkmedia_kms](kms.md)
+  * [nkmedia_call](call.md)
+  * [nkmedia_room](room.md)
+  * [nkmedia_room_msglog](room_msglog.md)
   * [nkmedia_sip](sip.md)
   * [nkmedia_verto](verto.md)
-  * [nkmedia_room_msglog](room_msglog.md)
-
+  
 ## Cookbook
 * Peer to Peer calls
-* Call through Janus
-* Call through Freeswitch
-* Recording with Janus
+* Call through server
+* SIP gateways
+* Recording
 * SFU (Selective Forwarding Unit)
 * MCU (Multipoint Control Unit)
-* SIP Gateway
 
 ## Advanced
 * Plugin architecture
