@@ -42,8 +42,8 @@ See the [User Guide](doc/index.md#user-guide) for a more detailed explanation of
 * **nkmedia_kms**: Kurento backend with support for echo, calls through the server, SFUs and and SIP (in and out) gateways. SIP calls can participate in SFU sessions or be connected to webrtc endpoints. State of the art recording support, inmediately playable and seekable.
 * **nkmedia_room**: Support for SFU and MCU rooms, with event generation for members in and out, member list and in-room user messaging.
 * **nkmedia_call**: Provides an optional signaling server to be used over WS, WSS, TCP or TLS. Support for calling, accepting, rejecting, multiple parallel calls, etc.
-** nkmedia_sip** : Provides full SIP support.
-** nkmedia_verto**: Provides Verto protocol emulation for clients
+* **nkmedia_sip** : Provides full SIP support.
+* **nkmedia_verto**: Provides Verto protocol emulation for clients
 
 In the [future](doc/roadmap.md), NkMEDIA will add support for:
 * Multi-node configurations based on [NetComposer](http://www.slideshare.net/carlosjgf/net-composer-v2).
