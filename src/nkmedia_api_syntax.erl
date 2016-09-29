@@ -39,7 +39,7 @@ session_fields() ->
 		answer,
 		no_offer_trickle_ice,
 		no_answer_trickle_ice,
-		ice_timeout,
+		trickle_ice_timeout,
 		sdp_type,
 		backend,
 		master_id,
@@ -78,7 +78,7 @@ syntax(<<"session">>, <<"create">>, Syntax, Defaults, Mandatory) ->
 			offer => offer(),
         	no_offer_trickle_ice => atom,
         	no_answer_trickle_ice => atom,
-        	ice_timeout => {integer, 100, 30000},
+        	trickle_ice_timeout => {integer, 100, 30000},
             sdp_type => {enum, [webrtc, rtp]},		%% For generated SDP only
 			backend => atom,						%% nkmedia_janus, etc.
 			master_id => binary,

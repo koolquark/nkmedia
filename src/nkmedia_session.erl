@@ -82,7 +82,7 @@
         offer => nkmedia:offer(),
         no_offer_trickle_ice => boolean(),          % Buffer candidates and insert in SDP
         no_answer_trickle_ice => boolean(),       
-        ice_timeout => integer(),
+        trickle_ice_timeout => integer(),
         sdp_type => webrtc | rtp,
         backend => nkemdia:backend(),
         master_id => id(),                          % See above
@@ -739,7 +739,7 @@ do_set_offer(Offer, #state{type=Type, backend_role=Role, session=Session}=State)
     NoTrickleIce = maps:get(no_offer_trickle_ice, Session, false),
     case Offer of
         #{trickle_ice:=true} when NoTrickleIce ->
-            Time = maps:get(ice_timeout, Session, ?MAX_ICE_TIME),
+            Time = maps:get(trickle_ice_timeout, Session, ?MAX_ICE_TIME),
             State2 = add_to_session(offer, Offer, State),
             State3 = case Role of
                 offerer ->
@@ -796,7 +796,7 @@ do_set_answer(Answer, #state{type=Type, backend_role=Role, session=Session}=Stat
     NoTrickleIce = maps:get(no_answer_trickle_ice, Session, false),
     case Answer of
         #{trickle_ice:=true} when NoTrickleIce ->
-            Time = maps:get(ice_timeout, Session, ?MAX_ICE_TIME),
+            Time = maps:get(trickle_ice_timeout, Session, ?MAX_ICE_TIME),
             State2 = add_to_session(answer, Answer, State),
             State3 = case Role of
                 offerer ->
