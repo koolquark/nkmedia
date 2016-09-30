@@ -17,7 +17,7 @@ See also each backend and plugin documentation:
 
 Also, for Erlang developers, you can have a look at the [event dispatcher](../src/nkmedia_api_events.erl).
 
-All event will have the following structure:
+All events have the following structure:
 
 ```js
 {
@@ -40,12 +40,12 @@ Then `obj_id` will be the _session id_ of the session generating the event. The 
 
 Type|Body|Description
 ---|---|---
-answer|{answer: ...}|Fired when a session has an answer available
-type|{type:Type, ...}|The session type has been updated
-candidate|{sdpMid: .., sdpMLineIndex: ..., candidate: ...}|A new _trickle ICE_ candidate is available
-candidate_end|{}|No more _trickle ICE_ candidates arte available
-info|{...}|Some user-specific event is fired
-destroyed|{code: Code, reason: Reason}|The session has been stopped
+answer|`{answer: ...}`|Fired when a session has an answer available
+type|{`type: ..., ...}`|The session type has been updated
+candidate|`{sdpMid: .., sdpMLineIndex: ..., candidate: ...}`|A new _trickle ICE_ candidate is available
+candidate_end|`{}`|No more _trickle ICE_ candidates arte available
+info|`{...}`|Some user-specific event is fired
+destroyed|`{code: Code, reason: Reason}`|The session has been stopped
 
 
 **Sample**
