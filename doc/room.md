@@ -4,10 +4,10 @@ This plugin allows you to manage SFU or MCUs rooms easily. All backends use it w
 
 
 * [**Commands**](#commands)
-  * [`create`](#create)|Create a new room
-  * [`destroy`](#destroy)|Destroys a room
-  * [`list`](#list)|List known rooms
-  * [`info`](#info)|Gets information about a room
+  * [`create`](#create): Create a new room
+  * [`destroy`](#destroy): |Destroys a room
+  * [`list`](#list): List known rooms
+  * [`info`](#info): Gets information about a room
 * [**Events**](#events)
 
 All commands must have 
@@ -156,17 +156,17 @@ Gets information about a started room, along with the list of members.
 		backend: "nkmedia_janus",
     members: {
   		"0737dc33-391a-2700-1470-38c9862f00d9": {
-        role: "listener"
+            role: "listener"
     		peer_id: "39ce4076-391a-1260-75db-38c9862f00d9",
     		user_id: "listener1@domain.com"
       },
       "39ce4076-391a-1260-75db-38c9862f00d9": {
-        role: "publisher",
-        user_id: "1009"
+            role: "publisher",
+            user_id: "1009"
       },
       "90076c74-391a-153c-f6c7-38c9862f00d9": {
-        role: "publisher",
-        user_id: "1008"
+            role: "publisher",
+            user_id: "1008"
       }
     },
     tid: 1
@@ -196,7 +196,7 @@ All room generated events will follow the pattern:
 }
 ```
 
-The `obj_id` field will match the _room id_, and the followin types are supported: 
+The `obj_id` field will match the _room id_, and the following types are supported: 
 
 
 Type|Body|Description
