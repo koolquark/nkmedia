@@ -5,7 +5,7 @@
 	* [echo](#echo)
 	* [bridge](#bridge)
 	* [mcu](#mcu)
-* [**Trickle ICE**](#tricke-ice)
+* [**Trickle ICE**](#trickl	e-ice)
 * [**SIP**](#sip)
 * [**Media update**](#media-update)
 * [**Type update**](#type-update)
@@ -150,7 +150,9 @@ See [Room Management](#room-management) to learn about operations that can be pe
 
 ## Trickle ICE
 
-Freeswitch has currenly no support for _trickle ICE_, however NkMEDIA is able to _emulate_ it. If you want to use it when sending offfers or answers to the backend, you must use the field `trickle_ice: true`. You can now use the commands [api.md#set_candidate] and [api.md#set_candidate_end] to send candidates to the backend. NkMEDIA will buffer the candidates and, when either you call `set_candidate_end` or the `trickle_ice_timeout` is fired, all of them will be incorporated in the SDP and sent to Freeswitch.
+Freeswitch has currenly no support for _trickle ICE_, however NkMEDIA is able to _emulate_ it. 
+
+If you want to _trickle ICE_ when sending offfers or answers to the backend, you must use the field `trickle_ice: true`. You can now use the commands (set_candidate)[api.md#set_candidate] and (set_candidate_end)[api.md#set_candidate_end] to send candidates to the backend. NkMEDIA will buffer the candidates and, when either you call `set_candidate_end` or the `trickle_ice_timeout` is fired, all of them will be incorporated in the SDP and sent to Freeswitch.
 
 When Freesewitch generates an offer or answer, it will never use _trickle ICE_.
 
