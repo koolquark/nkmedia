@@ -154,3 +154,39 @@ Gets information about a started room. For _sfu_ rooms, you will get the list of
 ```
 
 
+
+
+
+## Room events
+
+The room subsystem generate the following event types:
+
+Type|Body|Description
+---|---|---
+started|{class: Class, backend: Backend}|Fired when a new room is created
+destroyed|{code: Code, reason: Reason}|A room has been destroyed
+started_publisher|{session_id: SessId, user: User}|Fired when a new publisher joins an _sfu_ room
+stopped_publisher|{session_id: SessId, user: User}|An existing publisher is leaving an _sfu_ room
+started_listener|{session_id: SessId, user: User, peer: Peer}|Fired when a new listener joins an _sfu_ room, connected to a _peer_ publisher.
+stopped_listener|{session_id: SessId, user: User}|An existing listener is leaving an _sfu_ room
+
+
+**Sample**
+
+```js
+{
+  class: "core",
+  cmd: "event",
+  data: {
+    class: "media",
+    subclass: "room",
+    type: "started",
+    obj_id: "11c92417-6c97-6f35-971b-2954afab410b",
+    body: {
+      class: "sfu",
+      backend: "nkmedia_janus"
+    }
+  },
+  tid: 1
+}
+```

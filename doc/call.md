@@ -213,5 +213,34 @@ You can hangup a call at any moment. Fields `code` and `error` are optional.
 
 
 
+## Call events
+
+The call subsystem generate the following event types:
+
+Type|Body|Description
+---|---|---
+ringing|{}|The call is ringing
+answer|{answer: Answer}|The call has an answer
+hangup|{code: Code, reason: Reason}|The call has been hangup
+
+**Sample**
+
+```js
+{
+	class: "core",
+	cmd: "event",
+	data: {
+		class: "media",
+		subclass: "call",
+		type: "ringing",
+		obj_id: "90076c74-391a-153c-f6c7-38c9862f00d9": {
+	},
+	tid: 1
+}
+```
+
+
+
+
 
 

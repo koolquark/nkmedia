@@ -1,7 +1,7 @@
 # NkMEDIA API External Interface
 
 This documente describes the currently supported External API commands for core NkMEDIA. 
-See the [API Introduction](intro.md) for an introduction to the interface, and [Core Events](events.doc) for a description of available events.
+See the [API Introduction](intro.md) for an introduction to the interface, and [Core Events](events.md) for a description of available events.
 
 * [**`create`**](#create): Creates a new media session
 * [**`destroy`**](#destroy): Destroys an existing media session

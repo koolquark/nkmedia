@@ -17,14 +17,36 @@ See also each backend and plugin documentation:
 
 Also, for Erlang developers, you can have a look at the [event dispatcher](../src/nkmedia_api_events.erl).
 
+All event will have the following structure:
 
-The session subsystem generate the following event types:
+```js
+{
+	class: "core",
+	cmd: "event",
+	data: {
+		class: "media",
+		subclass: "session",
+		type: "...",
+		obj_id: "...",
+		body: {
+			...
+		}
+	},
+	tid: 1
+}
+```
+Then `obj_id` will be the _session id_ of the session generating the event. The following _types_ are supported:
+
 
 Type|Body|Description
 ---|---|---
 answer|{answer: ...}|Fired when a session has an answer available
-stop|{code: Code, reason: Reason}|A session has stopped
-updated_type|{type:Type, ...}|A session has been updated
+type|{type:Type, ...}|The session type has been updated
+candidate|{sdpMid: .., sdpMLineIndex: ..., candidate: ...}|A new _trickle ICE_ candidate is available
+candidate_end|{}|No more _trickle ICE_ candidates arte available
+info|{...}|Some user-specific event is fired
+destroyed|{code: Code, reason: Reason}|The session has been stopped
+
 
 **Sample**
 
@@ -45,67 +67,3 @@ updated_type|{type:Type, ...}|A session has been updated
 	tid: 1
 }
 ```
-
-
-
-## Room events
-
-The room subsystem generate the following event types:
-
-Type|Body|Description
----|---|---
-started|{class: Class, backend: Backend}|Fired when a new room is created
-destroyed|{code: Code, reason: Reason}|A room has been destroyed
-started_publisher|{session_id: SessId, user: User}|Fired when a new publisher joins an _sfu_ room
-stopped_publisher|{session_id: SessId, user: User}|An existing publisher is leaving an _sfu_ room
-started_listener|{session_id: SessId, user: User, peer: Peer}|Fired when a new listener joins an _sfu_ room, connected to a _peer_ publisher.
-stopped_listener|{session_id: SessId, user: User}|An existing listener is leaving an _sfu_ room
-
-
-**Sample**
-
-```js
-{
-	class: "core",
-	cmd: "event",
-	data: {
-		class: "media",
-		subclass: "room",
-		type: "started",
-		obj_id: "11c92417-6c97-6f35-971b-2954afab410b",
-		body: {
-			class: "sfu",
-			backend: "nkmedia_janus"
-		}
-	},
-	tid: 1
-}
-```
-
-
-## Call events
-
-The call subsystem generate the following event types:
-
-Type|Body|Description
----|---|---
-ringing|{}|The call is ringing
-answer|{answer: Answer}|The call has an answer
-hangup|{code: Code, reason: Reason}|The call has been hangup
-
-**Sample**
-
-```js
-{
-	class: "core",
-	cmd: "event",
-	data: {
-		class: "media",
-		subclass: "call",
-		type: "ringing",
-		obj_id: "90076c74-391a-153c-f6c7-38c9862f00d9": {
-	},
-	tid: 1
-}
-```
-
