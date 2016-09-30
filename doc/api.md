@@ -12,23 +12,32 @@ and each backend and plugin documentation:
 * [nkmedia_verto](verto.md)
 
 
-The currently supported External API commands are described here. All commands must have `class="media"` and `subclass="session"`:
+The currently supported External API commands are:
 
-* [`**create**`](#create): Creates a new media session
-* [`**destroy**`](#destroy): Destroys an existing media session
-* [`**set_answer**`](#set_answer): Sets the answer for a session
-* [`**get_info**`](#get_info): Gets info about a session
-* [`**get_list**`](#get_list): Gets the current list of sessions
-* [`**get_offer**`](#get_offer): Gets the offer for a session
-* [`**get_answer**`](#get_answer): Gets the answer for a session
-* [`**update_media**`](#update_media): Updates media processing in a current session
-* [`**set_type**`](#set_type): Updates the type of a current session
-* [`**recorder_action**`](#recorder_action): Performs an action over the recorder
-* [`**player_action**`](#player_action): Performs an action over the player
-* [`**room_action**`](#room_action): Performs an action over the current room
-* [`**set_candidate**`](#set_candidate): Sends a Trickle ICE candidate
-* [`**set_candidate_end**`](#set_candidate_end): Signals that no more candidates are available
+* [**`create`**](#create): Creates a new media session
+* [**`destroy`**](#destroy): Destroys an existing media session
+* [**`set_answer`**](#set_answer): Sets the answer for a session
+* [**`get_info`**](#get_info): Gets info about a session
+* [**`get_list`**](#get_list): Gets the current list of sessions
+* [**`get_offer`**](#get_offer): Gets the offer for a session
+* [**`get_answer`**](#get_answer): Gets the answer for a session
+* [**`update_media`**](#update_media): Updates media processing in a current session
+* [**`set_type`**](#set_type): Updates the type of a current session
+* [**`recorder_action`**](#recorder_action): Performs an action over the recorder
+* [**`player_action`**](#player_action): Performs an action over the player
+* [**`room_action`**](#room_action): Performs an action over the current room
+* [**`set_candidate`**](#set_candidate): Sends a Trickle ICE candidate
+* [**`set_candidate_end`**](#set_candidate_end): Signals that no more candidates are available
 
+
+All commands must have 
+
+```json
+{
+	class: "media",
+	subclass: "session"
+}
+```
 
 ## create
 
