@@ -1,18 +1,7 @@
 # NkMEDIA API External Interface
 
-See the [API Introduction](intro.md) for an introduction to the interface,
-and each backend and plugin documentation:
-
-* [nkmedia_janus](janus.md)
-* [nkmedia_fs](fs.md)
-* [nkmedia_kms](kms.md)
-* [nkmedia_room](room.md)
-* [nkmedia_call](call.md)
-* [nkmedia_sip](sip.md)
-* [nkmedia_verto](verto.md)
-
-
-The currently supported External API commands are:
+This documente describes the currently supported External API commands for core NkMEDIA. 
+See the [API Introduction](intro.md) for an introduction to the interface, and [Core Events](events.doc) for a description of available events.
 
 * [**`create`**](#create): Creates a new media session
 * [**`destroy`**](#destroy): Destroys an existing media session
@@ -32,20 +21,33 @@ The currently supported External API commands are:
 
 All commands must have 
 
-```json
+```js
 {
 	class: "media",
 	subclass: "session"
 }
 ```
 
+See also each backend and plugin documentation:
+
+* [nkmedia_janus](janus.md)
+* [nkmedia_fs](fs.md)
+* [nkmedia_kms](kms.md)
+* [nkmedia_room](room.md)
+* [nkmedia_call](call.md)
+* [nkmedia_sip](sip.md)
+* [nkmedia_verto](verto.md)
+
+Also, for Erlang developers, you can have a look at the command [syntax specification](../src/nkmedia_api_syntax.erl) and [command implementation](../src/nkmedia_api.erl).
+
+
 ## create
 
-Performs the creation of a new media session. The mandatory `type` field defines the type of session. Currently, the following types are supported, along with the necessary plugin or plugins that support it.
+Performs the creation of a new media session. The mandatory `type` field defines the type of the session. Currently, the following types are supported, along with the necessary plugin or plugins that support them.
 
 Type|Plugins
 ---|---|---
-p2p|(none)
+p2p|-
 echo|[nkmedia_janus](janus.md#echo, fs.md#echo), [nkmedia_fs](fs.md#echo), [nkmedia_kms](kms.md#echo)
 proxy|[nkmedia_janus](janus.md#proxy)
 publish|[nkmedia_janus](janus.md#publish), [nkmedia_kms](kms.md#publish)
@@ -65,18 +67,18 @@ wait_reply|false|Wait for the offer or answer
 offer|{}|Offer for the session, if available
 no_offer_trickle_ice|false|Forces consolidation of offer candidates in SDP
 no_answer_trickle_ice|false|Forces consolidation of answer candidates in SDP
-trickle_ice_timeout|5000|ICE timeout for Trickle ICE before consolidating candidates
-sdp_type|webrtc|Type of offer or answer SDP to generate (`webrtc` or `rtp`)
-backend|(automatic)|Forces a specific plugin for the request
-master_id|(none)|See bellow
-set_master_answer|false|If true, slave session will set its answer to the master
-stop_after_peer|true|For master or slave session, stop if peer stops
+trickle_ice_timeout|5000|Timeout for Trickle ICE before consolidating candidates
+sdp_type|"webrtc"|Type of offer or answer SDP to generate (`webrtc` or `rtp`)
+backend|(automatic)|Forces a specific backend for the request (`nkmedia_janus`, `nkmedia_fs` or `nkmedia_kms`)
+master_id|(none)|Makes this session a _slave_ of this _master_ session (see bellow)
+set_master_answer|false|If `true`, this _slave_ session will set its _answer_ to _master_
+stop_after_peer|true|For _master_ or _slave_ sessions, stop if peer stops
 wait_timeout|60|Timeout for sessions in _wait_ state
-ready_timeout|86400|Timeout for sessions in _reay_ state
-subscribe|true|Subscribe to session events
-event_body|{}|Body to receive in the automatic events.
+ready_timeout|86400|Timeout for sessions in _ready_ (_answer_ is already set) state
+subscribe|true|Subscribe to session events. Use `false` to avoid automatic subscription.
+event_body|{}|Body to receive in all automatic events.
 
-If you use `wait_reply=true`, the backend will supply the _answer_ (in case you supplied an _offer_). Or the _offer_ if you don't supply one (but must then send the answer to the backend). Otherwhise, you must use the `get_offer` or `get_answer` commands.
+If you use `wait_reply=true`, the backend will supply the _answer_ (in case you supplied an _offer_), or the _offer_ (if you don't supply one, you must then send the _answer_ to the backend). Otherwhise, you must use the `get_offer` or `get_answer` commands.
 
 **Sample**
 
@@ -91,7 +93,7 @@ If you use `wait_reply=true`, the backend will supply the _answer_ (in case you 
 		wait_reply: true
 		offer: {
 			sdp: "v=0.."
-		},
+		}
 	}
 	tid: 1
 }
@@ -116,15 +118,16 @@ Depending on the session type and backend, other fields can be used. Please refe
 Field|Description
 ---|---
 room_id|Room to use
-publisher_id|Publisher to connect ton
+publisher_id|Publisher to connect to
 layout|MCU layout to use
 loops|Loops to repeat in the player
 uri|URI to use for the player
 mute_audio|Mute the audio
 mute_video|Mute the video
 mute_data|Mute the data channel
-bitrate|Bitrate to use
+bitrate|Bitrate to set
 
+<br>
 
 **Events**
 
