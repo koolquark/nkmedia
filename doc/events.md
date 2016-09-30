@@ -1,10 +1,22 @@
-# NkMEDIA External Interface - Events
+# NkMEDIA API External Interface - Events
 
+This documente describes the currently supported External API events for core NkMEDIA. 
 See the [API Introduction](intro.md) for an introduction to the interface and [API Commands](api.md) for a detailed description of available commands.
 
-Many NkMEDIA operations launch events of different types. All API connections subscribed to these events will receive. them. See NkSERVICE documentation for a description of how to subscribe and receive events.
+Many NkMEDIA operations launch events of different types. All API connections subscribed to these events will receive them. See NkSERVICE documentation for a description of how to subscribe and receive events.
 
-## Session Events
+See also each backend and plugin documentation:
+
+* [nkmedia_janus](janus.md)
+* [nkmedia_fs](fs.md)
+* [nkmedia_kms](kms.md)
+* [nkmedia_room](room.md)
+* [nkmedia_call](call.md)
+* [nkmedia_sip](sip.md)
+* [nkmedia_verto](verto.md)
+
+Also, for Erlang developers, you can have a look at the [event dispatcher](../src/nkmedia_api_events.erl).
+
 
 The session subsystem generate the following event types:
 

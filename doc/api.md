@@ -131,20 +131,20 @@ bitrate|Bitrate to set
 
 **Events**
 
-When creating a session, the user connection is automatically subscribed to receive all events related to the session.
+When creating a session, the user connection is automatically subscribed to receive all events related to the session (unless `subscribe=false` is used).
 
 **Master/Slave sessions**
 
-When you start a session using the `master_id` key poiting to another existing session, this session will become a _slave_ of that _master_ session. This means:
+When you start a session using a `master_id` key poiting to another existing session, this session will become a _slave_ of that _master_ session. This means:
 
 * When any of the session stops, the other stops also (unless `stop_after_peer=false` is used).
-* When the slave session gets an answer it will be automatically set at the master (if `set_master_answer=true`)
+* When the slave session gets an _answer_ it will be automatically set at the _master_ (if `set_master_answer=true`).
 * ICE candidates are routed among sessions as needed automatically.
 
 
 **Tricle ICE**
 
-All Webrtc SDPs are supposed to have ICE candidates inside. If the candidates are not included and Trickle ICE must be used, the `trickle_ice` parameters of the SDP must be used. By default, some backends will not use Trickle ICE (Freeswitch does not support it, and Janus only for the client side) or they will always use Tricle ICE (like Kurento). You can use the `no_offer_trickle_ice` and `no_answer_trickle_ice` to force the consolidation of candidates in the server-generated SDP. NkMEDIA will then receive the candidates and insert them in the SDP before offering it to the client.
+All _webrtc SDPs_ are supposed to have _ICE candidates_ inside by default. If the candidates are not included and _trickle ICE_ must be used, the `trickle_ice` parameter of the _offer_ or _answer_ must be set to `true`. Some backends will not use _trickle ICE_ (Freeswitch does not support it, and Janus only for the client side), others they will always use _tricle ICE_ (like Kurento). You can use the `no_offer_trickle_ice` and `no_answer_trickle_ice` parameters to force the consolidation of candidates in the server-generated SDP. NkMEDIA will then receive the candidates and insert them in the SDP before offering it to the client or the backend.
 
 
 ## destroy
@@ -158,7 +158,7 @@ session_id|(mandatory)|Session Id
 
 ## set_answer
 
-When the started session's type requires you to supply an answer (because the backend generated the offer), you must use this API to set the session's answer. 
+When the started session's type requires you to supply an _answer_ (because the backend already generated the _offer_), you must use this API to set the session's _answer_. 
 
 Field|Default|Description
 ---|---|---
@@ -166,9 +166,33 @@ session_id|(mandatory)|Session Id
 answer|(mandatory)|Answer for the session
 
 
+**Sample**
+
+```js
+{
+	class: "media",
+	subclass: "session",
+	cmd: "set_answer",
+	data: {
+		answer: {
+			"sdp": "..."
+		}
+	}
+	tid: 1
+}
+```
+-->
+```js
+{
+	result: "ok",
+	tid: 1
+}
+```
+
+
 ## get_offer
 
-Waits for the session offer to be generated
+Waits for the session _offer_ to be generated
 
 **Sample**
 
@@ -196,7 +220,7 @@ Waits for the session offer to be generated
 
 ## get_answer
 
-Waits for the session answer to be generated
+Waits for the session _answer_ to be generated
 
 
 ## get_info
@@ -262,7 +286,7 @@ Gets a list of all current sessions
 
 ## update_media
 
-Some backends allow to modify the media session characteristics in real time. 
+Some backends allow you to modify the media session characteristics in real time. 
 See each backend documentation. Typical fields are:
 
 Field|Sample|Description
@@ -288,20 +312,12 @@ bitrate|0|Bitrate to use (kbps, 0 for unlimited)
 	tid: 1
 }
 ```
--->
-```js
-{
-	result: "ok",
-	tid: 1
-}
-```
 
 
 ## set_type
 
 Some backends allow to change the session type once started.
 See each backend documentation. Fields `session_id` and `type` are mandatory.
-Typical fields are:
 
 **Sample**
 
@@ -315,13 +331,6 @@ Typical fields are:
 		type: "listen",
 		publisher_id: "9dedf3cf-3da7-883c-6790-38c9862f00d9"
 	}
-	tid: 1
-}
-```
--->
-```js
-{
-	result: "ok",
 	tid: 1
 }
 ```
@@ -343,13 +352,6 @@ Some backends allow to record the session. See each backend documentation.
 		session_id: "54c1b637-36fb-70c2-8080-28f07603cda8",
 		action: "start"
 	}
-	tid: 1
-}
-```
--->
-```js
-{
-	result: "ok",
 	tid: 1
 }
 ```
@@ -406,17 +408,11 @@ Some backends allow to control the room this session belongs to. See each backen
 	tid: 1
 }
 ```
--->
-```js
-{
-	result: "ok",
-	tid: 1
-}
-```
+
 
 ## set_candidate
 
-When the client sends an SDP offer or answer without candidates (and with the field `trickle_ice=true`), it must use this command to send candidates to the backend. The following fields are mandatory:
+When the client sends an SDP _offer_ or _answer_ without candidates (and with the field `trickle_ice=true`), it must use this command to send candidates to the backend. The following fields are mandatory:
 
 Field|Sample|Description
 ---|---|---
@@ -428,6 +424,6 @@ candidate|"candidate..."|Current candidate
 
 ## set_candidate_end
 
-When the client has no more candidates to send, must use this command to inform the server.
+When the client has no more candidates to send, it should use this command to inform the server.
 
 
