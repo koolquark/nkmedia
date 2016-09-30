@@ -34,13 +34,11 @@ Once the offer is set, you must set the answer. Again, there are several options
 
 ## Offers and Answers
 
-In NkMEDIA, _offer_ and _answer_ objects are related not only to _sdp_, but can include may other pieces of information. Offer and answers could exists without sdp, if it is not yet available. 
-
-Offers and answers are described as a json object, with the following fields:
+In NkMEDIA, _offer_ and _answer_ objects are described as a json object, with the following fields:
 
 Field|Sample|Description
 ---|---|---
-sdp|"v=0..."|SDP, if available
+sdp|"v=0..."|SDP
 sdp_type|"webrtc"|Can be "webrtc" (the default) or "rtp". Informs to NkMEDIA if it is an SDP generated at a WebRTC endpoint or not.
 trickle_ice|false|If the SDP has no candidates and Trickle ICE must be used, it must be indicated as `trickle_ice=true`
 
