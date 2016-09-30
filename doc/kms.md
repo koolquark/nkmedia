@@ -6,7 +6,7 @@
 	* [bridge](#bridge)
 	* [publish](#publish)
 	* [listen](#listen)
-	* [play](#mcu)
+	* [play](#play)
 * [**Trickle ICE**](#trickle-ice)
 * [**SIP**](#sip)
 * [**Media update**](#media-update)
@@ -164,7 +164,7 @@ Allows you to _listen_ to a previously started publisher, working as an _SFU_ (s
 {
 	class: "media",
 	subclass: "session",
-	cmd: "crate",
+	cmd: "create",
 	data: {
 		type: "listen",
 		publisher_id: "54c1b637-36fb-70c2-8080-28f07603cda8",
@@ -261,12 +261,12 @@ If the offer you send in has a SIP-like SDP, you must also include the option `s
 
 ## Media update
 
-This backend allows to you perform, at any moment and in all session types, the following [media updates](api.doc#update_media):
+This backend allows to you perform, at any moment and in all session types, the following [media updates](api.md#update_media):
 
 * `mute_audio`: Mute the outgoing audio.
 * `mute_video`: Mute the outgoing video.
 * `mute_data`: Mute the outgoing data channel.
-* `bitrate`: Limit the incoming bandwidth
+* `bitrate`: Limit the incoming bandwidth (TBD)
 
 **Sample**
 
@@ -287,7 +287,7 @@ This backend allows to you perform, at any moment and in all session types, the 
 ## Type udpdate 
 
 Kurento allows you to change the session to type to any other type at any moment, calling [set_type](api.md#set_type).
-You can for example first `park` a call, then include it on a `bridge` or an `mcu`.
+You can for example first `park` a call, then include it on a `bridge`, then perform a `play`.
 
 
 ## Recording

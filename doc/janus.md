@@ -143,7 +143,7 @@ You must not include any offer in the [session creation request](api.md#create),
 {
 	class: "media",
 	subclass: "session",
-	cmd: "crate",
+	cmd: "create",
 	data: {
 		type: "listen",
 		publisher_id: "54c1b637-36fb-70c2-8080-28f07603cda8",
@@ -200,7 +200,7 @@ When Janus generates an offer or answer, it will never use _trickle ICE_.
 
 ## Media update
 
-This backend allows to you perform, at any moment and in all session types (except SIP `proxy`) the following [media updates](api.doc#update_media):
+This backend allows to you perform, at any moment and in all session types (except SIP `proxy`) the following [media updates](api.md#update_media):
 
 * `mute_audio`: Mute the outgoing audio.
 * `mute_video`: Mute the outgoing video.

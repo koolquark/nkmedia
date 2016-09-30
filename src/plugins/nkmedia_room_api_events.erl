@@ -38,7 +38,7 @@
 
 event(RoomId, started, Room) ->
     Data = maps:with([audio_codec, video_codec, bitrate, class, backend], Room),
-    send_event(RoomId, started, Data, Room);
+    send_event(RoomId, created, Data, Room);
 
 event(RoomId, {stopped, Reason}, #{srv_id:=SrvId}=Room) ->
     {Code, Txt} = nkservice_util:error_code(SrvId, Reason),

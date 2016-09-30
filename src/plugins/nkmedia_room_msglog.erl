@@ -47,7 +47,7 @@
 -type msg() ::
     #{
         msg_id => msg_id(),
-        user => binary(),
+        user_id => binary(),
         session_id => binary(),
         timestamp => nklib_util:l_timestamp()
     }.
@@ -186,10 +186,10 @@ update(State, Room) ->
 do_api_cmd(<<"msglog_send">>, ApiReq, State) ->
     #api_req{srv_id=SrvId, data=Data, user=User, session=SessId} = ApiReq,
     #{room_id:=RoomId, msg:=Msg} = Data,
-    RoomMsg = Msg#{user=>User, session_id=>SessId},
+    RoomMsg = Msg#{user_id=>User, session_id=>SessId},
     case send_msg(RoomId, RoomMsg) of
         {ok, #{msg_id:=MsgId}=SentMsg} ->
-            nkmedia_api_events:send_event(SrvId, room, RoomId, msglog_send, SentMsg),
+            nkmedia_api_events:send_event(SrvId, room, RoomId, msglog_new_msg, SentMsg),
             {ok, #{msg_id=>MsgId}, State};
         {error, Error} ->
             {error, Error, State}
