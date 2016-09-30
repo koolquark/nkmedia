@@ -9,9 +9,9 @@
 * Starting a Service
 
 ## Management Interface
-* [Introduction](api_intro.md)
-* [Core API](api_commands.md)
-* [Core API Events](api_events.md)
+* [Introduction](intro.md)
+* [Core API](api.md)
+* [Core API Events](events.md)
 * Plugins API
   * [nkmedia_janus](janusi.md)
   * [nkmedia_fs](fs.md)

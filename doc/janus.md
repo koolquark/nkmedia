@@ -18,7 +18,7 @@ When recording is available, a file with the same name of the session will be cr
 
 ### Echo
 
-Allows to create an echo session. The caller must include the _offer_ in the [session creation request](api_commands.md#start-a-session), and NkMEDIA will include the _answer_ in the response.
+Allows to create an echo session. The caller must include the _offer_ in the [session creation request](api.md#start-a-session), and NkMEDIA will include the _answer_ in the response.
 
 Aditional supported options are:
 
@@ -65,7 +65,7 @@ record|false|Perform recording of audio and video
 
 ### Echo Update
 
-It is possible to update the media session once started, using the [update session request](api_commands.md#update-a-session) and using `type: "media"`. For the _echo_ type, the parameters `use_audio`, `use_video`, `bitrate` and `record` can be modified. If the recording is stopped and then started again, a new file will be generated.
+It is possible to update the media session once started, using the [update session request](api.md#update-a-session) and using `type: "media"`. For the _echo_ type, the parameters `use_audio`, `use_video`, `bitrate` and `record` can be modified. If the recording is stopped and then started again, a new file will be generated.
 
 **Sample**
 
@@ -87,7 +87,7 @@ It is possible to update the media session once started, using the [update sessi
 
 ### Proxy
 
-Allows to create a proxy session. The caller must include the _offer_ in the [session creation request](api_commands.md#start-a-session), and NkMEDIA will include the _offer_ to send to the called party. Later on, when the called party returns its answer, you must use the [set answer command](api_commands.md#set-an-answer), and you will get back the answer for the caller session.
+Allows to create a proxy session. The caller must include the _offer_ in the [session creation request](api.md#start-a-session), and NkMEDIA will include the _offer_ to send to the called party. Later on, when the called party returns its answer, you must use the [set answer command](api.md#set-an-answer), and you will get back the answer for the caller session.
 
 
 Field|Default|Description
@@ -160,7 +160,7 @@ You must now send the answer to the session, and you will get your own answer:
 
 ### Proxy Update
 
-It is possible to update the media session once started, using the [update session request](api_commands.md#update-a-session) and `type: "media"`. For the _proxy_ type, the parameters `use_audio`, `use_video`, `bitrate` and `record` can be modified. See example for [echo](#echo-update)
+It is possible to update the media session once started, using the [update session request](api.md#update-a-session) and `type: "media"`. For the _proxy_ type, the parameters `use_audio`, `use_video`, `bitrate` and `record` can be modified. See example for [echo](#echo-update)
 
 ## Publish
 
@@ -215,14 +215,14 @@ record|false|Perform recording of audio and video
 
 ### Publish update
 
-It is possible to update the media session once started, using the [update session request](api_commands.md#update-a-session). Parameters `use_audio`, `use_video`, `bitrate` and `record` can be modified. See example for [echo](#echo-update).
+It is possible to update the media session once started, using the [update session request](api.md#update-a-session). Parameters `use_audio`, `use_video`, `bitrate` and `record` can be modified. See example for [echo](#echo-update).
 
 
 ## Listen
 
 Allows to _listen_ to a previously started publisher, working as an _SFU_ (selective forwarding unit). You must tell the _publisher id_, and the room will be found automatically.
 
-You must not include any offer in the [session creation request](api_commands.md#start-a-session), and NkMEDIA will send you the _offer_ back. You must then supply an _answer_ calling tpo the [set answer command](api_commands.md#set-an-answer).
+You must not include any offer in the [session creation request](api.md#start-a-session), and NkMEDIA will send you the _offer_ back. You must then supply an _answer_ calling tpo the [set answer command](api.md#set-an-answer).
 
 
 

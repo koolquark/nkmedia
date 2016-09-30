@@ -1,6 +1,6 @@
 # NkMEDIA External Interface - Events
 
-See the [API Introduction](api_intro.md) for an introduction to the interface and [API Commands](api_commands.md) for a detailed description of available commands.
+See the [API Introduction](intro.md) for an introduction to the interface and [API Commands](api.md) for a detailed description of available commands.
 
 Many NkMEDIA operations launch events of different types. All API connections subscribed to these events will receive. them. See NkSERVICE documentation for a description of how to subscribe and receive events.
 
