@@ -132,14 +132,9 @@ room_bitrate|`0`|Bitrate for the room (kbps, 0:unlimited)
 
 ## listen
 
-Allows you to _listen_ to a previously started publisher, working as an _SFU_ (selective forwarding unit). You must tell the _publisher id_, and the room will be found automatically.
+Allows you to _listen_ to a previously started publisher, working as an _SFU_ (selective forwarding unit). You must tell the `publisher id` and the room will be found automatically.
 
 You must not include any offer in the [session creation request](api.md#create), because Janus will make one for you. You must then supply an _answer_ calling the [set answer](api.md#set_answer) command.
-
-
-Field|Default|Description
----|---|---
-publisher_id|(mandatory)|Publisher to listen to
 
 
 **Sample**
@@ -151,7 +146,7 @@ publisher_id|(mandatory)|Publisher to listen to
 	cmd: "crate",
 	data: {
 		type: "listen",
-		publisher: "54c1b637-36fb-70c2-8080-28f07603cda8",
+		publisher_id: "54c1b637-36fb-70c2-8080-28f07603cda8",
 		wait_reply: true
 	}
 	tid: 1
@@ -197,7 +192,7 @@ You must now set the answer:
 
 ## Trickle ICE
 
-When sending an offer or answer to the backend, it can include all candidates in the SDP or you can use _trickle ICE_. In this case, you must not include the candidates in the SDP, but use the field `trickle_ice: true`. You can now use the commands (set_candidate)[api.md#set_candidate] and (set_candidate_end)[api.md#set_candidate_end] to send candidates to the backend.
+When sending an offer or answer to the backend, it can include all candidates in the SDP or you can use _trickle ICE_. In this case, you must not include the candidates in the SDP, but use the field `trickle_ice: true`. You can now use the commands [set_candidate](api.md#set_candidate) and [set_candidate_end](api.md#set_candidate_end) to send candidates to the backend.
 
 When Janus generates an offer or answer, it will never use _trickle ICE_.
 

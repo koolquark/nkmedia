@@ -1,21 +1,34 @@
-# NkMEDIA External Interface
+# Kurento Backend
 
-## Freeswitch Options
+* [**Session Types**](#session-types)
+	* [park](#park)
+	* [echo](#echo)
+	* [bridge](#bridge)
+	* [publish](#publish)
+	* [listen](#listen)
+	* [play](#mcu)
+* [**Trickle ICE**](#trickle-ice)
+* [**SIP**](#sip)
+* [**Media update**](#media-update)
+* [**Type update**](#type-update)
+* [**Recording**](#recording)
 
-When the nkmedia_janus backend is selected (either manually, using the `backend: nkmedia_fs` option when creating the session or automatically, depending on the type), following session types are supported:
 
-Type|Description
----|---|---
-[park](#park)|_Parks_ the session (see bellow)
-[echo](#echo)|Echoes audio and/or video
-[mcu](#mcu)|Starts a mixing MCU for audio and video
-[bridge](#bridge)|Connects two sessions
+## Session Types
 
-An unique characteristic of this backend is that any session, once started, can be updated to any other session type without starting a new SDP negotiation. This means that you can start a `park` session, and later on, _connect_ the same session to an _mcu_ or to another user's session (both must belong to the same Freeswitch instance).
+When the `nkmedia_kms` backend is selected (either manually, using the `backend: "nkmedia_kms"` option when creating the session or automatically, depending on the type), the session types described bellow can be created. Kurento allows two modes for all types: as an _offerer_ or as an _offeree_. 
 
-### Park
+As an **offerer**, you create the session without an _offer_, and instruct Kurento to make one either calling [get_offer](api.md#get_offer) or using `wait_reply: true` in the [session creation](api.md#create) request. Once you have the _answer_, you must call [set_answer](api.md#set_answer) to complete the session.
 
-You can use this session type to _place_ the session at the Freeswitch mediaserver, without yet sending audio or video, and before updating it to any other operation.
+As an **offeree**, you create the session with an offer, and you get the answer from Kurento either calling [get_answer](api.md#get_offer) or using `wait_reply: true` in the session creation request.
+
+
+
+## park
+
+You can use this session type to _place_ the session at the Kurento mediaserver, without yet sending audio or video, and before updating it to any other type.
+
+The available [media updates](#media-update) can also be included in the creation request.
 
 **Sample**
 
@@ -29,6 +42,7 @@ You can use this session type to _place_ the session at the Freeswitch mediaserv
 		offer: {
 			sdp: "v=0.."
 		},
+		wait_reply: true
 	}
 	tid: 1
 }
@@ -48,10 +62,9 @@ You can use this session type to _place_ the session at the Freeswitch mediaserv
 ```
 
 
+## echo
 
-### Echo
-
-This session type echos any received audio or video.
+Allows to create an _echo_ session, sending the audio and video back to the caller. 
 
 **Sample**
 
@@ -59,36 +72,24 @@ This session type echos any received audio or video.
 {
 	class: "media",
 	subclass: "session",
-	cmd: "start",
+	cmd: "create",
 	data: {
 		type: "echo",
-		backend: "nkmedia_fs",
 		offer: {
 			sdp: "v=0.."
-		}
+		},
+		wait_reply: true
 	}
 	tid: 1
 }
 ```
--->
-```js
-{
-	result: "ok",
-	data: {
-		session_id: "54c1b637-36fb-70c2-8080-28f07603cda8",
-		answer: {
-			sdp: "v=0..."
-		}
-	},
-	tid: 1
-}
-```
 
 
-### MCU
+## bridge
 
-This session type connects the session to a new or existing MCU conference at a Freeswitch instance.
-The optional field `room_id` can be used to connect to an existing room, or creare a new one with this name.
+Allows to connect two different Kurento sessions together. If you use the `master_id: ...` parameter in the session creation request, this session will be set as _slave_ of the other session (see [Core API](api.md#create)). Otherwise, you must use the `peer_id: ...` parameter with the _session id_ of the peer to connect to.
+
+The available [media updates](#media-update) can also be included in the creation request.
 
 **Sample**
 
@@ -96,79 +97,42 @@ The optional field `room_id` can be used to connect to an existing room, or crea
 {
 	class: "media",
 	subclass: "session",
-	cmd: "start",
-	data: {
-		type: "mcu",
-		room_id: "41605362-3955-8f28-e371-38c9862f00d9",
-		offer: {
-			sdp: "v=0.."
-		}
-	}
-	tid: 1
-}
-```
--->
-```js
-{
-	result: "ok",
-	data: {
-		session_id: "54c1b637-36fb-70c2-8080-28f07603cda8",
-		room_id: "41605362-3955-8f28-e371-38c9862f00d9",
-		answer: {
-			sdp: "v=0..."
-		}
-	},
-	tid: 1
-}
-```
-
-### Room updates
-
-In the near future, you will be able to perform large number of updates over a session of type room. Currenly the only supported option is to change the layout of the mcu in real time:
-
-**Sample**
-
-```js
-{
-	class: "media",
-	subclass: "session",
-	cmd: "update",
-	data: {
-		update_type: "mcu_layout",
-		room_id: "41605362-3955-8f28-e371-38c9862f00d9",
-		mcu_layout: "2x2"
-	}
-	tid: 1
-}
-```
-
-
-## Bridge
-
-Allows to connect two sessions at the same Freeswitch instance. You typically start a first sesison and park it, an later on you start a second session and bridge them together.
-
-The following options are supported:
-
-Field|Description
----|---|---
-peer|Mandatory, session id of the peer to bridge to.
-park_after_bridge|See bellow (default false)
-
-If the option `park_after_bridge` is set to _true_, the session will no be stopped if the bridged session stops. 
-
-**Sample**
-
-```js
-{
-	class: "media",
-	subclass: "session",
-	cmd: "start",
+	cmd: "create",
 	data: {
 		type: "bridge",
-		peer: "5ff9d334-398c-108e-7e0d-38c9862f00d9"
+		master_id: "54c1b637-36fb-70c2-8080-28f07603cda8",
 		offer: {
 			sdp: "v=0.."
-		}
+		},
+		wait_reply: true
+	}
+	tid: 1
+}
+```
+
+
+## publish
+
+Allows you to _publish_ a session with audio/video/data to a _room_, working as an _SFU_ (_selective forwarding unit_). Any number of listeners can then be connected to this session.
+
+If you don't include a room, a new one will be created automatically. If you include a room, it must already exist.
+
+The available [media updates](#media-update) can also be included in the creation request.
+
+
+**Sample**
+
+```js
+{
+	class: "media",
+	subclass: "session",
+	cmd: "create",
+	data: {
+		type: "publish",
+		offer: {
+			sdp: "v=0.."
+		},
+		wait_reply: true
 	}
 	tid: 1
 }
@@ -178,8 +142,8 @@ If the option `park_after_bridge` is set to _true_, the session will no be stopp
 {
 	result: "ok",
 	data: {
-		session_id: "343b5809-398c-12e2-21e2-38c9862f00d9",
-		peer: "5ff9d334-398c-108e-7e0d-38c9862f00d9"
+		session_id: "54c1b637-36fb-70c2-8080-28f07603cda8",
+		room: "bbd48487-3783-f511-ee41-28f07603cda8",
 		answer: {
 			sdp: "v=0..."
 		}
@@ -189,10 +153,10 @@ If the option `park_after_bridge` is set to _true_, the session will no be stopp
 ```
 
 
-# Session updates
+## listen
 
-Freeswitch backend allows existing sessions to be _updated_ to any other session type.
-For example, a session started as _park_ or _echo_ could be updated into a _mcu room_:
+Allows you to _listen_ to a previously started publisher, working as an _SFU_ (selective forwarding unit). You must tell the `publisher_id`, and the room will be found automatically.
+
 
 **Sample**
 
@@ -200,11 +164,14 @@ For example, a session started as _park_ or _echo_ could be updated into a _mcu 
 {
 	class: "media",
 	subclass: "session",
-	cmd: "update",
+	cmd: "crate",
 	data: {
-		type: "session_type",
-		session_type: "mcu"
-		room_id: "41605362-3955-8f28-e371-38c9862f00d9"
+		type: "listen",
+		publisher_id: "54c1b637-36fb-70c2-8080-28f07603cda8",
+		offer: {
+			sdp: "v=0..."
+		},
+		wait_reply: true
 	}
 	tid: 1
 }
@@ -214,12 +181,140 @@ For example, a session started as _park_ or _echo_ could be updated into a _mcu 
 {
 	result: "ok",
 	data: {
-		room_id: "41605362-3955-8f28-e371-38c9862f00d9",
-		room_type: "video-mcu-stereo"
+		session_id: "2052a043-3785-de87-581b-28f07603cda8",
+		offer: {
+			answer: "v=0..."
+		}
 	},
 	tid: 1
 }
 ```
+
+
+## play
+
+Allows you to reproduce any audio/video file over the session. The file must be encoded using _WEBM_ or _MP4_.
+The _uri_ must point to a local or remote file, using _http_.
+
+The available [media updates](#media-update) can also be included in the creation request.
+
+**Sample**
+
+```js
+{
+	class: "media",
+	subclass: "session",
+	cmd: "create",
+	data: {
+		type: "play",
+		uri: "http://files.kurento.org/video/format/sintel.webm",
+		offer: {
+			sdp: "v=0.."
+		},
+		wait_reply: true
+	}
+	tid: 1
+}
+```
+-->
+```js
+{
+	result: "ok",
+	data: {
+		session_id: "54c1b637-36fb-70c2-8080-28f07603cda8",
+		answer: {
+			sdp: "v=0..."
+		}
+	},
+	tid: 1
+}
+```
+
+You can now manage the player using the [player_action](api.md#player_action) command. The available actions are:
+
+Action|Description
+---|---
+pause|Pauses the reproduction
+resume|Resumes the reproduction
+get_info|Gets info about the file, length and if seekable.
+get_position|Gets current position
+set_position|Jumps to a specific position (use `position: ...`)
+
+
+
+## Trickle ICE
+
+When sending an offer or answer to the backend, it can include all candidates in the SDP or you can use _trickle ICE_. In this case, you must not include the candidates in the SDP, but use the field `trickle_ice: true`. You can now use the commands [set_candidate](api.md#set_candidate) and [set_candidate_end](api.md#set_candidate_end) to send candidates to the backend.
+
+When Kurento generates and offer or an answer, it will always use _trickle ICE_ by default. You can get the offered candidates listening to the [candidate](events.md) and [candidate_end](events.md) events.
+
+If you do not want to support _trickle ICE_ you can use the options `no_offer_trickle_ice` and `no_answer_trickle_ice` in the session creation request. NkMEDIA will then buffer all candidates from Kurento, an when either Kurento sends the last candidate event or the `trickle_ice_timeout` is fired, all of them will be incorporated in the SDP and offered to you, as if it were generated from Kurento without trickle.
+
+
+## SIP
+
+The Kurento backend has full support for SIP.
+
+If the offer you send in has a SIP-like SDP, you must also include the option `sdp_type: "rtp"` on it. The generated answer will also be SIP compatible. If you want Kurento to generate a SIP offer, use the `sdp_type: "rtp"` parameter in the session creation request. Your answer must also be then SIP compatible.
+
+
+
+## Media update
+
+This backend allows to you perform, at any moment and in all session types, the following [media updates](api.doc#update_media):
+
+* `mute_audio`: Mute the outgoing audio.
+* `mute_video`: Mute the outgoing video.
+* `mute_data`: Mute the outgoing data channel.
+* `bitrate`: Limit the incoming bandwidth
+
+**Sample**
+
+```js
+{
+	class: "media",
+	subclass: "session",
+	cmd: "update_media",
+	data: {
+		mute_audio: true,
+		bitrate: 100000
+	}
+	tid: 1
+}
+```
+
+
+## Type udpdate 
+
+Kurento allows you to change the session to type to any other type at any moment, calling [set_type](api.md#set_type).
+You can for example first `park` a call, then include it on a `bridge` or an `mcu`.
+
+
+## Recording
+
+Kurento offers a very sophisticated session recording mechanism.
+
+At any moment, and in all session types, you can order to start or stop recording of the session, using the [recorder_action](api.md#recorder_action) command.
+
+To start recording, use the `start` action. You can also use `stop`, `pause` and `resume` actions.
+
+
+**Sample**
+
+```js
+{
+	class: "media",
+	class: "session",
+	cmd: "recorder_action",
+	data: {
+		session_id: "2052a043-3785-de87-581b-28f07603cda8",
+		action: start
+	}
+	tid: 1
+}
+```
+
+TBD: how to access the file
 
 
 
