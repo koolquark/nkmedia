@@ -7,6 +7,7 @@ This document describes the characteristics of the Janus backend
 	* [proxy](#proxy) and [sip](#sip) gateways
 	* [publish](#publish)
 	* [listen](#listen)
+* [**Trickle ICE**](#tricke-ice)
 * [**Media update**](#media-update)
 * [**Type update**](#type-update)
 * [**Recording**](#recording)
@@ -193,6 +194,12 @@ You must now set the answer:
 	tid: 2
 }
 ```
+
+## Trickle ICE
+
+When sending an offer or answer to the backend, it can include all candidates in the SDP or you can use _trickle ICE_. In this case, you must not include the candidates in the SDP, but use the field `trickle_ice: true`. You can now use the commands [api.md#set_candidate] and [api.md#set_candidate_end] to send candidates to the backend.
+
+When Janus generates an offer or answer, it will never use _trickle ICE_.
 
 
 

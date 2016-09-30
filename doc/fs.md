@@ -5,6 +5,7 @@
 	* [echo](#echo)
 	* [bridge](#bridge)
 	* [mcu](#mcu)
+* [**Trickle ICE**](#tricke-ice)
 * [**SIP**](#sip)
 * [**Media update**](#media-update)
 * [**Type update**](#type-update)
@@ -145,6 +146,14 @@ The optional field `room_id` can be used to connect to an existing room, or crea
 ```
 
 See [Room Management](#room-management) to learn about operations that can be performed on the room.
+
+
+## Trickle ICE
+
+Freeswitch has currenly no support for _trickle ICE_, however NkMEDIA is able to _emulate_ it. If you want to use it when sending offfers or answers to the backend, you must use the field `trickle_ice: true`. You can now use the commands [api.md#set_candidate] and [api.md#set_candidate_end] to send candidates to the backend. NkMEDIA will buffer the candidates and, when either you call `set_candidate_end` or the `trickle_ice_timeout` is fired, all of them will be incorporated in the SDP and sent to Freeswitch.
+
+When Freesewitch generates an offer or answer, it will never use _trickle ICE_.
+
 
 
 ## SIP
