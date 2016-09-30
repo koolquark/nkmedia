@@ -198,7 +198,7 @@ You must now set the answer:
 
 ## Media update
 
-This backend allows to you perform, at any moment and in all session types (except the SIP-related) the following [media updates](api.doc#update_media):
+This backend allows to you perform, at any moment and in all session types (except SIP `proxy`) the following [media updates](api.doc#update_media):
 
 * `mute_audio`: Mute the outgoing audio.
 * `mute_video`: Mute the outgoing video.
@@ -241,6 +241,34 @@ Then only [type update](api.md#set_type) that the Janus backend supports is chan
 	tid: 1
 }
 ```
+
+
+## Recording
+
+At any moment, and in all session types (except SIP `proxy`) you can order to start or stop recording of the session, using the [recorder_action](api.md#recorder_action) command.
+
+To start recording, use the `start` action.
+
+
+**Sample**
+
+```js
+{
+	class: "media",
+	class: "session",
+	cmd: "recorder_action",
+	data: {
+		session_id: "2052a043-3785-de87-581b-28f07603cda8",
+		action: start
+	}
+	tid: 1
+}
+```
+
+To stop recording, use the `stop` action.
+
+TBD: how to access the file
+
 
 
 
