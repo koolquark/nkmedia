@@ -5,7 +5,7 @@
 	* [echo](#echo)
 	* [bridge](#bridge)
 	* [mcu](#mcu)
-* [**SIP*](#sip)
+* [**SIP**](#sip)
 * [**Media update**](#media-update)
 * [**Type update**](#type-update)
 * [**Recording**](#recording)
@@ -14,13 +14,11 @@
 
 ## Session Types
 
-When the `nkmedia_fs` backend is selected (either manually, using the `backend: "nkmedia_fs"` option when creating the session or automatically, depending on the type), the session described bellow can be created.
-
-Freeswitch allows two modes for all types: as an _offerer_ or as an _offeree_. 
+When the `nkmedia_fs` backend is selected (either manually, using the `backend: "nkmedia_fs"` option when creating the session or automatically, depending on the type), the session types described bellow can be created. Freeswitch allows two modes for all types: as an _offerer_ or as an _offeree_. 
 
 As an **offerer**, you create the session without an _offer_, and instruct Freeswith to make one either calling [get_offer](api.md#get_offer) or using `wait_reply: true` in the [session creation](api.md#create) request. Once you have the _answer_, you must call [set_answer](api.md#set_answer) to complete the session.
 
-As an **offeree**, you create the session with an offer, and you get the anser from Freeswitch either calling [get_answer](api.md#get_offer) or using `wait_reply: true` in the [session creation](api.md#create) request.
+As an **offeree**, you create the session with an offer, and you get the answer from Freeswitch either calling [get_answer](api.md#get_offer) or using `wait_reply: true` in the session creation request.
 
 
 
@@ -85,7 +83,7 @@ Allows to create an _echo_ session, sending the audio and video back to the call
 
 ## bridge
 
-Allows to connect two different Freeswitch sessions together. If you use the `master_id: ...` parameter in the session creation request, this session will be set as _slave_ of the other session (see [Core API](api.md)). Otherwise, you must use the `peer_id: ...` parameter with the _session id_ of the peer to connect to.
+Allows to connect two different Freeswitch sessions together. If you use the `master_id: ...` parameter in the session creation request, this session will be set as _slave_ of the other session (see [Core API](api.md#create)). Otherwise, you must use the `peer_id: ...` parameter with the _session id_ of the peer to connect to.
 
 **Sample**
 
@@ -174,32 +172,9 @@ TBD
 
 
 
-### Room management
+## Room management
 
-In the near future, you will be able to perform large number of updates over a session of type room. Currenly the only supported option is to change the layout of the mcu in real time:
-
-**Sample**
-
-```js
-{
-	class: "media",
-	subclass: "session",
-	cmd: "update",
-	data: {
-		update_type: "mcu_layout",
-		room_id: "41605362-3955-8f28-e371-38c9862f00d9",
-		mcu_layout: "2x2"
-	}
-	tid: 1
-}
-```
-
-
-
-# Session updates
-
-Freeswitch backend allows existing sessions to be _updated_ to any other session type.
-For example, a session started as _park_ or _echo_ could be updated into a _mcu room_:
+In the near future, you will be able to perform several updates over any MCU, calling [room_action](api.md#room_action). Currenly the only supported option is to change the layout of the mcu in real time:
 
 **Sample**
 
@@ -207,28 +182,12 @@ For example, a session started as _park_ or _echo_ could be updated into a _mcu 
 {
 	class: "media",
 	subclass: "session",
-	cmd: "update",
+	cmd: "room_action",
 	data: {
-		type: "session_type",
-		session_type: "mcu"
-		room_id: "41605362-3955-8f28-e371-38c9862f00d9"
+		action: "layout"
+		room_id: "41605362-3955-8f28-e371-38c9862f00d9",
+		layout: "2x2"
 	}
 	tid: 1
 }
 ```
--->
-```js
-{
-	result: "ok",
-	data: {
-		room_id: "41605362-3955-8f28-e371-38c9862f00d9",
-		room_type: "video-mcu-stereo"
-	},
-	tid: 1
-}
-```
-
-
-
-
-
