@@ -16,7 +16,7 @@ This document describes the characteristics of the Janus backend
 
 When the `nkmedia_janus` backend is selected (either manually, using the `backend: "nkmedia_janus"` option when creating the session or automatically, depending on the type), the following session types can be created:
 
-### echo
+## echo
 
 Allows to create an _echo_ session, sending the audio and video back to the caller. The caller must include the _offer_ in the [session creation request](api.md#create), and you must use [get_answer](api.md#get_answer) to get the answer (or use `wait_reply: true` in the request).
 
@@ -54,7 +54,7 @@ The available [media updates](#media-update) can also be included in the creatio
 }
 ```
 
-### **proxy**
+## **proxy**
 
 Allows you to create a _proxy_ session, a media session where all traffic goes through the server, allowing media updates and recording. 
 
@@ -69,7 +69,7 @@ The available [media updates](#media-update) can also be included in the creatio
 Samples TBD
 
 
-#### SIP
+### SIP
 
 You can make a SIP-to-WebRTC gateway using an offer with a _SIP-type_ SDP, and using `sdp_type: "rtp"` in it. The generated _master_ answer will also be SIP-like, ready to be sent to the calling SIP device.
 
