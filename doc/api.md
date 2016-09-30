@@ -1,35 +1,33 @@
- # NkMEDIA External Interface
+# NkMEDIA API External Interface
 
 See the [API Introduction](intro.md) for an introduction to the interface,
 and each backend and plugin documentation:
 
-* [nkmedia_janus](doc/janus.md)
-* [nkmedia_fs](doc/fs.md)
-* [nkmedia_kms](doc/kms.md)
-* [nkmedia_room](doc/room.md)
-* [nkmedia_call](doc/call.md)
-* [nkmedia_sip](doc/sip.md)
-* [nkmedia_verto](doc/verto.md)
+* [nkmedia_janus](janus.md)
+* [nkmedia_fs](fs.md)
+* [nkmedia_kms](kms.md)
+* [nkmedia_room](room.md)
+* [nkmedia_call](call.md)
+* [nkmedia_sip](sip.md)
+* [nkmedia_verto](verto.md)
 
 
-The currently supported External API commands as described here. 
+The currently supported External API commands are described here. All commands must have `class="media"` and `subclass="session"`:
 
-Class|Subclass|Cmd|Description
----|---|---|---
-`media`|`session`|[`create`](#create)|Creates a new media session
-`media`|`session`|[`destroy`](#destroy)|Destroys a new media session
-`media`|`session`|[`set_answer`](#set_answer)|Sets the answer for a session
-`media`|`session`|[`get_info`](#get_info)|Gets info about a session
-`media`|`session`|[`get_list`](#get_list)|Gets the current list of sessions
-`media`|`session`|[`get_offer`](#get_offer)|Gets the offer for a session
-`media`|`session`|[`get_answer`](#get_answer)|Gets the answer for a session
-`media`|`session`|[`update_media`](#update_media)|Updates media in a current session
-`media`|`session`|[`set_type`](#set_type)|Updates the type of a current session
-`media`|`session`|[`recorder_action`](#recorder_action)|Performs an action over the recorder
-`media`|`session`|[`player_action`](#player_action)|Performs an action over the player
-`media`|`session`|[`room_action`](#room_action)|Performs an action over the current room
-`media`|`session`|[`set_candidate`](#set_candidate)|Sends a Trickle ICE candidate
-`media`|`session`|[`set_candidate_end`](#set_candidate_end)|Signal that no more candidates are available
+* [`**create**`](#create): Creates a new media session
+* [`**destroy**`](#destroy): Destroys an existing media session
+* [`**set_answer**`](#set_answer): Sets the answer for a session
+* [`**get_info**`](#get_info): Gets info about a session
+* [`**get_list**`](#get_list): Gets the current list of sessions
+* [`**get_offer**`](#get_offer): Gets the offer for a session
+* [`**get_answer**`](#get_answer): Gets the answer for a session
+* [`**update_media**`](#update_media): Updates media processing in a current session
+* [`**set_type**`](#set_type): Updates the type of a current session
+* [`**recorder_action**`](#recorder_action): Performs an action over the recorder
+* [`**player_action**`](#player_action): Performs an action over the player
+* [`**room_action**`](#room_action): Performs an action over the current room
+* [`**set_candidate**`](#set_candidate): Sends a Trickle ICE candidate
+* [`**set_candidate_end**`](#set_candidate_end): Signals that no more candidates are available
 
 
 ## create
