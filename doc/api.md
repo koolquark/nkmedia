@@ -10,7 +10,6 @@ See the [API Introduction](intro.md) for an introduction to the interface, and [
 * [**`get_list`**](#get_list): Gets the current list of sessions
 * [**`get_offer`**](#get_offer): Gets the offer for a session
 * [**`get_answer`**](#get_answer): Gets the answer for a session
-* [**`get_proxy_offer`**](#get_proxy_offer): Gets the offer for a proxy session
 * [**`update_media`**](#update_media): Updates media processing in a current session
 * [**`set_type`**](#set_type): Updates the type of a current session
 * [**`recorder_action`**](#recorder_action): Performs an action over the recorder
@@ -222,11 +221,6 @@ Waits for the session _offer_ to be generated
 ## get_answer
 
 Waits for the session _answer_ to be generated
-
-
-## get_proxy_offer
-
-For some `proxy` type sessions, this command allows you to get the _offer_ to be sent to the remote party. (See backend documentation).
 
 
 ## get_info

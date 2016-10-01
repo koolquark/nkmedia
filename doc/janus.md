@@ -59,9 +59,9 @@ The available [media updates](#media-update) can also be included in the creatio
 
 Allows you to create a _proxy_ session, a media session where all traffic goes through the server, allowing media updates and recording. 
 
-You must create a _master_ session with an _offer_, call [get_proxy_offer](api.md#get_proxy_offer) to get the _proxy offer_, and use it to start a _slave_ session and call the remote party.
+You must first get the _offer_ from the _caller_. You must create a session for it with type `proxy` and your _offer_ (this session will be the _master_). You must then start a second session for the callee, again with type `proxy` but without any offer, and with the field `master_id` pointing to the first session. This second session will become the _slave_.
 
-Once you have an answer from the remote party, you must use [set_answer](api.md#set_answer) to set the answer on the _slave_ session, and it will automatically connect to the _master_ session. You can now either wait for the answer event for the _master_ session or call [get_answer](api.md#get_answer) on it.
+You must get the offer for the second session (calling [get_offer](api.md#get_offer)), and send it to the _callee_. When you have the callee answer (or hangup) you must send it to the slave session (calling [set_answer](api.md#set_answer)). The master session will then generate the answer for the caller. You can now either wait for the answer event for the _master_ session or call [get_answer](api.md#get_answer) on it.
 
 If any of the session stops, the other will also be destroyed automatically.
 
