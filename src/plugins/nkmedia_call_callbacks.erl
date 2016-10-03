@@ -18,20 +18,21 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc Room Call Callbacks
+%% @doc Call Callbacks
 -module(nkmedia_call_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
 -export([nkmedia_call_init/2, nkmedia_call_terminate/2, 
-         nkmedia_call_resolve/3, nkmedia_call_invite/5, nkmedia_call_cancel/3, 
+         nkmedia_call_start_caller/2, nkmedia_call_start_callee/3,
+         nkmedia_call_resolve/4, nkmedia_call_invite/4, nkmedia_call_cancel/3, 
          nkmedia_call_event/3, nkmedia_call_reg_event/4, 
          nkmedia_call_handle_call/3, nkmedia_call_handle_cast/2, 
          nkmedia_call_handle_info/2]).
 -export([nkmedia_session_reg_event/4]).
 -export([error_code/1]).
 -export([api_cmd/2, api_syntax/4]).
-
+-export([nkmedia_session_handle_call/3]).
 
 -include("../../include/nkmedia.hrl").
 -include_lib("nkservice/include/nkservice.hrl").
@@ -77,6 +78,9 @@ error_code(no_destination)          ->  {305004, "No destination"};
 error_code(no_answer)               ->  {305005, "No answer"};
 error_code(already_answered)        ->  {305006, "Already answered"};
 error_code(originator_cancel)       ->  {305007, "Originator cancel"};
+error_code(caller_stoped)           ->  {305008, "Caller stopped"};
+error_code(callee_stoped)           ->  {305009, "Callee stopped"};
+error_code(session_not_used)        ->  {305009, "Session not used"};
 error_code(_) -> continue.
 
 
@@ -101,6 +105,11 @@ nkmedia_session_reg_event(_SessId, _Reg, _Ev, _Session) ->
 %% ===================================================================
 
 -type call_id() :: nkmedia_call:id().
+-type dest() :: nkmedia_call:dest().
+-type dest_ext() :: nkmedia_call:dest_ext().
+-type caller() :: nkmedia_call:caller().
+-type callee() :: nkmedia_call:callee().
+-type callee_id() :: nkmedia_call:callee_id().
 -type call() :: nkmedia_call:call().
 
 
@@ -119,39 +128,60 @@ nkmedia_call_terminate(_Reason, Call) ->
     {ok, Call}.
 
 
-%% @doc Called when an call is created. The initial callee option is included,
-%% along with the current destionations. You may add new destinations.
-%% By default, it will look for types 'user' and 'session', adding 
-%% {nkmedia_api, {user|session}, pid()} destinations
-%% Then nkmedia_call_invite must send the real invitations
--spec nkmedia_call_resolve(nkmedia_call:callee(), [nkmedia_call:dest_ext()], call()) ->
-    {ok, [nkmedia_call:dest_ext()], call()} | continue().
+%% @doc Called when the Call must start the 'caller' session
+-spec nkmedia_call_start_caller(call_id(), call()) ->
+    {ok, nkmedia_session:id(), call()} | {error, nkservice:error(), call()} |
+    continue().
 
-nkmedia_call_resolve(Callee, DestExts, Call) ->
-    nkmedia_api:nkmedia_call_resolve(Callee, DestExts, Call).
+nkmedia_call_start_caller(_CallId, Call) ->
+    {error, not_implemented, Call}.
+
+
+%% @doc Called when the Call must start the 'caller' session
+-spec nkmedia_call_start_callee(nkmedia_session:id(), call_id(), call()) ->
+    {ok, nkmedia_session:id(), call()} | {error, nkservice:error(), call()} |
+    continue().
+
+nkmedia_call_start_callee(_SessId, _CallId, Call) ->
+    {error, not_implemented, Call}.
+
+
+
+
+
+%% @doc Called when an call is created. The initial callee is included,
+%% along with the current desti nations. You may add new destinations.
+%%
+%% The default implementation will look for types 'user' and 'session', adding 
+%% {nkmedia_api, {user|session, pid()}} destinations
+%% Then nkmedia_call_invite must send the real invitations
+-spec nkmedia_call_resolve(callee(), nkmedia_call:call_type(), [dest_ext()], call()) ->
+    {ok, [dest_ext()], call()} | continue().
+
+nkmedia_call_resolve(Callee, Type, DestExts, Call) ->
+    nkmedia_call_lib:resolve(Callee, Type, DestExts, Call).
 
 
 %% @doc Called for each defined destination to be invited
-%% The offer can be empty if it was not included in the call creation
-%% You must return a nklib:link(), and include it when calling
-%% nkmedia_call:ringing/3, answered/3 or rejected/3
--spec nkmedia_call_invite(call_id(), nkmedia_call:dest(), 
-                          nkmedia:offer(), Meta::term(), call()) ->
-    {ok, nklib:link(), call()} | 
+%% If dest() is recognized, plugin must start a new session, possibly linking
+%% with the call. 
+%% When sending answer, if it is accepted, must set the answer there
+-spec nkmedia_call_invite(dest(), caller(), call_id(), call()) ->
+    {ok, callee_id(), call()} | 
     {retry, Secs::pos_integer(), call()} | 
     {remove, call()} | 
     continue().
 
-nkmedia_call_invite(CallId, Dest, Offer, Meta, Call) ->
-    nkmedia_api:nkmedia_call_invite(CallId, Dest, Offer, Meta, Call).
+nkmedia_call_invite(Dest, Caller, CallId, Call) ->
+    nkmedia_call_lib:invite(Dest, Caller, CallId, Call).
 
 
 %% @doc Called when an outbound invite has been cancelled
--spec nkmedia_call_cancel(call_id(), nklib:link(), call()) ->
+-spec nkmedia_call_cancel(call_id(), callee_id(), call()) ->
     {ok, call()} | continue().
 
-nkmedia_call_cancel(CallId, Link, Call) ->
-    nkmedia_api:nkmedia_call_cancel(CallId, Link, Call).
+nkmedia_call_cancel(CallId, CalleeId, Call) ->
+    nkmedia_call_lib:cancel(CallId, CalleeId, Call).
 
 
 %% @doc Called when the status of the call changes
@@ -159,7 +189,7 @@ nkmedia_call_cancel(CallId, Link, Call) ->
     {ok, call()} | continue().
 
 nkmedia_call_event(CallId, Event, Call) ->
-    nkmedia_events:call_event(CallId, Event, Call).
+    nkmedia_call_api_events:event(CallId, Event, Call).
 
 
 %% @doc Called when the status of the call changes, for each registered
@@ -179,8 +209,15 @@ nkmedia_call_reg_event(_CallId, {nkmedia_session, SessId}, Event, Call) ->
     end,
     {ok, Call};
 
-nkmedia_call_reg_event(CallId, Link, Event, Call) ->
-    nkmedia_api:nkmedia_call_reg_event(CallId, Link, Event, Call).
+nkmedia_call_reg_event(CallId, {nkmedia_api, Pid}, {hangup, _Reason}, Call) ->
+    nkservice_api_server:unregister(Pid, {nkmedia_call, CallId, self()}),
+
+
+    gen_server:cast(Pid, {nkmedia_api_call_hangup, CallId, self()}),
+    {ok, Call};
+
+nkmedia_call_reg_event(_CallId, _Link, _Event, Call) ->
+    {ok, Call}.
 
 
 %% @doc
@@ -230,3 +267,20 @@ api_syntax(#api_req{class = <<"media">>, subclass = <<"call">>, cmd=Cmd},
     
 api_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
     continue.
+
+
+%% ===================================================================
+%% nkmedia_session
+%% ===================================================================
+
+
+%% @private
+nkmedia_session_handle_call({nkmedia_call, CallId, CallPid}, _From, Session) ->
+    #{srv_id:=SrvId} = Session,
+    nkmedia_session:register(self(), {nkmedia_call, CallId, CallPid}),
+    Session2 = ?SESSION(#{call_id=>CallId}, Session),
+    {reply, {ok, SrvId, self()}, Session2};
+
+nkmedia_session_handle_call(_Msg, _From, _Session) ->
+    continue.
+

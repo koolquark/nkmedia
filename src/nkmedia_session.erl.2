@@ -116,9 +116,9 @@
         backend_role => offerer | offeree,
         type => type(),
         type_ext => type_ext(),
-        slave_id => id(),
-        call_id => binary(),                        % Used by nkmedia_call
-        record_pos => integer(),                    % Record position
+        master_peer => id(),
+        slave_peer => id(),
+        record_pos => integer(),                     % Record position
         player_loops => boolean() |integer()
     }.
 
@@ -476,13 +476,13 @@ handle_call(Msg, From, State) ->
 handle_cast(do_start, #state{id=Id, session=Session}=State) ->
     case Session of
         #{master_id:=MasterId} ->
-            case link_to_slave(MasterId, Id) of
-                {ok, _} ->
-                    do_start(State);
-                _ ->
+            case link_to_master(MasterId, Id, State) of
+                {ok, State2} -> 
+                    do_start(State2);
+                {error, _Error} -> 
                     do_stop(peer_stopped, State)
             end;
-        _ ->
+        _ -> 
             do_start(State)
     end;
 
@@ -497,7 +497,7 @@ handle_cast({set_answer, Answer}, State) ->
 
 handle_cast({set_slave_answer, SlaveId, Answer}, #state{session=Session}=State) ->
     case Session of
-        #{slave_id:=SlaveId} ->
+        #{slave_peer:=SlaveId} ->
             case handle(nkmedia_session_slave_answer, [Answer], State) of
                 {ok, Answer2, State2} ->
                     handle_cast({set_answer, Answer2}, State2);
@@ -533,15 +533,15 @@ handle_cast({link_to_master, MasterId, PidB}, State) ->
     noreply(link_to_master(MasterId, PidB, State));
 
 handle_cast({unlink_session, PeerId}, #state{id=SessId, session=Session}=State) ->
-    State2 = case maps:find(slave_id, Session) of
+    State2 = case maps:find(slave_peer, Session) of
         {ok, PeerId} ->
-            % We are Master of PeerId
+            % We are Master of SlaveId
             do_cast(PeerId, {unlink_from_master, SessId}),
             unlink_from_slave(PeerId, State);
         _ ->
             State
     end,
-    State3 = case maps:find(master_id, Session) of
+    State3 = case maps:find(master_peer, Session) of
         {ok, PeerId} ->
             % We are Slave of PeerId
             do_cast(PeerId, {unlink_from_slave, SessId}),
@@ -552,7 +552,7 @@ handle_cast({unlink_session, PeerId}, #state{id=SessId, session=Session}=State) 
     noreply(State3);
 
 handle_cast(unlink_session, #state{id=SessId, session=Session}=State) ->
-    State2 = case maps:find(slave_id, Session) of
+    State2 = case maps:find(slave_peer, Session) of
         {ok, SlaveId} ->
             % We are Master of SlaveId
             do_cast(SlaveId, {unlink_from_master, SessId}),
@@ -560,7 +560,7 @@ handle_cast(unlink_session, #state{id=SessId, session=Session}=State) ->
         error ->
             State
     end,
-    State3 = case maps:find(master_id, Session) of
+    State3 = case maps:find(master_peer, Session) of
         {ok, MasterId} ->
             % We are Slave of MasterId
             do_cast(MasterId, {unlink_from_slave, SessId}),
@@ -826,7 +826,7 @@ do_set_answer(Answer, #state{type=Type, backend_role=Role, session=Session}=Stat
                     ?LLOG(info, "answer set", [], State3),
                     debug_media("answer:\n~s", [maps:get(sdp, Answer2, <<>>)], State3),
                     State4 = case Session of
-                        #{set_master_answer:=true, master_id:=MasterId} ->
+                        #{set_master_answer:=true, master_peer:=MasterId} ->
                             ?LLOG(notice, "calling set_answer for ~s", 
                                   [MasterId], State3),
                             set_answer(MasterId, Answer2),
@@ -855,13 +855,13 @@ do_client_candidate(Candidate, #state{client_candidates=trickle}=State) ->
         {ok, State2} ->
             debug_media("sent client candidate ~s to backend", [Line], State),
             State2;
-        {continue, #state{session=#{master_id:=MasterId}}=State2} ->
+        {continue, #state{session=#{master_peer:=MasterId}}=State2} ->
             % If we receive a client candidate, a no backend takes it,
             % let's send it to my salve as a backend candidate. 
             debug_media("sent client candidate ~s to MASTER", [Line], State),
             backend_candidate(MasterId, Candidate),
             State2;
-        {continue, #state{session=#{slave_id:=SlaveId}}=State2} ->
+        {continue, #state{session=#{slave_peer:=SlaveId}}=State2} ->
             debug_media("sent client candidate ~s to SLAVE", [Line], State),
             backend_candidate(SlaveId, Candidate),
             State2;
@@ -1031,13 +1031,13 @@ do_stop(Reason, #state{id=SessId, session=Session}=State) ->
     {ok, State2} = handle(nkmedia_session_stop, [Reason], State),
     State3 = event({stop, Reason}, State2#state{stop_sent=true}),
     case Session of
-        #{master_id:=MasterId} -> 
+        #{master_peer:=MasterId} -> 
             do_cast(MasterId, {peer_stopped, SessId});
         _ -> 
             ok
     end,
     case Session of
-        #{slave_id:=SlaveId} -> 
+        #{slave_peer:=SlaveId} -> 
             do_cast(SlaveId, {peer_stopped, SessId});
         _ -> 
             ok
@@ -1123,22 +1123,22 @@ remove_from_session(Key, #state{session=Session}=State) ->
 
 %% @private
 link_to_master(MasterId, PidB, State) ->
-    State2 = links_add({master_id, MasterId}, PidB, State),
-    add_to_session(master_id, MasterId, State2).
+    State2 = links_add({master_peer, MasterId}, PidB, State),
+    add_to_session(master_peer, MasterId, State2).
 
 
 %% @private
 link_to_slave(SlaveId, PidB, State) ->
-    State2 = links_add({slave_id, SlaveId}, PidB, State),
-    add_to_session(slave_id, SlaveId, State2).
+    State2 = links_add({slave_peer, SlaveId}, PidB, State),
+    add_to_session(slave_peer, SlaveId, State2).
 
 
 unlink_from_slave(SlaveId, #state{session=Session}=State) ->
-    case maps:find(slave_id, Session) of
+    case maps:find(slave_peer, Session) of
         {ok, SlaveId} ->
             ?LLOG(notice, "unlinked from slave ~s", [SlaveId], State),
-            State2 = links_remove({slave_id, SlaveId}, State),
-            remove_from_session(slave_id, State2);
+            State2 = links_remove({slave_peer, SlaveId}, State),
+            remove_from_session(slave_peer, State2);
         _ ->
             State
     end.
@@ -1146,11 +1146,11 @@ unlink_from_slave(SlaveId, #state{session=Session}=State) ->
 
 %% @private
 unlink_from_master(MasterId, #state{session=Session}=State) ->
-    case maps:find(master_id, Session) of
+    case maps:find(master_peer, Session) of
         {ok, MasterId} ->
             ?LLOG(notice, "unlinked from master ~s", [MasterId], State),
-            State2 = links_remove({master_id, MasterId}, State),
-            remove_from_session(master_id, State2);
+            State2 = links_remove({master_peer, MasterId}, State),
+            remove_from_session(master_peer, State2);
         _ ->
             State
     end.

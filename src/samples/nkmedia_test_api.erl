@@ -492,7 +492,7 @@ start_session(WsPid, Config) when is_pid(WsPid) ->
 
 %% @private
 start_invite(Num, WsPid, Config) ->
-    case  nkmedia_test:find_user(Num) of
+    case nkmedia_test:find_user(Num) of
         not_found ->
             {error, unknown_user};
         Dest ->

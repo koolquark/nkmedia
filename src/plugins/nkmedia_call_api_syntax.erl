@@ -34,11 +34,11 @@
 syntax(<<"call">>, <<"start">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
-            call_id => binary,
             callee => binary,
             type => atom,
-            offer => nkmedia_api_syntax:offer(),
-            meta => any,
+            call_id => binary,
+            type => atom,
+            caller => map,
             session_id => binary,
             ring_time => {integer, 1, none},
             events_body => any
@@ -51,7 +51,7 @@ syntax(<<"call">>, <<"ringing">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             call_id => binary,
-            answer => nkmedia_api_syntax:answer()
+            answer => map
         },
         Defaults,
         [call_id|Mandatory]
@@ -62,7 +62,7 @@ syntax(<<"call">>, <<"answered">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             call_id => binary,
-            answer => nkmedia_api_syntax:answer(),
+            answer => map,
             subscribe => boolean,
             events_body => any
         },

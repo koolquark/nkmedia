@@ -417,7 +417,7 @@ do_type(bridge, #{peer_id:=PeerId}=Opts, Session) ->
             {error, Error, Session2}
     end;
 
-do_type(bridge, #{master_peer:=PeerId}=Opts, Session) ->
+do_type(bridge, #{master_id:=PeerId}=Opts, Session) ->
     do_type(bridge, Opts#{peer_id=>PeerId}, Session);
 
 do_type(bridge, _Opts, Session) ->

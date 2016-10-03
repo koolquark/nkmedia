@@ -30,7 +30,7 @@
          nkmedia_janus_handle_call/3, nkmedia_janus_handle_cast/2,
          nkmedia_janus_handle_info/2]).
 -export([error_code/1]).
--export([nkmedia_call_resolve/3, nkmedia_call_invite/5, nkmedia_call_cancel/3,
+-export([nkmedia_call_resolve/3, nkmedia_call_invite/4, nkmedia_call_cancel/3,
          nkmedia_call_reg_event/4]).
 -export([nkmedia_session_reg_event/4]).
 
@@ -45,7 +45,7 @@
 
 
 plugin_deps() ->
-    [nkmedia].
+    [nkmedia, nkmedia_call].
 
 
 plugin_syntax() ->
@@ -250,12 +250,13 @@ nkmedia_call_resolve(Callee, Acc, Call) ->
 %% When a call is sento to {nkmedia_janus, pid()}, we capture it here
 %% We register with janus as {nkmedia_janus_call, CallId, PId},
 %% and with the call as {nkmedia_janus, Pid}
-nkmedia_call_invite(CallId, {nkmedia_janus, Pid}, Offer, _Meta, Call) when is_pid(Pid) ->
+nkmedia_call_invite(CallId, {nkmedia_janus, Pid}, #{offer:=Offer}, Call) 
+        when is_pid(Pid) ->
     Link = {nkmedia_janus_call, CallId, self()},
     ok = nkmedia_janus_proto:invite(Pid, CallId, Offer, Link),
     {ok, {nkmedia_janus, Pid}, Call};
 
-nkmedia_call_invite(_CallId, _Dest, _Offer, _Meta, _Call) ->
+nkmedia_call_invite(_CallId, _Dest, _Data, _Call) ->
     continue.
 
 

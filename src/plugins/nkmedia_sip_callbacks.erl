@@ -30,7 +30,7 @@
          nkmedia_sip_invite_answered/2]).
 -export([sip_get_user_pass/4, sip_authorize/3]).
 -export([sip_register/2, sip_invite/2, sip_reinvite/2, sip_cancel/3, sip_bye/2]).
--export([nkmedia_call_resolve/3, nkmedia_call_invite/5, nkmedia_call_cancel/3,
+-export([nkmedia_call_resolve/3, nkmedia_call_invite/4, nkmedia_call_cancel/3,
          nkmedia_call_reg_event/4]).
 -export([nkmedia_session_reg_event/4]).
 
@@ -345,7 +345,8 @@ nkmedia_call_resolve(Callee, Acc, #{srv_id:=SrvId}=Call) ->
 
 
 %% @private
-nkmedia_call_invite(CallId, {nkmedia_sip, Uri}, Offer, _Meta, #{srv_id:=SrvId}=Call) ->
+nkmedia_call_invite(CallId, {nkmedia_sip, Uri}, #{offer:=Offer}, 
+                    #{srv_id:=SrvId}=Call) ->
     case nkmedia_sip:send_invite(SrvId, Uri, Offer, {nkmedia_call, CallId}, []) of
         {ok, Pid} -> 
             {ok, {nkmedia_sip, Pid}, Call};
@@ -354,7 +355,7 @@ nkmedia_call_invite(CallId, {nkmedia_sip, Uri}, Offer, _Meta, #{srv_id:=SrvId}=C
             {remove, Call}
     end;
 
-nkmedia_call_invite(_CallId, _Dest, _Offer, _Meta, _Call) ->
+nkmedia_call_invite(_CallId, _Dest, _Data, _Call) ->
     continue.
 
 

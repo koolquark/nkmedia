@@ -80,9 +80,9 @@
 
 
 start() ->
-    _CertDir = code:priv_dir(nkpacket),
-    Spec = #{
+    Spec1 = #{
         callback => ?MODULE,
+        plugins => [nkmedia_janus, nkmedia_fs, nkmedia_kms],  %% Call janus->fs->kms
         web_server => "https:all:8081",
         web_server_path => "./www",
         api_server => "wss:all:9010",
@@ -93,10 +93,22 @@ start() ->
         janus_proxy=> "janus_proxy:all:8990",
         kurento_proxy => "kms:all:8433",
         nksip_trace => {console, all},
-        sip_listen => <<"sip:all:9012">>,
-        log_level => debug
+        sip_listen => "sip:all:9012",
+        log_level => debug,
+        api_gelf_server => "c2.netc.io"
     },
-    nkservice:start(test, Spec).
+    % export NKMEDIA_CERTS="/etc/letsencrypt/live/casa.carlosj.net"
+    Spec2 = case os:getenv("NKMEDIA_CERTS") of
+        false ->
+            Spec1;
+        Dir ->
+            Spec1#{
+                tls_certfile => filename:join(Dir, "cert.pem"),
+                tls_keyfile => filename:join(Dir, "privkey.pem"),
+                tls_cacertfile => filename:join(Dir, "fullchain.pem")
+            }
+    end,
+    nkservice:start(test, Spec2).
 
 
 stop() ->
@@ -117,10 +129,14 @@ restart() ->
 
 plugin_deps() ->
     [
-        nkmedia_sip,  nksip_registrar, nksip_trace,
-        nkmedia_verto, nkmedia_fs, nkmedia_fs_verto_proxy,
-        nkmedia_janus_proto, nkmedia_janus_proxy, nkmedia_janus,
-        nkmedia_kms, nkmedia_kms_proxy
+        nkmedia_sip, nksip_registrar, nksip_trace,
+        nkmedia_verto, nkmedia_janus_proto,
+        nkmedia_fs, nkmedia_kms, nkmedia_janus,
+        nkmedia_fs_verto_proxy, 
+        nkmedia_janus_proxy, 
+        nkmedia_kms_proxy,
+        nkservice_api_gelf,
+        nkmedia_room_msglog
     ].
 
 
@@ -140,6 +156,10 @@ connect(User, Data) ->
 connect2(User, Data) ->
     Fun = fun ?MODULE:api_client_fun/2,
     {ok, _, C} = nkservice_api_client:start(test, ?URL2, User, "p1", Fun, Data),
+    C.
+
+get_client() ->
+    [{_, C}|_] = nkservice_api_client:get_all(),
     C.
 
 
@@ -176,19 +196,21 @@ api_subscribe_allow(SrvId, Class, SubClass, Type, State) ->
 %% ===================================================================
 
 %% @private
+% If the login is tXXXX, an API session is emulated (not Verto specific)
+% Without t, it is a 'standard' verto Session
 nkmedia_verto_login(Login, Pass, Verto) ->
     case nkmedia_test:nkmedia_verto_login(Login, Pass, Verto) of
-        {true, <<"v", _/binary>>=User, Verto2} ->
-            {true, User, Verto2};
-        {true, User, Verto2} ->
+        {true, <<"t", _/binary>>=User, Verto2} ->
             Pid = connect(User, #{test_verto_server=>self()}),
             {true, User, Verto2#{test_api_server=>Pid}};
+        {true, User, Verto2} ->
+            {true, User, Verto2};
         Other ->
             Other
     end.
 
 
-%% @private
+%% @private Verto but using API Call emulation
 nkmedia_verto_invite(_SrvId, CallId, Offer, #{test_api_server:=Ws}=Verto) ->
     true = is_process_alive(Ws),
     #{dest:=Dest} = Offer,
@@ -197,7 +219,7 @@ nkmedia_verto_invite(_SrvId, CallId, Offer, #{test_api_server:=Ws}=Verto) ->
         verto_pid => pid2bin(self())
     },
     Link = {nkmedia_verto, CallId, self()},
-    case start_call(CallId, Dest, Ws, Offer, Events, Link) of
+    case start_call(Dest, Offer, CallId, Ws, Events, Link) of
         {ok, Link2} ->
             {ok, Link2, Verto};
         {rejected, Reason} ->
@@ -205,6 +227,7 @@ nkmedia_verto_invite(_SrvId, CallId, Offer, #{test_api_server:=Ws}=Verto) ->
             {rejected, Reason, Verto}
     end;
 
+%% @private Standard Verto calling (see default implementation)
 nkmedia_verto_invite(_SrvId, _CallId, _Offer, _Verto) ->
     continue.
 
@@ -271,7 +294,7 @@ nkmedia_janus_invite(_SrvId, CallId, Offer, #{test_api_server:=Ws}=Janus) ->
         janus_pid => pid2bin(self())
     },
     Link = {nkmedia_janus, CallId, self()},
-    case start_call(CallId, Dest, Ws, Offer, Events, Link) of
+    case start_call(Dest, Offer, CallId, Ws, Events, Link) of
         {ok, Link2} ->
             {ok, Link2, Janus};
         {rejected, Reason} ->
@@ -339,28 +362,15 @@ nks_sip_connection_recv(SipMsg, _Packet) ->
 %% ===================================================================
 
 %% @private
-start_call(CallId, Dest, WsPid, Offer, Events, Link) ->
-    {Type, Callee, ProxyType} = case Dest of
-        <<"v", _/binary>> -> {verto, Dest, webrtc};
-        <<"s", Rest/binary>> -> {sip, Rest, rtp};
-        _ -> {user, Dest, webrtc}
-    end,
-    SessConfig = #{
-        backend => nkmedia_janus, 
-        sdp_type => ProxyType,
-        offer => Offer,
-        register => Link
-    },
-    {ok, SessId, SessPid, #{offer:=Offer2}} = 
-        nkmedia_session:start(test, proxy, SessConfig),
+incoming(<<"j", Num/binary>>, Offer, CallId, WsPid, Events, Opts) ->
+    MasterConfig = incoming_config(nkmedia_janus, proxy, Offer, Events, Opts),
+    {ok, SessId, SessPid} = nkmedia_test_api:start_session(WsPid, MasterConfig),
     CallConfig = #{
         call_id => CallId,
-        type => Type,         
-        callee => Callee, 
-        offer => Offer2, 
+        callee => Num, 
+        invite => #{module=>?MODULE}, 
         session_id => SessId,
-        events_body => Events, 
-        meta => #{module=>?MODULE}
+        events_body => Events
     },
     % We start a call, link the ws session with the call, and subscribe to events
     case call_cmd(WsPid, start, CallConfig) of
@@ -368,10 +378,61 @@ start_call(CallId, Dest, WsPid, Offer, Events, Link) ->
             {ok, {nkmedia_session, SessId, SessPid}};
         Other ->
             nkmedia_session:stop(SessId),
-            nkservice_api_client:stop(WsPid),
-            {rejected, {call_error, Other}}
+            {error, {call_error, Other}}
     end.
 
+
+start_call(Dest, Offer, CallId, WsPid, Events, Link) ->
+    {Type, Backend, Callee, ProxyType} = case Dest of
+        <<"jv", _/binary>> -> {verto, nkmedia_janus, Dest, webrtc};
+        <<"kv", _/binary>> -> {verto, nkmedia_kms, Dest, webrtc};
+        <<"s", Rest/binary>> -> {sip, Rest, rtp};
+        _ -> {user, Dest, webrtc}
+    end,
+    SessConfig = #{
+        backend => Backend, 
+        sdp_type => ProxyType,
+        offer => Offer,
+        register => Link
+    },
+    {ok, SessId, SessPid} = nkmedia_session:start(test, proxy, SessConfig),
+    {ok, Offer2} = nkmedia_session:cmd(SessId, get_proxy_offer),
+    CallConfig = #{
+        call_id => CallId,
+        type => Type,         
+        callee => Callee, 
+        invite => #{offer=>Offer2, module=>?MODULE}, 
+        session_id => SessId,
+        events_body => Events
+    },
+    % We start a call, link the ws session with the call, and subscribe to events
+    case call_cmd(WsPid, start, CallConfig) of
+        {ok, #{<<"call_id">>:=CallId}} -> 
+            {ok, {nkmedia_session, SessId, SessPid}};
+        Other ->
+            nkmedia_session:stop(SessId),
+            {error, {call_error, Other}}
+    end.
+
+
+%% @private
+incoming_config(Backend, Type, Offer, Events, Opts) ->
+    Opts#{
+        backend => Backend, 
+        type => Type, 
+        offer => Offer, 
+        events_body => Events
+    }.
+
+
+%% @private
+start_call(WsPid, Callee, Config) ->
+    case call_cmd(WsPid, start, Config#{callee=>Callee}) of
+        {ok, #{<<"call_id">>:=_CallId}} -> 
+            ok;
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 %% @private

@@ -94,7 +94,7 @@
 
 
 %% Special case as 'B' leg of a proxy
-start(proxy, offerer, #{master_peer:=MasterId}=Session) -> 
+start(proxy, offerer, #{master_id:=MasterId}=Session) -> 
     case nkmedia_session:cmd(MasterId, get_proxy_offer, #{}) of
         {ok, #{janus_id:=Id, proxy_type:=Type, offer:=Offer}} ->
             Update = #{
@@ -215,7 +215,7 @@ answer(_Type, _Role, _Answer, _Session) ->
     {ok, session()} | continue.
 
 candidate(Candidate, #{type:=proxy, backend_role:=offerer}=Session) ->
-    #{master_peer:=MasterId} = Session,
+    #{master_id:=MasterId} = Session,
     session_cast(MasterId, {proxy_candidate, Candidate}),
     {ok, Session};
 
@@ -274,6 +274,19 @@ cmd(get_proxy_offer, _, Session) ->
         _ ->
             {error, invalid_session, Session}
     end;
+
+cmd(start_callee, _Opts, #{answer:=_}=Session) ->
+    {error, answer_already_set, Session};
+
+cmd(start_callee, Opts, #{type:=proxy}=Session) ->
+    #{srv_id:=SrvId, session_id:=SessId, nkmedia_janus_id:=JanusId} = Session,
+    Config = Opts#{
+        master_id => SessId,
+        nkmedia_backend => nkmedia_janus,
+        nkmedia_janus_id => JanusId
+    },
+    {ok, SessIdB, _SessPidB} = nkmedia_session:start(SrvId, proxy, Config),
+    {ok, #{session_id=>SessIdB}, Session};
 
 cmd(_Update, _Opts, Session) ->
     {error, not_implemented, Session}.
@@ -603,7 +616,7 @@ recorder_action(Action, _Opts, Session) ->
 start_record(#{uri:=<<"file://", File/binary>>=Uri}, Session) ->
     Data = #{record=>true, filename=>File},
     case Session of
-        #{type:=proxy, backend_role:=offerer, master_peer:=MasterId} ->
+        #{type:=proxy, backend_role:=offerer, master_id:=MasterId} ->
             case session_call(MasterId, {set_media_proxy, Data}) of
                 ok ->
                     {ok, #{uri=>Uri}, Session};
@@ -628,7 +641,7 @@ start_record(Opts, Session) ->
 %% @private
 stop_record(Session) ->
    case Session of
-        #{type:=proxy, backend_role:=offerer, master_peer:=MasterId} ->
+        #{type:=proxy, backend_role:=offerer, master_id:=MasterId} ->
             case session_call(MasterId, {set_media_proxy, #{record=>false}}) of
                 ok ->
                     {ok, #{}, Session};
@@ -673,7 +686,7 @@ set_default_media_proxy(Session) ->
 
 
 % %% @private
-set_media_proxy(Opts, #{master_peer:=MasterId}=Session) ->
+set_media_proxy(Opts, #{master_id:=MasterId}=Session) ->
     case Session of
         #{nkmedia_janus_proxy_type:=videocall} ->
             case get_media(Opts, Session) of

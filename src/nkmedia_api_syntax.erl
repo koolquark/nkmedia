@@ -43,6 +43,7 @@ session_fields() ->
 		sdp_type,
 		backend,
 		master_id,
+		slave_id,
 		set_master_answer,
 		stop_after_peer,
 		wait_timeout,
@@ -52,8 +53,6 @@ session_fields() ->
 		backend_role,
 		type,
 		type_ext,
-		master_peer,
-		slave_peer,
 
 		room_id,
 		publisher_id,

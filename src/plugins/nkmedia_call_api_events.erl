@@ -38,16 +38,16 @@
 -spec event(nkmedia_call:id(), nkmedia_call:event(), nkmedia_call:call()) ->
     {ok, nkmedia_call:call()}.
 
-event(CallId, {ringing, _, Answer}, Call) when map_size(Answer) > 0 -> 
-    send_event(CallId, ringing, #{answer=>Answer}, Call);
+event(CallId, {ringing, _CalleId, Data}, Call) when is_map(Data) ->
+    send_event(CallId, ringing, Data, Call);
 
-event(CallId, {ringing, _, _Answer}, Call) ->
+event(CallId, {ringing, _CalleeId, _Data}, Call) ->
     send_event(CallId, ringing, #{}, Call);
 
-event(CallId, {answer, _, Answer}, Call) when map_size(Answer) > 0 ->
-    send_event(CallId, answer, #{answer=>Answer}, Call);
+event(CallId, {answer, _CalleeId, Data}, Call) when is_map(Data) ->
+    send_event(CallId, answer, Data, Call);
 
-event(CallId, {answer, _, _Answer}, Call) ->
+event(CallId, {answer, _CalleeId, _Data}, Call) ->
     send_event(CallId, answer, #{}, Call);
 
 event(CallId, {hangup, Reason}, #{srv_id:=SrvId}=Call) ->

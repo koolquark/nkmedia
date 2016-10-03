@@ -47,8 +47,9 @@ add_id(Key, Config) ->
 			Id2 = nklib_util:to_binary(Id),
 			{Id2, maps:put(Key, Id2, Config)};
 		_ ->
-			Id = nklib_util:uuid_4122(),
-			{Id, maps:put(Key, Id, Config)}
+			Id1 = nklib_util:uuid_4122(),
+			Id2 = <<(nklib_util:to_binary(Key))/binary, $_, Id1/binary>>,
+			{Id2, maps:put(Key, Id2, Config)}
 	end.
 
 
