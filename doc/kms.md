@@ -87,7 +87,11 @@ Allows to create an _echo_ session, sending the audio and video back to the call
 
 ## bridge
 
-Allows to connect two different Kurento sessions together. If you use the `master_id: ...` parameter in the session creation request, this session will be set as _slave_ of the other session (see [Core API](api.md#create)). Otherwise, you must use the `peer_id: ...` parameter with the _session id_ of the peer to connect to.
+Allows to connect two different Kurento sessions together. 
+
+Once you have a session of any type, you can start (or switch) any other session and bridge it to the first one through the server. You need to use type _bridge_ and include the field `peer_id` pointing to the first one.
+
+It is recommended to use the field `master_id` in the new second session, so that it becomes a _slave_ of the first, _master_ session. This way, if either sessions stops, the other will also stop automatically.
 
 The available [media updates](#media-update) can also be included in the creation request.
 
@@ -100,6 +104,7 @@ The available [media updates](#media-update) can also be included in the creatio
 	cmd: "create",
 	data: {
 		type: "bridge",
+		peer_id: "54c1b637-36fb-70c2-8080-28f07603cda8",
 		master_id: "54c1b637-36fb-70c2-8080-28f07603cda8",
 		offer: {
 			sdp: "v=0.."

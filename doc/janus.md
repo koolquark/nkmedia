@@ -4,7 +4,7 @@ This document describes the characteristics of the Janus backend
 
 * [**Session Types**](#session-types)
 	* [echo](#echo)
-	* [proxy](#proxy) and [sip](#sip) gateways
+	* [bridge](#bridge) and [sip](#sip) gateways
 	* [publish](#publish)
 	* [listen](#listen)
 * [**Trickle ICE**](#trickle-ice)
@@ -55,22 +55,25 @@ The available [media updates](#media-update) can also be included in the creatio
 }
 ```
 
-## **proxy**
+## **bridge**
 
-Allows you to create a _proxy_ session, a media session where all traffic goes through the server, allowing media updates and recording. 
+Allows you to connect a pair of sessions throgh the server, managing medias, bandwidth and recording.
 
-You must first get the _offer_ from the _caller_. You must create a session for it with type `proxy` and your _offer_ (this session will be the _master_). You must then start a second session for the callee, again with type `proxy` but without any offer, and with the field `master_id` pointing to the first session. This second session will become the _slave_.
+Because of the way Janus works, you must first creata a session with type _proxy_ with the _offer_ from the _caller_. You must then start a second session for the callee, now with type `bridge`, without any offer, but including the field `peer_id` pointing to the first session. 
 
-You must get the offer for the second session (calling [get_offer](api.md#get_offer)), and send it to the _callee_. When you have the callee answer (or hangup) you must send it to the slave session (calling [set_answer](api.md#set_answer)). The master session will then generate the answer for the caller. You can now either wait for the answer event for the _master_ session or call [get_answer](api.md#get_answer) on it.
-
-If any of the session stops, the other will also be destroyed automatically.
+You must then get the offer for the second session (calling [get_offer](api.md#get_offer)), and send it to the _callee_. When you have the callee answer (or hangup) you must send it to the slave session (calling [set_answer](api.md#set_answer)). The first session (type _proxy_) will then generate the answer for the caller, and will chnage itself to type _bridge_ also. You can now either wait for the answer event for the first session or call [get_answer](api.md#get_answer) on it.
 
 The available [media updates](#media-update) can also be included in the creation request.
+
+It is recommended to use the field `master_id` in the second (bridge) session, so that it becomes a _slave_ of the first, _master_ session. This way, if either sessions stops, the other will also stop automatically.
+
 
 Samples TBD
 
 
 ### SIP
+
+The proxy-bridge combo is also capable of connect SIP and WebRTC sessions together. 
 
 You can make a SIP-to-WebRTC gateway using an offer with a _SIP-type_ SDP, and using `sdp_type: "rtp"` in it. The generated _master_ answer will also be SIP-like, ready to be sent to the calling SIP device.
 
@@ -78,6 +81,7 @@ To make a WebRTC-to-SIP gateway, you must use the option `sdp_type: "rtp"` in th
 
 You cannot however use any media upates on a SIP proxy session.
 
+See the [call plugin](call.md) to be able to use NkMEDIA's SIP signalling.
 
 
 ## publish

@@ -13,7 +13,7 @@
 * [Core API](api.md)
 * [Core API Events](events.md)
 * Plugins API
-  * [nkmedia_janus](janusi.md)
+  * [nkmedia_janus](janus.md)
   * [nkmedia_fs](fs.md)
   * [nkmedia_kms](kms.md)
   * [nkmedia_call](call.md)
