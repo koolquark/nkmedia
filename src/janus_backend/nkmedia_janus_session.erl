@@ -55,16 +55,17 @@
         nkmedia_janus_id => nkmedia_janus_engine:id(),
         nkmedia_janus_pid => pid(),
         nkmedia_janus_mon => reference(),
-        nkmedia_janus_proxy_type => videocall | from_sip | to_sip,
+        % nkmedia_janus_proxy_type => videocall | from_sip | to_sip,
         nkmedia_janus_proxy_offer => nkmedia:offer()
     }.
 
 
 -type type() ::
     nkmedia_session:type() |
-    echo     |
-    proxy    |
-    publish  |
+    echo        |
+    proxy       |       % Always become bridge
+    bridge      |
+    publish     |
     listen.
 
 
@@ -94,18 +95,16 @@
 
 
 %% Special case as 'B' leg of a proxy
-start(proxy, offerer, #{master_id:=MasterId}=Session) -> 
-    case nkmedia_session:cmd(MasterId, get_proxy_offer, #{}) of
-        {ok, #{janus_id:=Id, proxy_type:=Type, offer:=Offer}} ->
+start(bridge, offerer, #{peer_id:=PeerId}=Session) ->
+    case nkmedia_session:cmd(PeerId, get_proxy_offer, #{}) of
+        {ok, #{janus_id:=Id, proxy_type:=ProxyType, offer:=Offer}} ->
             Update = #{
                 backend => nkmedia_janus, 
                 nkmedia_janus_id => Id,
-                nkmedia_janus_proxy_type => Type,
-                % We want to send the answer back to master session
-                no_answer_trickle_ice => false,
-                set_master_answer => true
+                no_answer_trickle_ice => false
             },
             Session2 = ?SESSION(Update, Session),
+            update_type(bridge, #{peer_id=>PeerId, role=>slave, proxy_type=>ProxyType}),
             {ok, set_offer(Offer, Session2)};
         {error, Error} ->
             {error, Error, Session}
@@ -154,47 +153,20 @@ offer(Type, offeree, Offer, Session) ->
 
 %% @private Someone set the answer
 -spec answer(type(), nkmedia:role(), nkmedia:answer(), session()) ->
-    {ok, session()} | {error, nkservice:error(), session()} | continue.
+    {ok, nkmedia:answer(), session()} | {error, nkservice:error(), session()} | continue.
 
-answer(proxy, offerer, Answer, #{nkmedia_janus_proxy_type:=videocall}=Session) ->
-    % We are the 'B' side of the proxy, do nothing because the answer will be sent
-    % to the master automatically
+% We are the B side of a proxy
+answer(bridge, offerer, Answer, #{type_ext:=#{proxy_type:=videocall}}=Session) ->
     case set_default_media_proxy(Session) of
         {ok, Session2} ->
-            lager:error("B SIDE1"),
-            {ok, Answer, Session2};
+            set_proxy_answer(Answer, Session2);
         {error, Error, Session2} ->
             {error, Error, Session2}
     end;
 
-answer(proxy, offerer, Answer, #{nkmedia_janus_proxy_type:=Type}=Session) ->
-    % We are the 'B' side of a SIP  proxy
-    lager:error("SIP B: ~p", [Type]),
-    {ok, Answer, Session};
-
-answer(proxy, offerer, Answer, Session) ->
-    % We are the 'B' side of a SIP  proxy
-    lager:error("SIP B NO TYPE"),
-    {ok, Answer, Session};
-
-answer(proxy, offeree, Answer, #{nkmedia_janus_pid:=Pid}=Session) ->
-    % We are the 'A' side of the proxy. Answer it from B.
-    case nkmedia_janus_op:answer(Pid, Answer) of
-        {ok, Answer2} ->
-            case Session of
-                #{nkmedia_janus_proxy_type:=videocall} ->
-                    case set_default_media(Session) of
-                        {ok, Session2} ->
-                            {ok, Answer2, Session2};
-                        {error, Error, Session2} ->
-                            {error, Error, Session2}
-                    end;
-                _ ->
-                    {ok, Answer2, Session}
-            end;
-        {error, Error} ->
-            {error, Error, Session}
-    end;
+% We are the B side of a SIP proxy
+answer(bridge, offerer, Answer, Session) ->
+    set_proxy_answer(Answer, Session);
 
 answer(listen, offerer, Answer, #{nkmedia_janus_pid:=Pid}=Session) ->
     case nkmedia_janus_op:answer(Pid, Answer) of
@@ -214,8 +186,8 @@ answer(_Type, _Role, _Answer, _Session) ->
 -spec candidate(nkmedia:candidate(), session()) ->
     {ok, session()} | continue.
 
-candidate(Candidate, #{type:=proxy, backend_role:=offerer}=Session) ->
-    #{master_id:=MasterId} = Session,
+candidate(Candidate, 
+          #{type:=bridge, type_ext:=#{role:=slave, peer_id:=MasterId}}=Session) ->
     session_cast(MasterId, {proxy_candidate, Candidate}),
     {ok, Session};
 
@@ -231,7 +203,7 @@ candidate(Candidate, #{nkmedia_janus_pid:=Pid}=Session) ->
 -spec cmd(cmd(), Opts::map(), session()) ->
     {ok, Reply::term(), session()} | {error, term(), session()} | continue().
 
-cmd(update_media, Opts, #{type:=proxy, backend_role:=offerer}=Session) ->
+cmd(update_media, Opts, #{type:=bridge, type_ext:=#{role:=slave}}=Session) ->
     case set_media_proxy(Opts, Session) of
         {ok, Session2} ->
             {ok, #{}, Session2};
@@ -240,7 +212,7 @@ cmd(update_media, Opts, #{type:=proxy, backend_role:=offerer}=Session) ->
     end;
 
 cmd(update_media, Opts, #{type:=Type}=Session) 
-        when Type==echo; Type==proxy; Type==publish ->
+        when Type==echo; Type==bridge; Type==publish ->
     case set_media(Opts, Session) of
         {ok, Session2} ->
             {ok, #{}, Session2};
@@ -263,30 +235,44 @@ cmd(recorder_action, Opts, Session) ->
     Action = maps:get(action, Opts, get_actions),
     recorder_action(Action, Opts, Session);
 
-cmd(get_proxy_offer, _, Session) ->
+cmd(get_type, _, Session) ->
+    Fields = [type, type_ext, nkmedia_janus_id],
+    {ok, maps:with(Fields, Session), Session};
+
+cmd(get_proxy_offer, _, #{type:=proxy}=Session) ->
     case Session of
         #{
+            type_ext := #{proxy_type:=ProxyType},
             nkmedia_janus_id := Id, 
-            nkmedia_janus_proxy_offer := Offer,
-            nkmedia_janus_proxy_type := Type
+            nkmedia_janus_proxy_offer := Offer
         } ->
-            {ok, #{janus_id=>Id, proxy_type=>Type, offer=>Offer}, Session};
+            {ok, #{janus_id=>Id, proxy_type=>ProxyType, offer=>Offer}, Session};
         _ ->
             {error, invalid_session, Session}
     end;
 
-cmd(start_callee, _Opts, #{answer:=_}=Session) ->
-    {error, answer_already_set, Session};
-
-cmd(start_callee, Opts, #{type:=proxy}=Session) ->
-    #{srv_id:=SrvId, session_id:=SessId, nkmedia_janus_id:=JanusId} = Session,
-    Config = Opts#{
-        master_id => SessId,
-        nkmedia_backend => nkmedia_janus,
-        nkmedia_janus_id => JanusId
-    },
-    {ok, SessIdB, _SessPidB} = nkmedia_session:start(SrvId, proxy, Config),
-    {ok, #{session_id=>SessIdB}, Session};
+% Receive the answer from the remote session to generate our (master) answer
+cmd(set_proxy_answer, #{peer_id:=PeerId, answer:=Answer}, #{type:=proxy}=Session) ->
+    #{nkmedia_janus_pid:=Pid} = Session,
+    case nkmedia_janus_op:answer(Pid, Answer) of
+        {ok, Answer2} ->
+            nkmedia_session:set_answer(self(), Answer2),
+            #{type_ext:=#{proxy_type:=ProxyType}} = Session,
+            update_type(bridge, #{proxy_type=>ProxyType, peer_id=>PeerId, role=>master}),
+            case ProxyType of
+                videocall ->
+                    case set_default_media(Session) of
+                        {ok, Session2} ->
+                            {ok, #{}, Session2};
+                        {error, Error, Session2} ->
+                            {error, Error, Session2}
+                    end;
+                _ ->
+                    {ok, #{}, Session}
+            end;
+        {error, Error} ->
+            {error, Error, Session}
+    end;
 
 cmd(_Update, _Opts, Session) ->
     {error, not_implemented, Session}.
@@ -330,7 +316,7 @@ handle_call({set_media_proxy, Data}, _From, #{nkmedia_janus_pid:=Pid}=Session) -
 handle_cast({proxy_candidate, Candidate}, #{nkmedia_janus_pid:=Pid}=Session) ->
     % lager:error("RECEIVED PROXY CANDIDATE"),
     case Session of
-        #{nkmedia_janus_proxy_type:=videocall} ->
+        #{type_ext:=#{proxy_type:=videocall}} ->
             nkmedia_janus_op:candidate_peer(Pid, Candidate);
         _ ->
             nkmedia_janus_op:candidate(Pid, Candidate)
@@ -347,6 +333,7 @@ handle_cast({proxy_candidate, Candidate}, #{nkmedia_janus_pid:=Pid}=Session) ->
 %% @private
 is_supported(echo) -> true;
 is_supported(proxy) -> true;
+is_supported(bridge) -> true;
 is_supported(publish) -> true;
 is_supported(listen) -> true;
 is_supported(_) -> false.
@@ -399,25 +386,24 @@ start_offeree(echo, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
 start_offeree(proxy, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
     OfferType = maps:get(sdp_type, Offer, webrtc),
     OutType = maps:get(sdp_type, Session, webrtc),
-    Fun = case {OfferType, OutType} of
+    ProxyType = case {OfferType, OutType} of
         {webrtc, webrtc} -> videocall;
         {webrtc, rtp} -> to_sip;
         {rtp, webrtc} -> from_sip;
         {rtp, rtp} -> error
     end,
-    case Fun of
+    case ProxyType of
         error ->
             {error, invalid_parameters, Session};
         _ ->
-            case nkmedia_janus_op:Fun(Pid, Offer) of
+            case nkmedia_janus_op:ProxyType(Pid, Offer) of
                 {ok, Offer2} ->
                     Update = #{
-                        nkmedia_janus_proxy_type => Fun,
                         nkmedia_janus_proxy_offer => Offer2,
-                        % when we receive answer from slave, we must process it
                         no_answer_trickle_ice => false
                     },
                     % Media will be set on answer
+                    update_type(proxy, #{proxy_type=>ProxyType}),
                     {ok, ?SESSION(Update, Session)};
                 {error, Error} ->
                     {error, Error, Session}
@@ -472,6 +458,17 @@ get_mediaserver(#{srv_id:=SrvId}=Session) ->
             {ok, Session#{nkmedia_janus_id=>Id}};
         {error, Error} ->
             {error, Error}
+    end.
+
+
+%% @private
+set_proxy_answer(Answer, #{session_id:=SessId, peer_id:=PeerId}=Session) ->
+    Cmd = #{answer=>Answer, peer_id=>SessId},
+    case nkmedia_session:cmd(PeerId, set_proxy_answer, Cmd) of
+        {ok, _} ->
+            {ok, Answer, Session};
+        {error, Error} ->
+            {error, Error, Session}
     end.
 
 
@@ -616,7 +613,7 @@ recorder_action(Action, _Opts, Session) ->
 start_record(#{uri:=<<"file://", File/binary>>=Uri}, Session) ->
     Data = #{record=>true, filename=>File},
     case Session of
-        #{type:=proxy, backend_role:=offerer, master_id:=MasterId} ->
+        #{type:=bridge, type_ext:=#{role:=slave, peer_id:=MasterId}} ->
             case session_call(MasterId, {set_media_proxy, Data}) of
                 ok ->
                     {ok, #{uri=>Uri}, Session};
@@ -641,7 +638,7 @@ start_record(Opts, Session) ->
 %% @private
 stop_record(Session) ->
    case Session of
-        #{type:=proxy, backend_role:=offerer, master_id:=MasterId} ->
+        #{type:=bridge, type_ext:=#{role:=slave, peer_id:=MasterId}} ->
             case session_call(MasterId, {set_media_proxy, #{record=>false}}) of
                 ok ->
                     {ok, #{}, Session};
@@ -686,9 +683,9 @@ set_default_media_proxy(Session) ->
 
 
 % %% @private
-set_media_proxy(Opts, #{master_id:=MasterId}=Session) ->
+set_media_proxy(Opts, #{peer_id:=MasterId}=Session) ->
     case Session of
-        #{nkmedia_janus_proxy_type:=videocall} ->
+        #{type_ext:=#{proxy_type:=videocall}} ->
             case get_media(Opts, Session) of
                 none ->
                     {ok, Session};

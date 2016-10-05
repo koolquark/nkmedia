@@ -32,7 +32,7 @@
 -module(nkmedia_call_lib).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([resolve/4, invite/4, cancel/3]).
+-export([resolve/4, invite/5, cancel/3]).
 % -include("../../include/nkmedia.hrl").
 % -include("../../include/nkmedia_call.hrl").
 % -include_lib("nkservice/include/nkservice.hrl").
@@ -80,13 +80,13 @@ resolve(_Callee, _Type, Acc, Call) ->
 
 
 %% @private Sends a call INVITE over the API (for user or session types)
-invite({nkmedia_api_user, Pid}, Caller, CallId, Call) ->
+invite(CallId, {nkmedia_api_user, Pid}, _SessId, Caller, Call) ->
     do_invite(Pid, user, Caller, CallId, Call);
 
-invite({nkmedia_api_session, Pid}, Caller, CallId, Call) ->
+invite(CallId, {nkmedia_api_session, Pid}, _SessId, Caller, Call) ->
     do_invite(Pid, user, Caller, CallId, Call);
 
-invite(_Dest, _Caller, _CallId, Call) ->
+invite(_CallId, _Dest, _SessId, _Caller, Call) ->
     {remove, Call}.
 
 

@@ -643,7 +643,9 @@ code_change(OldVsn, State, Extra) ->
 -spec terminate(term(), #state{}) ->
     ok.
 
-terminate(Reason, State) ->
+terminate(Reason, #state{wait_offer=WaitOffer, wait_answer=WaitAnswer}=State) ->
+    reply_all_waiting({error, session_stopped}, WaitOffer),
+    reply_all_waiting({error, session_stopped}, WaitAnswer),
     case Reason of
         normal ->
             ?LLOG(info, "terminate: ~p", [Reason], State),

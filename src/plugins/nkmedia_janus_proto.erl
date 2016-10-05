@@ -473,7 +473,7 @@ process_client_req(trickle, Msg, NkPort, #state{session_id=SessionId}=State) ->
             {ok, State2} = 
                 handle(nkmedia_janus_candidate, [CallId, Link, Candidate], State);
         not_found ->
-            State2 = error(not_found_on_accept)
+            State2 = error(not_found_on_accept_trickle)
     end,
     Resp = make_resp(#{janus=>ack, session_id=>SessionId}, Msg),
     send(Resp, NkPort, State2);

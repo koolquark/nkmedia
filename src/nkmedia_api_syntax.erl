@@ -54,6 +54,7 @@ session_fields() ->
 		type,
 		type_ext,
 
+		peer_id,
 		room_id,
 		publisher_id,
 		layout,
@@ -89,6 +90,7 @@ syntax(<<"session">>, <<"create">>, Syntax, Defaults, Mandatory) ->
 			ready_timeout => {integer, 1, none},
 
 			% Type-specific
+	        peer_id => binary,
 	        room_id => binary,
 	        publisher_id => binary,
 	        layout => binary,

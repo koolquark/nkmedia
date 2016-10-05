@@ -34,13 +34,12 @@
 syntax(<<"call">>, <<"start">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
-            callee => binary,
-            type => atom,
             call_id => binary,
             type => atom,
+            callee => binary,
             caller => map,
-            session_id => binary,
-            ring_time => {integer, 1, none},
+            backend => atom,
+            sdp_type => {enum, [webrtc, rtp]},
             events_body => any
         },
         Defaults,
@@ -51,10 +50,11 @@ syntax(<<"call">>, <<"ringing">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             call_id => binary,
-            answer => map
+            session_id =>  binary,
+            callee => map
         },
         Defaults,
-        [call_id|Mandatory]
+        [call_id, session_id|Mandatory]
     };
 
 
@@ -62,19 +62,24 @@ syntax(<<"call">>, <<"answered">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             call_id => binary,
-            answer => map,
+            session_id =>  binary,
+            callee => map,
+            answer => nkmedia_api_syntax:answer(),
             subscribe => boolean,
             events_body => any
         },
         Defaults,
-        [call_id|Mandatory]
+        [call_id, session_id, answer|Mandatory]
     };
 
 syntax(<<"call">>, <<"rejected">>, Syntax, Defaults, Mandatory) ->
     {
-        Syntax#{call_id => binary},
+        Syntax#{
+            call_id => binary,
+            session_id =>  binary
+        },
         Defaults,
-        [call_id|Mandatory]
+        [call_id, session_id|Mandatory]
     };
 
 syntax(<<"call">>, <<"hangup">>, Syntax, Defaults, Mandatory) ->

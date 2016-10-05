@@ -34,6 +34,10 @@
          nkmedia_session_handle_info/2]).
 -export([nkmedia_room_init/2, nkmedia_room_terminate/2, nkmedia_room_tick/2,
          nkmedia_room_handle_cast/2]).
+-export([nkmedia_call_start_caller_session/2, nkmedia_call_start_callee_session/3,
+         nkmedia_call_set_answer/5]).
+
+
 -export([api_syntax/4]).
 -export([nkdocker_notify/2]).
 
@@ -264,6 +268,62 @@ nkmedia_room_handle_cast({nkmedia_janus, Msg}, Room) ->
 
 nkmedia_room_handle_cast(_Msg, _Room) ->
     continue.
+
+
+
+%% ===================================================================
+%% Implemented Callbacks - nkmedia_call
+%% ===================================================================
+
+
+nkmedia_call_start_caller_session(CallId, #{srv_id:=SrvId, offer:=Offer}=Call) ->
+    case maps:get(backend, Call, nkmedia_janus) of
+        nkmedia_janus ->
+            Config = #{
+                backend => nkmedia_janus, 
+                offer => Offer,
+                call_id => CallId,
+                register => {nkmedia_call, CallId, self()}
+            },
+            {ok, MasterId, _Pid} = nkmedia_session:start(SrvId, proxy, Config),
+            {ok, MasterId, Call};
+        _ ->
+            continue
+    end.
+
+
+nkmedia_call_start_callee_session(MasterId, CallId, #{srv_id:=SrvId}=Call) ->
+    case nkmedia_session:cmd(MasterId, get_type) of
+        {ok, #{type:=proxy, backend:=nkmedia_janus}} ->
+            Config = #{
+                backend => nkmedia_janus,
+                peer_id => MasterId,
+                call_id => CallId
+            },
+            {ok, SlaveId, _Pid} = nkmedia_session:start(SrvId, proxy_slave, Config),
+            case nkmedia_session:get_offer(SlaveId) of
+                {ok, Offer} ->
+                    {ok, SlaveId, #{offer=>Offer}, Call};
+                {error, Error} ->
+                    {error, Error, Call}
+            end;
+        {ok, #{backend:=nkmedia_janus}} ->
+            {error, incompatible_session, Call};
+        _ ->
+            continue
+    end.
+
+
+nkmedia_call_set_answer(_CallId, _MasterId, SlaveId, #{answer:=Answer}, Call) ->
+    case nkmedia_session:set_answer(SlaveId, Answer) of
+        ok ->
+            {ok, Call};
+        {error, Error} ->
+            {error, Error}
+    end;
+
+nkmedia_call_set_answer(_CallId, _MasterId, _SlaveId, _Data, Call) ->
+    {error, answer_not_set, Call}.
 
 
 

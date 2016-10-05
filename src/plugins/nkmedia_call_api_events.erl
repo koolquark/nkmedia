@@ -44,11 +44,11 @@ event(CallId, {ringing, _CalleId, Data}, Call) when is_map(Data) ->
 event(CallId, {ringing, _CalleeId, _Data}, Call) ->
     send_event(CallId, ringing, #{}, Call);
 
-event(CallId, {answer, _CalleeId, Data}, Call) when is_map(Data) ->
-    send_event(CallId, answer, Data, Call);
+event(CallId, {answer, _CalleeId, Answer, Data}, Call) when is_map(Data) ->
+    send_event(CallId, answer, Data#{answer=>Answer}, Call);
 
-event(CallId, {answer, _CalleeId, _Data}, Call) ->
-    send_event(CallId, answer, #{}, Call);
+event(CallId, {answer, _CalleeId, Answer, _Data}, Call) ->
+    send_event(CallId, answer, #{answer=>Answer}, Call);
 
 event(CallId, {hangup, Reason}, #{srv_id:=SrvId}=Call) ->
     {Code, Txt} = nkservice_util:error_code(SrvId, Reason),

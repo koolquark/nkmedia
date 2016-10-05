@@ -38,8 +38,9 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([start/3, ringing/3, answered/4, rejected/2, hangup/2, hangup_all/0]).
--export([register/2, unregister/2]).
+-export([start/3, ringing/2, ringing/3, answered/3, rejected/2]).
+-export([hangup/2, hangup_all/0]).
+-export([register/2, unregister/2, session_event/3]).
 -export([find/1, get_all/0, get_call/1]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
@@ -66,7 +67,9 @@
 
 -type callee() :: term().
 
--type callee_id() :: term().
+-type callee_id() :: nklib:link().
+
+-type callee_session_id() :: session_id().
 
 -type call_type() :: user | session | atom(). % Also nkmedia_verto, ...
 
@@ -77,6 +80,8 @@
         call_id => id(),                        % Optional
         type => call_type(),                    % Optional, used in resolvers
         caller => caller(),                     % Caller info
+        backend => nkmedia:backend(),
+        sdp_type => nkmedia:sdp_type(),
         caller_session_id => session_id(),      % Generated if not included
         register => nklib:link(),
         user_id => nkservice:user_id(),             % Informative only
@@ -89,7 +94,7 @@
     #{
         srv_id => nkservice:id(),
         callee => callee(),
-        callee_session_id => session_id()
+        callee_session_id => callee_session_id()
     }.
 
 
@@ -136,23 +141,31 @@ start(Srv, Callee, Config) ->
 
 
 %% @doc Called by the invited process
--spec ringing(id(), callee_id(), term()) ->
+-spec ringing(id(), callee_id() | callee_session_id()) ->
     ok | {error, term()}.
 
-ringing(CallId, CalleeId, Data) ->
-    do_call(CallId, {ringing, CalleeId, Data}).
+ringing(CallId, CalleeId) ->
+    ringing(CallId, CalleeId, #{}).
 
 
 %% @doc Called by the invited process
--spec answered(id(), callee_id(), session_id(), term()) ->
+-spec ringing(id(), callee_id() | callee_session_id(), callee()) ->
     ok | {error, term()}.
 
-answered(CallId, CalleeId, SessId, Data) ->
-    do_call(CallId, {answered, CalleeId, SessId, Data}).
+ringing(CallId, CalleeId, Callee) ->
+    do_call(CallId, {ringing, CalleeId, Callee}).
 
 
 %% @doc Called by the invited process
--spec rejected(id(), callee_id()) ->
+-spec answered(id(), callee_id() | callee_session_id(), callee()) ->
+    ok | {error, term()}.
+
+answered(CallId, CalleeId, Callee) ->
+    do_call(CallId, {answered, CalleeId, Callee}).
+
+
+%% @doc Called by the invited process
+-spec rejected(id(), callee_id() | callee_session_id()) ->
     ok | {error, term()}.
 
 rejected(CallId, CalleeId) ->
@@ -189,6 +202,13 @@ unregister(CallId, Link) ->
 
 
 %% @private
+-spec session_event(id(), session_id(), nkmedia_session:event()) ->
+    ok | {error, term()}.
+session_event(CallId, SessId, Event) ->
+    do_cast(CallId, {session_event, SessId, Event}).
+
+
+%% @private
 -spec get_all() ->
     [{id(), pid()}].
 
@@ -215,8 +235,8 @@ get_call(CallId) ->
     sdp_type :: webrtc | rtp,
     launched :: boolean(),
     timer :: reference(),
-    session_id :: session_id(),
-    data :: map()
+    link :: nklib:link(),
+    session_id :: session_id()
 }).
 
 -record(state, {
@@ -254,9 +274,9 @@ init([#{srv_id:=SrvId, call_id:=CallId, callee:=Callee}=Call]) ->
         {ok, #state{call=Call3}=State3} ->
             case Call3 of
                 #{caller_session_id:=_} ->
-                    gen_server:cast(self(), started_caller);
+                    gen_server:cast(self(), started_caller_session);
                 _ ->
-                    gen_server:cast(self(), start_caller),
+                    gen_server:cast(self(), start_caller_session),
                     {ok, State3}
             end;
         {error, Error} ->
@@ -271,31 +291,30 @@ init([#{srv_id:=SrvId, call_id:=CallId, callee:=Callee}=Call]) ->
     {noreply, #state{}} | {reply, term(), #state{}} |
     {stop, Reason::term(), #state{}} | {stop, Reason::term(), Reply::term(), #state{}}.
 
-handle_call({ringing, CalleeId, Data}, _From, State) ->
-    case find_invite_by_callee_id(CalleeId, State) of
-        {ok, _} ->
-            {reply, ok, event({ringing, CalleeId, Data}, State)};
+handle_call({ringing, Id, Callee}, _From, State) ->
+    case find_invite_by_id(Id, State) of
+        {ok, #invite{link=Link}} ->
+            {reply, ok, event({ringing, Link, Callee}, State)};
         not_found ->
             {reply, {error, invite_not_found}, State} 
     end;
 
-handle_call({answered, CalleeId, SessId, Data}, From, State) ->
+handle_call({answered, Id, Callee}, _From, State) ->
     #state{id=CallId, call=Call} = State,
-    case find_invite_by_callee_id(CalleeId, State) of
-        {ok, #invite{pos=Pos}} ->
-            % ?LLOG(info, "received ANSWER", [], State),
-            gen_server:reply(From, ok),
-            case nkmedia_call:do_call(SessId, {nkmedia_call, CallId, self()}) of
-                {ok, _, SessPid} ->
-                    State2 = links_add(SessId, callee_session_id, SessPid, State),
+    case find_invite_by_id(Id, State) of
+        {ok, #invite{pos=Pos, link=Link, session_id=CalleeSessId}} ->
+            #{caller_session_id:=CallerSessId} = Call,
+            Args = [CallId, CallerSessId, CalleeSessId, Callee],
+            case handle(nkmedia_call_set_answer, Args, State) of
+                {ok, State2} ->
                     State3 = cancel_all_but(Pos, State2),
-                    Call2 = ?CALL_RM(caller, Call),                         % Save memory
-                    Call3 = ?CALL(#{callee_session_id=>CalleeId}, Call2),
-                    State4 = State3#state{call=Call3},
-                    {noreply, event({answer, CalleeId, Data}, State4)};
-                _ ->
-                    hangup(self(), session_stopped),
-                    {noreply, State}
+                    Call2 = ?CALL(#{callee_session_id=>CalleeSessId}, Call),
+                    State4 = State3#state{call=Call2},
+                    State5 = links_add(Link, callee_link, State4),
+                    Callee2 = maps:remove(answer, Callee),
+                    {reply, ok, event({answer, Link, Callee2}, State5)};
+                {error, Error, State2} ->
+                    {reply, {error, Error}, State2}
             end;
         not_found ->
             {reply, {error, invite_not_found}, State}
@@ -325,16 +344,16 @@ handle_call(Msg, From, State) ->
 -spec handle_cast(term(), #state{}) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
-handle_cast(start_caller, #state{id=CallId}=State) ->
-    case handle(nkmedia_call_start_caller, [CallId], State) of
+handle_cast(start_caller_session, #state{id=CallId}=State) ->
+    case handle(nkmedia_call_start_caller_session, [CallId], State) of
         {ok, SessId, #state{call=Call}=State2} ->
             Call2 = ?CALL(#{caller_session_id=>SessId}, Call),
-            handle_cast(started_caller, State2#state{call=Call2});
+            handle_cast(started_caller_session, State2#state{call=Call2});
         {error, Error, State2} ->
             do_hangup(Error, State2)
     end;
 
-handle_cast(started_caller, #state{id=CallId, call=Call}=State) ->
+handle_cast(started_caller_session, #state{id=CallId, call=Call}=State) ->
     #{caller_session_id:=SessId} = Call,
     case nkmedia_session:register(SessId, {nkmedia_call, CallId, self()}) of
         {ok, Pid} ->
@@ -344,13 +363,65 @@ handle_cast(started_caller, #state{id=CallId, call=Call}=State) ->
             do_hangup(Error, State2)
     end;
 
-handle_cast({rejected, CalleeId}, State) ->
-    case find_invite_by_callee_id(CalleeId, State) of
+handle_cast({rejected, Id}, State) ->
+    case find_invite_by_id(Id, State) of
         {ok, #invite{pos=Pos}} ->
-            remove_invite(Pos, State);
+            remove_invite(Pos, call_rejected, State);
         not_found ->
             {noreply, State}
     end;
+
+handle_cast({session_event, SessId, {answer, Answer}}, #state{call=Call}=State) ->
+    case Call of
+        #{caller_session_id:=SessId, register:=Link} ->
+            {noreply, event({session_answer, SessId, Answer}, Link, State)};
+        #{caller_session_id:=_} ->
+            ?LLOG(notice, "received session answer with no caller registration", 
+                  [], State),
+            {noreply, State};
+        _ ->
+            case find_invite_by_id(SessId, State) of
+                {ok, #invite{link=Link}} ->
+                    {noreply, event({session_answer, SessId, Answer}, Link, State)};
+                not_found ->
+                    ?LLOG(notice, "received unexpected session answer: ~p", 
+                          [SessId], State),
+                    {noreply, State}
+            end
+    end;
+
+handle_cast({session_event, SessId, {candidate, Candidate}}, #state{call=Call}=State) ->
+    case Call of
+        #{caller_session_id:=SessId, register:=Link} ->
+            {noreply, event({session_candidate, SessId, Candidate}, Link, State)};
+        #{caller_session_id:=_} ->
+            ?LLOG(notice, "received session candidate with no caller registration", 
+                  [], State),
+            {noreply, State};
+        _ ->
+            case find_invite_by_id(SessId, State) of
+                {ok, #invite{link=Link}} ->
+                    {noreply, event({session_candidate, SessId, Candidate}, Link, State)};
+                not_found ->
+                    ?LLOG(notice, "received unexpected session candidate: ~p", 
+                          [SessId], State),
+                    {noreply, State}
+            end
+    end;
+
+handle_cast({session_event, SessId, {stop, _Reason}}, #state{call=Call}=State) ->
+    case Call of
+        #{caller_session_id:=SessId} ->
+            do_hangup(caller_stopped, State);
+        #{callee_session_id:=SessId} ->
+            do_hangup(callee_stopped, State);
+        _ ->
+            rejected(self(), SessId),
+            {noreply, State}
+    end;
+
+handle_cast({session_event, _SessId, _Event}, State) ->
+    {noreply, State};
 
 handle_cast({hangup, Reason}, State) ->
     ?LLOG(info, "external hangup: ~p", [Reason], State),
@@ -378,20 +449,14 @@ handle_info({launch_out, Pos}, State) ->
 
 handle_info({ring_timeout, Pos}, State) ->
     case find_invite_by_pos(Pos, State) of
-        {ok, #invite{dest=Dest, session_id=SessId}} ->
+        {ok, #invite{dest=Dest}} ->
             ?LLOG(info, "call ring timeout for ~p (~p)", [Dest, Pos], State),
-            case is_binary(SessId) of
-                true -> 
-                    nkmedia_session:stop(SessId, originator_cancel);
-                false ->
-                    ok
-            end,
-            remove_invite(Pos, State);
+            remove_invite(Pos, ring_timeout, State);
         not_found ->
             {noreply, State}
     end;
 
-handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, State) ->
+handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, #state{call=Call}=State) ->
     case links_down(Ref, State) of
         {ok, Link, Data, State2} ->
             case Reason of
@@ -404,7 +469,12 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, State) ->
                 caller_session_id ->
                     do_hangup(caller_stopped, State2);
                 callee_session_id ->
-                    do_hangup(callee_stopped, State2);
+                    case maps:find(callee_session_id, Call) of
+                        {ok, Link} ->
+                            do_hangup(callee_stopped, State2);
+                        error ->
+                            rejected(self(), Link)
+                    end;
                 reg ->
                     do_hangup(registered_down, State2)
             end;
@@ -487,37 +557,43 @@ launch_invites(Callee, State) ->
 
 %% @private
 launch_out(Inv, #state{id=CallId, call=Call}=State) ->
-    #invite{pos=Pos, dest=Dest} = Inv,
     Caller = maps:get(caller, Call, #{}),
-    case start_callee(Inv, State) of
-        {ok, #invite{session_id=SessId, data=Data}=Inv2, State2} ->
-            Args = [Dest, CallId, SessId, maps:merge(Caller, Data)],
+    case start_callee_session(Inv, State) of
+        {ok, #invite{dest=Dest, session_id=SessId}=Inv2, State2} ->
+            Args = [CallId, Dest, SessId, Caller],
             case handle(nkmedia_call_invite, Args, State2) of
-                {ok, SessId, State3} ->
-                    launched_out(Inv2, SessId, State3);
-                {ok, SessId2, State3} ->
-                    nkmedia_session:stop(SessId, call_stop),
-                    launched_out(Inv2, SessId2, State3);
+                {ok, Link, State3} ->
+                    launched_out(Inv2, Link, SessId, State3);
+                {ok, Link, SessId2, State3} ->
+                    nkmedia_session:stop(SessId, session_not_used),
+                    launched_out(Inv2, Link, SessId2, State3);
                 {retry, Secs, State3} ->
                     launched_retry(Inv2, Secs, State3);
                 {remove, State3} ->
+                    #invite{pos=Pos, dest=Dest} = Inv,
                     ?LLOG(notice, "removing out ~p (~p)", [Dest, Pos], State),
-                    remove_invite(Pos, State3)
+                    remove_invite(Pos, call_rejected, State3)
             end;
         {error, Error, State2} ->
             ?LLOG(notice, "error generating session: ~p", [Error], State2),
-            remove_invite(Pos, State2)
+            #invite{pos=Pos} = Inv,
+            remove_invite(Pos, call_error, State2)
     end.
 
 
-
 %% @private
-launched_out(Inv, SessId, #state{pos=Pos, invites=Invs}=State) ->
+launched_out(Inv, Link, SessId, #state{invites=Invs}=State) ->
     #invite{pos=Pos, dest=Dest} = Inv, 
-    ?LLOG(info, "launching out ~p (~p)", [Dest, Pos], State),
-    Inv2 = Inv#invite{launched=true, session_id=SessId},
+    ?LLOG(info, "launched out ~p (~p)", [Dest, Pos], State),
+    Inv2 = Inv#invite{launched=true, link=Link, session_id=SessId},
     Invs2 = lists:keystore(Pos, #invite.pos, Invs, Inv2),
-    {noreply, State#state{invites=Invs2}}.
+    case nkmedia_session:register(SessId, Link) of
+        {ok, _} ->
+            {noreply, State#state{invites=Invs2}};
+        {error, Error} ->
+            ?LLOG(notice, "error registering callee session: ~p", [Error], State),
+            remove_invite(Pos, session_error, State)
+    end.
 
 
 %% @private
@@ -530,17 +606,25 @@ launched_retry(Inv, Secs, #state{invites=Invs}=State) ->
 
 
 %% @private
-start_callee(#invite{session_id=undefined}=Inv, #state{id=CallId, call=Call}=State) ->
+start_callee_session(#invite{session_id=undefined}=Inv, State) ->
+    #state{id=CallId, call=Call} = State,
     #{caller_session_id:=CallerSessId} = Call,
-    case handle(nkmedia_call_start_callee, [CallerSessId, CallId], State) of
-        {ok, CalleeSessId, Data, State2} ->
-            Inv2 = Inv#invite{session_id=CalleeSessId, data=Data},
-            {ok, Inv2, State2};
+    case handle(nkmedia_call_start_callee_session, [CallId, CallerSessId], State) of
+        {ok, CalleeSessId, State2} ->
+            Reg = {nkmedia_call, CallId, self()},
+            case nkmedia_session:register(CalleeSessId, Reg) of
+                {ok, Pid} ->
+                    State3 = links_add(CalleeSessId, callee_session_id, Pid, State2),
+                    Inv2 = Inv#invite{session_id=CalleeSessId},
+                    {ok, Inv2, State3};
+                {error, Error} ->
+                    {error, Error, State2}
+            end;
         {error, Error, State2} ->
             {error, Error, State2}
     end;
 
-start_callee(Inv, State) ->
+start_callee_session(Inv, State) ->
     {ok, Inv, State}.
 
 
@@ -554,23 +638,25 @@ find_invite_by_pos(Pos, #state{invites=Invs}) ->
 
 
 %% @private
-find_invite_by_callee_id(CalleeId, #state{invites=Invs}) ->
-   case lists:keyfind(CalleeId, #invite.session_id, Invs) of
-        #invite{} = Inv -> {ok, Inv};
-        false -> not_found
+find_invite_by_id(Id, #state{invites=Invs}) ->
+   case lists:keyfind(Id, #invite.session_id, Invs) of
+        #invite{} = Inv -> 
+            {ok, Inv};
+        false ->
+            case lists:keyfind(Id, #invite.link, Invs) of
+                #invite{} = Inv -> 
+                    {ok, Inv};
+                false ->
+                    not_found
+            end
     end.
 
 
 %% @private
-remove_invite(Pos, #state{invites=Invs}=State) ->
+remove_invite(Pos, Reason, #state{invites=Invs}=State) ->
     case lists:keytake(Pos, #invite.pos, Invs) of
-        {value, #invite{pos=Pos, session_id=SessId}, Invs2} ->
-            case is_binary(SessId) of
-                true ->
-                    nkmedia_session:stop(SessId, call_stop);
-                false ->
-                    ok
-            end,
+        {value, #invite{pos=Pos}=Inv, Invs2} ->
+            stop_session(Inv, Reason),
             case Invs2 of
                 [] ->
                     ?LLOG(info, "all invites removed", [], State),
@@ -592,14 +678,14 @@ cancel_all(State) ->
 %% @private
 cancel_all_but(Except, #state{invites=Invs}=State) ->
     State2 = lists:foreach(
-        fun(#invite{session_id=CalleeId, pos=Pos, timer=Timer}) ->
+        fun(#invite{pos=Pos, dest=Dest, timer=Timer}=Inv) ->
             nklib_util:cancel_timer(Timer),
             case Pos of
                 Except ->
                     ok;
                 _ ->
-                    ?LLOG(info, "sending CANCEL to ~p", [CalleeId], State),
-                    nkmedia_session:stop(CalleeId, originator_cancel)
+                    ?LLOG(info, "sending CANCEL to ~p (~p)", [Pos, Dest], State),
+                    stop_session(Inv, originator_cancel)
             end
         end,
         Invs),
@@ -632,17 +718,30 @@ event(Event, #state{id=Id}=State) ->
     end,
     State2 = links_fold(
         fun
-            (Link, reg, AccState) ->
-                {ok, AccState2} = 
-                    handle(nkmedia_call_reg_event, [Id, Link, Event], AccState),
-                AccState2;
-            (_Link, _Data, AccState) ->
+            (Link, reg, AccState) -> 
+                event(Event, Link, AccState);
+            (_Link, _Data, AccState) -> 
                 AccState
         end,
         State,
         State),
     {ok, State3} = handle(nkmedia_call_event, [Id, Event], State2),
     State3.
+
+
+%% @private
+event(Event, Link, #state{id=Id}=State) ->
+    {ok, State2} = handle(nkmedia_call_reg_event, [Id, Link, Event], State),
+    State2.
+
+
+
+%% @private
+stop_session(#invite{session_id=SessId}, Reason) when is_binary(SessId) ->
+    nkmedia_session:stop(SessId, Reason);
+
+stop_session(_Inv, _Reason) ->
+    ok.
 
 
 %% @private

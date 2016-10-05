@@ -368,17 +368,17 @@ nkmedia_sip_invite(_SrvId, <<"j", Dest/binary>>, Offer, SipLink, _Req, _Call) ->
     ConfigA = incoming_config(nkmedia_janus, Offer, SipLink, #{}),
     {ok, SessId, SessLink} = start_session(proxy, ConfigA),
     ConfigB = slave_config(nkmedia_janus, SessId, #{}),
-    {ok, _} = start_invite(Dest, proxy, ConfigB),
+    {ok, _} = start_invite(Dest, bridge, ConfigB#{peer_id=>SessId}),
     {ok, SessLink};
 
 % Version using FS
-nkmedia_sip_invite(_SrvId, <<"fe">>, Offer, SipLink, _Req, _Call) ->
+nkmedia_sip_invite(_SrvId, <<"f">>, Offer, SipLink, _Req, _Call) ->
     ConfigA = incoming_config(nkmedia_fs, Offer, SipLink, #{}),
     {ok, _SessId, SessLink} = start_session(mcu, ConfigA#{room_id=>m1}),
     {ok, SessLink};
 
 % Version using KMS
-nkmedia_sip_invite(_SrvId, <<"ke">>, Offer, SipLink, _Req, _Call) ->
+nkmedia_sip_invite(_SrvId, <<"k">>, Offer, SipLink, _Req, _Call) ->
     ConfigA = incoming_config(nkmedia_kms, Offer, SipLink, #{}),
     {ok, _SessId, SessLink} = start_session(play, ConfigA),
     {ok, SessLink};
@@ -454,8 +454,8 @@ incoming(<<"j", Num/binary>>, Offer, Reg, Opts) ->
         _ -> ConfigA1
     end,
     {ok, SessId, SessLink} = start_session(proxy, ConfigA2#{bitrate=>100000}),
-    ConfigB = slave_config(nkmedia_janus, SessId, Opts),
-    {ok, _} = start_invite(Num, proxy, ConfigB#{bitrate=>150000}),
+    ConfigB = slave_config(nkmedia_janus, SessId, Opts#{bitrate=>150000}),
+    {ok, _} = start_invite(Num, bridge, ConfigB#{peer_id=>SessId}),
     {ok, SessId, SessLink};
 
 incoming(<<"f", Num/binary>>, Offer, Reg, Opts) ->
@@ -463,7 +463,7 @@ incoming(<<"f", Num/binary>>, Offer, Reg, Opts) ->
     ConfigA = incoming_config(nkmedia_fs, Offer, Reg, Opts),
     {ok, SessId, SessLink} = start_session(park, ConfigA#{}),
     ConfigB = slave_config(nkmedia_fs, SessId, Opts),
-    {ok, _} = start_invite(Num, bridge, ConfigB),
+    {ok, _} = start_invite(Num, bridge, ConfigB#{peer_id=>SessId}),
     {ok, SessId, SessLink};
 
 incoming(<<"k", Num/binary>>, Offer, Reg, Opts) ->
@@ -471,8 +471,8 @@ incoming(<<"k", Num/binary>>, Offer, Reg, Opts) ->
     % Muting audio or here has no effect on A, but will be copied from B
     ConfigA = incoming_config(nkmedia_kms, Offer, Reg, Opts),
     {ok, SessId, SessLink} = start_session(park, ConfigA),
-    ConfigB = slave_config(nkmedia_kms, SessId, Opts),
-    {ok, _} = start_invite(Num, bridge, ConfigB#{mute_video=>false}),
+    ConfigB = slave_config(nkmedia_kms, SessId, Opts#{mute_video=>false}),
+    {ok, _} = start_invite(Num, bridge, ConfigB#{peer_id=>SessId}),
     {ok, SessId, SessLink};
 
 incoming(<<"play">>, Offer, Reg, Opts) ->
