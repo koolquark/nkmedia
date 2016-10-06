@@ -236,7 +236,7 @@ cmd(recorder_action, Opts, Session) ->
     recorder_action(Action, Opts, Session);
 
 cmd(get_type, _, Session) ->
-    Fields = [type, type_ext, nkmedia_janus_id],
+    Fields = [type, type_ext, backend, nkmedia_janus_id],
     {ok, maps:with(Fields, Session), Session};
 
 cmd(get_proxy_offer, _, #{type:=proxy}=Session) ->
@@ -259,16 +259,17 @@ cmd(set_proxy_answer, #{peer_id:=PeerId, answer:=Answer}, #{type:=proxy}=Session
             nkmedia_session:set_answer(self(), Answer2),
             #{type_ext:=#{proxy_type:=ProxyType}} = Session,
             update_type(bridge, #{proxy_type=>ProxyType, peer_id=>PeerId, role=>master}),
+            Session2 = ?SESSION_RM(nkmedia_janus_proxy_offer, Session),
             case ProxyType of
                 videocall ->
-                    case set_default_media(Session) of
-                        {ok, Session2} ->
-                            {ok, #{}, Session2};
-                        {error, Error, Session2} ->
-                            {error, Error, Session2}
+                    case set_default_media(Session2) of
+                        {ok, Session3} ->
+                            {ok, #{}, Session3};
+                        {error, Error, Session3} ->
+                            {error, Error, Session3}
                     end;
                 _ ->
-                    {ok, #{}, Session}
+                    {ok, #{}, Session2}
             end;
         {error, Error} ->
             {error, Error, Session}

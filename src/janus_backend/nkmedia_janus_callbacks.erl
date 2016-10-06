@@ -166,7 +166,7 @@ nkmedia_session_answer(_Type, _Role, _Answer, _Session) ->
 
 %% @private
 nkmedia_session_cmd(Update, Opts, #{nkmedia_janus_id:=_}=Session) ->
-   nkmedia_janus_session:cmd(Update, Opts, Session);
+    nkmedia_janus_session:cmd(Update, Opts, Session);
 
 nkmedia_session_cmd(_Update, _Opts, _Session) ->
     continue.
@@ -292,15 +292,15 @@ nkmedia_call_start_caller_session(CallId, #{srv_id:=SrvId, offer:=Offer}=Call) -
     end.
 
 
-nkmedia_call_start_callee_session(MasterId, CallId, #{srv_id:=SrvId}=Call) ->
-    case nkmedia_session:cmd(MasterId, get_type) of
+nkmedia_call_start_callee_session(CallId, MasterId, #{srv_id:=SrvId}=Call) ->
+    case nkmedia_session:cmd(MasterId, get_type, #{}) of
         {ok, #{type:=proxy, backend:=nkmedia_janus}} ->
             Config = #{
                 backend => nkmedia_janus,
                 peer_id => MasterId,
                 call_id => CallId
             },
-            {ok, SlaveId, _Pid} = nkmedia_session:start(SrvId, proxy_slave, Config),
+            {ok, SlaveId, _Pid} = nkmedia_session:start(SrvId, bridge, Config),
             case nkmedia_session:get_offer(SlaveId) of
                 {ok, Offer} ->
                     {ok, SlaveId, #{offer=>Offer}, Call};
@@ -314,10 +314,15 @@ nkmedia_call_start_callee_session(MasterId, CallId, #{srv_id:=SrvId}=Call) ->
     end.
 
 
-nkmedia_call_set_answer(_CallId, _MasterId, SlaveId, #{answer:=Answer}, Call) ->
+nkmedia_call_set_answer(_CallId, MasterId, SlaveId, #{answer:=Answer}=Callee, Call) ->
     case nkmedia_session:set_answer(SlaveId, Answer) of
         ok ->
-            {ok, Call};
+            case nkmedia_session:get_answer(MasterId) of
+                {ok, Answer2} ->
+                    {ok, Callee#{answer=>Answer2}, Call};
+                {error, Error} ->
+                    {error, Error}
+            end;
         {error, Error} ->
             {error, Error}
     end;

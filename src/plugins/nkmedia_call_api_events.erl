@@ -38,17 +38,11 @@
 -spec event(nkmedia_call:id(), nkmedia_call:event(), nkmedia_call:call()) ->
     {ok, nkmedia_call:call()}.
 
-event(CallId, {ringing, _CalleId, Data}, Call) when is_map(Data) ->
-    send_event(CallId, ringing, Data, Call);
+event(CallId, {ringing, Callee}, Call) ->
+    send_event(CallId, ringing, Callee, Call);
 
-event(CallId, {ringing, _CalleeId, _Data}, Call) ->
-    send_event(CallId, ringing, #{}, Call);
-
-event(CallId, {answer, _CalleeId, Answer, Data}, Call) when is_map(Data) ->
-    send_event(CallId, answer, Data#{answer=>Answer}, Call);
-
-event(CallId, {answer, _CalleeId, Answer, _Data}, Call) ->
-    send_event(CallId, answer, #{answer=>Answer}, Call);
+event(CallId, {answered, Callee}, Call) ->
+    send_event(CallId, answered, Callee, Call);
 
 event(CallId, {hangup, Reason}, #{srv_id:=SrvId}=Call) ->
     {Code, Txt} = nkservice_util:error_code(SrvId, Reason),

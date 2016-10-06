@@ -24,7 +24,8 @@
 
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
 -export([nkmedia_call_init/2, nkmedia_call_terminate/2, 
-         nkmedia_call_resolve/4, nkmedia_call_invite/5, nkmedia_call_cancel/3, 
+         nkmedia_call_resolve/4, nkmedia_call_invite/5, nkmedia_call_cancelled/3, 
+         nkmedia_call_answer/4, nkmedia_call_candidate/4,
          nkmedia_call_event/3, nkmedia_call_reg_event/4, 
          nkmedia_call_handle_call/3, nkmedia_call_handle_cast/2, 
          nkmedia_call_handle_info/2,
@@ -80,9 +81,8 @@ error_code(no_destination)          ->  {305005, "No destination"};
 error_code(no_answer)               ->  {305006, "No answer"};
 error_code(already_answered)        ->  {305007, "Already answered"};
 error_code(originator_cancel)       ->  {305008, "Originator cancel"};
-error_code(caller_stoped)           ->  {305009, "Caller stopped"};
-error_code(callee_stoped)           ->  {305010, "Callee stopped"};
-error_code(session_not_used)        ->  {305011, "Session not used"};
+error_code(caller_stopped)          ->  {305009, "Caller stopped"};
+error_code(callee_stopped)          ->  {305010, "Callee stopped"};
 error_code(_) -> continue.
 
 
@@ -96,7 +96,6 @@ error_code(_) -> continue.
 -type dest_ext() :: nkmedia_call:dest_ext().
 -type caller() :: nkmedia_call:caller().
 -type callee() :: nkmedia_call:callee().
--type callee_id() :: nkmedia_call:callee_id().
 -type call() :: nkmedia_call:call().
 -type session_id() :: nkmedia_session:id().
 
@@ -147,11 +146,27 @@ nkmedia_call_invite(CallId, Dest, SessId, Caller, Call) ->
 
 
 %% @doc Called when an outbound invite has been cancelled
--spec nkmedia_call_cancel(call_id(), callee_id(), call()) ->
+-spec nkmedia_call_cancelled(call_id(), nklib:link(), call()) ->
     {ok, call()} | continue().
 
-nkmedia_call_cancel(CallId, CalleeId, Call) ->
-    nkmedia_call_lib:cancel(CallId, CalleeId, Call).
+nkmedia_call_cancelled(CallId, CalleeLink, Call) ->
+    nkmedia_call_lib:cancel(CallId, CalleeLink, Call).
+
+
+%% Called when the calling party has the answer available
+-spec nkmedia_call_answer(call_id(), nklib:link(), callee(), call()) ->
+    {ok, call()} | {error, nkservice:error(), call()}.
+
+nkmedia_call_answer(_CallId, _CallerLink, _Callee, Call) ->
+    {error, not_implemented, Call}.
+
+
+%% Called when caller or callee has a new candidate availableanswer available
+-spec nkmedia_call_candidate(call_id(), nklib:link(), nkmedia:candidate(), call()) ->
+    {ok, call()} | {error, nkservice:error(), call()}.
+
+nkmedia_call_candidate(_CallId, _Link, _Candidate, Call) ->
+    {error, not_implemented, Call}.
 
 
 %% @doc Called when the status of the call changes
@@ -167,17 +182,6 @@ nkmedia_call_event(CallId, Event, Call) ->
 -spec nkmedia_call_reg_event(call_id(), nklib:link(), nkmedia_call:event(), call()) ->
     {ok, call()} | continue().
 
-% Automatic processing of calls linked to a session
-nkmedia_call_reg_event(_CallId, {nkmedia_session, SessId}, Event, Call) ->
-    case Event of
-        {answer, _Callee, Answer} ->
-            nkmedia_session:set_answer(SessId, Answer);
-        {hangup, Reason} ->
-            nkmedia_session:stop(SessId, Reason);
-        _ ->
-            ok
-    end,
-    {ok, Call};
 
 nkmedia_call_reg_event(CallId, {nkmedia_api, Pid}, {hangup, _Reason}, Call) ->
     nkservice_api_server:unregister(Pid, {nkmedia_call, CallId, self()}),
@@ -218,6 +222,7 @@ nkmedia_call_handle_info(Msg, Call) ->
 
 
 %% @doc Called when the Call must start the 'caller' session
+%% Implemented by backends
 -spec nkmedia_call_start_caller_session(call_id(), call()) ->
     {ok, nkmedia_session:id(), call()} | {error, nkservice:error(), call()} |
     continue().
@@ -227,22 +232,25 @@ nkmedia_call_start_caller_session(_CallId, Call) ->
 
 
 %% @doc Called when the Call must start a 'callee' session
+%% Implemented by backends
 -spec nkmedia_call_start_callee_session(call_id(), nkmedia_session:id(), call()) ->
     {ok, nkmedia_session:id(), map(), call()} | 
-    {ok, map(), call()} | 
     {error, nkservice:error(), call()} |
     continue().
 
-nkmedia_call_start_callee_session(_SessId, _CallId, Call) ->
+nkmedia_call_start_callee_session(_CallId, _SessId, Call) ->
     {error, not_implemented, Call}.
 
 
 %% @doc Called when the call has both sessions and must be connected
--spec nkmedia_call_set_answer(call_id(), session_id(), session_id(), map(), call()) ->
+%% Implemented by backend
+-spec nkmedia_call_set_answer(call_id(), session_id(), session_id(), callee(), call()) ->
     {ok, call()} | {error, nkservice:error(), term()} | continue().
 
-nkmedia_call_set_answer(_CallId, _CallerSessId, _CalleeSessId, _Data, Call) ->
+nkmedia_call_set_answer(_CallId, _CallerSessId, _CalleeSessId, _Callee, Call) ->
     {error, not_implemented, Call}.
+
+
 
 
 

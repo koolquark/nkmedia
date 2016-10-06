@@ -30,7 +30,8 @@
          nkmedia_janus_handle_call/3, nkmedia_janus_handle_cast/2,
          nkmedia_janus_handle_info/2]).
 -export([error_code/1]).
--export([nkmedia_call_resolve/3, nkmedia_call_invite/4, nkmedia_call_cancel/3,
+-export([nkmedia_call_resolve/4, nkmedia_call_invite/5, 
+         nkmedia_call_answer/4, nkmedia_call_cancelled/3, 
          nkmedia_call_reg_event/4]).
 -export([nkmedia_session_reg_event/4]).
 
@@ -105,13 +106,33 @@ nkmedia_janus_registered(_User, Janus) ->
 
 
 %% @doc Called when the client sends an INVITE
+%% See nkmedia_verto_invite for explanation
 -spec nkmedia_janus_invite(nkservice:id(), call_id(), nkmedia:offer(), janus()) ->
     {ok, nklib:link(), janus()} | 
     {answer, nkmedia_janus_proto:answer(), nklib:link(), janus()} | 
     {rejected, nkservice:error(), janus()} | continue().
 
-nkmedia_janus_invite(_SrvId, _CallId, _Offer, Janus) ->
-    {rejected, not_implemented, Janus}.
+nkmedia_janus_invite(SrvId, CallId, #{dest:=Dest}=Offer, Janus) ->
+    Config1 = #{
+        call_id => CallId,
+        offer => Offer, 
+        caller_link => {nkmedia_janus, CallId, self()}
+    },
+    Config2 = case Dest of
+        <<"p2p:", Callee/binary>> ->
+            Config1;
+        <<"sip:", Callee/binary>> ->
+            Config1#{backend=>nkmedia_janus, sdp_type=>rtp};
+        Callee ->
+            Config1#{backend=>nkmedia_janus}
+    end,
+    case nkmedia_call:start(SrvId, Callee, Config2) of
+        {ok, CallId, CallPid} ->
+            {ok, {nkmedia_call, CallId, CallPid}, Janus};
+        {error, Error} ->
+            lager:warning("NkMEDIA Janus session error: ~p", [Error]),
+            {rejected, Error, Janus}
+    end.
 
 
 %% @doc Called when the client sends an ANSWER
@@ -132,7 +153,8 @@ nkmedia_janus_answer(_CallId, {nkmedia_session, SessId, _Pid}, Answer, Janus) ->
 % If the registered process happens to be {nkmedia_call, ...} and we have
 % an answer for an invite we received, we set the answer in the call
 nkmedia_janus_answer(_CallId, {nkmedia_call, CallId, _Pid}, Answer, Janus) ->
-    case nkmedia_call:answered(CallId, {nkmedia_janus, self()}, Answer) of
+    Callee = #{answer=>Answer},
+    case nkmedia_call:answered(CallId, {nkmedia_janus, CallId, self()}, Callee) of
         ok ->
             {ok, Janus};
         {error, Error} ->
@@ -180,6 +202,10 @@ nkmedia_janus_start(SessId, Answer, Janus) ->
 
 nkmedia_janus_candidate(_CallId, {nkmedia_session, SessId, _Pid}, Candidate, Janus) ->
     ok = nkmedia_session:candidate(SessId, Candidate),
+    {ok, Janus};
+
+nkmedia_janus_candidate(_CallId, {nkmedia_call, CallId, _Pid}, Candidate, Janus) ->
+    ok = nkmedia_call:candidate(CallId, {nkmedia_janus, CallId, self()}, Candidate),
     {ok, Janus};
 
 nkmedia_janus_candidate(_CallId, _Link, _Candidate, Janus) ->
@@ -232,57 +258,6 @@ error_code(_)               -> continue.
 
 
 %% @private
-%% If call has type 'nkmedia_janus' we will capture it
-nkmedia_call_resolve(Callee, Acc, Call) ->
-    case maps:get(type, Call, nkmedia_janus) of
-        nkmedia_janus ->
-            DestExts = [
-                #{dest=>{nkmedia_janus, Pid}}
-                || Pid <- nkmedia_janus_proto:find_user(Callee)
-            ],
-            {continue, [Callee, Acc++DestExts, Call]};
-        _ ->
-            continue
-    end.
-
-
-%% @private
-%% When a call is sento to {nkmedia_janus, pid()}, we capture it here
-%% We register with janus as {nkmedia_janus_call, CallId, PId},
-%% and with the call as {nkmedia_janus, Pid}
-nkmedia_call_invite(CallId, {nkmedia_janus, Pid}, #{offer:=Offer}, Call) 
-        when is_pid(Pid) ->
-    Link = {nkmedia_janus_call, CallId, self()},
-    ok = nkmedia_janus_proto:invite(Pid, CallId, Offer, Link),
-    {ok, {nkmedia_janus, Pid}, Call};
-
-nkmedia_call_invite(_CallId, _Dest, _Data, _Call) ->
-    continue.
-
-
-%% @private
-%% Convenient functions in case we are registered with the call as
-%% {nkmedia_jsnud CallId, Pid}
-nkmedia_call_cancel(CallId, {nkmedia_janus, Pid}, _Call) when is_pid(Pid) ->
-    nkmedia_janus_proto:hangup(Pid, CallId, originator_cancel),
-    continue;
-
-nkmedia_call_cancel(_CallId, _Link, _Call) ->
-    continue.
-
-
-%% @private
-%% Convenient functions in case we are registered with the call as
-%% {nkmedia_janus, CallId, Pid}
-nkmedia_call_reg_event(_CallId, {nkmedia_janus, CallId, Pid}, {hangup, Reason}, _Call) ->
-    lager:info("Janus stopping after call hangup: ~p", [Reason]),
-    nkmedia_janus_proto:hangup(Pid, CallId, Reason),
-    continue;
-
-nkmedia_call_reg_event(_CallId, _Link, _Event, _Call) ->
-    continue.
-
-%% @private
 %% Convenient functions in case we are registered with the session as
 %% {nkmedia_janus, CallId, Pid}
 nkmedia_session_reg_event(_SessId, {nkmedia_janus, CallId, Pid}, Event, Session) ->
@@ -312,6 +287,67 @@ nkmedia_session_reg_event(_SessId, {nkmedia_janus, CallId, Pid}, Event, Session)
 nkmedia_session_reg_event(_CallId, _Link, _Event, _Call) ->
     continue.
 
+
+%% @private
+%% If call has type 'nkmedia_janus' we will capture it
+nkmedia_call_resolve(Callee, Type, Acc, Call) when Type==janus; Type==all ->
+    Dest = [
+        #{dest=>{nkmedia_janus, Pid}}
+        || Pid <- nkmedia_janus_proto:find_user(Callee)
+    ],
+    {continue, [Callee, Type, Acc++Dest, Call]};
+        
+nkmedia_call_resolve(_Callee, _Type, _Acc, _Call) ->
+    continue.
+
+
+%% @private
+%% When a call is sento to {nkmedia_janus, pid()}
+%% See nkmedia_call_invite in nkmedia_verto_callbacks for explanation
+
+
+%% We register with janus as {nkmedia_janus_call, CallId, PId},
+%% and with the call as {nkmedia_janus, Pid}
+nkmedia_call_invite(CallId, {nkmedia_janus, Pid}, _SessId, #{offer:=Offer}, Call) ->
+    CallLink = {nkmedia_call, CallId, self()},
+    {ok, JanusLink} = nkmedia_janus_proto:invite(Pid, CallId, Offer, CallLink),
+    {ok, JanusLink, Call};
+
+nkmedia_call_invite(_CallId, _Dest, _SessId, _Data, _Call) ->
+    continue.
+
+
+%% @private
+nkmedia_call_answer(CallId, {nkmedia_janus, CallId, Pid}, #{answer:=Answer}, Call) ->
+    case nkmedia_janus_proto:answer(Pid, CallId, Answer) of
+        ok ->
+            {ok, Call};
+        {error, Error} ->
+            lager:error("Error setting Verto answer: ~p", [Error]),
+            {error, Error}
+    end;
+
+nkmedia_call_answer(_CallId, _Link, _Callee, _Call) ->
+    continue.
+
+
+%% @private
+nkmedia_call_cancelled(_CallId, {nkmedia_janus, CallId, Pid}, _Call) ->
+    nkmedia_janus_proto:hangup(Pid, CallId, originator_cancel),
+    continue;
+
+nkmedia_call_cancelled(_CallId, _Link, _Call) ->
+    continue.
+
+
+%% @private
+nkmedia_call_reg_event(CallId, {nkmedia_janus, CallId, Pid}, {hangup, Reason}, _Call) ->
+    nkmedia_janus_proto:hangup(Pid, CallId, Reason),
+    continue;
+
+nkmedia_call_reg_event(_CallId, _Link, _Event, _Call) ->
+    % lager:error("CALL REG: ~p", [_Link]),
+    continue.
 
 
 

@@ -280,9 +280,14 @@ nkmedia_verto_terminate(Reason, Verto) ->
 
 
 %% @private
-nkmedia_janus_registered(User, Janus) ->
+%% If the register with tXXXX, and API session is emulated
+nkmedia_janus_registered(<<"t", _/binary>>=User, Janus) ->
     Pid = connect(User, #{test_janus_server=>self()}),
-    {ok, Janus#{test_api_server=>Pid}}.
+    {ok, Janus#{test_api_server=>Pid}};
+
+nkmedia_janus_registered(_User, Janus) ->
+    {ok, Janus}.
+
 
 
 % @private Called when we receive INVITE from Janus
@@ -300,7 +305,11 @@ nkmedia_janus_invite(_SrvId, CallId, Offer, #{test_api_server:=Ws}=Janus) ->
         {rejected, Reason} ->
             lager:notice("Janus invite rejected ~p", [Reason]),
             {rejected, Reason, Janus}
-    end.
+    end;
+
+%% @private Standard Janus calling (see default implementation)
+nkmedia_janus_invite(_SrvId, _CallId, _Offer, _Janus) ->
+    continue.
 
 
 %% @private
