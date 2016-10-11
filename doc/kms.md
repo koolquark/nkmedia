@@ -12,6 +12,7 @@
 * [**Media update**](#media-update)
 * [**Type update**](#type-update)
 * [**Recording**](#recording)
+* [**Calls**](#calls)
 
 
 ## Session Types
@@ -321,6 +322,13 @@ To start recording, use the `start` action. You can also use `stop`, `pause` and
 
 TBD: how to access the file
 
+## Calls
+
+When using the [call plugin](call.md) with this backend, the _caller_ session will be of type `park`, and the _callee_ session will have type `bridge`, connected to the first. You will get the answer for the callee inmediately.
+
+You can start several parallel destinations, and each of them is a fully independent session. 
+
+You can receive and send calls to SIP endpoints.
 
 
 

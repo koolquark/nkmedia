@@ -11,6 +11,7 @@
 * [**Type update**](#type-update)
 * [**Recording**](#recording)
 * [**Room Management**](#room-management)
+* [**Calls**](#calls)
 
 
 ## Session Types
@@ -207,3 +208,12 @@ In the near future, you will be able to perform several updates over any MCU, ca
 	tid: 1
 }
 ```
+
+
+## Calls
+
+When using the [call plugin](call.md) with this backend, the _caller_ session will be of type `park`, and the _callee_ session will have type `bridge`, connected to the first. You will get the answer for the callee inmediately.
+
+You can start several parallel destinations, and each of them is a fully independent session. 
+
+You can receive and send calls to SIP endpoints.

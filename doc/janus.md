@@ -11,6 +11,7 @@ This document describes the characteristics of the Janus backend
 * [**Media update**](#media-update)
 * [**Type update**](#type-update)
 * [**Recording**](#recording)
+* [**Calls*](#calls)
 
 
 ## Session Types
@@ -274,6 +275,17 @@ To start recording, use the `start` action.
 To stop recording, use the `stop` action.
 
 TBD: how to access the file
+
+
+## Calls
+
+When using the [call plugin](call.md) with this backend, the _caller_ session will be of type `proxy`, and the _callee_ session will have type `bridge`, connected to the first.
+
+You can start several parallel destinations but, since all of them will share the same _offer_, you should only use the offer once your _acccept_ has been accepted.
+
+You can receive and send calls to SIP endpoints.
+
+
 
 
 

@@ -27,9 +27,9 @@ All commands must have
 
 See also each backend documentation:
 
-* [nkmedia_janus](janus.md)
-* [nkmedia_fs](fs.md)
-* [nkmedia_kms](kms.md)
+* [nkmedia_janus](janus.md#calls)
+* [nkmedia_fs](fs.md#calls)
+* [nkmedia_kms](kms.md#calls)
 
 Also, for Erlang developers, you can have a look at the command [syntax specification](../src/nkmedia_call_api_syntax.erl) and [command implementation](../src/nkmedia_call_api.erl).
 
@@ -43,9 +43,9 @@ Starts a new call. You must supply a `callee` and an `offer`. Available fields a
 Field|Default|Description
 ---|---|---
 call_id|(generated)|Call ID
-callee|(mandatory)|Callee specification (see #destinations)
+callee|(mandatory)|Callee specification (see [destinations](#destinations))
 offer|(mandatory)|Offer to use
-type|(mandatory)|Call type (see #destinations)
+type|(mandatory)|Call type (see [destinations](#destinations))
 caller|{}|Caller specification (for notifications)
 backend|p2p|Backend to use (see each backend documentation)
 no_offer_trickle_ice|false|Forces consolidation of offer candidates in SDP
@@ -243,7 +243,7 @@ When the client has no more candidates to send, it should use this command to in
 
 
 
-## Call events
+## Events
 
 
 All events have the following structure:
