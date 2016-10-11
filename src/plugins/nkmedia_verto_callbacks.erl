@@ -132,7 +132,8 @@ nkmedia_verto_invite(SrvId, CallId, #{dest:=Dest}=Offer, Verto) ->
         call_id => CallId,
         offer => Offer, 
         caller_link => {nkmedia_verto, CallId, self()},
-        caller => #{info=>verto_native}
+        caller => #{info=>verto_native},
+        no_answer_trickle_ice => true
     },
     case nkmedia_call:start2(SrvId, Dest, Config) of
         {ok, CallId, CallPid} ->
@@ -300,7 +301,7 @@ nkmedia_session_reg_event(_SessId, _Link, _Event, _Call) ->
 %% If call has type 'verto' we will capture it
 nkmedia_call_resolve(Callee, Type, Acc, Call) when Type==verto; Type==all ->
     Dest = [
-        #{dest=>{nkmedia_verto, Pid}}
+        #{dest=>{nkmedia_verto, Pid}, session_config=>#{no_offer_trickle_ice=>true}}
         || Pid <- nkmedia_verto:find_user(Callee)
     ],
     {continue, [Callee, Type, Acc++Dest, Call]};

@@ -56,6 +56,9 @@ syntax(<<"create">>, Syntax, Defaults, Mandatory) ->
             callee => binary,
             caller => map,
             backend => atom,
+            no_offer_trickle_ice => boolean,
+            no_answer_trickle_ice => boolean,
+            trickle_ice_timeout => {integer, 1, none},
             offer => nkmedia_api_syntax:offer(),
             sdp_type => {enum, [webrtc, rtp]},
             events_body => any

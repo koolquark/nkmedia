@@ -333,7 +333,10 @@ nkmedia_call_resolve(Callee, Type, Acc, Call) when Type==sip; Type==all ->
     end,
     Uris2 = nksip_registrar:find(SrvId, sip, User, Domain) ++
             nksip_registrar:find(SrvId, sips, User, Domain),
-    Dests= [#{dest=>{nkmedia_sip, U}, sdp_type=>rtp} || U <- Uris1++Uris2],
+    Dests= [
+        #{dest=>{nkmedia_sip, U}, session_config=>#{sdp_type=>rtp}} 
+        || U <- Uris1++Uris2
+    ],
     {continue, [Callee, Type, Acc++Dests, Call]};
 
 nkmedia_call_resolve(_Callee, _Type, _Acc, _Call) ->

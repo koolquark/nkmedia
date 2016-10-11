@@ -51,6 +51,7 @@
 -define(CALLER_FIELDS, [sdp_type, no_answer_trickle_ice, trickle_ice_timeout, backend]).
 -define(CALLEE_FIELDS, [sdp_type, no_offer_trickle_ice, trickle_ice_timeout, backend]).
 
+-define(DEFAULT_BACKEND, nkmedia_janus).
 
 
 %% ===================================================================
@@ -153,16 +154,16 @@ start(Srv, Callee, Config) ->
 
 start2(Srv, Callee, Config) ->
     case Callee of
-        <<"p2p:", Callee2/binary>> ->
+        <<"p2p-", Callee2/binary>> ->
             Config2 = Config#{backend=>p2p};
-        <<"sip:", Callee2/binary>> ->
+        <<"sip-", Callee2/binary>> ->
             Config2 = Config#{backend=>nkmedia_janus, sdp_type=>rtp};
-        <<"fs:", Callee2/binary>> ->
+        <<"fs-", Callee2/binary>> ->
             Config2 = Config#{backend=>nkmedia_fs};
-        <<"kms:", Callee2/binary>> ->
+        <<"kms-", Callee2/binary>> ->
             Config2 = Config#{backend=>nkmedia_kms};
         Callee2 ->
-            Config2 = Config#{backend=>nkmedia_janus}
+            Config2 = Config#{backend=>?DEFAULT_BACKEND}
     end,
     start(Srv, Callee2, Config2).
 
@@ -196,7 +197,7 @@ accepted(CallId, CalleeId, Answer, Callee) when is_map(Callee) ->
     ok | {error, term()}.
 
 candidate(CallId, CalleeId, Candidate) ->
-    do_call(CallId, {candidate, CalleeId, Candidate}).
+    do_cast(CallId, {candidate, CalleeId, Candidate}).
 
 
 %% @doc Called by the invited process
@@ -267,11 +268,11 @@ get_call(CallId) ->
     pos :: integer(),
     dest :: dest(),
     ring :: integer(),
-    sdp_type :: webrtc | rtp,
     launched :: boolean(),
     timer :: reference(),
     link :: nklib:link(),
     session_id :: session_id(),
+    session_config :: nkmedia_session:config(),
     offer :: nkmedia:offer()
 }).
 
@@ -357,26 +358,6 @@ handle_call({accepted, Id, Answer, Callee}, _From, State) ->
             {reply, {error, invite_not_found}, State}
     end;
 
-handle_call({candidate, Id, Candidate}, _From, State) ->
-    case State of
-        #state{caller_link=Id, caller_session_id=SessId} ->
-            % lager:error("CALLER CANDIDATE"),
-            nkmedia_session:candidate(SessId, Candidate),
-            {reply, ok, State};
-        #state{caller_session_id=Id} ->
-            nkmedia_session:candidate(Id, Candidate),
-            {reply, ok, State};
-        #state{callee_link=Id, callee_session_id=SessId} ->
-            % lager:error("CALLEE CANDIDATE"),
-            nkmedia_session:candidate(SessId, Candidate),
-            {reply, ok, State};
-        #state{callee_session_id=Id} ->
-            nkmedia_session:candidate(Id, Candidate),
-            {reply, ok, State};
-        _ ->
-            {reply, {error, unknown_peer}, State}
-    end;
-
 handle_call(get_call, _From, #state{call=Call}=State) -> 
     {reply, {ok, Call}, State};
 
@@ -418,6 +399,22 @@ handle_cast(start_caller_session, #state{id=CallId, call=Call}=State) ->
         {error, Error, State2} ->
             do_hangup(Error, State2)
     end;
+
+handle_cast({candidate, Id, Candidate}, State) ->
+    case State of
+        #state{caller_link=Id, caller_session_id=SessId} ->
+            nkmedia_session:candidate(SessId, Candidate);
+        #state{caller_session_id=Id} ->
+            nkmedia_session:candidate(Id, Candidate);
+        #state{callee_link=Id, callee_session_id=SessId} ->
+            nkmedia_session:candidate(SessId, Candidate);
+        #state{callee_session_id=Id} ->
+            nkmedia_session:candidate(Id, Candidate);
+        _ ->
+            ?LLOG(warning, "received candidate for unknown peer", [], State),
+            hangup(self(), unknown_peer)
+    end,
+    {noreply, State};
 
 handle_cast({rejected, Id}, State) ->
     case find_invite_by_id(Id, State) of
@@ -526,14 +523,16 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, State) ->
                         #state{callee_link=Link} ->
                             do_hangup(callee_stopped, State2);
                         _ ->
-                            rejected(self(), Link)
+                            rejected(self(), Link),
+                            {noreply, State2}
                     end;
                 callee_session_id ->
                     case State of
                         #state{callee_session_id=Link} ->
                             do_hangup(callee_stopped, State2);
                         _ ->
-                            rejected(self(), Link)
+                            rejected(self(), Link),
+                            {noreply, State2}
                     end;
                 reg ->
                     do_hangup(registered_down, State2)
@@ -604,7 +603,7 @@ launch_invites([#{dest:=Dest}=DestEx|Rest], #state{invites=Invs, pos=Pos}=State)
         dest = Dest, 
         ring = Ring, 
         launched = false,
-        sdp_type = maps:get(sdp_type, DestEx, webrtc)
+        session_config = maps:get(session_config, DestEx, #{})
     },
     case Wait of
         0 -> self() ! {launch_out, Pos};
@@ -661,10 +660,10 @@ launched_retry(Inv, Secs, #state{invites=Invs}=State) ->
 
 %% @private
 start_callee_session(#invite{session_id=undefined}=Inv, State) ->
-    #invite{pos=Pos, sdp_type=Type} = Inv,
-    #state{id=CallId, caller_session_id=CallerSessId, invites=Invs, call=Call} = State,
-    Config1 = maps:with(?CALLEE_FIELDS, Call),
-    Config2 = Config1#{sdp_type=>Type, register=>{nkmedia_call, CallId, self()}},
+    #invite{pos=Pos, session_config=Config} = Inv,
+    #state{id=CallId, caller_session_id=CallerSessId, invites=Invs} = State,
+    Config1 = maps:with(?CALLEE_FIELDS, Config),
+    Config2 = Config1#{register=>{nkmedia_call, CallId, self()}},
     Args = [CallId, CallerSessId, Config2],
     case handle(nkmedia_call_start_callee_session, Args, State) of
         {ok, CalleeSessId, Pid, Offer, State2} ->

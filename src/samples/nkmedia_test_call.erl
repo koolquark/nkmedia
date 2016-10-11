@@ -70,6 +70,12 @@
 %% 5) Call from SIP to native Verto/Janus or API
 %%    - nkmedia_sip_invite() is called, and starts a normal call us before
 %%    - destination can be a native or emulated API session
+%%
+%% 6) Use nkmedia_fs and kms backends
+%%    - Since nkmedia_call:start2/3 is being used, the following prefixes are used:
+%%    - fs: use nkmedia_fs backend. It will bufer candidates if received
+%%    - kms: use nkmedia_kms backend. Verto and Janus use no_answer_trickle_ice for
+%%      the caller and no_offer_trickle_ice for the callee.
 
 
 
@@ -412,7 +418,9 @@ start_call(Dest, Offer, CallId, Ws, Events, _Link) ->
         callee => Dest,
         caller => #{info=>nkmedia_call_test},
         offer => Offer,
-        events_body => Events
+        events_body => Events,
+        no_answer_trickle_ice => true,      % For our answer
+        no_offer_trickle_ice => true        % For B-side offer
     },
     case call_cmd(Ws, create, Config) of
         {ok, #{<<"call_id">>:=CallId}} -> 

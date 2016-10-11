@@ -117,7 +117,8 @@ nkmedia_janus_invite(SrvId, CallId, #{dest:=Dest}=Offer, Janus) ->
         call_id => CallId,
         offer => Offer, 
         caller_link => {nkmedia_janus, CallId, self()},
-        caller => #{info=>janus_native}
+        caller => #{info=>janus_native},
+        no_answer_trickle_ice => true
     },
     case nkmedia_call:start2(SrvId, Dest, Config) of
         {ok, CallId, CallPid} ->
@@ -285,7 +286,7 @@ nkmedia_session_reg_event(_CallId, _Link, _Event, _Call) ->
 %% If call has type 'nkmedia_janus' we will capture it
 nkmedia_call_resolve(Callee, Type, Acc, Call) when Type==janus; Type==all ->
     Dest = [
-        #{dest=>{nkmedia_janus, Pid}}
+        #{dest=>{nkmedia_janus, Pid}, session_config=>#{no_offer_trickle_ice=>true}}
         || Pid <- nkmedia_janus_proto:find_user(Callee)
     ],
     {continue, [Callee, Type, Acc++Dest, Call]};
