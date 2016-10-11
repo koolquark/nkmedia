@@ -150,7 +150,7 @@ start(Srv, Type, Config) ->
     case nkservice_srv:get_srv_id(Srv) of
         {ok, SrvId} ->
             Config2 = Config#{type=>Type, srv_id=>SrvId},
-            {SessId, Config3} = nkmedia_util:add_id(session_id, Config2),
+            {SessId, Config3} = nkmedia_util:add_id(session_id, Config2, session),
             {ok, SessPid} = gen_server:start(?MODULE, [Config3], []),
             {ok, SessId, SessPid};
         not_found ->

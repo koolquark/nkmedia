@@ -30,8 +30,8 @@
          nkmedia_janus_handle_call/3, nkmedia_janus_handle_cast/2,
          nkmedia_janus_handle_info/2]).
 -export([error_code/1]).
--export([nkmedia_call_resolve/4, nkmedia_call_invite/5, 
-         nkmedia_call_answer/4, nkmedia_call_cancelled/3, 
+-export([nkmedia_call_resolve/4, nkmedia_call_invite/6, 
+         nkmedia_call_answer/6, nkmedia_call_cancelled/3, 
          nkmedia_call_reg_event/4]).
 -export([nkmedia_session_reg_event/4]).
 
@@ -113,20 +113,13 @@ nkmedia_janus_registered(_User, Janus) ->
     {rejected, nkservice:error(), janus()} | continue().
 
 nkmedia_janus_invite(SrvId, CallId, #{dest:=Dest}=Offer, Janus) ->
-    Config1 = #{
+    Config = #{
         call_id => CallId,
         offer => Offer, 
-        caller_link => {nkmedia_janus, CallId, self()}
+        caller_link => {nkmedia_janus, CallId, self()},
+        caller => #{info=>janus_native}
     },
-    Config2 = case Dest of
-        <<"p2p:", Callee/binary>> ->
-            Config1;
-        <<"sip:", Callee/binary>> ->
-            Config1#{backend=>nkmedia_janus, sdp_type=>rtp};
-        Callee ->
-            Config1#{backend=>nkmedia_janus}
-    end,
-    case nkmedia_call:start(SrvId, Callee, Config2) of
+    case nkmedia_call:start2(SrvId, Dest, Config) of
         {ok, CallId, CallPid} ->
             {ok, {nkmedia_call, CallId, CallPid}, Janus};
         {error, Error} ->
@@ -153,9 +146,9 @@ nkmedia_janus_answer(_CallId, {nkmedia_session, SessId, _Pid}, Answer, Janus) ->
 % If the registered process happens to be {nkmedia_call, ...} and we have
 % an answer for an invite we received, we set the answer in the call
 nkmedia_janus_answer(_CallId, {nkmedia_call, CallId, _Pid}, Answer, Janus) ->
-    Callee = #{answer=>Answer},
-    case nkmedia_call:answered(CallId, {nkmedia_janus, CallId, self()}, Callee) of
-        ok ->
+    Id = {nkmedia_janus, CallId, self()},
+    case nkmedia_call:accepted(CallId, Id, Answer, #{module=>nkmedia_janus}) of
+        {ok, _} ->
             {ok, Janus};
         {error, Error} ->
             {hangup, Error, Janus}
@@ -308,26 +301,27 @@ nkmedia_call_resolve(_Callee, _Type, _Acc, _Call) ->
 
 %% We register with janus as {nkmedia_janus_call, CallId, PId},
 %% and with the call as {nkmedia_janus, Pid}
-nkmedia_call_invite(CallId, {nkmedia_janus, Pid}, _SessId, #{offer:=Offer}, Call) ->
+nkmedia_call_invite(CallId, {nkmedia_janus, Pid}, _SessId, Offer, _Caller, Call) ->
     CallLink = {nkmedia_call, CallId, self()},
     {ok, JanusLink} = nkmedia_janus_proto:invite(Pid, CallId, Offer, CallLink),
     {ok, JanusLink, Call};
 
-nkmedia_call_invite(_CallId, _Dest, _SessId, _Data, _Call) ->
+nkmedia_call_invite(_CallId, _Dest, _SessId, _Offer, _Caller, _Call) ->
     continue.
 
 
 %% @private
-nkmedia_call_answer(CallId, {nkmedia_janus, CallId, Pid}, #{answer:=Answer}, Call) ->
+nkmedia_call_answer(CallId, {nkmedia_janus, CallId, Pid}, _SessId, Answer, 
+                    _Callee, Call) ->
     case nkmedia_janus_proto:answer(Pid, CallId, Answer) of
         ok ->
             {ok, Call};
         {error, Error} ->
             lager:error("Error setting Verto answer: ~p", [Error]),
-            {error, Error}
+            {error, Error, Call}
     end;
 
-nkmedia_call_answer(_CallId, _Link, _Callee, _Call) ->
+nkmedia_call_answer(_CallId, _Link, _SessId, _Answer, _Callee, _Call) ->
     continue.
 
 

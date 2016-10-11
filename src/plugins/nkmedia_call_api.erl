@@ -22,10 +22,12 @@
 -module(nkmedia_call_api).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([cmd/4]).
-% -export([api_server_reg_down/3, api_server_handle_cast/2]).
+-export([cmd/3]).
+-export([resolve/4, invite/6, cancel/3, answer/6, candidate/4]).
+-export([call_event/4]).
 
 -include_lib("nkservice/include/nkservice.hrl").
+-include_lib("nksip/include/nksip.hrl").
 
 
 %% ===================================================================
@@ -33,19 +35,25 @@
 %% ===================================================================
 
 
-%% Registers the call session with the API session (to monitor DOWNs)
-%% as (nkmedia_call, CallId, CallPid)
-%% Registers the API session with the media session (as nkmedia_api, pid())
+%% @doc An call start has been received
+%% - We start the call, the callee_link is the user session process
+%%   (if the user session stops, the call will be destroyed)
+%% - We register the user session process with the call also
+%%   (if the call stops, it is detected)
+
+%% - When the call has an answer or candidates, functions in 
+%%   nkmedia_call_lib will be called
+
 %% Subscribes to events
-cmd(<<"call">>, <<"start">>, Req, State) ->
+cmd(<<"create">>, Req, State) ->
     #api_req{srv_id=SrvId, data=Data, user=User, session=UserSession} = Req,
     #{callee:=Callee} = Data,
     Config = Data#{
-        register => {nkmedia_api, self()},
+        caller_link => {nkmedia_api, self()},
         user_id => User,
         user_session => UserSession
     },
-    {ok, CallId, Pid} = nkmedia_call:start(SrvId, Callee, Config),
+    {ok, CallId, Pid} = nkmedia_call:start2(SrvId, Callee, Config),
     nkservice_api_server:register(self(), {nkmedia_call, CallId, Pid}), 
     case maps:get(subscribe, Data, true) of
         true ->
@@ -58,11 +66,10 @@ cmd(<<"call">>, <<"start">>, Req, State) ->
     end,
     {ok, #{call_id=>CallId}, State};
 
-cmd(<<"call">>, <<"ringing">>, #api_req{data=Data, session=SessId}, State) ->
+cmd(<<"ringing">>, #api_req{data=Data}, State) ->
     #{call_id:=CallId} = Data,
-    Answer = maps:get(answer, Data, #{}),
-    lager:error("CALL RINGING2: ~p", [CallId]),
-    case nkmedia_call:ringing(CallId, SessId, Answer) of
+    Callee = maps:get(callee, Data, #{}),
+    case nkmedia_call:ringing(CallId, {nkmedia_api, self()}, Callee) of
         ok ->
             {ok, #{}, State};
         {error, invite_not_found} ->
@@ -74,36 +81,25 @@ cmd(<<"call">>, <<"ringing">>, #api_req{data=Data, session=SessId}, State) ->
             {error, call_error, State}
     end;
 
-cmd(<<"call">>, <<"answered">>, Req, State) ->
-    #api_req{srv_id=SrvId, data=Data, session=SessId} = Req,
+cmd(<<"accepted">>, #api_req{srv_id=_SrvId, data=Data}, State) ->
     #{call_id:=CallId} = Data,
     Answer = maps:get(answer, Data, #{}),
-    case nkmedia_call:answered(CallId, SessId, Answer) of
-        ok ->
-            % We are the 'B' leg of the call, let's register with it
-            % and start events
-            {ok, _CallPid} = nkmedia_call:register(CallId, {nkmedia_api, self()}),
-            case maps:get(subscribe, Data, true) of
-                true ->
-                    RegId = call_reg_id(SrvId, <<"*">>, CallId),
-                    Body = maps:get(events_body, Data, #{}),
-                    nkservice_api_server:register_events(self(), RegId, Body);
-                false -> 
-                    ok
-            end,
+    Callee = maps:get(callee, Data, #{}),
+    case nkmedia_call:accepted(CallId, {nkmedia_api, self()}, Answer, Callee) of
+        {ok, _Pid} ->
             {ok, #{}, State};
         {error, invite_not_found} ->
             {error, already_answered, State};
         {error, call_not_found} ->
             {error, call_not_found, State};
         {error, Error} ->
-            lager:warning("Error in call answered: ~p", [Error]),
+            lager:warning("Error in call accepted: ~p", [Error]),
             {error, call_error, State}
     end;
 
-cmd(<<"call">>, <<"rejected">>, #api_req{data=Data, session=SessId}, State) ->
+cmd(<<"rejected">>, #api_req{data=Data}, State) ->
     #{call_id:=CallId} = Data,
-    case nkmedia_call:rejected(CallId, SessId) of
+    case nkmedia_call:rejected(CallId, {nkmedia_api, self()}) of
         ok ->
             {ok, #{}, State};
         {error, call_not_found} ->
@@ -113,9 +109,37 @@ cmd(<<"call">>, <<"rejected">>, #api_req{data=Data, session=SessId}, State) ->
             {error, call_error, State}
     end;
 
-cmd(<<"call">>, <<"hangup">>, #api_req{data=Data}, State) ->
+cmd(<<"set_candidate">>, #api_req{data=Data}, State) ->
+    #{
+        call_id := CallId, 
+        sdpMid := Id, 
+        sdpMLineIndex := Index, 
+        candidate := ALine
+    } = Data,
+    Candidate = #candidate{m_id=Id, m_index=Index, a_line=ALine},
+    case nkmedia_call:candidate(CallId, {nkmedia_api, self()}, Candidate) of
+        ok ->
+            {ok, #{}, State};
+        {error, Error} ->
+            {error, Error, State}
+    end;
+
+cmd(<<"set_candidate_end">>, #api_req{data=Data}, State) ->
+    #{call_id := CallId} = Data,
+    Candidate = #candidate{last=true},
+    case nkmedia_call:candidate(CallId, {nkmedia_api, self()}, Candidate) of
+        ok ->
+            {ok, #{}, State};
+        {error, Error} ->
+            {error, Error, State}
+    end;
+
+cmd(<<"hangup">>, #api_req{data=Data}, State) ->
     #{call_id:=CallId} = Data,
-    Reason = maps:get(reason, Data, <<"user_hangup">>),
+    Reason = case maps:find(reason, Data) of
+        {ok, UserReason} -> {api_hangup, UserReason};
+        error -> api_hangup
+    end,
     case nkmedia_call:hangup(CallId, Reason) of
         ok ->
             {ok, #{}, State};
@@ -126,23 +150,118 @@ cmd(<<"call">>, <<"hangup">>, #api_req{data=Data}, State) ->
             {error, call_error, State}
     end;
 
-cmd(_SrvId, Other, _Data, State) ->
-    {error, {unknown_command, Other}, State}.
+cmd(<<"get_info">>, #api_req{data=Data}, State) ->
+    #{call_id:=CallId} = Data,
+    case nkmedia_call:get_call(CallId) of
+        {ok, Call} ->
+            Keys = nkmedia_call_api_syntax:call_fields(),
+            Data2 = maps:with(Keys, Call),
+            {ok, Data2, State};
+        {error, Error} ->
+            {error, Error, State}
+    end;
 
+cmd(<<"get_list">>, _Req, State) ->
+    Res = [#{call_id=>Id} || {Id, _Pid} <- nkmedia_call:get_all()],
+    {ok, Res, State};
+
+
+cmd(Cmd, _Req, State) ->
+    {error, {unknown_command, Cmd}, State}.
 
 
 %% ===================================================================
-%% Call callbacks
+%% Internal
 %% ===================================================================
 
 
-% %% @private
-% nkmedia_call_reg_event(CallId, {nkmedia_api, Pid}, {hangup, _Reason}, Call) ->
-%     gen_server:cast(Pid, {nkmedia_api_call_hangup, CallId, self()}),
-%     {ok, Call};
+%% @private Called from nkmedia_call_callbacks
+resolve(User, user, Acc, Call) ->
+    Dests = [
+        #{dest=>{nkmedia_api_user, Pid}} 
+        || {_SessId, Pid} <- nkservice_api_server:find_user(User)
+    ],
+    {ok, Acc++Dests, Call};
 
-% nkmedia_call_reg_event(_CallId, _RegId, _Event, Call) ->
-%     {ok, Call}.
+resolve(Callee, session, Acc, Call) ->
+    Callee2 = nklib_util:to_binary(Callee),
+    Dests = case nkservice_api_server:find_session(Callee2) of
+        {ok, _User, Pid} ->
+            [#{dest=>{nkmedia_api_session, Callee2, Pid}}];
+        not_found ->
+            []
+    end,
+    {ok, Acc++Dests, Call};
+
+resolve(Callee, all, Acc, Call) ->
+    {ok, Acc2, Call2} = resolve(Callee, user, Acc, Call),
+    resolve(Callee, session, Acc2, Call2);
+
+resolve(_Callee, _Type, Acc, Call) ->
+    {ok, Acc, Call}.
+
+
+%% @private Sends a call INVITE over the API (for user or session types)
+%% Called from nkmedia_call_callbacks
+%% - If the user accepts the call, the user session will be registered as callee
+%% - The user must call accepted or rejected
+invite(CallId, {Type, Pid}, SessId, Offer, Caller, #{srv_id:=SrvId}=Call) ->
+    Data = #{
+        call_id => CallId, 
+        type => Type, 
+        session_id => SessId, 
+        offer => Offer,
+        caller => Caller
+    },
+    case nkservice_api_server:cmd(Pid, media, call, invite, Data) of
+        {ok, <<"ok">>, Res} ->
+            nkservice_api_server:register(Pid, {nkmedia_call, CallId, self()}), 
+            case maps:get(subscribe, Res, true) of
+                true ->
+                    RegId = call_reg_id(SrvId, <<"*">>, CallId),
+                    Body = maps:get(events_body, Res, #{}),
+                    nkservice_api_server:register_events(Pid, RegId, Body);
+                false -> 
+                    ok
+            end,
+            {ok, {nkmedia_api, Pid}, Call};
+        {ok, <<"error">>, _} ->
+            {remove, Call};
+        {error, _Error} ->
+            {remove, Call}
+    end.
+
+
+%% @private
+cancel(CallId, Pid, Call) ->
+    nkmedia_call_api_events:event(CallId, cancelled, Call, Pid).
+
+
+%% @private 
+answer(CallId, Pid, SessId, Answer, Callee, Call) ->
+    nkmedia_call_api_events:event(CallId, {answer, SessId, Answer, Callee}, Call, Pid).
+
+
+%% @private 
+candidate(CallId, Pid, Candidate, Call) ->
+    nkmedia_call_api_events:event(CallId, {candidate, Candidate}, Call, Pid).
+
+
+%% @private
+%% The event will be captured as standard, no need to send it here
+call_event(CallId, ApiPid, {hangup, _Reason}, #{srv_id:=SrvId}=Call) ->
+    nkservice_api_server:unregister(ApiPid, {nkmedia_call, CallId, self()}),
+    RegId = call_reg_id(SrvId, <<"*">>, CallId),
+    nkservice_api_server:unregister_events(ApiPid, RegId),
+    {ok, Call};
+
+call_event(_CallId, _Pid, _Event, Call) ->
+    {ok, Call}.
+
+
+%% ===================================================================
+%% Private
+%% ===================================================================
 
 
 %% @private
@@ -154,20 +273,5 @@ call_reg_id(SrvId, Type, CallId) ->
         type = nklib_util:to_binary(Type),
         obj_id = CallId
     }.
-
-
-%% ===================================================================
-%% API server callbacks
-%% ===================================================================
-
-
-% %% @private Called from nkmedia_callbacks, if a registered link is down
-% api_server_reg_down({nkmedia_call, CallId, _CallPid}, Reason, State) ->
-%     lager:warning("API Server: Call ~s is down: ~p", [CallId, Reason]),
-%     {ok, State};
-
-% api_server_reg_down(_Link, _Reason, _State) ->
-%     continue.
-
 
 

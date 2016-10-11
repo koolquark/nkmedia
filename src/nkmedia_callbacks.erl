@@ -94,6 +94,7 @@ error_code(offer_already_set) 		-> 	{300011, "Offer already set"};
 error_code(answer_not_set) 			-> 	{300012, "Answer not set"};
 error_code(answer_already_set) 		-> 	{300013, "Answer already set"};
 error_code(no_ice_candidates) 		-> 	{300014, "No ICE candidates"};
+error_code(missing_sdp) 			-> 	{300015, "Missing SDP"};
 
 error_code(bridge_stop)       		->  {300020, "Bridge stop"};
 error_code(peer_stopped)       		->  {300021, "Peer session stopped"};

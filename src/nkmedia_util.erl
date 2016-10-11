@@ -21,7 +21,7 @@
 -module(nkmedia_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([get_q850/1, add_id/2, filter_codec/3]).
+-export([get_q850/1, add_id/2, add_id/3, filter_codec/3]).
 -export([kill/1]).
 -export([remove_sdp_data_channel/1]).
 -export_type([stop_reason/0, q850/0]).
@@ -40,15 +40,23 @@
 
 %% @private
 add_id(Key, Config) ->
+	add_id(Key, Config, <<>>).
+
+
+%% @private
+add_id(Key, Config, Prefix) ->
 	case maps:find(Key, Config) of
 		{ok, Id} when is_binary(Id) ->
 			{Id, Config};
 		{ok, Id} ->
 			Id2 = nklib_util:to_binary(Id),
 			{Id2, maps:put(Key, Id2, Config)};
+		_ when Prefix == <<>> ->
+			Id = nklib_util:uuid_4122(),
+			{Id, maps:put(Key, Id, Config)};
 		_ ->
 			Id1 = nklib_util:uuid_4122(),
-			Id2 = <<(nklib_util:to_binary(Key))/binary, $_, Id1/binary>>,
+			Id2 = <<(nklib_util:to_binary(Prefix))/binary, $-, Id1/binary>>,
 			{Id2, maps:put(Key, Id2, Config)}
 	end.
 

@@ -20,43 +20,59 @@
 %% -------------------------------------------------------------------
 
 %% @doc Testing the call system (try after nkmedia_test and nkmedia_test_api)
-%% We can test here:
 %% 
-%% 1) Normal call
-%%    - A Verto or Janus session connects to a registered user
-%%    - A session is started, registers with Janus or Verto process, and viceversa
-%%    - A call is started over API
-%%    - The other party receives the INVITE (api_client_fun) and send ringing back.
-%%      Then create the Janus/Verto invite, registered as {test_ call, Id Pid}
-%%      If they answer, we capture it in this file and send the answer.
-%%      Same if rejected
-%%    - If it answers, send the answer to the call, and the call to the session. 
-%%      We caller receive only the call event (we didn't subscribe to session events)
-%%      Since we registered as {nkmedia_verto, _, _}, the caller Janus or Verto will
-%%      detect the answer automatically. Otherwise, we need to get the answer from the
-%%      call, send it to the session, and get the new answer, or susbcribe to session
-%%      events (and leave the call linked with the session)
+%% Ww have native connections (Verto, Janus, SIP, API) and 
+%% we can use Verto/Janus to simulate API connections (login with tXXX, api user is XXX)
 %%
-%% 2) Connect to a 'default' Verto session
-%%    - Start a verto session as vXXXXX
-%%    - Janus or Verto calls to a connected user vXXXXX
-%%    - Similar to previous case, but the call type is "verto"
-%%    - At the server, Verto plugin captures the call, resolve and call invite, and
-%%      calls directly to Verto
-%%    - Verto either rejects or acceptes the call, sending the answer to the call,
-%%      and the call to the session.
-%%    - If this Verto instance calls, the default implementation of nkmedia_verto_invite
-%%      will start a session (linked with it) and a call. 
-%%    - Destinations "p2p:", "verto:", "sip:" and standard are accepted
+%% 1) Call from Verto/Janus native to API (Verto/Janus emulated)
+%%    - A Verto or Janus session logins (caller, native, without "t")
+%%    - Another Verto/Janus logins as API (with "t")
+%%    - When the first calls, the native processing in nkmedia_verto_callabacks
+%%      takes place (see nkmedia_verto_invite).
+%%    - A call is started that generates two sessions.
+%%      nkmedia_call_resolve and nkmedia_call_invite are called
+%%    - Since the callee is an API 'user' endpoint, in nkmedia_call_api:resolve/3 it
+%%      is directed to {nkmedia_api_user, Pid}. In invite/6, we send the invite
+%%      over the wire. It is captured in api_client_fun/2 here, and a INVITE is
+%%      sent to Janus/Verto registerd with {test_api_server, Pid}.
+%%    - If it rejects, is detected here and a 'rejected' is sent over the wire.
+%%      Same if hangup. If answered, an 'accepted' is sent.
+%%    - NkMEDIA detects the answer and nkmedia_call_answer is called, detected
+%%      by Janus/Verto
+%%    - Must test rejecting the call at any destination, hangup, cancel
+%%    - Must test calling Janus, to send candidates. If caller is also Janus, 
+%%      candidates must flow in both directions
+%%
+%% 2) Call from API (Verto/Janus emulated) to Verto/Janus
+%%    - A Janus/Verto emulated (with "t") calls to a native one
+%%    - nkmedia_verto_invite (or janus) here is called. It sends a call creation
+%%      request over the API, and registers the Verto/Janus session with our client API
+%%    - When the answer is received it gets api_client_fun, same for hangup
+%%    - nkmedia_call_resolve is called, and captured at destination Verto/Janus
+%%    - nkmedia_call_invite is also captured (see nkmedia_verto_callbacks for details)
+%%    - Test rejecting, cancelling, candidates in destination or both
+%%    - Test Janus/Janus to test candidates in both directions
 %% 
-%% 3) Calling to SIP
-%%    - All SIP processing is standard SIP plugin behaviour
-%%    - When normal Janus/Verto calls to a number starting with "s" is is understood
-%%      as a SIP destionation. Can be a registered user, with or without domain,
-%%      or a full SIP address
-%%    - From native verto instances (registered as vXXXX), use sip:...
-%%    - If receive a call from SIP, it is accepted "sip-", "verto-" or normal user
+%% 3) Call from Verto/Janus to SIP
+%%    - When native Verto/Janus calls a number that is resolved to sip in
+%%      nkmedia_sip_callbacks:nkmedia_call_resolve(), the invite is also captured.
+%%      Functions nkmedia_sip_invite_ringing, _rejected and _answered are called
+%%      However, with the default janus backend, you must use "sip:XXX" so that 
+%%      the caller session is created with sdp_type=rtp (see nkmedia_call:start2())
+%%    - Try cancel, rejected, hangup on both sides
+%%    - See options sip_registrar, sip_invite_to_not_registered, etc. in
+%%      nkmedia_sip_callbacks
 %%
+%% 4) Call from API to SIP
+%%    - The same happens here in start_call() when the call comes from an emulated
+%%      API with Janus or Verto (registered with "t")
+%%
+%% 5) Call from SIP to native Verto/Janus or API
+%%    - nkmedia_sip_invite() is called, and starts a normal call us before
+%%    - destination can be a native or emulated API session
+
+
+
 
 
 
@@ -93,7 +109,7 @@ start() ->
         janus_proxy=> "janus_proxy:all:8990",
         kurento_proxy => "kms:all:8433",
         nksip_trace => {console, all},
-        sip_listen => "sip:all:9012",
+        sip_listen => "sip:all:8060",
         log_level => debug,
         api_gelf_server => "c2.netc.io"
     },
@@ -163,7 +179,6 @@ get_client() ->
     C.
 
 
-
 call_cmd(C, Cmd, Data) ->
     nkservice_api_client:cmd(C, media, call, Cmd, Data).
 
@@ -200,8 +215,8 @@ api_subscribe_allow(SrvId, Class, SubClass, Type, State) ->
 % Without t, it is a 'standard' verto Session
 nkmedia_verto_login(Login, Pass, Verto) ->
     case nkmedia_test:nkmedia_verto_login(Login, Pass, Verto) of
-        {true, <<"t", _/binary>>=User, Verto2} ->
-            Pid = connect(User, #{test_verto_server=>self()}),
+        {true, <<"t", Num/binary>>=User, Verto2} ->
+            Pid = connect(Num, #{test_verto_server=>self()}),
             {true, User, Verto2#{test_api_server=>Pid}};
         {true, User, Verto2} ->
             {true, User, Verto2};
@@ -210,7 +225,7 @@ nkmedia_verto_login(Login, Pass, Verto) ->
     end.
 
 
-%% @private Verto but using API Call emulation
+%% @private Verto incoming call using API Call emulation
 nkmedia_verto_invite(_SrvId, CallId, Offer, #{test_api_server:=Ws}=Verto) ->
     true = is_process_alive(Ws),
     #{dest:=Dest} = Offer,
@@ -220,8 +235,8 @@ nkmedia_verto_invite(_SrvId, CallId, Offer, #{test_api_server:=Ws}=Verto) ->
     },
     Link = {nkmedia_verto, CallId, self()},
     case start_call(Dest, Offer, CallId, Ws, Events, Link) of
-        {ok, Link2} ->
-            {ok, Link2, Verto};
+        ok ->
+            {ok, {test_api_server, Ws}, Verto};
         {rejected, Reason} ->
             lager:notice("Verto invite rejected ~p", [Reason]),
             {rejected, Reason, Verto}
@@ -233,14 +248,14 @@ nkmedia_verto_invite(_SrvId, _CallId, _Offer, _Verto) ->
 
 
 %% @private
-nkmedia_verto_answer(CallId, {test_call, CallId, WsPid}, Answer, Verto) ->
-    #{test_api_server:=WsPid} = Verto,
-    case call_cmd(WsPid, answered, #{call_id=>CallId, answer=>Answer}) of
+nkmedia_verto_answer(CallId, {test_api_server, Ws}, Answer, Verto) ->
+    Callee = #{info => nkmedia_verto_test},
+    case call_cmd(Ws, accepted, #{call_id=>CallId, answer=>Answer, callee=>Callee}) of
         {ok, #{}} ->
             %% Call will get the answer and send it back to the session
             ok;
         {error, Error} ->
-            lager:notice("VERTO CALL REJECTED: ~p", [Error]),
+            lager:notice("VERTO CALL ERROR: ~p", [Error]),
             nkmedia_verto:hangup(self(), CallId)
     end,
     {ok, Verto};
@@ -250,9 +265,8 @@ nkmedia_verto_answer(_CallId, _Link, _Answer, _Verto) ->
 
 
 %% @private
-nkmedia_verto_rejected(CallId, {test_call, CallId, WsPid}, Verto) ->
-    #{test_api_server:=WsPid} = Verto,
-    call_cmd(WsPid, rejected, #{call_id=>CallId}),
+nkmedia_verto_rejected(CallId, {test_api_server, Ws}, Verto) ->
+    call_cmd(Ws, rejected, #{call_id=>CallId}),
     {ok, Verto};
 
 nkmedia_verto_rejected(_CallId, _Link, _Verto) ->
@@ -260,9 +274,8 @@ nkmedia_verto_rejected(_CallId, _Link, _Verto) ->
 
 
 %% @private
-nkmedia_verto_bye(CallId, {test_call, CallId, WsPid}, Verto) ->
-    #{test_api_server:=WsPid} = Verto,
-    call_cmd(WsPid, hangup, #{call_id=>CallId}),
+nkmedia_verto_bye(CallId, {test_api_server, Ws}, Verto) ->
+    call_cmd(Ws, hangup, #{call_id=>CallId, reason=>vertoBye}),
     {ok, Verto};
 
 nkmedia_verto_bye(_CallId, _Link, _Verto) ->
@@ -281,8 +294,8 @@ nkmedia_verto_terminate(Reason, Verto) ->
 
 %% @private
 %% If the register with tXXXX, and API session is emulated
-nkmedia_janus_registered(<<"t", _/binary>>=User, Janus) ->
-    Pid = connect(User, #{test_janus_server=>self()}),
+nkmedia_janus_registered(<<"t", Num/binary>>, Janus) ->
+    Pid = connect(Num, #{test_janus_server=>self()}),
     {ok, Janus#{test_api_server=>Pid}};
 
 nkmedia_janus_registered(_User, Janus) ->
@@ -300,8 +313,8 @@ nkmedia_janus_invite(_SrvId, CallId, Offer, #{test_api_server:=Ws}=Janus) ->
     },
     Link = {nkmedia_janus, CallId, self()},
     case start_call(Dest, Offer, CallId, Ws, Events, Link) of
-        {ok, Link2} ->
-            {ok, Link2, Janus};
+        ok ->
+            {ok, {test_api_server, Ws}, Janus};
         {rejected, Reason} ->
             lager:notice("Janus invite rejected ~p", [Reason]),
             {rejected, Reason, Janus}
@@ -313,14 +326,14 @@ nkmedia_janus_invite(_SrvId, _CallId, _Offer, _Janus) ->
 
 
 %% @private
-nkmedia_janus_answer(CallId, {test_call, CallId, WsPid}, Answer, Janus) ->
-    #{test_api_server:=WsPid} = Janus,
-    case call_cmd(WsPid, answered, #{call_id=>CallId, answer=>Answer}) of
+nkmedia_janus_answer(CallId, {test_api_server, Ws}, Answer, Janus) ->
+    Callee = #{info => nkmedia_janus_test},
+    case call_cmd(Ws, accepted, #{call_id=>CallId, answer=>Answer, callee=>Callee}) of
         {ok, #{}} ->
             %% Call will get the answer and send it back to the session
             ok;
         {error, Error} ->
-            lager:notice("JANUS CALL REJECTED: ~p", [Error]),
+            lager:notice("JANUS CALL ERROR: ~p", [Error]),
             nkmedia_janus_proto:hangup(self(), CallId)
     end,
     {ok, Janus};
@@ -330,10 +343,31 @@ nkmedia_janus_answer(_CallId, _Link, _Answer, _Janus) ->
 
 
 %% @private
-nkmedia_janus_bye(CallId, {test_call, VCallId, _Pid}, #{test_api_server:=Ws}=Verto) ->
-    CallId = VCallId,
-    {ok, #{}} = call_cmd(Ws, hangup, #{call_id=>CallId, reason=><<"Janus Stop">>}),
-    {ok, Verto};
+nkmedia_janus_candidate(CallId, {test_api_server, Ws}, Candidate, Janus) ->
+    case Candidate of
+        #candidate{last=true} ->
+            lager:error("CC1"),
+            {ok, _} = call_cmd(Ws, set_candidate_end, #{call_id=>CallId});
+        #candidate{m_id=Id, m_index=Index, a_line=ALine} ->
+            lager:error("CC2"),
+            Data = #{
+                call_id => CallId, 
+                sdpMid => Id, 
+                sdpMLineIndex => Index, 
+                candidate => ALine
+            },
+            {ok, _} = call_cmd(Ws, set_candidate, Data)
+    end,
+    {ok, Janus};
+
+nkmedia_janus_candidate(_CallId, _Link, _Candidate, _Janus) ->
+    continue.
+
+
+%% @private
+nkmedia_janus_bye(CallId, {test_api_server, Ws}, Janus) ->
+    call_cmd(Ws, hangup, #{call_id=>CallId, reason=><<"Janus Stop">>}),
+    {ok, Janus};
 
 nkmedia_janus_bye(_CallId, _Link, _Verto) ->
     continue.
@@ -370,57 +404,21 @@ nks_sip_connection_recv(SipMsg, _Packet) ->
 %% Internal
 %% ===================================================================
 
-%% @private
-incoming(<<"j", Num/binary>>, Offer, CallId, WsPid, Events, Opts) ->
-    MasterConfig = incoming_config(nkmedia_janus, proxy, Offer, Events, Opts),
-    {ok, SessId, SessPid} = nkmedia_test_api:start_session(WsPid, MasterConfig),
-    CallConfig = #{
+
+start_call(Dest, Offer, CallId, Ws, Events, _Link) ->
+    Config = #{ 
         call_id => CallId,
-        callee => Num, 
-        invite => #{module=>?MODULE}, 
-        session_id => SessId,
-        events_body => Events
-    },
-    % We start a call, link the ws session with the call, and subscribe to events
-    case call_cmd(WsPid, start, CallConfig) of
-        {ok, #{<<"call_id">>:=CallId}} -> 
-            {ok, {nkmedia_session, SessId, SessPid}};
-        Other ->
-            nkmedia_session:stop(SessId),
-            {error, {call_error, Other}}
-    end.
-
-
-start_call(Dest, Offer, CallId, WsPid, Events, Link) ->
-    {Type, Backend, Callee, ProxyType} = case Dest of
-        <<"jv", _/binary>> -> {verto, nkmedia_janus, Dest, webrtc};
-        <<"kv", _/binary>> -> {verto, nkmedia_kms, Dest, webrtc};
-        <<"s", Rest/binary>> -> {sip, Rest, rtp};
-        _ -> {user, Dest, webrtc}
-    end,
-    SessConfig = #{
-        backend => Backend, 
-        sdp_type => ProxyType,
+        type => all,
+        callee => Dest,
+        caller => #{info=>nkmedia_call_test},
         offer => Offer,
-        register => Link
-    },
-    {ok, SessId, SessPid} = nkmedia_session:start(test, proxy, SessConfig),
-    {ok, Offer2} = nkmedia_session:cmd(SessId, get_proxy_offer),
-    CallConfig = #{
-        call_id => CallId,
-        type => Type,         
-        callee => Callee, 
-        invite => #{offer=>Offer2, module=>?MODULE}, 
-        session_id => SessId,
         events_body => Events
     },
-    % We start a call, link the ws session with the call, and subscribe to events
-    case call_cmd(WsPid, start, CallConfig) of
+    case call_cmd(Ws, create, Config) of
         {ok, #{<<"call_id">>:=CallId}} -> 
-            {ok, {nkmedia_session, SessId, SessPid}};
-        Other ->
-            nkmedia_session:stop(SessId),
-            {error, {call_error, Other}}
+            ok;
+        {error, Error} ->
+            {error, Error}
     end.
 
 
@@ -435,8 +433,8 @@ incoming_config(Backend, Type, Offer, Events, Opts) ->
 
 
 %% @private
-start_call(WsPid, Callee, Config) ->
-    case call_cmd(WsPid, start, Config#{callee=>Callee}) of
+start_call(Ws, Callee, Config) ->
+    case call_cmd(Ws, start, Config#{callee=>Callee}) of
         {ok, #{<<"call_id">>:=_CallId}} -> 
             ok;
         {error, Error} ->
@@ -446,6 +444,7 @@ start_call(WsPid, Callee, Config) ->
 
 %% @private
 api_client_fun(#api_req{class = <<"core">>, cmd = <<"event">>, data = Data}, UserData) ->
+    % lager:error("FUN: ~p", [Data]),
     Class = maps:get(<<"class">>, Data),
     Sub = maps:get(<<"subclass">>, Data, <<"*">>),
     Type = maps:get(<<"type">>, Data, <<"*">>),
@@ -467,7 +466,13 @@ api_client_fun(#api_req{class = <<"core">>, cmd = <<"event">>, data = Data}, Use
     end,
     case {Class, Sub, Type} of
         {<<"media">>, <<"call">>, <<"answer">>} ->
-            ok;
+            #{<<"answer">>:=#{<<"sdp">>:=SDP}} = Body,
+            case Sender of
+                {verto, CallId, Pid} ->
+                    nkmedia_verto:answer(Pid, CallId, #{sdp=>SDP});
+                {janus, CallId, Pid} ->
+                    nkmedia_janus_proto:answer(Pid, CallId, #{sdp=>SDP})
+            end;
         {<<"media">>, <<"call">>, <<"hangup">>} ->
             case Sender of
                 {verto, CallId, Pid} ->
@@ -490,21 +495,21 @@ api_client_fun(#api_req{class = <<"core">>, cmd = <<"event">>, data = Data}, Use
 
 api_client_fun(#api_req{cmd= <<"invite">>, data=Data}, UserData) ->
     #{<<"call_id">>:=CallId, <<"offer">>:=Offer} = Data,
+    #{<<"sdp">>:=SDP} = Offer,
     lager:info("INVITE: ~p", [UserData]),
     Self = self(),
     spawn(
         fun() ->
-            call_cmd(Self, ringing, #{call_id=>CallId}),
+            {ok, _} = 
+                call_cmd(Self, ringing, #{call_id=>CallId, callee=>#{api_test=>true}}),
+            Link = {test_api_server, Self},
             case UserData of
                 #{test_janus_server:=JanusPid} ->
-                    timer:sleep(1000),
-                    Link = {test_call, CallId, Self},
-                    #{<<"sdp">>:=SDP} = Offer,
-                    ok = nkmedia_janus_proto:invite(JanusPid, CallId, #{sdp=>SDP}, Link);
+                    {ok, _} = 
+                        nkmedia_janus_proto:invite(JanusPid, CallId, #{sdp=>SDP}, Link);
                 #{test_verto_server:=VertoPid} ->
-                    Link = {test_call, CallId, Self},
-                    #{<<"sdp">>:=SDP} = Offer,
-                    ok = nkmedia_verto:invite(VertoPid, CallId, #{sdp=>SDP}, Link)
+                    {ok, _} = 
+                        nkmedia_verto:invite(VertoPid, CallId, #{sdp=>SDP}, Link)
             end
         end),
     {ok, #{}, UserData};

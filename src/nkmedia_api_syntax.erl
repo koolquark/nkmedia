@@ -215,10 +215,9 @@ syntax(<<"session">>, <<"set_candidate">>, Syntax, Defaults, Mandatory) ->
 syntax(<<"session">>, <<"set_candidate_end">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
-			session_id => binary,
-			role => {enum, [caller, callee]}
+			session_id => binary
 		},
-		Defaults#{role=>caller},
+		Defaults,
 		[session_id|Mandatory]
 	};
 

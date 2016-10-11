@@ -22,9 +22,9 @@
 -module(nkmedia_call_api_events).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([event/3]).
+-export([event/3, event/4]).
 
-% -include_lib("nkservice/include/nkservice.hrl").
+-include_lib("nksip/include/nksip.hrl").
 
 
 
@@ -41,8 +41,8 @@
 event(CallId, {ringing, Callee}, Call) ->
     send_event(CallId, ringing, Callee, Call);
 
-event(CallId, {answered, Callee}, Call) ->
-    send_event(CallId, answered, Callee, Call);
+event(CallId, {accepted, Callee}, Call) ->
+    send_event(CallId, accepted, Callee, Call);
 
 event(CallId, {hangup, Reason}, #{srv_id:=SrvId}=Call) ->
     {Code, Txt} = nkservice_util:error_code(SrvId, Reason),
@@ -52,9 +52,36 @@ event(_CallId, _Event, Call) ->
     {ok, Call}.
 
 
+
 %% @private
-send_event(CallId, Type, Body, #{srv_id:=SrvId}=Call) ->
-    nkmedia_api_events:send_event(SrvId, call, CallId, Type, Body),
+-spec event(nkmedia_call:id(), term(), nkmedia_call:call(), pid()) ->
+    {ok, nkmedia_call:call()}.
+
+event(CallId, {answer, SessId, Answer, Callee}, Call, Pid) ->
+    Data = #{session_id=>SessId, answer=>Answer, callee=>Callee},
+    send_event(CallId, answer, Data, Call, Pid);
+
+event(CallId, {candidate, #candidate{}=Candidate}, Call, Pid) ->
+    #candidate{a_line=Line, m_id=Id, m_index=Index} = Candidate,
+    Data = #{sdpMid=>Id, sdpMLineIndex=>Index, candidate=>Line},
+	send_event(CallId, candidate, Data, Call, Pid);
+
+event(_CallId, _Event, Call, _Pid) ->
+    {ok, Call}.
+
+
+%% ===================================================================
+%% Internal
+%% ===================================================================
+
+
+%% @private
+send_event(CallId, Type, Body, Call) ->
+	send_event(CallId, Type, Body, Call, all).
+
+%% @private
+send_event(CallId, Type, Body, #{srv_id:=SrvId}=Call, Pid) ->
+    nkmedia_api_events:send_event(SrvId, call, CallId, Type, Body, Pid),
     {ok, Call}.
 
 

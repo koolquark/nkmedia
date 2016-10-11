@@ -22,7 +22,7 @@
 -module(nkmedia_call_api_syntax).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([syntax/5]).
+-export([call_fields/0, syntax/4]).
 
 -include_lib("nkservice/include/nkservice.hrl").
 
@@ -31,7 +31,24 @@
 %% Syntax
 %% ===================================================================
 
-syntax(<<"call">>, <<"start">>, Syntax, Defaults, Mandatory) ->
+%% @private
+call_fields() ->
+    [
+        call_id, 
+        type,
+        no_offer_trickle_ice,
+        no_answer_trickle_ice,
+        trickle_ice_timeout,
+        sdp_type,
+        backend,
+        user_id,
+        user_session,
+        caller,
+        callee
+    ].
+
+
+syntax(<<"create">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             call_id => binary,
@@ -39,6 +56,7 @@ syntax(<<"call">>, <<"start">>, Syntax, Defaults, Mandatory) ->
             callee => binary,
             caller => map,
             backend => atom,
+            offer => nkmedia_api_syntax:offer(),
             sdp_type => {enum, [webrtc, rtp]},
             events_body => any
         },
@@ -46,43 +64,61 @@ syntax(<<"call">>, <<"start">>, Syntax, Defaults, Mandatory) ->
         [callee|Mandatory]
     };
 
-syntax(<<"call">>, <<"ringing">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"ringing">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             call_id => binary,
-            session_id =>  binary,
             callee => map
         },
         Defaults,
-        [call_id, session_id|Mandatory]
+        [call_id|Mandatory]
     };
 
 
-syntax(<<"call">>, <<"answered">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"accepted">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             call_id => binary,
-            session_id =>  binary,
             callee => map,
             answer => nkmedia_api_syntax:answer(),
             subscribe => boolean,
             events_body => any
         },
         Defaults,
-        [call_id, session_id, answer|Mandatory]
+        [call_id|Mandatory]
     };
 
-syntax(<<"call">>, <<"rejected">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"rejected">>, Syntax, Defaults, Mandatory) ->
+    {
+        Syntax#{
+            call_id => binary
+        },
+        Defaults,
+        [call_id|Mandatory]
+    };
+
+syntax(<<"set_candidate">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             call_id => binary,
-            session_id =>  binary
+            sdpMid => binary,
+            sdpMLineIndex => integer,
+            candidate => binary
         },
-        Defaults,
-        [call_id, session_id|Mandatory]
+        Defaults#{sdpMid=><<>>},
+        [call_id, sdpMLineIndex, candidate|Mandatory]
     };
 
-syntax(<<"call">>, <<"hangup">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"set_candidate_end">>, Syntax, Defaults, Mandatory) ->
+    {
+        Syntax#{
+            call_id => binary
+        },
+        Defaults,
+        [call_id|Mandatory]
+    };
+
+syntax(<<"hangup">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             call_id => binary,
@@ -92,6 +128,21 @@ syntax(<<"call">>, <<"hangup">>, Syntax, Defaults, Mandatory) ->
         [call_id|Mandatory]
     };
 
-syntax(_Sub, _Cmd, Syntax, Defaults, Mandatory) ->
+
+syntax(<<"get_info">>, Syntax, Defaults, Mandatory) ->
+    {
+        Syntax#{call_id => binary},
+        Defaults,
+        [call_id|Mandatory]
+    };
+
+syntax(<<"get_list">>, Syntax, Defaults, Mandatory) ->
+    {
+        Syntax,
+        Defaults,
+        Mandatory
+    };
+    
+syntax(_Cmd, Syntax, Defaults, Mandatory) ->
     {Syntax, Defaults, Mandatory}.
 

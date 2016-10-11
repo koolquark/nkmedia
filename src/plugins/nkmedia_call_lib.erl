@@ -32,7 +32,7 @@
 -module(nkmedia_call_lib).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([resolve/4, invite/5, cancel/3]).
+
 % -include("../../include/nkmedia.hrl").
 % -include("../../include/nkmedia_call.hrl").
 % -include_lib("nkservice/include/nkservice.hrl").
@@ -44,87 +44,5 @@
 %% ===================================================================
 
 
-
-
-%% ===================================================================
-%% Public
-%% ===================================================================
-
-
-
-%% @private
-resolve(User, user, Acc, Call) ->
-    Dests = [
-        #{dest=>{nkmedia_api_user, SessId, Pid}} 
-        || {SessId, Pid} <- nkservice_api_server:find_user(User)
-    ],
-    {ok, Acc++Dests, Call};
-
-resolve(Callee, session, Acc, Call) ->
-    Callee2 = nklib_util:to_binary(Callee),
-    Dests = case nkservice_api_server:find_session(Callee2) of
-        {ok, _User, Pid} ->
-            [#{dest=>{nkmedia_api_session, Callee2, Pid}}];
-        not_found ->
-            []
-    end,
-    {ok, Acc++Dests, Call};
-
-resolve(Callee, all, Acc, Call) ->
-    {ok, Acc2, Call2} = resolve(Callee, user, Acc, Call),
-    resolve(Callee, session, Acc2, Call2);
-
-resolve(_Callee, _Type, Acc, Call) ->
-    {ok, Acc, Call}.
-
-
-
-%% @private Sends a call INVITE over the API (for user or session types)
-invite(CallId, {nkmedia_api_user, Pid}, _SessId, Caller, Call) ->
-    do_invite(Pid, user, Caller, CallId, Call);
-
-invite(CallId, {nkmedia_api_session, Pid}, _SessId, Caller, Call) ->
-    do_invite(Pid, user, Caller, CallId, Call);
-
-invite(_CallId, _Dest, _SessId, _Caller, Call) ->
-    {remove, Call}.
-
-
-%% @private
-cancel(_CallId, _CalleeId, #{srv_id:=_SrvId}=Call) ->
-    % lager:error("CALL CANCELLED"),
-    % {Code, Text} = nkservice_util:error_code(SrvId, originator_cancel),
-    % Body = #{code=>Code, reason=>Text},
-    % RegId = call_reg_id(SrvId, hangup, CallId),
-    % case nkservice_api_server:find_session(CalleeId) of
-    %     {ok, _User, Pid} ->
-    %         % Send the event only to this session
-    %         nkservice_events:send(RegId, Body, Pid);
-    %     not_found ->
-    %         lager:warning("Call cancelled for no sesssion: ~s", [CalleeId])
-    % end,
-    {ok, Call}.
-
-
-%% ===================================================================
-%% Internal
-%% ===================================================================
-
-do_invite(Pid, Type, Caller, CallId, Call) ->
-    Data = Caller#{call_id=>CallId, type=>Type},
-    case nkservice_api_server:cmd(Pid, media, call, invite, Data) of
-        {ok, <<"ok">>, #{<<"retry">>:=Retry}} ->
-            case is_integer(Retry) andalso Retry>0 of
-                true -> {retry, Retry, Call};
-                false -> {remove, Call}
-            end;
-        {ok, <<"ok">>, _} ->
-            % SessId will be our CalleeId
-            {ok, Call};
-        {ok, <<"error">>, _} ->
-            {remove, Call};
-        {error, _Error} ->
-            {remove, Call}
-    end.
 
 
