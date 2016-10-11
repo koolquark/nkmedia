@@ -55,7 +55,7 @@ sdp_type|"webrtc"|Type of offer or answer SDP to generate (`webrtc` or `rtp`)
 subscribe|true|Subscribe to call events. Use `false` to avoid automatic subscription.
 event_body|{}|Body to receive in all automatic events.
 
-NkMEDIA will create a 'caller' media session (type will be dependant of plugin). Some plugins will offer the answer inmediately, while other will need the answer from the remote party.
+NkMEDIA will create a _caller_ media session (type will be dependant of plugin). Some plugins will offer the answer inmediately, while other will need the answer from the remote party.
 
 NkMEDIA will then _resolve_ the callee to a set of [destinations](#destinations), starting a new session for each and calling each one in parallel. Each callee can use the [`ringing`](#ringing), [`rejected`](#rejected) and [`accepted`](#accepted) commands.
 
@@ -94,7 +94,10 @@ NkMEDIA will then _resolve_ the callee to a set of [destinations](#destinations)
 ```
 
 
-NkMEDIA will locate all destinations (for example, por _user_ type, locating all sessions belongig to the user) and will send an _invite_ each of them in parallel scheme with its offer, for example:
+NkMEDIA will locate all destinations (for example, por _user_ type, locating all sessions belongig to the user) and will send an _invite_ to each of them in parallel scheme with its offer.
+
+You must reply inmediately (before prompting the user or ringing) either accepting the call (returning `result: "ok"`) or rejecting it with `result: "error"`. From all accepted calls, it is expected that the callee must call [`rejected`](#rejected) or [`accepted`](#accepted).
+
 
 ```js
 {
@@ -116,7 +119,18 @@ NkMEDIA will locate all destinations (for example, por _user_ type, locating all
 }
 ```
 
-you must reply inmediately (before prompting the user or ringing) either accepting the call (returning `result: "ok"` with no data) or rejecting it with `result: "error"`. From all accepted calls, it is expected that the callee must call [`rejected`](#rejected) or [`accepted`](#accepted).
+-->
+
+```js
+{
+	result: "ok",
+	data: {
+		subscribe: true
+	},
+	tid: 1000
+}```
+
+
 
 If you reply `accepted`, you can also include the following fields:
 
