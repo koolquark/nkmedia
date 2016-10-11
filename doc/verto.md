@@ -1,8 +1,5 @@
 # VERTO Plugin
 
-TBD
-
-
 NkMEDIA includes a [Verto](http://evoluxbr.github.io/verto-docs/) compatible server, meaning that you can use any Verto client, like [Verto Communicator](https://freeswitch.org/confluence/display/FREESWITCH/Verto+Communicator) to connect to NkMEDIA and place and receive calls.
 
 Verto clients can be used with or withouth Freeswtich backend, since NkMEDIA includes a full Verto server (like Freeswitch does).

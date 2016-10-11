@@ -5,9 +5,9 @@ This plugin allows you to manage SFU or MCUs rooms easily. All backends use it w
 
 * [**Commands**](#commands)
   * [`create`](#create): Create a new room
-  * [`destroy`](#destroy): |Destroys a room
-  * [`list`](#list): List known rooms
-  * [`info`](#info): Gets information about a room
+  * [`destroy`](#destroy): Destroys a room
+  * [`get_list`](#get_list): List known rooms
+  * [`get_info`](#get_info): Gets information about a room
 * [**Events**](#events)
 
 All commands must have 
@@ -96,7 +96,7 @@ Destroys a started room. Current participant sessions, if any, will be removed.
 ```
 
 
-## list
+## get_list
 
 Gets a list of known rooms, along with its class
 
@@ -106,7 +106,7 @@ Gets a list of known rooms, along with its class
 {
 	class: "media",
   	subclass: "room",
-  	cmd: "list",
+  	cmd: "get_list",
     tid: 1
 }
 ```
@@ -129,7 +129,7 @@ Gets a list of known rooms, along with its class
 ```
 
 
-## info
+## get_info
 
 Gets information about a started room, along with the list of members.
 
@@ -140,7 +140,7 @@ Gets information about a started room, along with the list of members.
 {
 	class: "media",
   	subclass: "room",
-  	cmd: "info",
+  	cmd: "get_info",
   	data: {
   		room_id: "002f5758-3919-9408-4a02-38c9862f00d9"
   	},

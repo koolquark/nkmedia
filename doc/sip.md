@@ -1,7 +1,5 @@
 # SIP Plugin
 
-TBD
-
 
 NkMEDIA includes a full blown SIP server, based on [NkSIP](https://github.com/NetComposer/nksip), so it is extremely flexible and scalable. It can be used to make SIP gateways or any other SIP entity. It also includes a registrar server.
 
