@@ -2,7 +2,7 @@
 
 This plugin offers an easy to use signalling on top of NkMEDIA, so that you can send _calls_ from any supported client to any other supported endpoint.
 
-You can call from a registered user, SIP endpoint or Verto session to any of them. You only need to supply the _offer_ and destination, and NkMEDIA will locate all destinations beloging to that destination, and start parallel sessions for all of them. The first that answers is connected to the caller. 
+You can call from a registered user, SIP endpoint or Verto session to any other of them. You only need to supply the _offer_ and destination, and NkMEDIA will locate all endpoints beloging to that destination, and wilk start parallel sessions for all of them. The first one that answers is connected to the caller. 
 
 * [**Commands**](#commands)
   * [`create`](#create): Create a new call
@@ -292,6 +292,16 @@ candidate|{sdpMid=>..., sdpMLineIndex=>..., candidate=>...}|A candidate is avail
 	tid: 1
 }
 ```
+
+
+# Destinations
+
+This plugins supports the following destinations:
+
+* **user**
+* **session**
+* **sip**
+* **verto**
 
 
 
