@@ -48,11 +48,11 @@ cmd(<<"destroy">>, #api_req{data=#{room_id:=Id}}, State) ->
             {error, Error, State}
     end;
 
-cmd(<<"list">>, _Req, State) ->
+cmd(<<"get_list">>, _Req, State) ->
     Ids = [#{room_id=>Id, class=>Class} || {Id, Class, _Pid} <- nkmedia_room:get_all()],
     {ok, Ids, State};
 
-cmd(<<"info">>, #api_req{data=#{room_id:=RoomId}}, State) ->
+cmd(<<"get_info">>, #api_req{data=#{room_id:=RoomId}}, State) ->
     case nkmedia_room:get_info(RoomId) of
         {ok, Info} ->
             {ok, Info, State};

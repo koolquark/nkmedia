@@ -52,14 +52,14 @@ syntax(<<"destroy">>, Syntax, Defaults, Mandatory) ->
         [room_id|Mandatory]
     };
 
-syntax(<<"list">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"get_list">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{service => fun nkservice_api:parse_service/1},
         Defaults, 
         Mandatory
     };
 
-syntax(<<"info">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"get_info">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{room_id => binary},
         Defaults, 

@@ -39,10 +39,10 @@
     {ok, nkmedia_call:call()}.
 
 event(CallId, {ringing, Callee}, Call) ->
-    send_event(CallId, ringing, Callee, Call);
+    send_event(CallId, ringing, #{callee=>Callee}, Call);
 
 event(CallId, {accepted, Callee}, Call) ->
-    send_event(CallId, accepted, Callee, Call);
+    send_event(CallId, accepted, #{callee=>Callee}, Call);
 
 event(CallId, {hangup, Reason}, #{srv_id:=SrvId}=Call) ->
     {Code, Txt} = nkservice_util:error_code(SrvId, Reason),

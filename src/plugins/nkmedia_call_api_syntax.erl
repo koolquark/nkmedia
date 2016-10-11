@@ -53,8 +53,8 @@ syntax(<<"create">>, Syntax, Defaults, Mandatory) ->
         Syntax#{
             call_id => binary,
             type => atom,
-            callee => binary,
-            caller => map,
+            callee => any,
+            caller => any,
             backend => atom,
             no_offer_trickle_ice => boolean,
             no_answer_trickle_ice => boolean,
@@ -64,7 +64,7 @@ syntax(<<"create">>, Syntax, Defaults, Mandatory) ->
             events_body => any
         },
         Defaults,
-        [callee|Mandatory]
+        [callee_id|Mandatory]
     };
 
 syntax(<<"ringing">>, Syntax, Defaults, Mandatory) ->
