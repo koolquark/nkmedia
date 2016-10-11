@@ -154,18 +154,23 @@ start(Srv, Callee, Config) ->
 
 start2(Srv, Callee, Config) ->
     case Callee of
-        <<"p2p-", Callee2/binary>> ->
+        <<"p2p", Callee2/binary>> ->
             Config2 = Config#{backend=>p2p};
-        <<"sip-", Callee2/binary>> ->
+        <<"sip", Callee2/binary>> ->
             Config2 = Config#{backend=>nkmedia_janus, sdp_type=>rtp};
-        <<"fs-", Callee2/binary>> ->
+        <<"fs", Callee2/binary>> ->
             Config2 = Config#{backend=>nkmedia_fs};
-        <<"kms-", Callee2/binary>> ->
+        <<"kms", Callee2/binary>> ->
             Config2 = Config#{backend=>nkmedia_kms};
         Callee2 ->
             Config2 = Config#{backend=>?DEFAULT_BACKEND}
     end,
-    start(Srv, Callee2, Config2).
+    case Callee2 of
+        <<":", Callee3/binary>> -> ok;
+        <<"-", Callee3/binary>> -> ok;
+        Callee3 -> ok
+    end,
+    start(Srv, Callee3, Config2).
 
 
 %% @doc Called by the invited process

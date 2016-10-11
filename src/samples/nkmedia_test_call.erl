@@ -76,7 +76,10 @@
 %%    - fs: use nkmedia_fs backend. It will bufer candidates if received
 %%    - kms: use nkmedia_kms backend. Verto and Janus use no_answer_trickle_ice for
 %%      the caller and no_offer_trickle_ice for the callee.
-
+%%
+%% 7) P2P calls
+%%    - when using p2p:XXX, the call is peer to peer
+%%    - to use Janus, must disable trikcle ice 
 
 
 

@@ -443,7 +443,7 @@ incoming(<<"kp2">>, Offer, Reg, Opts) ->
 incoming(<<"d", Num/binary>>, Offer, Reg, Opts) ->
     ConfigA = incoming_config(p2p, Offer, Reg, Opts),
     {ok, SessId, SessLink} = start_session(p2p, ConfigA),
-    ConfigB = slave_config(p2p, SessId, Opts#{offer=>Offer}),
+    ConfigB = slave_config(p2p, SessId, Opts#{offer=>Offer, peer_id=>SessId}),
     {ok, _} = start_invite(Num, p2p, ConfigB),
     {ok, SessId, SessLink};
 

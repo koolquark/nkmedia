@@ -380,12 +380,12 @@ backend_candidate(SessId, Candidate) ->
 init([#{session_id:=Id, type:=Type, srv_id:=SrvId}=Session]) ->
     true = nklib_proc:reg({?MODULE, Id}),
     nklib_proc:put(?MODULE, Id),
-    MasterId = maps:get(master_id, Session, undefined),
+    PeerId = maps:get(peer_id, Session, undefined),
     % If there is no offer, the backed must make one (offerer)
     % If there is an offer, the backend must make the answer (offeree)
     % unless this is a slave p2p session
     Role = case maps:is_key(offer, Session) of
-        true when Type==p2p, MasterId/=undefined -> offerer;
+        true when Type==p2p, PeerId/=undefined -> offerer;
         true -> offeree;
         false -> offerer
     end,
@@ -396,7 +396,7 @@ init([#{session_id:=Id, type:=Type, srv_id:=SrvId}=Session]) ->
         start_time => nklib_util:l_timestamp()
     },
     Session3 = case Type of
-        p2p -> Session2#{backend=>p2p, set_master_answer=>true};
+        p2p -> Session2#{backend=>p2p};
         _ -> Session2
     end,
     State1 = #state{

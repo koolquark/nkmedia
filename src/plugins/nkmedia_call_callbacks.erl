@@ -38,6 +38,7 @@
 -export([nkmedia_session_reg_event/4]).
 
 -include("../../include/nkmedia.hrl").
+-include("../../include/nkmedia_call.hrl").
 -include_lib("nkservice/include/nkservice.hrl").
 
 
@@ -243,8 +244,19 @@ nkmedia_call_handle_info(Msg, Call) ->
     {error, nkservice:error(), call()} |
     continue().
 
-nkmedia_call_start_caller_session(_CallId, _Config, Call) ->
-    {error, not_implemented, Call}.
+nkmedia_call_start_caller_session(CallId, Config, #{srv_id:=SrvId, offer:=Offer}=Call) -> 
+    case maps:get(backend, Call, p2p) of
+        p2p ->
+            Config2 = Config#{
+                backend => p2p, 
+                offer => Offer,
+                call_id => CallId
+            },
+            {ok, MasterId, Pid} = nkmedia_session:start(SrvId, p2p, Config2),
+            {ok, MasterId, Pid, ?CALL(#{backend=>p2p}, Call)};
+        _ ->
+            {error, not_implemented, Call}
+    end.
 
 
 %% @doc Called when the Call must start a 'callee' session
@@ -255,7 +267,20 @@ nkmedia_call_start_caller_session(_CallId, _Config, Call) ->
     {error, nkservice:error(), call()} |
     continue().
 
-nkmedia_call_start_callee_session(_CallId, _SessId, _Config, Call) ->
+nkmedia_call_start_callee_session(CallId, MasterId, Config, 
+                                  #{backend:=p2p, srv_id:=SrvId, offer:=Offer}=Call) ->
+    Config2 = Config#{
+        backend => p2p,
+        offer => Offer,
+        peer_id => MasterId,
+        call_id => CallId,
+        no_offer_trickle_ice => true,
+        no_answer_trickle_ice => true
+    },
+    {ok, SlaveId, Pid} = nkmedia_session:start(SrvId, p2p, Config2),
+    {ok, SlaveId, Pid, Offer, Call};
+
+nkmedia_call_start_callee_session(_CallId, _MasterId, _Config, Call) ->
     {error, not_implemented, Call}.
 
 
@@ -265,7 +290,20 @@ nkmedia_call_start_callee_session(_CallId, _SessId, _Config, Call) ->
                               nkmedia:answer(), call()) ->
     {ok, call()} | {error, nkservice:error(), term()} | continue().
 
-nkmedia_call_set_answer(_CallId, _CallerSessId, _CalleeSessId, _Answer, Call) ->
+nkmedia_call_set_answer(_CallId, MasterId, SlaveId, Answer, #{backend:=p2p}=Call) ->
+    case nkmedia_session:set_answer(SlaveId, Answer) of
+        ok ->
+            case nkmedia_session:set_answer(MasterId, Answer) of
+                ok ->
+                    {ok, Call};
+                {error, Error} ->
+                    {error, Error, Call}
+            end;
+        {error, Error} ->
+            {error, Error, Call}
+    end;
+
+nkmedia_call_set_answer(_CallId, _MasterId, _SlaveId, _Answer, Call) ->
     {error, not_implemented, Call}.
 
 
