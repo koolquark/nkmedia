@@ -7,7 +7,9 @@ NkMEDIA is an scalable and flexible signaling and media server for WebRTC and SI
 
 NkMEDIA is made of a very simple and efficient core, and a set of plugins and backends that extend its capabilities. At its core, it is only capable of controlling _peer to peer_ calls. However, activating plugins like _nkmedia_janus_ (based on [Janus](https://janus.conf.meetecho.com/index.html)), _nkmedia_fs_ (based on [Freeswitch](https://freeswitch.org)) and _nkmedia_kms_ (based on [Kurento](https://www.kurento.org)), it can perform complex media operations in an very simple way. Since each backend has very different characteristics, you can use the very best tool for each situation. For example, Janus is very lightweight and a great choice to write proxies and SFUs. Freeswitch has full PBX capabilities (allowing you to _park_ and _transfer_ calls to multiple destinations without starting new WebRTC sessions, detect _dtmf_ tones, etc.) and has a very powerful video MCU. Kurento is the most flexible tool to design any media processing system.
 
-NkMEDIA also offers out of the box three signaling APIs (again as plugins): a full SIP implementation (based on [NkSIP](https://github.com/NetComposer/nksip), so it can be a flexible, massively scalable SIP client and server), a [Verto](http://evoluxbr.github.io/verto-docs/) server implementation (that can be used with any backend, not only Freeswitch) and its own signaling system, [NetComposer API](https://github.com/NetComposer/nkservice/blob/luerl/doc/api_intro.md). It also possible to add new signaling APIs, or use your own signalling solution out of NkMEDIA.
+NkMEDIA can be managed using [NetComposer API](https://github.com/NetComposer/nkservice/blob/luerl/doc/api_intro.md), using the same API for all backends. This means that the session creation functions, starting publishers, recordings, etc., will be nearly identical for all backends, while NkMEDIA will adapt it to the specific backend.
+
+NkMEDIA also offers out of the box three signaling APIs (again as plugins): a full SIP implementation (based on [NkSIP](https://github.com/NetComposer/nksip), so it can be a flexible, massively scalable SIP client and server), a [Verto](http://evoluxbr.github.io/verto-docs/) server implementation (that can be used with any backend, not only Freeswitch) and its [own signaling system](doc/call.md). It also possible to add new signaling APIs, or use your own signalling solution out of NkMEDIA.
 
 NkMEDIA has full support for Trickle ICE and non Trickle ICE clients and servers. You can connect clients that does not support trickle at all to all-trickle backends like Kurento, and trickle clients to non-trickle servers like Freeswitch, automatically.
 
@@ -16,7 +18,6 @@ When using NkMEDIA, you start defining one or several _services_. Each service c
 You can control NkMEDIA through the management interface, creating any number of _sessions_. It offers a clean, very easy to use API, independent of any supported backend. You don't need to know how to install or manage Janus, Freeswitch or Kurento instances. When you order an operation to be performed on the session (like starting a proxy, recording, starting an SFU, etc.), NkMEDIA selects the right backend that supports that operation automatically and in a complete transparent way. For operations supported by several active backends (like `echo`) you can also force the selection.
 
 In real-life deployments, you will typically connect a server-side application to the management interface. However, being a websocket connection, you can also use a browser to manage sessions (its own or any other's session, if it is authorized).
-
 
 See the [User Guide](doc/index.md#user-guide) for a more detailed explanation of the architecture. 
 
@@ -29,6 +30,7 @@ See the [User Guide](doc/index.md#user-guide) for a more detailed explanation of
 * [MCU](https://webrtcglossary.com/mcu/) based multi audio/video conferences
 * [SFU](https://webrtcglossary.com/sfu/) (or mixed SFU+MCU) WebRTC distribution.
 * Recording (with or without transcoding).
+* Abstract API, independant of every specific backend.
 * Downloads, installs and monitors automatically instances of Janus, Freeswitch and Kurento, using [Docker](https://www.docker.com) containers.
 * Supports thousands of simultaneous connections, with WebRTC and SIP.
 * Robust and highly scalable, using all available processor cores automatically.
