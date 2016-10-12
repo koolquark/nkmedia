@@ -376,7 +376,7 @@ do_type(bridge, #{peer_id:=PeerId}, Session) ->
     Session2 = reset_type(Session),
     case session_call(PeerId, {bridge, SessId, UUID}) of
         ok ->
-            ?LLOG(info, "bridged accepted at ~s", [PeerId], Session),
+            ?LLOG(warning, "bridged accepted at ~s", [PeerId], Session),
             {ok, #{peer_id=>PeerId}, Session2};
         {error, Error} ->
             ?LLOG(notice, "bridged not accepted at ~s", [PeerId], Session),
@@ -397,13 +397,14 @@ get_fs_answer(Offer, #{nkmedia_fs_id:=FsId, session_id:=SessId}=Session) ->
     case Mod:start_in(SessId, FsId, Offer) of
         {ok, UUID, SDP} ->
             wait_park(Session),
-            Answer = #{
+            Answer1 = #{
                 sdp => SDP,
                 trickle_ice => false,
                 sdp_type => Type,
                 backend => nkmedia_fs
             },
-            Session2 = ?SESSION(#{answer=>Answer, nkmedia_fs_uuid=>UUID}, Session),
+            Answer2 = mangle_ip(Answer1),
+            Session2 = ?SESSION(#{answer=>Answer2, nkmedia_fs_uuid=>UUID}, Session),
             {ok, Session2};
         {error, Error} ->
             ?LLOG(warning, "error calling start_in: ~p", [Error], Session),
@@ -418,13 +419,14 @@ get_fs_offer(#{nkmedia_fs_id:=FsId, session_id:=SessId}=Session) ->
     Mod = fs_mod(Type),
     case Mod:start_out(SessId, FsId, #{}) of
         {ok, UUID, SDP} ->
-            Offer = #{
+            Offer1 = #{
                 sdp => SDP,
                 trickle_ice => false,
                 sdp_type => Type,
                 backend => nkmedia_fs
             },
-            {ok, ?SESSION(#{offer=>Offer, nkmedia_fs_uuid=>UUID}, Session)};
+            Offer2 = mangle_ip(Offer1),
+            {ok, ?SESSION(#{offer=>Offer2, nkmedia_fs_uuid=>UUID}, Session)};
         {error, Error} ->
             ?LLOG(warning, "error calling start_out: ~p", [Error], Session),
             {error, fs_get_offer_error}
@@ -610,6 +612,15 @@ session_call(SessId, Msg) ->
 session_cast(SessId, Msg) ->
     nkmedia_session:do_cast(SessId, {nkmedia_fs, Msg}).
 
+
+
+%% @private
+mangle_ip(#{sdp_type:=rtp}=Map) ->
+    lager:error("MANGLE IP"),
+    nkmedia_util:mangle_sdp_ip(Map);
+
+mangle_ip(Map) ->
+    Map.
 
 
 

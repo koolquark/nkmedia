@@ -178,7 +178,6 @@ answer(Link, #{sdp:=SDP}) ->
                 ok ->
                     ok;
                 {error, Error} ->
-                    lager:error("Error in SIP reply: ~p", [Error]),
                     {error, Error}
             end;
         _ ->
@@ -197,7 +196,7 @@ answer(_Link, _) ->
 register_incoming_link(Req, Link) ->
     {ok, Handle} = nksip_request:get_handle(Req),
     {ok, Dialog} = nksip_dialog:get_handle(Req),
-    % lager:info("Register incoming, SIP: ~p ~p ~p", [Link, Handle, self()]),
+    lager:info("Register incoming, SIP: ~p ~p ~p", [Link, Handle, self()]),
     true = nklib_proc:reg({nkmedia_sip_dialog_to_link, Dialog}, Link),
     true = nklib_proc:reg({nkmedia_sip_link_to_dialog, Link}, Dialog),
     true = nklib_proc:reg({nkmedia_sip_handle_to_link, Handle}, Link),

@@ -94,6 +94,7 @@ build_run(Config) ->
         {"nkmedia_dp.xml", run_dialplan()},
         {"event_socket.conf.xml", run_event_socket()},
         {"sip.xml", run_sip()},
+        {"acl.conf.xml", run_acl()},
         {"verto.conf.xml", run_verto()},
         {"start.sh", run_start()}
     ]),
@@ -244,6 +245,7 @@ run_dockerfile(Config) ->
     "mv autoload_configs/modules.conf.xml autoload_configs/modules.conf.xml.backup\n"
 
 "ADD sip.xml /usr/local/freeswitch/conf/sip_profiles/\n"
+"ADD acl.conf.xml /usr/local/freeswitch/conf/autoload_configs/\n"
 "ADD event_socket.conf.xml /usr/local/freeswitch/conf/autoload_configs/\n"
 "ADD verto.conf.xml /usr/local/freeswitch/conf/autoload_configs/\n"
 "ADD modules.conf.xml /usr/local/freeswitch/conf/autoload_configs/\n"
@@ -260,7 +262,8 @@ run_event_socket() -> <<"
     <param name=\"listen-ip\" value=\"$${nk_fs_ip}\"/>
     <param name=\"listen-port\" value=\"$${nk_event_port}\"/>
     <param name=\"password\" value=\"$${default_password}\"/>
-    <param name=\"apply-inbound-acl\" value=\"0.0.0.0/0\"/>
+    <!-- <param name=\"apply-inbound-acl\" value=\"0.0.0.0/0\"/> -->
+    <param name=\"apply-inbound-acl\" value=\"nk_lan\"/>
     <param name=\"stop-on-bind-error\" value=\"true\"/>
   </settings>
 </configuration>
@@ -293,6 +296,50 @@ run_verto() -> <<"
  </profiles>
 </configuration>
 ">>.
+
+
+run_acl() -> <<"
+<configuration name=\"acl.conf\" description=\"Network Lists\">
+  <network-lists>
+    <!--
+     These ACL's are automatically created on startup.
+
+     rfc1918.auto  - RFC1918 Space
+     nat.auto      - RFC1918 Excluding your local lan.
+     localnet.auto - ACL for your local lan.
+     loopback.auto - ACL for your local lan.
+    -->
+
+    <list name=\"lan\" default=\"allow\">
+      <node type=\"deny\" cidr=\"192.168.42.0/24\"/>
+      <node type=\"allow\" cidr=\"192.168.42.42/32\"/>
+    </list>
+
+    <!--
+    This will traverse the directory adding all users
+    with the cidr= tag to this ACL, when this ACL matches
+    the users variables and params apply as if they
+    digest authenticated.
+    -->
+    <list name=\"domains\" default=\"deny\">
+      <!-- domain= is special it scans the domain from the directory to build the ACL -->
+      <node type=\"allow\" domain=\"$${domain}\"/>
+      <!-- use cidr= if you wish to allow ip ranges to this domains acl. -->
+      <node type=\"allow\" cidr=\"192.168.0.0/24\"/>
+
+    </list>
+
+    <!-- ADDED -->
+    <list name=\"nk_lan\" default=\"deny\">
+      <node type=\"allow\" cidr=\"127.0.0.1/8\"/>
+      <node type=\"allow\" cidr=\"10.0.0.1/8\"/>
+      <node type=\"allow\" cidr=\"192.168.0.0/16\"/>
+    </list>
+
+  </network-lists>
+</configuration>
+">>.
+
 
 
 run_sip() -> <<"
@@ -329,7 +376,9 @@ run_sip() -> <<"
     <param name=\"hold-music\" value=\"$${hold_music}\"/>
     <param name=\"apply-nat-acl\" value=\"nat.auto\"/>
     <!--<param name=\"apply-inbound-acl\" value=\"domains\"/> -->
-    <param name=\"apply-inbound-acl\" value=\"localnet.auto\"/>
+    
+    <param name=\"apply-inbound-acl\" value=\"nk_lan\"/>
+    
     <param name=\"local-network-acl\" value=\"localnet.auto\"/>
     <!--<param name=\"dtmf-type\" value=\"info\"/>-->
     <param name=\"record-path\" value=\"$${recordings_dir}\"/>

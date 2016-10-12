@@ -22,6 +22,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([get_q850/1, add_id/2, add_id/3, filter_codec/3]).
+-export([mangle_sdp_ip/1]).
 -export([kill/1]).
 -export([remove_sdp_data_channel/1]).
 -export_type([stop_reason/0, q850/0]).
@@ -75,6 +76,22 @@ filter_codec(Media, Codec, #{sdp:=SDP1}=OffAns) ->
     OffAns#{sdp:=nksip_sdp:unparse(SDP3)}.
 
 
+
+%% @doc
+mangle_sdp_ip(#{sdp:=SDP}=Map) ->
+    MainIp = nklib_util:to_host(nkpacket_config_cache:main_ip()),
+    ExtIp = nklib_util:to_host(nkpacket_config_cache:ext_ip()),
+    case re:replace(SDP, MainIp, ExtIp, [{return, binary}, global]) of
+        SDP ->
+            lager:warning("no SIP mangle, ~s not found!", [MainIp]),
+            Map;
+        SDP2 ->
+            lager:warning("done SIP mangle ~s -> ~s", [MainIp, ExtIp]),
+            Map#{sdp:=SDP2}
+    end;
+
+mangle_sdp_ip(Map) ->
+    Map.
 
 
 

@@ -105,7 +105,8 @@ start(bridge, offerer, #{peer_id:=PeerId}=Session) ->
             },
             Session2 = ?SESSION(Update, Session),
             update_type(bridge, #{peer_id=>PeerId, role=>slave, proxy_type=>ProxyType}),
-            {ok, set_offer(Offer, Session2)};
+            Offer2 = mangle_sip_offer(Offer, ProxyType),
+            {ok, set_offer(Offer2, Session2)};
         {error, Error} ->
             {error, Error, Session}
     end;
@@ -256,9 +257,9 @@ cmd(set_proxy_answer, #{peer_id:=PeerId, answer:=Answer}, #{type:=proxy}=Session
     #{nkmedia_janus_pid:=Pid} = Session,
     case nkmedia_janus_op:answer(Pid, Answer) of
         {ok, Answer2} ->
-            Answer3 = mangle_sip_ip(Answer2, Session),
-            nkmedia_session:set_answer(self(), Answer3),
             #{type_ext:=#{proxy_type:=ProxyType}} = Session,
+            Answer3 = mangle_sip_answer(Answer2, ProxyType),
+            nkmedia_session:set_answer(self(), Answer3),
             update_type(bridge, #{proxy_type=>ProxyType, peer_id=>PeerId, role=>master}),
             Session2 = ?SESSION_RM(nkmedia_janus_proxy_offer, Session),
             case ProxyType of
@@ -716,21 +717,20 @@ get_media(Opts, Session) ->
 
 
 %% @private
-mangle_sip_ip(#{sdp:=SDP}=Answer, 
-              #{type:=proxy, type_ext:=#{proxy_type:=from_sip}}=Session) ->
-    MainIp = nklib_util:to_host(nkpacket_config_cache:main_ip()),
-    ExtIp = nklib_util:to_host(nkpacket_config_cache:ext_ip()),
-    case re:replace(SDP, MainIp, ExtIp, [{return, binary}, global]) of
-        SDP ->
-            ?LLOG(warning, "no SIP mangle, ~s not found!", [MainIp], Session),
-            Answer;
-        SDP2 ->
-            ?LLOG(warning, "done SIP mangle ~s -> ~s", [MainIp, ExtIp], Session),
-            Answer#{sdp:=SDP2}
-    end;
+mangle_sip_offer(Offer, to_sip) ->
+    nkmedia_util:mangle_sdp_ip(Offer);
 
-mangle_sip_ip(Answer, _Session) ->
+mangle_sip_offer(Offer, _Type) ->
+    Offer.
+
+
+%% @private
+mangle_sip_answer(Answer, from_sip) ->
+    nkmedia_util:mangle_sdp_ip(Answer);
+
+mangle_sip_answer(Answer, _Type) ->
     Answer.
+
 
 
 

@@ -99,8 +99,8 @@ plugin_config(Config, _Service) ->
     },
     Config2 = case ExtIp of
         true ->
-            ExtIp = nklib_util:to_host(nkpacket_config_cache:ext_ip()),
-            Config#{sip_local_host=>ExtIp};
+            Ip = nklib_util:to_host(nkpacket_config_cache:ext_ip()),
+            Config#{sip_local_host=>Ip};
         false ->
             Config
     end,
@@ -184,8 +184,12 @@ nkmedia_sip_invite_answered({nkmedia_call, CallId, _Pid}, Answer) ->
 
 nkmedia_sip_invite_answered({nkmedia_session, SessId, _Pid}, Answer) ->
     case nkmedia_session:set_answer(SessId, Answer) of
-        ok -> ok;
-        {error, Error} -> {error, Error}
+        ok -> 
+            lager:error("ANSWRED: ~p", [SessId]),
+            ok;
+        {error, Error} -> 
+            lager:error("ANSWRED E: ~p", [SessId]),
+            {error, Error}
     end;
 
 nkmedia_sip_invite_answered(_Id, _Answer) ->
@@ -375,7 +379,7 @@ nkmedia_call_answer(CallId, {nkmedia_sip, _Pid}, _SessId, Answer, _Callee, Call)
         ok ->
            {ok, Call};
         {error, Error} ->
-            lager:error("Error in SIP reply: ~p", [Error]),
+            lager:error("Error in SIP answer: ~p", [Error]),
             {error, Error, Call}
     end;
 
@@ -410,20 +414,30 @@ nkmedia_call_reg_event(_CallId, _Link, _Event, _Call) ->
 
 
 %% @private
-nkmedia_session_reg_event(SessId, {nkmedia_sip, _}, {answer, Answer}, Session) ->
-    case nkmedia_sip:answer({nkmedia_session, SessId, self()}, Answer) of
-        ok ->
-           {ok, Session};
-        {error, Error} ->
-            lager:error("Error in SIP reply: ~p", [Error]),
-            {error, Error, Session}
-    end;
+nkmedia_session_reg_event(SessId, {nkmedia_sip, _}, {answer, Answer}, _Session) ->
+    case maps:get(backend_role, _Session) of
+        offerer ->
+            %% We generated the offer and INVITEd to someone, so the answer is
+            %% from ours
+            ok;
+        offeree ->
+            %% We received an OFFER in an INVITE, and now have an answer and must
+            %% send the 200 back
+            case nkmedia_sip:answer({nkmedia_session, SessId, self()}, Answer) of
+                ok ->
+                   ok;
+                {error, Error} ->
+                    nkmedia_session:stop(self(), sip_answer),
+                    lager:error("Error in SIP reply: ~p", [Error])
+            end
+    end,
+    continue;
 
-nkmedia_session_reg_event(SessId, {nkmedia_sip, _}, {stop, _Reason}, Session) ->
+nkmedia_session_reg_event(SessId, {nkmedia_sip, _}, {stop, _Reason}, _Session) ->
     Self = self(),
     % We should not block the session
     spawn(fun() -> nkmedia_sip:hangup({nkmedia_session, SessId, Self}) end),
-    {ok, Session};
+    continue;
 
 nkmedia_session_reg_event(_SessId, _Link, _Event, _Session) ->
     continue.

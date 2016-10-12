@@ -208,8 +208,8 @@ invite(Dest, Type, Opts) ->
     WsPid = get_client(),
     start_invite(Dest, WsPid, Opts#{type=>Type}).
 
-invite_listen(Dest, Room, Pos) ->
-    {ok, PubId, Backend} = nkmedia_test:get_publisher(Room, Pos),
+invite_listen(Dest, Room) ->
+    {ok, PubId, Backend} = nkmedia_test:get_publisher(Room, 1),
     invite(Dest, listen, #{backend=>Backend, publisher_id=>PubId}).
 
 switch(SessId, Pos) ->

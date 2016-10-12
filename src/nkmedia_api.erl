@@ -178,10 +178,11 @@ nkmedia_session_reg_event(SessId, {nkmedia_api, Pid}, {stop, _Reason}, Session) 
 	#{srv_id:=SrvId} = Session,
 	RegId = session_reg_id(SrvId, <<"*">>, SessId),
 	nkservice_api_server:unregister_events(Pid, RegId),
-	nkservice_api_server:unregister(Pid, {nkmedia_session, SessId, self()});
+	nkservice_api_server:unregister(Pid, {nkmedia_session, SessId, self()}),
+	{ok, Session};
 
-nkmedia_session_reg_event(_SessId, _RegId, _Event, _Session) ->
-	ok.
+nkmedia_session_reg_event(_SessId, _RegId, _Event, Session) ->
+	{ok, Session}.
 
 
 

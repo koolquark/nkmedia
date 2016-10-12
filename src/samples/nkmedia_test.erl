@@ -405,6 +405,10 @@ incoming(<<"fe">>, Offer, Reg, Opts) ->
     Config = incoming_config(nkmedia_fs, Offer, Reg, Opts),
     start_session(echo, Config);
 
+incoming(<<"fp">>, Offer, Reg, Opts) ->
+    Config = incoming_config(nkmedia_fs, Offer, Reg, Opts),
+    start_session(park, Config);
+
 incoming(<<"ke">>, Offer, Reg, Opts) ->
     Config = incoming_config(nkmedia_kms, Offer, Reg, Opts),
     start_session(echo, Config#{use_data=>false});
@@ -488,8 +492,6 @@ incoming(<<"f", Num/binary>>, Offer, Reg, Opts) ->
         {error, Error} ->
             {error, Error}
     end;
-
-
 
 incoming(<<"k", Num/binary>>, Offer, Reg, Opts) ->
     % You can use stop_after_peer=>true on A and/or B legs
