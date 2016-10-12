@@ -56,6 +56,7 @@ session_fields() ->
 
 		peer_id,
 		room_id,
+		create_room,
 		publisher_id,
 		layout,
 		loops,
@@ -92,6 +93,7 @@ syntax(<<"session">>, <<"create">>, Syntax, Defaults, Mandatory) ->
 			% Type-specific
 	        peer_id => binary,
 	        room_id => binary,
+	        create_room => boolean,
 	        publisher_id => binary,
 	        layout => binary,
 	        loops => {integer, 0, none},
@@ -157,6 +159,7 @@ syntax(<<"session">>, <<"set_type">>, Syntax, Defaults, Mandatory) ->
 
 			% Type specific
 			room_id => binary,
+			create_room => boolean,
 			publisher_id => binary,
         	uri => binary,
         	layout => binary

@@ -482,14 +482,17 @@ set_proxy_answer(Answer, #{session_id:=SessId, peer_id:=PeerId}=Session) ->
 get_room(Type, #{nkmedia_janus_id:=JanusId}=Session) ->
     case get_room_id(Type, Session) of
         {ok, RoomId} ->
+            Create = maps:get(create_room, Session, false),
             case nkmedia_room:get_room(RoomId) of
                 {ok, #{nkmedia_janus_id:=JanusId}} ->
                     % lager:error("Room exists in same Janus"),
                     {ok, RoomId};
                 {ok, _O} ->
                     {error, different_mediaserver};
-                {error, room_not_found} ->
+                {error, room_not_found} when Create->
                     create_room(RoomId, Session);
+                {error, room_not_found} ->
+                    {error, room_not_found};
                 {error, Error} ->
                     {error, Error}
             end;

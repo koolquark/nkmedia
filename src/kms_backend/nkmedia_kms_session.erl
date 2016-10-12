@@ -611,13 +611,16 @@ connect_to_proxy(Opts, Session) ->
 get_room(Type, Opts, #{nkmedia_kms_id:=KmsId}=Session) ->
     case get_room_id(Type, Opts, Session) of
         {ok, RoomId} ->
+            Create = maps:get(create_room, Session, false),
             case nkmedia_room:get_room(RoomId) of
                 {ok, #{nkmedia_kms_id:=KmsId}} ->
                     {ok, RoomId};
                 {ok, _} ->
                     {error, different_mediaserver};
-                {error, room_not_found} ->
+                {error, room_not_found} when Create->
                     create_room(RoomId, Session);
+                {error, room_not_found} ->
+                    {error, room_not_found};
                 {error, Error} ->
                     {error, Error}
             end;
