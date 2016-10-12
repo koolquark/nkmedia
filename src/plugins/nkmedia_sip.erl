@@ -151,7 +151,13 @@ hangup(Link) ->
                 not_found ->
                     case link_to_dialog(Link) of
                         {ok, Dialog} ->
-                            nksip_uac:bye(Dialog, []);
+                            case nksip_uac:bye(Dialog, []) of
+                                {ok, 200, []} ->
+                                    ok;
+                                Other ->
+                                    lager:notice("~p: Invalid reply from SIP BYE: ~p", 
+                                                  [?MODULE, Other])
+                            end;
                         not_found ->
                             ok
                     end

@@ -210,8 +210,8 @@ invite(Dest, Type, Opts) ->
     Opts2 = maps:merge(#{backend => nkmedia_kms}, Opts),
     start_invite(Dest, Type, Opts2).
 
-invite_listen(Dest, Room, Pos) ->
-    {ok, PubId, Backend} = get_publisher(Room, Pos),
+invite_listen(Dest, Room) ->
+    {ok, PubId, Backend} = get_publisher(Room, 1),
     start_invite(Dest, listen, #{backend=>Backend, publisher_id=>PubId}).
     
 
@@ -353,8 +353,8 @@ sip_register(Req, Call) ->
 
 
 % Version that calls an echo... does not work!
-nkmedia_sip_invite(_SrvId, <<"je">>, Offer, SipLink, _Req, _Call) ->
-    ConfigA = incoming_config(nkmedia_janus, Offer, SipLink, #{}),
+nkmedia_sip_invite(_SrvId, <<"je">>, Offer, _Req, _Call) ->
+    ConfigA = incoming_config(nkmedia_janus, Offer, {nkmedia_sip, self()}, #{}),
     {ok, SessId, SessLink} = start_session(proxy, ConfigA),
     ConfigB = slave_config(nkmedia_janus, SessId, #{}),
     {ok, SessId2, _SessLink2} = start_session(proxy, ConfigB),
@@ -364,26 +364,30 @@ nkmedia_sip_invite(_SrvId, <<"je">>, Offer, SipLink, _Req, _Call) ->
     {ok, SessLink};
 
 % Version that calls another user using Janus proxy
-nkmedia_sip_invite(_SrvId, <<"j", Dest/binary>>, Offer, SipLink, _Req, _Call) ->
-    ConfigA = incoming_config(nkmedia_janus, Offer, SipLink, #{}),
+nkmedia_sip_invite(_SrvId, <<"j", Dest/binary>>, Offer, _Req, _Call) ->
+    ConfigA = incoming_config(nkmedia_janus, Offer, {nkmedia_sip, self()}, #{}),
     {ok, SessId, SessLink} = start_session(proxy, ConfigA),
     ConfigB = slave_config(nkmedia_janus, SessId, #{}),
-    {ok, _} = start_invite(Dest, bridge, ConfigB#{peer_id=>SessId}),
-    {ok, SessLink};
+    case start_invite(Dest, bridge, ConfigB#{peer_id=>SessId}) of
+        {ok, _} ->
+            {ok, SessLink};
+        {error, Error} ->
+            {error, Error}
+    end;
 
 % Version using FS
-nkmedia_sip_invite(_SrvId, <<"f">>, Offer, SipLink, _Req, _Call) ->
-    ConfigA = incoming_config(nkmedia_fs, Offer, SipLink, #{}),
+nkmedia_sip_invite(_SrvId, <<"f">>, Offer, _Req, _Call) ->
+    ConfigA = incoming_config(nkmedia_fs, Offer, {nkmedia_sip, self()}, #{}),
     {ok, _SessId, SessLink} = start_session(mcu, ConfigA#{room_id=>m1}),
     {ok, SessLink};
 
 % Version using KMS
-nkmedia_sip_invite(_SrvId, <<"k">>, Offer, SipLink, _Req, _Call) ->
-    ConfigA = incoming_config(nkmedia_kms, Offer, SipLink, #{}),
+nkmedia_sip_invite(_SrvId, <<"k">>, Offer, _Req, _Call) ->
+    ConfigA = incoming_config(nkmedia_kms, Offer, {nkmedia_sip, self()}, #{}),
     {ok, _SessId, SessLink} = start_session(play, ConfigA),
     {ok, SessLink};
 
-nkmedia_sip_invite(_SrvId, _Dest, _Offer, _SipLink, _Req, _Call) ->
+nkmedia_sip_invite(_SrvId, _Dest, _Offer, _Req, _Call) ->
     {rejected, decline}.
 
 
@@ -395,7 +399,7 @@ nkmedia_sip_invite(_SrvId, _Dest, _Offer, _SipLink, _Req, _Call) ->
 incoming(<<"je">>, Offer, Reg, Opts) ->
     % Can update mute_audio, mute_video, record, bitrate
     Config = incoming_config(nkmedia_janus, Offer, Reg, Opts),
-    start_session(echo, Config#{bitrate=>100000});
+    start_session(echo, Config#{bitrate=>500000});
 
 incoming(<<"fe">>, Offer, Reg, Opts) ->
     Config = incoming_config(nkmedia_fs, Offer, Reg, Opts),
@@ -443,9 +447,20 @@ incoming(<<"kp2">>, Offer, Reg, Opts) ->
 incoming(<<"d", Num/binary>>, Offer, Reg, Opts) ->
     ConfigA = incoming_config(p2p, Offer, Reg, Opts),
     {ok, SessId, SessLink} = start_session(p2p, ConfigA),
-    ConfigB = slave_config(p2p, SessId, Opts#{offer=>Offer, peer_id=>SessId}),
-    {ok, _} = start_invite(Num, p2p, ConfigB),
-    {ok, SessId, SessLink};
+    %% TODO: move this to a specific p2p backend?
+    Opts2 = Opts#{
+        offer => Offer,
+        peer_id => SessId,
+        master_id => SessId,
+        set_master_answer => true
+    },
+    ConfigB = slave_config(p2p, SessId, Opts2),
+    case start_invite(Num, p2p, ConfigB) of
+        {ok, _} ->
+            {ok, SessId, SessLink};
+        {error, Error} ->
+            {error, Error}
+    end;
 
 incoming(<<"j", Num/binary>>, Offer, Reg, Opts) ->
     ConfigA1 = incoming_config(nkmedia_janus, Offer, Reg, Opts),
@@ -455,16 +470,26 @@ incoming(<<"j", Num/binary>>, Offer, Reg, Opts) ->
     end,
     {ok, SessId, SessLink} = start_session(proxy, ConfigA2#{bitrate=>100000}),
     ConfigB = slave_config(nkmedia_janus, SessId, Opts#{bitrate=>150000}),
-    {ok, _} = start_invite(Num, bridge, ConfigB#{peer_id=>SessId}),
-    {ok, SessId, SessLink};
+    case start_invite(Num, bridge, ConfigB#{peer_id=>SessId}) of
+        {ok, _} ->
+            {ok, SessId, SessLink};
+        {error, Error} ->
+            {error, Error}
+    end;
 
 incoming(<<"f", Num/binary>>, Offer, Reg, Opts) ->
     % You can use stop_after_peer=>true on A and/or B legs
     ConfigA = incoming_config(nkmedia_fs, Offer, Reg, Opts),
     {ok, SessId, SessLink} = start_session(park, ConfigA#{}),
     ConfigB = slave_config(nkmedia_fs, SessId, Opts),
-    {ok, _} = start_invite(Num, bridge, ConfigB#{peer_id=>SessId}),
-    {ok, SessId, SessLink};
+    case start_invite(Num, bridge, ConfigB#{peer_id=>SessId}) of
+        {ok, _} ->
+            {ok, SessId, SessLink};
+        {error, Error} ->
+            {error, Error}
+    end;
+
+
 
 incoming(<<"k", Num/binary>>, Offer, Reg, Opts) ->
     % You can use stop_after_peer=>true on A and/or B legs
@@ -472,8 +497,12 @@ incoming(<<"k", Num/binary>>, Offer, Reg, Opts) ->
     ConfigA = incoming_config(nkmedia_kms, Offer, Reg, Opts),
     {ok, SessId, SessLink} = start_session(park, ConfigA),
     ConfigB = slave_config(nkmedia_kms, SessId, Opts#{mute_video=>false}),
-    {ok, _} = start_invite(Num, bridge, ConfigB#{peer_id=>SessId}),
-    {ok, SessId, SessLink};
+    case start_invite(Num, bridge, ConfigB#{peer_id=>SessId}) of
+        {ok, _} ->
+            {ok, SessId, SessLink};
+        {error, Error} ->
+            {error, Error}
+    end;
 
 incoming(<<"play">>, Offer, Reg, Opts) ->
     Config = incoming_config(nkmedia_kms, Offer, Reg, Opts),

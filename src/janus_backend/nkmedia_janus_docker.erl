@@ -95,6 +95,7 @@ start(Service) ->
             {error, Error2} -> throw(Error2)
         end,
         lager:info("NkMEDIA JANUS Docker: starting instance ~s", [Name]),
+        lager:info("Log dir: ~s\nRecord dir: ~s", [LogDir, RecDir]),
         case nkdocker:start(DockerPid, Name) of
             ok ->
                 {ok, Name};

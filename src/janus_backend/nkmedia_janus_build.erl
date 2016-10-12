@@ -443,8 +443,9 @@ path = /usr/local/share/janus/recordings
 config_sip() -> <<"
 [general]
 ; local_ip = 1.2.3.4        ; Guessed if omitted
+local_ip = $EXT_IP
 keepalive_interval = 120    ; OPTIONS, 0 to disable
-behind_nat = yes            ; Use STUN
+behind_nat = no            ; Use STUN
 ; user_agent = Cool WebRTC Gateway
 register_ttl = 3600
 ">>.

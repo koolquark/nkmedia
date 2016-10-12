@@ -373,9 +373,9 @@ conn_handle_cast(Msg, NkPort, State) ->
 
 conn_handle_info({timeout, _, {op_timeout, OpId}}, _NkPort, State) ->
     case extract_op(OpId, State) of
-        {#trans{from=From}, State2} ->
+        {#trans{from=From, req=Req}, State2} ->
             nklib_util:reply(From, {error, timeout}),
-            ?LLOG(warning, "operation timeout", [], State),
+            ?LLOG(warning, "operation timeout: ~p", [Req], State),
             {ok, State2};
         not_found ->
             {ok, State}

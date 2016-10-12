@@ -31,7 +31,7 @@
 -export_type([session/0, type/0, opts/0, cmd/0]).
 
 -define(LLOG(Type, Txt, Args, Session),
-    lager:Type("NkMEDIA JANUS Session ~s (~s)"++Txt, 
+    lager:Type("NkMEDIA JANUS Session ~s (~s) "++Txt, 
                [maps:get(session_id, Session), maps:get(type, Session) | Args])).
 
 -define(DEFAULT_MEDIA, #{mute_audio=>false, mute_video=>false, bitrate=>500000}).
@@ -256,7 +256,8 @@ cmd(set_proxy_answer, #{peer_id:=PeerId, answer:=Answer}, #{type:=proxy}=Session
     #{nkmedia_janus_pid:=Pid} = Session,
     case nkmedia_janus_op:answer(Pid, Answer) of
         {ok, Answer2} ->
-            nkmedia_session:set_answer(self(), Answer2),
+            Answer3 = mangle_sip_ip(Answer2, Session),
+            nkmedia_session:set_answer(self(), Answer3),
             #{type_ext:=#{proxy_type:=ProxyType}} = Session,
             update_type(bridge, #{proxy_type=>ProxyType, peer_id=>PeerId, role=>master}),
             Session2 = ?SESSION_RM(nkmedia_janus_proxy_offer, Session),
@@ -712,5 +713,24 @@ get_media(Opts, Session) ->
         Data ->
             {Data, Session}
     end.
+
+
+%% @private
+mangle_sip_ip(#{sdp:=SDP}=Answer, 
+              #{type:=proxy, type_ext:=#{proxy_type:=from_sip}}=Session) ->
+    MainIp = nklib_util:to_host(nkpacket_config_cache:main_ip()),
+    ExtIp = nklib_util:to_host(nkpacket_config_cache:ext_ip()),
+    case re:replace(SDP, MainIp, ExtIp, [{return, binary}, global]) of
+        SDP ->
+            ?LLOG(warning, "no SIP mangle, ~s not found!", [MainIp], Session),
+            Answer;
+        SDP2 ->
+            ?LLOG(warning, "done SIP mangle ~s -> ~s", [MainIp, ExtIp], Session),
+            Answer#{sdp:=SDP2}
+    end;
+
+mangle_sip_ip(Answer, _Session) ->
+    Answer.
+
 
 

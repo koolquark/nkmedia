@@ -68,7 +68,8 @@ plugin_syntax() ->
         sip_registrar => boolean,
         sip_domain => binary,
         sip_registrar_force_domain => boolean,
-        sip_invite_to_not_registered => boolean
+        sip_invite_to_not_registered => boolean,
+        sip_use_external_ip => boolean
     }.
 
 
@@ -77,7 +78,8 @@ plugin_defaults() ->
         sip_registrar => true,
         sip_domain => <<"nkmedia">>,
         sip_registrar_force_domain => true,
-        sip_invite_to_not_registered => true
+        sip_invite_to_not_registered => true,
+        sip_use_external_ip => true
     }.
 
 
@@ -86,15 +88,23 @@ plugin_config(Config, _Service) ->
         sip_registrar := Registrar,
         sip_domain := Domain,
         sip_registrar_force_domain := Force,
-        sip_invite_to_not_registered := External
+        sip_invite_to_not_registered := External,
+        sip_use_external_ip := ExtIp
     } = Config,
-    Config2 = #sip_config{
+    Cache = #sip_config{
         registrar = Registrar,
         domain = Domain,
         force_domain = Force,
         invite_to_not_registered = External
     },
-    {ok, Config, Config2}.
+    Config2 = case ExtIp of
+        true ->
+            ExtIp = nklib_util:to_host(nkpacket_config_cache:ext_ip()),
+            Config#{sip_local_host=>ExtIp};
+        false ->
+            Config
+    end,
+    {ok, Config2, Cache}.
 
 
 plugin_start(Config, #{name:=Name}) ->
@@ -375,7 +385,9 @@ nkmedia_call_answer(_CallId, _Link, _SessId, _Answer, _Callee, _Call) ->
 
 %% @private
 nkmedia_call_cancelled(CallId, {nkmedia_sip, _Pid}, _Call) ->
-    nkmedia_sip:hangup({nkmedia_call, CallId, self()}),
+    % We should not block the call
+    Self = self(),
+    spawn(fun() -> nkmedia_sip:hangup({nkmedia_call, CallId, Self}) end),
     continue;
 
 nkmedia_call_cancelled(_CallId, _Link, _Call) ->
@@ -384,7 +396,8 @@ nkmedia_call_cancelled(_CallId, _Link, _Call) ->
 
 %% @private
 nkmedia_call_reg_event(CallId, {nkmedia_sip, _Pid}, {hangup, _Reason}, _Call) ->
-    nkmedia_sip:hangup({nkmedia_call, CallId, self()}),
+    Self = self(),
+    spawn(fun() -> nkmedia_sip:hangup({nkmedia_call, CallId, Self}) end),
     continue;
 
 nkmedia_call_reg_event(_CallId, _Link, _Event, _Call) ->
@@ -397,32 +410,19 @@ nkmedia_call_reg_event(_CallId, _Link, _Event, _Call) ->
 
 
 %% @private
-nkmedia_session_reg_event(_SessId, {nkmedia_sip_in, {Handle, _Dialog}, _SipPid}, 
-                          {answer, #{sdp:=SDP}}, Session) ->
-    SDP2 = nksip_sdp:parse(SDP),
-    case nksip_request:reply({answer, SDP2}, Handle) of
+nkmedia_session_reg_event(SessId, {nkmedia_sip, _}, {answer, Answer}, Session) ->
+    case nkmedia_sip:answer({nkmedia_session, SessId, self()}, Answer) of
         ok ->
-            ok;
+           {ok, Session};
         {error, Error} ->
             lager:error("Error in SIP reply: ~p", [Error]),
-            nkmedia_session:stop(self(), sip_reply_error)
-    end,
-    {ok, Session};
+            {error, Error, Session}
+    end;
 
-
-nkmedia_session_reg_event(_SessId, {nkmedia_sip_in, {Handle, Dialog}, _SipPid}, 
-                          {stop, _Reason}, Session) ->
-    case Session of
-        #{answer:=#{sdp:=_}} ->
-            spawn(fun() -> nksip_uac:bye(Dialog, []) end);
-        _ ->
-            spawn(fun() -> nksip_request:reply(decline, Handle) end)
-    end,
-    {ok, Session};
-
-nkmedia_session_reg_event(_SessId, {nkmedia_sip_out, Link, _SipPid}, 
-                          {stop, _Reason}, Session) ->
-    spawn(fun() -> nkmedia_sip:hangup(Link) end),
+nkmedia_session_reg_event(SessId, {nkmedia_sip, _}, {stop, _Reason}, Session) ->
+    Self = self(),
+    % We should not block the session
+    spawn(fun() -> nkmedia_sip:hangup({nkmedia_session, SessId, Self}) end),
     {ok, Session};
 
 nkmedia_session_reg_event(_SessId, _Link, _Event, _Session) ->

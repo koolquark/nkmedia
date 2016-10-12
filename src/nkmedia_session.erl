@@ -49,7 +49,7 @@
 -define(MAX_ICE_TIME, 5000).
 -define(MAX_CALL_TIME, 5000).
 
-% -define(DEBUG_MEDIA, true).   % Uncomment to debug media
+-define(DEBUG_MEDIA, true).   % Uncomment to debug media
 
 
 %% ===================================================================
