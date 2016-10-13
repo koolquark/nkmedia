@@ -14,7 +14,7 @@ See the [API Introduction](intro.md) for an introduction to the interface, and [
 * [**`set_type`**](#set_type): Updates the type of a current session
 * [**`recorder_action`**](#recorder_action): Performs an action over the recorder
 * [**`player_action`**](#player_action): Performs an action over the player
-* [**`room_action`**](#room_action): Performs an action over the current room
+* [**`conf_action`**](#conf_action): Performs an action over the current conference
 * [**`set_candidate`**](#set_candidate): Sends a Trickle ICE candidate
 * [**`set_candidate_end`**](#set_candidate_end): Signals that no more candidates are available
 
@@ -33,7 +33,7 @@ See also each backend and plugin documentation:
 * [nkmedia_janus](janus.md)
 * [nkmedia_fs](fs.md)
 * [nkmedia_kms](kms.md)
-* [nkmedia_room](room.md)
+* [nkmedia_conf](conf.md)
 * [nkmedia_call](call.md)
 * [nkmedia_sip](sip.md)
 * [nkmedia_verto](verto.md)
@@ -117,7 +117,7 @@ Depending on the session type and backend, other fields can be used. Please refe
 
 Field|Description
 ---|---
-room_id|Room to use
+conf_id|Conference to use
 publisher_id|Publisher to connect to
 layout|MCU layout to use
 loops|Loops to repeat in the player
@@ -389,9 +389,9 @@ Some backends allow to control a `play` session. See each backend documentation.
 ```
 
 
-## room_action
+## conf_action
 
-Some backends allow to control the room this session belongs to. See each backend documentation. 
+Some backends allow to control the conference this session belongs to. See each backend documentation. 
 
 **Sample**
 
@@ -399,7 +399,7 @@ Some backends allow to control the room this session belongs to. See each backen
 {
 	class: "media",
 	subclass: "session",
-	cmd: "room_action",
+	cmd: "conf_action",
 	data: {
 		session_id: "54c1b637-36fb-70c2-8080-28f07603cda8",
 		action: "layout"

@@ -10,7 +10,7 @@ See also each backend and plugin documentation:
 * [nkmedia_janus](janus.md)
 * [nkmedia_fs](fs.md)
 * [nkmedia_kms](kms.md)
-* [nkmedia_room](room.md)
+* [nkmedia_conf](conf.md)
 * [nkmedia_call](call.md)
 * [nkmedia_sip](sip.md)
 * [nkmedia_verto](verto.md)

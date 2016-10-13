@@ -119,9 +119,9 @@ The available [media updates](#media-update) can also be included in the creatio
 
 ## publish
 
-Allows you to _publish_ a session with audio/video/data to a _room_, working as an _SFU_ (_selective forwarding unit_). Any number of listeners can then be connected to this session.
+Allows you to _publish_ a session with audio/video/data to a _conference_, working as an _SFU_ (_selective forwarding unit_). Any number of listeners can then be connected to this session.
 
-If you don't include a room, a new one will be created automatically. If you include a room, it must already exist.
+If you don't include a conference, a new one will be created automatically. If you include a conference, it must already exist.
 
 The available [media updates](#media-update) can also be included in the creation request.
 
@@ -149,7 +149,7 @@ The available [media updates](#media-update) can also be included in the creatio
 	result: "ok",
 	data: {
 		session_id: "54c1b637-36fb-70c2-8080-28f07603cda8",
-		room: "bbd48487-3783-f511-ee41-28f07603cda8",
+		conf_id: "bbd48487-3783-f511-ee41-28f07603cda8",
 		answer: {
 			sdp: "v=0..."
 		}
@@ -161,7 +161,7 @@ The available [media updates](#media-update) can also be included in the creatio
 
 ## listen
 
-Allows you to _listen_ to a previously started publisher, working as an _SFU_ (selective forwarding unit). You must tell the `publisher_id`, and the room will be found automatically.
+Allows you to _listen_ to a previously started publisher, working as an _SFU_ (selective forwarding unit). You must tell the `publisher_id`, and the conference will be found automatically.
 
 
 **Sample**

@@ -87,19 +87,19 @@ See the [call plugin](call.md) to be able to use NkMEDIA's SIP signalling.
 
 ## publish
 
-Allows you to _publish_ a session with audio/video/data to a _room_, working as an _SFU_ (_selective forwarding unit_). Any number of listeners can then be connected to this session.
+Allows you to _publish_ a session with audio/video/data to a _conference_, working as an _SFU_ (_selective forwarding unit_). Any number of listeners can then be connected to this session.
 
-If you don't include a room, a new one will be created automatically (using options `room_audiocodec`, `room_videocodec` and `room_bitrate`). If you include a room, it must already exist.
+If you don't include a conference, a new one will be created automatically (using options `conf_audiocodec`, `conf_videocodec` and `conf_bitrate`). If you include a conference, it must already exist.
 
 The available [media updates](#media-update) can also be included in the creation request.
 
 
 Field|Default|Description
 ---|---|---
-room_id|(automatic)|Room to use
-room_audio_codec|`"opus"`|Forces audio codec (`opus`, `isac32`, `isac16`, `pcmu`, `pcma`)
-room_video_codec|`"vp8"`|Forces video codec (`vp8`, `vp9`, `h264`)
-room_bitrate|`0`|Bitrate for the room (kbps, 0:unlimited)
+conf_id|(automatic)|Conference to use
+conf_audio_codec|`"opus"`|Forces audio codec (`opus`, `isac32`, `isac16`, `pcmu`, `pcma`)
+conf_video_codec|`"vp8"`|Forces video codec (`vp8`, `vp9`, `h264`)
+conf_bitrate|`0`|Bitrate for the conference (kbps, 0:unlimited)
 
 **Sample**
 
@@ -114,7 +114,7 @@ room_bitrate|`0`|Bitrate for the room (kbps, 0:unlimited)
 			sdp: "v=0.."
 		},
 		wait_reply: true,
-		room_video_codec: "vp9"
+		conf_video_codec: "vp9"
 	}
 	tid: 1
 }
@@ -125,7 +125,7 @@ room_bitrate|`0`|Bitrate for the room (kbps, 0:unlimited)
 	result: "ok",
 	data: {
 		session_id: "54c1b637-36fb-70c2-8080-28f07603cda8",
-		room: "bbd48487-3783-f511-ee41-28f07603cda8",
+		conf_id: "bbd48487-3783-f511-ee41-28f07603cda8",
 		answer: {
 			sdp: "v=0..."
 		}
@@ -137,7 +137,7 @@ room_bitrate|`0`|Bitrate for the room (kbps, 0:unlimited)
 
 ## listen
 
-Allows you to _listen_ to a previously started publisher, working as an _SFU_ (selective forwarding unit). You must tell the `publisher id` and the room will be found automatically.
+Allows you to _listen_ to a previously started publisher, working as an _SFU_ (selective forwarding unit). You must tell the `publisher id` and the conference will be found automatically.
 
 You must not include any offer in the [session creation request](api.md#create), because Janus will make one for you. You must then supply an _answer_ calling the [set answer](api.md#set_answer) command.
 
@@ -230,7 +230,7 @@ This backend allows to you perform, at any moment and in all session types (exce
 
 ## Type udpdate 
 
-Then only [type update](api.md#set_type) that the Janus backend supports is changing a `listen` session type to another `listen` type, but pointing to a publisher on the same room.
+Then only [type update](api.md#set_type) that the Janus backend supports is changing a `listen` session type to another `listen` type, but pointing to a publisher on the same conference.
 
 
 **Sample**

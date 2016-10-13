@@ -10,7 +10,7 @@
 * [**Media update**](#media-update)
 * [**Type update**](#type-update)
 * [**Recording**](#recording)
-* [**Room Management**](#room-management)
+* [**Conference Management**](#conference-management)
 * [**Calls**](#calls)
 
 
@@ -115,7 +115,7 @@ It is recommended to use the field `master_id` in the new second session, so tha
 ## mcu
 
 This session type connects the session to a new or existing MCU conference at a Freeswitch instance.
-The optional field `room_id` can be used to connect to an existing room, or create a new one with this name.
+The optional field `conf_id` can be used to connect to an existing conference, or create a new one with this name.
 
 **Sample**
 
@@ -126,7 +126,7 @@ The optional field `room_id` can be used to connect to an existing room, or crea
 	cmd: "start",
 	data: {
 		type: "mcu",
-		room_id: "41605362-3955-8f28-e371-38c9862f00d9",
+		conf_id: "41605362-3955-8f28-e371-38c9862f00d9",
 		offer: {
 			sdp: "v=0.."
 		},
@@ -142,7 +142,7 @@ The optional field `room_id` can be used to connect to an existing room, or crea
 	result: "ok",
 	data: {
 		session_id: "54c1b637-36fb-70c2-8080-28f07603cda8",
-		room_id: "41605362-3955-8f28-e371-38c9862f00d9",
+		conf_id: "41605362-3955-8f28-e371-38c9862f00d9",
 		answer: {
 			sdp: "v=0..."
 		}
@@ -151,7 +151,7 @@ The optional field `room_id` can be used to connect to an existing room, or crea
 }
 ```
 
-See [Room Management](#room-management) to learn about operations that can be performed on the room.
+See [Conference Management](#conference-management) to learn about operations that can be performed on the conference.
 
 
 ## Trickle ICE
@@ -189,9 +189,9 @@ TBD
 
 
 
-## Room management
+## Conference management
 
-In the near future, you will be able to perform several updates over any MCU, calling [room_action](api.md#room_action). Currenly the only supported option is to change the layout of the mcu in real time:
+In the near future, you will be able to perform several updates over any MCU, calling [conf_action](api.md#conf_action). Currenly the only supported option is to change the layout of the mcu in real time:
 
 **Sample**
 
@@ -199,10 +199,10 @@ In the near future, you will be able to perform several updates over any MCU, ca
 {
 	class: "media",
 	subclass: "session",
-	cmd: "room_action",
+	cmd: "conf_action",
 	data: {
 		action: "layout"
-		room_id: "41605362-3955-8f28-e371-38c9862f00d9",
+		conf_id: "41605362-3955-8f28-e371-38c9862f00d9",
 		layout: "2x2"
 	}
 	tid: 1

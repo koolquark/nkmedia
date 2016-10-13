@@ -1,13 +1,13 @@
-# ROOM MSGLOG Plugin
+# CONF MSGLOG Plugin
 
-MsgLog is a plugin for [NkMEDIA rooms](room.md). Once activated for a service, all started rooms will gain the capabilty of receiving _messages_, that are also stored and can be retrieved later.
+MsgLog is a plugin for [NkMEDIA conferences](conf.md). Once activated for a service, all started conferences will gain the capabilty of receiving _messages_, that are also stored and can be retrieved later.
 
-Each received message will also generate an event for the room.
+Each received message will also generate an event for the conference.
 
-Like for nkmedia_room, all commands use class `media`, subclass `room`.
+Like for nkmedia_conf, all commands use class `media`, subclass `conf`.
 
 * [**Commands**](#commands)
-  * [`msglog_send`](#msglog_send): Sends a new message to the room
+  * [`msglog_send`](#msglog_send): Sends a new message to the conference
   * [`msglog_get`](#msglog_get): Retrieves all messages
 * [**Events**](#events)
 
@@ -16,7 +16,7 @@ Like for nkmedia_room, all commands use class `media`, subclass `room`.
 
 ## msglog_send
 
-Sends a message to the room. Any JSON object can be used as the message, using the field `msg`, and the following fields will be added:
+Sends a message to the conference. Any JSON object can be used as the message, using the field `msg`, and the following fields will be added:
 
 Field|Value
 ---|---
@@ -25,17 +25,17 @@ user_id|User that sent the message
 session_id|User session id that sent the message
 timestmap|Unix-time (microseconds)
 
-The fields `room_id` and `msg` are mandatory.
+The fields `conf_id` and `msg` are mandatory.
 
 **Sample**
 
 ```js
 {
 	class: "media",
-	subclass: "room",
+	subclass: "conf",
 	cmd: "msglog_send",
 	data: {
-		room_id: "my_room_id",
+		conf_id: "my_conf_id",
 		msg: {
 			key1: "val1"
 		},
@@ -57,7 +57,7 @@ The fields `room_id` and `msg` are mandatory.
 
 ## msglog_get
 
-This command allows you to get the list of sent messages to the room. Only the field `room_id`is mandatory. 
+This command allows you to get the list of sent messages to the conference. Only the field `conf_id`is mandatory. 
 
 
 **Sample**
@@ -65,10 +65,10 @@ This command allows you to get the list of sent messages to the room. Only the f
 ```js
 {
 	class: "media",
-	subclass: "room",
+	subclass: "conf",
 	cmd: "msglog_get",
 	data: {
-		room_id: "my_room_id"
+		conf_id: "my_conf_id"
 	}
 	tid: 2
 }
@@ -93,7 +93,7 @@ This command allows you to get the list of sent messages to the room. Only the f
 
 # Events
 
-All users registered to receive room events with type `msglog_new_msg` (or all events, what is the normal situation for room members) will receive the following event:
+All users registered to receive conference events with type `msglog_new_msg` (or all events, what is the normal situation for conference members) will receive the following event:
 
 ```js
 {
@@ -101,9 +101,9 @@ All users registered to receive room events with type `msglog_new_msg` (or all e
 	cmd: "event",
 	data: {
 		class: "media",
-		subclass: "room",
+		subclass: "conf",
 		type: "msglog_new_msg",
-		obj_id: "my_room_id",
+		obj_id: "my_conf_id",
 		body: #{
 			msg_id: 1,
 			user_id: "user@domain",
