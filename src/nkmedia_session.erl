@@ -95,7 +95,7 @@
         user_id => nkservice:user_id(),             % Informative only
         user_session => nkservice:user_session(),   % Informative only
         
-        room_id => binary(),                        % To be used in backends
+        conf_id => binary(),                        % To be used in backends
         publisher_id => binary(),
         mute_audio => boolean(),
         mute_video => boolean(),

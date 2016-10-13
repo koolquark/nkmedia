@@ -18,17 +18,17 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc Janus room (SFU) management
--module(nkmedia_janus_room).
+%% @doc Janus conf (SFU) management
+-module(nkmedia_janus_conf).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([init/2, terminate/2, tick/2, handle_cast/2]).
 -export([janus_check/3]).
 
--define(LLOG(Type, Txt, Args, Room),
-    lager:Type("NkMEDIA Janus Room ~s "++Txt, [maps:get(room_id, Room) | Args])).
+-define(LLOG(Type, Txt, Args, Conf),
+    lager:Type("NkMEDIA Janus Conferece ~s "++Txt, [maps:get(conf_id, Conf) | Args])).
 
--include("../../include/nkmedia_room.hrl").
+-include("../../include/nkmedia_conf.hrl").
 
 
 %% ===================================================================
@@ -36,10 +36,10 @@
 %% ===================================================================
 
 
--type room_id() :: nkmedia_room:id().
+-type conf_id() :: nkmedia_conf:id().
 
--type room() ::
-    nkmedia_room:room() |
+-type conf() ::
+    nkmedia_conf:conf() |
     #{
         nkmedia_janus_id => nkmedia_janus:id()
     }.
@@ -51,16 +51,16 @@
 %% ===================================================================
 
 %% @private Called periodically from nkmedia_janus_engine
-janus_check(JanusId, RoomId, Data) ->
-    case nkmedia_room:find(RoomId) of
+janus_check(JanusId, ConfId, Data) ->
+    case nkmedia_conf:find(ConfId) of
         {ok, Pid} ->
             #{<<"num_participants">>:=Num} = Data,
             gen_server:cast(Pid, {nkmedia_janus, {participants, Num}});
         not_found ->
             spawn(
                 fun() -> 
-                    lager:warning("Destroying orphan Janus room ~s", [RoomId]),
-                    destroy_room(#{nkmedia_janus_id=>JanusId, room_id=>RoomId})
+                    lager:warning("Destroying orphan Janus conf ~s", [ConfId]),
+                    destroy_conf(#{nkmedia_janus_id=>JanusId, conf_id=>ConfId})
                 end)
     end.
 
@@ -70,17 +70,17 @@ janus_check(JanusId, RoomId, Data) ->
 %% Callbacks
 %% ===================================================================
 
-%% @doc Creates a new room
+%% @doc Creates a new conf
 %% Use nkmedia_janus_op:list_rooms/1 to check rooms directly on Janus
--spec init(room_id(), room()) ->
-    {ok, room()} | {error, term()}.
+-spec init(conf_id(), conf()) ->
+    {ok, conf()} | {error, term()}.
 
-init(_RoomId, Room) ->
-    case get_janus(Room) of
-        {ok, Room2} ->
-            case create_room(Room2) of
-                {ok, Room3} ->
-                    {ok, ?ROOM(#{class=>sfu, backend=>nkmedia_janus}, Room3)};
+init(_ConfId, Conf) ->
+    case get_janus(Conf) of
+        {ok, Conf2} ->
+            case create_conf(Conf2) of
+                {ok, Conf3} ->
+                    {ok, ?CONF(#{class=>sfu, backend=>nkmedia_janus}, Conf3)};
                 {error, Error} ->
                     {error, Error}
             end;
@@ -90,60 +90,60 @@ init(_RoomId, Room) ->
 
 
 %% @doc
--spec terminate(term(), room()) ->
-    {ok, room()} | {error, term()}.
+-spec terminate(term(), conf()) ->
+    {ok, conf()} | {error, term()}.
 
-terminate(_Reason, Room) ->
-    case destroy_room(Room) of
+terminate(_Reason, Conf) ->
+    case destroy_conf(Conf) of
         ok ->
-            ?LLOG(info, "stopping, destroying room", [], Room);
+            ?LLOG(info, "stopping, destroying conf", [], Conf);
         {error, Error} ->
-            ?LLOG(warning, "could not destroy room: ~p", [Error], Room)
+            ?LLOG(warning, "could not destroy conf: ~p", [Error], Conf)
     end,
-    {ok, Room}.
+    {ok, Conf}.
 
 
 
 %% @private
--spec tick(room_id(), room()) ->
-    {ok, room()} | {stop, nkservice:error(), room()}.
+-spec tick(conf_id(), conf()) ->
+    {ok, conf()} | {stop, nkservice:error(), conf()}.
 
-tick(RoomId, #{nkmedia_janus_id:=JanusId}=Room) ->
-    case length(nkmedia_room:get_all_with_role(publisher, Room)) of
+tick(ConfId, #{nkmedia_janus_id:=JanusId}=Conf) ->
+    case length(nkmedia_conf:get_all_with_role(publisher, Conf)) of
         0 ->
-            nkmedia_room:stop(self(), timeout);
+            nkmedia_conf:stop(self(), timeout);
         _ ->
-           case nkmedia_janus_engine:check_room(JanusId, RoomId) of
+           case nkmedia_janus_engine:check_conf(JanusId, ConfId) of
                 {ok, _} ->      
                     ok;
                 _ ->
-                    ?LLOG(warning, "room is not on engine ~p ~p", 
-                          [JanusId, RoomId], Room),
-                    nkmedia_room:stop(self(), timeout)
+                    ?LLOG(warning, "conf is not on engine ~p ~p", 
+                          [JanusId, ConfId], Conf),
+                    nkmedia_conf:stop(self(), timeout)
             end
     end,
-    {ok, Room}.
+    {ok, Conf}.
 
 
 %% @private
--spec handle_cast(term(), room()) ->
-    {noreply, room()}.
+-spec handle_cast(term(), conf()) ->
+    {noreply, conf()}.
 
-handle_cast({participants, Num}, Room) ->
-    case length(nkmedia_room:get_all_with_role(publisher, Room)) of
+handle_cast({participants, Num}, Conf) ->
+    case length(nkmedia_conf:get_all_with_role(publisher, Conf)) of
         Num -> 
             ok;
         Other ->
             ?LLOG(notice, "Janus says ~p participants, we have ~p!", 
-                  [Num, Other], Room),
+                  [Num, Other], Conf),
             case Num of
                 0 ->
-                    nkmedia_room:stop(self(), no_room_members);
+                    nkmedia_conf:stop(self(), no_conf_members);
                 _ ->
                     ok
             end
     end,
-    {noreply, Room}.
+    {noreply, Conf}.
 
 
 
@@ -154,38 +154,38 @@ handle_cast({participants, Num}, Room) ->
 
 
 %% @private
--spec get_janus(room()) ->
-    {ok, room()} | error.
+-spec get_janus(conf()) ->
+    {ok, conf()} | error.
 
-get_janus(#{nkmedia_janus_id:=_}=Room) ->
-    {ok, Room};
+get_janus(#{nkmedia_janus_id:=_}=Conf) ->
+    {ok, Conf};
 
-get_janus(#{srv_id:=SrvId}=Room) ->
+get_janus(#{srv_id:=SrvId}=Conf) ->
     case SrvId:nkmedia_janus_get_mediaserver(SrvId) of
         {ok, JanusId} ->
-            {ok, ?ROOM(#{nkmedia_janus_id=>JanusId}, Room)};
+            {ok, ?CONF(#{nkmedia_janus_id=>JanusId}, Conf)};
         {error, _Error} ->
             error
     end.
 
 
 %% @private
--spec create_room(room()) ->
-    {ok, room()} | {error, term()}.
+-spec create_conf(conf()) ->
+    {ok, conf()} | {error, term()}.
 
-create_room(#{nkmedia_janus_id:=JanusId, room_id:=RoomId}=Room) ->
+create_conf(#{nkmedia_janus_id:=JanusId, conf_id:=ConfId}=Conf) ->
     Merge = #{audio_codec=>opus, video_codec=>vp8, bitrate=>500000},
-    Room2 = ?ROOM_MERGE(Merge, Room),
+    Conf2 = ?CONF_MERGE(Merge, Conf),
     Opts = #{        
-        audiocodec => maps:get(audio_codec, Room2),
-        videocodec => maps:get(video_codec, Room2),
-        bitrate => maps:get(bitrate, Room2)
+        audiocodec => maps:get(audio_codec, Conf2),
+        videocodec => maps:get(video_codec, Conf2),
+        bitrate => maps:get(bitrate, Conf2)
     },
-    case nkmedia_janus_op:start(JanusId, RoomId) of
+    case nkmedia_janus_op:start(JanusId, ConfId) of
         {ok, Pid} ->
-            case nkmedia_janus_op:create_room(Pid, RoomId, Opts) of
+            case nkmedia_janus_op:create_room(Pid, ConfId, Opts) of
                 ok ->
-                    {ok, Room2};
+                    {ok, Conf2};
                 {error, Error} ->
                     {error, Error}
             end;
@@ -194,13 +194,13 @@ create_room(#{nkmedia_janus_id:=JanusId, room_id:=RoomId}=Room) ->
     end.
 
 
--spec destroy_room(room()) ->
+-spec destroy_conf(conf()) ->
     ok | {error, term()}.
 
-destroy_room(#{nkmedia_janus_id:=JanusId, room_id:=RoomId}) ->
-    case nkmedia_janus_op:start(JanusId, RoomId) of
+destroy_conf(#{nkmedia_janus_id:=JanusId, conf_id:=ConfId}) ->
+    case nkmedia_janus_op:start(JanusId, ConfId) of
         {ok, Pid} ->
-            nkmedia_janus_op:destroy_room(Pid, RoomId);
+            nkmedia_janus_op:destroy_room(Pid, ConfId);
         {error, Error} ->
             {error, Error}
     end.

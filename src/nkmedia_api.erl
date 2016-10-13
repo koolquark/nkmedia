@@ -110,7 +110,7 @@ cmd(<<"session">>, Cmd, #api_req{data=Data}, State)
 			 Cmd == <<"set_type">>;
 		     Cmd == <<"recorder_action">>; 
 		     Cmd == <<"player_action">>; 
-		     Cmd == <<"room_action">> ->
+		     Cmd == <<"conf_action">> ->
  	#{session_id:=SessId} = Data,
  	Cmd2 = binary_to_atom(Cmd, latin1),
 	case nkmedia_session:cmd(SessId, Cmd2, Data) of

@@ -18,16 +18,16 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc Kurento room management
--module(nkmedia_kms_room).
+%% @doc Kurento conf management
+-module(nkmedia_kms_conf).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([init/2, terminate/2, tick/2]).
 
--define(LLOG(Type, Txt, Args, Room),
-    lager:Type("NkMEDIA Kms Room ~s "++Txt, [maps:get(room_id, Room) | Args])).
+-define(LLOG(Type, Txt, Args, Conf),
+    lager:Type("NkMEDIA Kms Conference ~s "++Txt, [maps:get(conf_id, Conf) | Args])).
 
--include("../../include/nkmedia_room.hrl").
+-include("../../include/nkmedia_conf.hrl").
 
 
 %% ===================================================================
@@ -35,10 +35,10 @@
 %% ===================================================================
 
 
--type room_id() :: nkmedia_room:id().
+-type conf_id() :: nkmedia_conf:id().
 
--type room() ::
-    nkmedia_room:room() |
+-type conf() ::
+    nkmedia_conf:conf() |
     #{
         nkmedia_kms_id => nkmedia_kms:id()
     }.
@@ -58,41 +58,41 @@
 
 
 
-%% @doc Creates a new room
--spec init(room_id(), room()) ->
-    {ok, room()} | {error, term()}.
+%% @doc Creates a new conf
+-spec init(conf_id(), conf()) ->
+    {ok, conf()} | {error, term()}.
 
-init(_RoomId, Room) ->
-    case get_kms(Room) of
-        {ok, Room2} ->
-            {ok, ?ROOM(#{class=>sfu, backend=>nkmedia_kms}, Room2)};
+init(_ConfId, Conf) ->
+    case get_kms(Conf) of
+        {ok, Conf2} ->
+            {ok, ?CONF(#{class=>sfu, backend=>nkmedia_kms}, Conf2)};
        error ->
             {error, mediaserver_not_available}
     end.
 
 
 %% @doc
--spec terminate(term(), room()) ->
-    {ok, room()} | {error, term()}.
+-spec terminate(term(), conf()) ->
+    {ok, conf()} | {error, term()}.
 
-terminate(_Reason, Room) ->
-    ?LLOG(info, "stopping, destroying room", [], Room),
-    {ok, Room}.
+terminate(_Reason, Conf) ->
+    ?LLOG(info, "stopping, destroying conf", [], Conf),
+    {ok, Conf}.
 
 
 
 %% @private
--spec tick(room_id(), room()) ->
-    {ok, room()} | {stop, nkservice:error(), room()}.
+-spec tick(conf_id(), conf()) ->
+    {ok, conf()} | {stop, nkservice:error(), conf()}.
 
-tick(_RoomId, Room) ->
-    case length(nkmedia_room:get_all_with_role(publisher, Room)) of
+tick(_ConfId, Conf) ->
+    case length(nkmedia_conf:get_all_with_role(publisher, Conf)) of
         0 ->
-            nkmedia_room:stop(self(), timeout);
+            nkmedia_conf:stop(self(), timeout);
         _ ->
             ok
     end,
-    {ok, Room}.
+    {ok, Conf}.
 
 
 
@@ -102,13 +102,13 @@ tick(_RoomId, Room) ->
 
 
 %% @private
-get_kms(#{nkmedia_kms_id:=_}=Room) ->
-    {ok, Room};
+get_kms(#{nkmedia_kms_id:=_}=Conf) ->
+    {ok, Conf};
 
-get_kms(#{srv_id:=SrvId}=Room) ->
+get_kms(#{srv_id:=SrvId}=Conf) ->
     case SrvId:nkmedia_kms_get_mediaserver(SrvId) of
         {ok, KmsId} ->
-            {ok, ?ROOM(#{nkmedia_kms_id=>KmsId}, Room)};
+            {ok, ?CONF(#{nkmedia_kms_id=>KmsId}, Conf)};
         {error, _Error} ->
             error
     end.

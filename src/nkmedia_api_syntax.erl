@@ -55,8 +55,8 @@ session_fields() ->
 		type_ext,
 
 		peer_id,
-		room_id,
-		create_room,
+		conf_id,
+		create_conf,
 		publisher_id,
 		layout,
 		loops,
@@ -92,8 +92,8 @@ syntax(<<"session">>, <<"create">>, Syntax, Defaults, Mandatory) ->
 
 			% Type-specific
 	        peer_id => binary,
-	        room_id => binary,
-	        create_room => boolean,
+	        conf_id => binary,
+	        create_conf => boolean,
 	        publisher_id => binary,
 	        layout => binary,
 	        loops => {integer, 0, none},
@@ -158,8 +158,8 @@ syntax(<<"session">>, <<"set_type">>, Syntax, Defaults, Mandatory) ->
 			type => atom,
 
 			% Type specific
-			room_id => binary,
-			create_room => boolean,
+			conf_id => binary,
+			create_conf => boolean,
 			publisher_id => binary,
         	uri => binary,
         	layout => binary
@@ -192,7 +192,7 @@ syntax(<<"session">>, <<"player_action">>, Syntax, Defaults, Mandatory) ->
 		[session_id|Mandatory]
 	};
 
-syntax(<<"session">>, <<"room_action">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"session">>, <<"conf_action">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,

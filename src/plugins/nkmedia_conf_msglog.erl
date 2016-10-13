@@ -19,16 +19,16 @@
 %% -------------------------------------------------------------------
 
 %% @doc Plugin implementing a Verto server
--module(nkmedia_room_msglog).
+-module(nkmedia_conf_msglog).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([send_msg/2, get_msgs/2]).
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
 -export([error_code/1]).
--export([nkmedia_room_init/2, nkmedia_room_handle_call/3]).
+-export([nkmedia_conf_init/2, nkmedia_conf_handle_call/3]).
 -export([api_cmd/2, api_syntax/4]).
 
--include("../../include/nkmedia_room.hrl").
+-include("../../include/nkmedia_conf.hrl").
 -include_lib("nkservice/include/nkservice.hrl").
 
 
@@ -66,13 +66,13 @@
 %% ===================================================================
 
 
-%% @doc Sends a message to the room
--spec send_msg(nkmedia_room:id(), map()) ->
+%% @doc Sends a message to the conf
+-spec send_msg(nkmedia_conf:id(), map()) ->
     {ok, msg()} | {error, term()}.
 
-send_msg(RoomId, Msg) when is_map(Msg) ->
+send_msg(ConfId, Msg) when is_map(Msg) ->
     Msg2 = Msg#{timestamp=>nklib_util:l_timestamp()},
-    case nkmedia_room:do_call(RoomId, {?MODULE, send, Msg2}) of
+    case nkmedia_conf:do_call(ConfId, {?MODULE, send, Msg2}) of
         {ok, MsgId} ->
             {ok, Msg2#{msg_id=>MsgId}};
         {error, Error} ->
@@ -81,11 +81,11 @@ send_msg(RoomId, Msg) when is_map(Msg) ->
 
 
 %% @doc Get all msgs
--spec get_msgs(nkmedia_room:id(), filters()) ->
+-spec get_msgs(nkmedia_conf:id(), filters()) ->
     {ok, [msg()]} | {error, term()}.
 
-get_msgs(RoomId, Filters) ->
-    nkmedia_room:do_call(RoomId, {?MODULE, get, Filters}).
+get_msgs(ConfId, Filters) ->
+    nkmedia_conf:do_call(ConfId, {?MODULE, get, Filters}).
 
 
 
@@ -96,18 +96,18 @@ get_msgs(RoomId, Filters) ->
 
 %% @private
 plugin_deps() ->
-    [nkmedia_room].
+    [nkmedia_conf].
 
 
 %% @private
 plugin_start(Config, #{name:=Name}) ->
-    lager:info("Plugin NkMEDIA ROOM MsgLog (~s) starting", [Name]),
+    lager:info("Plugin NkMEDIA CONF MsgLog (~s) starting", [Name]),
     {ok, Config}.
 
 
 %% @private
 plugin_stop(Config, #{name:=Name}) ->
-    lager:info("Plugin NkMEDIA ROOM MsgLog (~p) stopping", [Name]),
+    lager:info("Plugin NkMEDIA CONF MsgLog (~p) stopping", [Name]),
     {ok, Config}.
 
 
@@ -117,34 +117,34 @@ error_code(_) -> continue.
 
 
 %% ===================================================================
-%% Room callbacks
+%% Conf callbacks
 %% ===================================================================
 
 %% @private
-nkmedia_room_init(_RoomId, Room) ->
+nkmedia_conf_init(_ConfId, Conf) ->
     State = #state{msgs=orddict:new()},
-    {ok, Room#{?MODULE=>State}}.
+    {ok, Conf#{?MODULE=>State}}.
 
 
 %% @private
-nkmedia_room_handle_call({?MODULE, send, Msg}, _From, #{?MODULE:=State}=Room) ->
-    nkmedia_room:restart_timer(Room),
+nkmedia_conf_handle_call({?MODULE, send, Msg}, _From, #{?MODULE:=State}=Conf) ->
+    nkmedia_conf:restart_timer(Conf),
     #state{pos=Pos, msgs=Msgs} = State,
     Msg2 = Msg#{msg_id => Pos},
     State2 = State#state{
         pos = Pos+1, 
         msgs = orddict:store(Pos, Msg2, Msgs)
     },
-    {reply, {ok, Pos}, update(State2, Room)};
+    {reply, {ok, Pos}, update(State2, Conf)};
 
-nkmedia_room_handle_call({?MODULE, get, _Filters}, _From, 
-                         #{?MODULE:=State}=Room) ->
-    nkmedia_room:restart_timer(Room),
+nkmedia_conf_handle_call({?MODULE, get, _Filters}, _From, 
+                         #{?MODULE:=State}=Conf) ->
+    nkmedia_conf:restart_timer(Conf),
     #state{msgs=Msgs} = State,
     Reply = [Msg || {_Id, Msg} <- orddict:to_list(Msgs)],
-    {reply, {ok, Reply}, Room};
+    {reply, {ok, Reply}, Conf};
 
-nkmedia_room_handle_call(_Msg, _From, _Room) ->
+nkmedia_conf_handle_call(_Msg, _From, _Conf) ->
     continue.
 
 
@@ -153,7 +153,7 @@ nkmedia_room_handle_call(_Msg, _From, _Room) ->
 %% ===================================================================
 
 %% @private
-api_cmd(#api_req{class = <<"media">>, subclass = <<"room">>, cmd=Cmd}=Req, State)
+api_cmd(#api_req{class = <<"media">>, subclass = <<"conf">>, cmd=Cmd}=Req, State)
         when Cmd == <<"msglog_send">>; Cmd == <<"msglog_get">> ->
     #api_req{cmd=Cmd} = Req,
     do_api_cmd(Cmd, Req, State);
@@ -163,7 +163,7 @@ api_cmd(_Req, _State) ->
 
 
 %% @private
-api_syntax(#api_req{class = <<"media">>, subclass = <<"room">>, cmd=Cmd}=Req, 
+api_syntax(#api_req{class = <<"media">>, subclass = <<"conf">>, cmd=Cmd}=Req, 
            Syntax, Defaults, Mandatory) 
            when Cmd == <<"msglog_send">>; Cmd == <<"msglog_get">> ->
     #api_req{cmd=Cmd} = Req,
@@ -179,25 +179,25 @@ api_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
 %% ===================================================================
 
 %% @private
-update(State, Room) ->
-    ?ROOM(#{?MODULE=>State}, Room).
+update(State, Conf) ->
+    ?CONF(#{?MODULE=>State}, Conf).
 
 
 do_api_cmd(<<"msglog_send">>, ApiReq, State) ->
     #api_req{srv_id=SrvId, data=Data, user=User, session=SessId} = ApiReq,
-    #{room_id:=RoomId, msg:=Msg} = Data,
-    RoomMsg = Msg#{user_id=>User, session_id=>SessId},
-    case send_msg(RoomId, RoomMsg) of
+    #{conf_id:=ConfId, msg:=Msg} = Data,
+    ConfMsg = Msg#{user_id=>User, session_id=>SessId},
+    case send_msg(ConfId, ConfMsg) of
         {ok, #{msg_id:=MsgId}=SentMsg} ->
-            nkmedia_api_events:send_event(SrvId, room, RoomId, msglog_new_msg, SentMsg),
+            nkmedia_api_events:send_event(SrvId, conf, ConfId, msglog_new_msg, SentMsg),
             {ok, #{msg_id=>MsgId}, State};
         {error, Error} ->
             {error, Error, State}
     end;
 
 do_api_cmd(<<"msglog_get">>, #api_req{data=Data}, State) ->
-    #{room_id:=RoomId} = Data,
-    case get_msgs(RoomId, #{}) of
+    #{conf_id:=ConfId} = Data,
+    case get_msgs(ConfId, #{}) of
         {ok, List} ->
             {ok, List, State};
         {error, Error} ->
@@ -212,20 +212,20 @@ do_api_cmd(_Cmd, _ApiReq, State) ->
 do_api_syntax(<<"msglog_send">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
-            room_id => binary,
+            conf_id => binary,
             msg => map
         },
         Defaults,
-        [room_id, msg|Mandatory]
+        [conf_id, msg|Mandatory]
     };
 
 do_api_syntax(<<"msglog_get">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
-            room_id => binary
+            conf_id => binary
         },
         Defaults,
-        [room_id|Mandatory]
+        [conf_id|Mandatory]
     };
 
 do_api_syntax(_Cmd, Syntax, Defaults, Mandatory) ->

@@ -53,7 +53,7 @@
 
 
 plugin_deps() ->
-    [nkmedia, nkmedia_room].
+    [nkmedia, nkmedia_conf].
 
 
 plugin_group() ->

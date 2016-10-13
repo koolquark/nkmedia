@@ -161,7 +161,7 @@ plugin_deps() ->
         nkmedia_janus_proxy, 
         nkmedia_kms_proxy,
         nkservice_api_gelf,
-        nkmedia_room_msglog
+        nkmedia_conf_msglog
     ].
 
 

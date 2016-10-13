@@ -18,8 +18,8 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc Room Plugin API Syntax
--module(nkmedia_room_api_syntax).
+%% @doc Conf Plugin API Syntax
+-module(nkmedia_conf_api_syntax).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([syntax/4]).
@@ -35,7 +35,7 @@ syntax(<<"create">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             class => atom,
-            room_id => binary,
+            conf_id => binary,
             backend => atom,
             bitrate => {integer, 0, none},
             audio_codec => {enum, [opus, isac32, isac16, pcmu, pcma]},
@@ -47,9 +47,9 @@ syntax(<<"create">>, Syntax, Defaults, Mandatory) ->
 
 syntax(<<"destroy">>, Syntax, Defaults, Mandatory) ->
     {
-        Syntax#{room_id => binary},
+        Syntax#{conf_id => binary},
         Defaults,
-        [room_id|Mandatory]
+        [conf_id|Mandatory]
     };
 
 syntax(<<"get_list">>, Syntax, Defaults, Mandatory) ->
@@ -61,9 +61,9 @@ syntax(<<"get_list">>, Syntax, Defaults, Mandatory) ->
 
 syntax(<<"get_info">>, Syntax, Defaults, Mandatory) ->
     {
-        Syntax#{room_id => binary},
+        Syntax#{conf_id => binary},
         Defaults, 
-        [room_id|Mandatory]
+        [conf_id|Mandatory]
     };
 
 syntax(_Cmd, Syntax, Defaults, Mandatory) ->

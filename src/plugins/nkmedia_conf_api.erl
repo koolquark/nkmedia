@@ -18,8 +18,8 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc Room Plugin API
--module(nkmedia_room_api).
+%% @doc Conf Plugin API
+-module(nkmedia_conf_api).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([cmd/3]).
@@ -33,15 +33,15 @@
 
 
 cmd(<<"create">>, #api_req{srv_id=SrvId, data=Data}, State) ->
-    case nkmedia_room:start(SrvId, Data) of
+    case nkmedia_conf:start(SrvId, Data) of
         {ok, Id, _Pid} ->
-            {ok, #{room_id=>Id}, State};
+            {ok, #{conf_id=>Id}, State};
         {error, Error} ->
             {error, Error, State}
     end;
 
-cmd(<<"destroy">>, #api_req{data=#{room_id:=Id}}, State) ->
-    case nkmedia_room:stop(Id, api_stop) of
+cmd(<<"destroy">>, #api_req{data=#{conf_id:=Id}}, State) ->
+    case nkmedia_conf:stop(Id, api_stop) of
         ok ->
             {ok, #{}, State};
         {error, Error} ->
@@ -49,11 +49,11 @@ cmd(<<"destroy">>, #api_req{data=#{room_id:=Id}}, State) ->
     end;
 
 cmd(<<"get_list">>, _Req, State) ->
-    Ids = [#{room_id=>Id, class=>Class} || {Id, Class, _Pid} <- nkmedia_room:get_all()],
+    Ids = [#{conf_id=>Id, class=>Class} || {Id, Class, _Pid} <- nkmedia_conf:get_all()],
     {ok, Ids, State};
 
-cmd(<<"get_info">>, #api_req{data=#{room_id:=RoomId}}, State) ->
-    case nkmedia_room:get_info(RoomId) of
+cmd(<<"get_info">>, #api_req{data=#{conf_id:=ConfId}}, State) ->
+    case nkmedia_conf:get_info(ConfId) of
         {ok, Info} ->
             {ok, Info, State};
         {error, Error} ->

@@ -112,7 +112,7 @@ plugin_deps() ->
         nkmedia_janus_proxy, 
         nkmedia_kms_proxy,
         nkservice_api_gelf,
-        nkmedia_room_msglog
+        nkmedia_conf_msglog
     ].
 
 
@@ -149,8 +149,8 @@ recorder(C, S, Data) ->
 player(C, S, Data) ->
     cmd(C, S, player_action, Data).
 
-room(C, S, Data) ->
-    cmd(C, S, room_action, Data).
+conf(C, S, Data) ->
+    cmd(C, S, conf_action, Data).
 
 type(C, S, Type, Data) ->
     cmd(C, S, set_type, Data#{type=>Type}).
@@ -172,21 +172,21 @@ candidate(C, SessId, #candidate{a_line=Line, m_id=Id, m_index=Index}) ->
 
 
 
-%% Room
-room_list(C) ->
-    room_cmd(C, list, #{}).
+%% Conf
+conf_list(C) ->
+    conf_cmd(C, list, #{}).
 
-room_create(C, Data) ->
-    room_cmd(C, create, Data).
+conf_create(C, Data) ->
+    conf_cmd(C, create, Data).
 
-room_destroy(C, Id) ->
-    room_cmd(C, destroy, #{room_id=>Id}).
+conf_destroy(C, Id) ->
+    conf_cmd(C, destroy, #{conf_id=>Id}).
 
-room_info(C, Id) ->
-    room_cmd(C, info, #{room_id=>Id}).
+conf_info(C, Id) ->
+    conf_cmd(C, info, #{conf_id=>Id}).
 
-room_cmd(C, Cmd, Data) ->
-    nkservice_api_client:cmd(C, media, room, Cmd, Data).
+conf_cmd(C, Cmd, Data) ->
+    nkservice_api_client:cmd(C, media, conf, Cmd, Data).
 
 
 %% Events
@@ -208,27 +208,27 @@ invite(Dest, Type, Opts) ->
     WsPid = get_client(),
     start_invite(Dest, WsPid, Opts#{type=>Type}).
 
-invite_listen(Dest, Room) ->
-    {ok, PubId, Backend} = nkmedia_test:get_publisher(Room, 1),
+invite_listen(Dest, Conf) ->
+    {ok, PubId, Backend} = nkmedia_test:get_publisher(Conf, 1),
     invite(Dest, listen, #{backend=>Backend, publisher_id=>PubId}).
 
 switch(SessId, Pos) ->
-    {ok, listen, #{room_id:=Room}, _} = nkmedia_session:get_type(SessId),
-    {ok, PubId, _Backend} = nkmedia_test:get_publisher(Room, Pos),
+    {ok, listen, #{conf_id:=Conf}, _} = nkmedia_session:get_type(SessId),
+    {ok, PubId, _Backend} = nkmedia_test:get_publisher(Conf, Pos),
     C = get_client(),
     type(C, SessId, listen, #{publisher_id=>PubId}).
 
 
 
 %% Msglog
-msglog_send(C, Room, Msg) ->
-    nkservice_api_client:cmd(C, media, room, msglog_send, #{room_id=>Room, msg=>Msg}).
+msglog_send(C, Conf, Msg) ->
+    nkservice_api_client:cmd(C, media, conf, msglog_send, #{conf_id=>Conf, msg=>Msg}).
 
-msglog_get(C, Room) ->
-    nkservice_api_client:cmd(C, media, room, msglog_get, #{room_id=>Room}).
+msglog_get(C, Conf) ->
+    nkservice_api_client:cmd(C, media, conf, msglog_get, #{conf_id=>Conf}).
 
-msglog_subscribe(C, Room) ->
-    Spec = #{class=>media, subclass=>room, obj_id=>Room},
+msglog_subscribe(C, Conf) ->
+    Spec = #{class=>media, subclass=>conf, obj_id=>Conf},
     nkservice_api_client:cmd(C, core, event, subscribe, Spec).
 
 
@@ -422,43 +422,43 @@ incoming(<<"ke">>, Offer, WsPid, Events, Opts) ->
     start_session(WsPid, Config#{mute_audio=>true});
 
 incoming(<<"m1">>, Offer, WsPid, Events, Opts) ->
-    Config = incoming_config(nkmedia_fs, mcu, Offer, Events, Opts#{room_id=>m1}),
+    Config = incoming_config(nkmedia_fs, mcu, Offer, Events, Opts#{conf_id=>m1}),
     start_session(WsPid, Config);
 
 incoming(<<"m2">>, Offer, WsPid, Events, Opts) ->
-    Config = incoming_config(nkmedia_fs, mcu, Offer, Events, Opts#{room_id=>m2}),
+    Config = incoming_config(nkmedia_fs, mcu, Offer, Events, Opts#{conf_id=>m2}),
     start_session(WsPid, Config);
 
 incoming(<<"jp1">>, Offer, WsPid, Events, Opts) ->
-    RoomConfig = #{class=>sfu, room_id=>sfu, backend=>nkmedia_janus, bitrate=>100000},
-    case room_create(WsPid, RoomConfig) of
+    ConfConfig = #{class=>sfu, conf_id=>sfu, backend=>nkmedia_janus, bitrate=>100000},
+    case conf_create(WsPid, ConfConfig) of
         {ok, _} -> ok;
         {error, {304002, _}} -> ok
     end,
     Config = incoming_config(nkmedia_janus, publish, Offer, Events, Opts),
-    start_session(WsPid, Config#{room_id=>sfu});
+    start_session(WsPid, Config#{conf_id=>sfu});
 
 incoming(<<"jp2">>, Offer, WsPid, Events, Opts) ->
     Config1 = incoming_config(nkmedia_janus, publish, Offer, Events, Opts),
     Config2 = Config1#{
-        room_audio_codec => pcma,
-        room_video_codec => vp9,
-        room_bitrate => 100000
+        conf_audio_codec => pcma,
+        conf_video_codec => vp9,
+        conf_bitrate => 100000
     },
-    start_session(WsPid, Config2#{room_id=>sfu2});
+    start_session(WsPid, Config2#{conf_id=>sfu2});
 
 incoming(<<"kp1">>, Offer, WsPid, Events, Opts) ->
-    RoomConfig = #{class=>sfu, room_id=>sfu, backend=>nkmedia_kms},
-    case room_create(WsPid, RoomConfig) of
+    ConfConfig = #{class=>sfu, conf_id=>sfu, backend=>nkmedia_kms},
+    case conf_create(WsPid, ConfConfig) of
         {ok, _} -> ok;
         {error, {304002, _}} -> ok
     end,
     Config = incoming_config(nkmedia_kms, publish, Offer, Events, Opts),
-    start_session(WsPid, Config#{room_id=>sfu});
+    start_session(WsPid, Config#{conf_id=>sfu});
 
 incoming(<<"kp2">>, Offer, WsPid, Events, Opts) ->
     Config = incoming_config(nkmedia_kms, publish, Offer, Events, Opts),
-    start_session(WsPid, Config#{room_id=>sfu2});
+    start_session(WsPid, Config#{conf_id=>sfu2});
 
 incoming(<<"play">>, Offer, WsPid, Events, Opts) ->
     Config = incoming_config(nkmedia_kms, play, Offer, Events, Opts),

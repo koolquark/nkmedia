@@ -205,12 +205,12 @@ cmd(player_action, _Opts, Session) ->
 cmd(update_media, _Opts, Session) ->
     {error, not_implemented, Session};
 
-cmd(room_action, Opts, #{type:=mcu}=Session) ->
+cmd(conf_action, Opts, #{type:=mcu}=Session) ->
     Action = maps:get(action, Opts, get_actions),
-    room_action(Action, Opts, Session);
+    conf_action(Action, Opts, Session);
 
-cmd(room_action, _Opts, Session) ->
-    {error, no_active_room, Session};
+cmd(conf_action, _Opts, Session) ->
+    {error, no_active_conf, Session};
 
 cmd(_Update, _Opts, Session) ->
     {error, not_implemented, Session}.
@@ -357,15 +357,15 @@ do_type(echo, _Opts, Session) ->
 
 do_type(mcu, Opts, Session) ->
     Session2 = reset_type(Session),
-    Room = case maps:find(room_id, Opts) of
-        {ok, Room0} -> nklib_util:to_binary(Room0);
+    Conf = case maps:find(conf_id, Opts) of
+        {ok, Conf0} -> nklib_util:to_binary(Conf0);
         error -> nklib_util:uuid_4122()
     end,
-    RoomType = maps:get(room_profile, Opts, <<"video-mcu-stereo">>),
-    Cmd = [<<"conference:">>, Room, <<"@">>, RoomType],
+    ConfType = maps:get(conf_profile, Opts, <<"video-mcu-stereo">>),
+    Cmd = [<<"conference:">>, Conf, <<"@">>, ConfType],
     case fs_transfer(Cmd, Session2) of
         ok ->
-            TypeExt = #{room_id=>Room, room_profile=>RoomType},
+            TypeExt = #{conf_id=>Conf, conf_profile=>ConfType},
             {ok, TypeExt, Session2};
         {error, Error} ->
             {error, Error, Session2}
@@ -450,9 +450,9 @@ get_engine(#{srv_id:=SrvId}=Session) ->
 
 
 %% @private
-room_action(layout, #{layout:=Layout}, Session) ->
-    #{type_ext:=#{room_id:=Room}=Ext, nkmedia_fs_id:=FsId} = Session,
-    case nkmedia_fs_cmd:conf_layout(FsId, Room, Layout) of
+conf_action(layout, #{layout:=Layout}, Session) ->
+    #{type_ext:=#{conf_id:=Conf}=Ext, nkmedia_fs_id:=FsId} = Session,
+    case nkmedia_fs_cmd:conf_layout(FsId, Conf, Layout) of
         ok  ->
             update_type(mcu, Ext#{layout=>Layout}),
             {ok, #{}, Session};
@@ -460,13 +460,13 @@ room_action(layout, #{layout:=Layout}, Session) ->
             {error, Error, Session}
     end;
 
-room_action(layout, _Opts, Session) ->
+conf_action(layout, _Opts, Session) ->
     {error, {missing_parameter, layout}, Session};
 
-room_action(get_actions, _Opts, Session) ->
+conf_action(get_actions, _Opts, Session) ->
     {ok, #{actions=>[layout, get_actions]}, Session};
 
-room_action(Action, _Opts, Session) ->
+conf_action(Action, _Opts, Session) ->
     {error, {invalid_action, Action}, Session}.
 
 

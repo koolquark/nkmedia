@@ -101,7 +101,7 @@ error_code(peer_stopped)       		->  {300021, "Peer session stopped"};
 
 error_code(no_active_recorder) 		->  {300030, "No active recorder"};
 error_code(no_active_player) 		->  {300031, "No active player"};
-error_code(no_active_room)	 		->  {300032, "No active room"};
+error_code(no_active_conf)	 		->  {300032, "No active conf"};
 
 error_code(_) -> continue.
 

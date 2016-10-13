@@ -18,17 +18,17 @@
 %%
 %% -------------------------------------------------------------------
 
--ifndef(NKMEDIA_ROOM_HRL_).
--define(NKMEDIA_ROOM_HRL_, 1).
+-ifndef(NKMEDIA_CONF_HRL_).
+-define(NKMEDIA_CONF_HRL_, 1).
 
 %% ===================================================================
 %% Defines
 %% ===================================================================
 
 
--define(ROOM(Map, Room), maps:merge(Room, Map)).
--define(ROOM_RM(Key, Room), maps:remove(Key, Room)).
--define(ROOM_MERGE(Map, Room), maps:merge(Map, Room)).
+-define(CONF(Map, Conf), maps:merge(Conf, Map)).
+-define(CONF_RM(Key, Conf), maps:remove(Key, Conf)).
+-define(CONF_MERGE(Map, Conf), maps:merge(Map, Conf)).
 
 
 

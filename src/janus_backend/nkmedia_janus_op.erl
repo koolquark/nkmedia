@@ -821,7 +821,7 @@ do_list_rooms(State) ->
 %% @private
 do_create_room(Room, Opts, State) ->
     {ok, Handle} = attach(videoroom, State),
-    RoomId = to_room_id(Room),
+    RoomId = to_conf_id(Room),
     Body = #{
         request => create, 
         description => nklib_util:to_binary(Room),
@@ -848,7 +848,7 @@ do_create_room(Room, Opts, State) ->
 %% Connected peers will receive event from Janus and will stop
 do_destroy_room(Room, State) ->
     {ok, Handle} = attach(videoroom, State),
-    RoomId = to_room_id(Room),
+    RoomId = to_conf_id(Room),
     Body = #{request => destroy, room => RoomId},
     case message(Handle, Body, #{}, State) of
         {ok, Msg, _} ->
@@ -868,7 +868,7 @@ do_destroy_room(Room, State) ->
 %% @private Create session and join
 do_publish(#{sdp:=SDP}, Room, #state{id=SessId} = State) ->
     {ok, Handle} = attach(videoroom, State),
-    RoomId = to_room_id(Room),
+    RoomId = to_conf_id(Room),
     Feed = erlang:phash2(SessId),
     Body = #{
         request => join, 
@@ -936,7 +936,7 @@ do_listen(Listen, Room, State) ->
     Feed = erlang:phash2(Listen),
     Body2 = #{
         request => join, 
-        room => to_room_id(Room),
+        room => to_conf_id(Room),
         ptype => listener,
         feed => Feed
     },
@@ -1505,7 +1505,7 @@ to_room(Room) -> nklib_util:to_binary(Room).
 
 
 %% @private
-to_room_id(Room) when is_integer(Room) -> Room;
-to_room_id(Room) when is_binary(Room) -> erlang:phash2(Room).
+to_conf_id(Room) when is_integer(Room) -> Room;
+to_conf_id(Room) when is_binary(Room) -> erlang:phash2(Room).
 
 

@@ -210,8 +210,8 @@ invite(Dest, Type, Opts) ->
     Opts2 = maps:merge(#{backend => nkmedia_kms}, Opts),
     start_invite(Dest, Type, Opts2).
 
-invite_listen(Dest, Room) ->
-    {ok, PubId, Backend} = get_publisher(Room, 1),
+invite_listen(Dest, Conf) ->
+    {ok, PubId, Backend} = get_publisher(Conf, 1),
     start_invite(Dest, listen, #{backend=>Backend, publisher_id=>PubId}).
     
 
@@ -228,16 +228,16 @@ player(SessId, Opts) ->
 type(SessId, Type, Opts) ->
     cmd(SessId, set_type, Opts#{type=>Type}).
 
-room(SessId, Opts) ->
-    cmd(SessId, room_action, Opts).
+conf(SessId, Opts) ->
+    cmd(SessId, conf_action, Opts).
 
-room_layout(SessId, Layout) ->
+conf_layout(SessId, Layout) ->
     Layout2 = nklib_util:to_binary(Layout),
-    room(SessId, #{action=>layout, layout=>Layout2}).
+    conf(SessId, #{action=>layout, layout=>Layout2}).
 
 switch(SessId, Pos) ->
-    {ok, listen, #{room_id:=Room}, _} = nkmedia_session:get_type(SessId),
-    {ok, PubId, _Backend} = get_publisher(Room, Pos),
+    {ok, listen, #{conf_id:=Conf}, _} = nkmedia_session:get_type(SessId),
+    {ok, PubId, _Backend} = get_publisher(Conf, Pos),
     type(SessId, listen, #{publisher_id=>PubId}).
 
 cmd(SessId, Cmd, Opts) ->
@@ -255,7 +255,7 @@ play_to_mcu() ->
         offer => Offer, 
         master_id => SessIdA, 
         set_master_answer => true,
-        room_id => m1
+        conf_id => m1
     },
     {ok, _SessIdB, _SessLinkB} = start_session(mcu, ConfigB).
 
@@ -268,7 +268,7 @@ play_to_janus() ->
         offer => Offer, 
         master_id => SessIdA, 
         set_master_answer => true,
-        room_id => sfu
+        conf_id => sfu
     },
     {ok, _SessIdB, _SessLinkB} = start_session(publish, ConfigB).
 
@@ -378,7 +378,7 @@ nkmedia_sip_invite(_SrvId, <<"j", Dest/binary>>, Offer, _Req, _Call) ->
 % Version using FS
 nkmedia_sip_invite(_SrvId, <<"f">>, Offer, _Req, _Call) ->
     ConfigA = incoming_config(nkmedia_fs, Offer, {nkmedia_sip, self()}, #{}),
-    {ok, _SessId, SessLink} = start_session(mcu, ConfigA#{room_id=>m1}),
+    {ok, _SessId, SessLink} = start_session(mcu, ConfigA#{conf_id=>m1}),
     {ok, SessLink};
 
 % Version using KMS
@@ -419,30 +419,31 @@ incoming(<<"kp">>, Offer, Reg, Opts) ->
 
 incoming(<<"m1">>, Offer, Reg, Opts) ->
     Config = incoming_config(nkmedia_fs, Offer, Reg, Opts),
-    start_session(mcu, Config#{room_id=>"m1"});
+    start_session(mcu, Config#{conf_id=>"m1"});
 
 incoming(<<"m2">>, Offer, Reg, Opts) ->
     Config = incoming_config(nkmedia_fs, Offer, Reg, Opts),
-    start_session(mcu, Config#{room_id=>"m2"});
+    start_session(mcu, Config#{conf_id=>"m2"});
 
 incoming(<<"jp1">>, Offer, Reg, Opts) ->
-    nkmedia_room:start(test, #{room_id=>sfu, backend=>nkmedia_janus}),
+    nkmedia_conf:start(test, #{conf_id=>sfu, backend=>nkmedia_janus}),
     Config = incoming_config(nkmedia_janus, Offer, Reg, Opts),
-    start_session(publish, Config#{room_id=>sfu});
+    start_session(publish, Config#{conf_id=>sfu});
 
 incoming(<<"jp2">>, Offer, Reg, Opts) ->
     Config1 = incoming_config(nkmedia_janus, Offer, Reg, Opts),
     Config2 = Config1#{
-        room_audio_codec => pcma,
-        room_video_codec => vp9,
-        room_bitrate => 100000
+        create_conf => true,
+        conf_audio_codec => pcma,
+        conf_video_codec => vp9,
+        conf_bitrate => 100000
     },
     start_session(publish, Config2);
 
 incoming(<<"kp1">>, Offer, Reg, Opts) ->
-    nkmedia_room:start(test, #{room_id=>sfu, backend=>nkmedia_kms}),
+    nkmedia_conf:start(test, #{conf_id=>sfu, backend=>nkmedia_kms}),
     Config = incoming_config(nkmedia_kms, Offer, Reg, Opts),
-    start_session(publish, Config#{room_id=>sfu});
+    start_session(publish, Config#{conf_id=>sfu});
 
 incoming(<<"kp2">>, Offer, Reg, Opts) ->
     Config = incoming_config(nkmedia_kms, Offer, Reg, Opts),
@@ -613,10 +614,10 @@ find_user(User) ->
     end.
 
 
-get_publisher(RoomId, Pos) ->
-    case nkmedia_room:get_room(RoomId) of
-        {ok, #{backend:=Backend}=Room} ->
-            Pubs = nkmedia_room:get_all_with_role(publisher, Room),
+get_publisher(ConfId, Pos) ->
+    case nkmedia_conf:get_conf(ConfId) of
+        {ok, #{backend:=Backend}=Conf} ->
+            Pubs = nkmedia_conf:get_all_with_role(publisher, Conf),
             {ok, lists:nth(Pos, Pubs), Backend};
         {error, Error} ->
             {error, Error}

@@ -24,7 +24,7 @@
 -behaviour(gen_server).
 
 -export([connect/1, stop/1, find/1]).
--export([stats/2, get_config/1, get_conn/1, check_room/2]).
+-export([stats/2, get_config/1, get_conn/1, check_conf/2]).
 -export([get_all/0, get_all/1, stop_all/0]).
 -export([start_link/1, init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
@@ -128,13 +128,13 @@ get_conn(Id) ->
 
 
 %% @private
--spec check_room(id(), integer()) ->
+-spec check_conf(id(), integer()) ->
 	ok.
 
-check_room(Id, Room) ->
+check_conf(Id, Conf) ->
 	case find(Id) of
 		{ok, _Status, JanusPid, _ConnPid} ->
-			nkservice_util:call(JanusPid, {check_room, Room}, ?CALL_TIME);
+			nkservice_util:call(JanusPid, {check_conf, Conf}, ?CALL_TIME);
 		_ ->
 			{error, no_connection}
 	end.
@@ -198,7 +198,7 @@ start_link(Config) ->
 	session :: integer(),
 	handle :: integer(),
 	info = #{} :: map(),
-	rooms = #{} :: #{Room::binary() => map()}
+	confs = #{} :: #{Conf::binary() => map()}
 }).
 
 
@@ -212,7 +212,7 @@ init([#{srv_id:=SrvId, name:=Id}=Config]) ->
 	nklib_proc:put(?MODULE, {SrvId, Id}),
 	true = nklib_proc:reg({?MODULE, Id}, {connecting, undefined}),
 	self() ! connect,
-	self() ! get_rooms,
+	self() ! get_confs,
 	?LLOG(info, "started (~p)", [self()], State),
 	{ok, State}.
 
@@ -228,10 +228,10 @@ handle_call(get_state, _From, State) ->
 handle_call(get_config, _From, #state{config=Config}=State) ->
     {reply, {ok, Config}, State};
 
-handle_call({check_room, Room}, _From, #state{rooms=Rooms}=State) ->
-	Reply = case maps:find(Room, Rooms) of
+handle_call({check_conf, Conf}, _From, #state{confs=Confs}=State) ->
+	Reply = case maps:find(Conf, Confs) of
 		{ok, Data} -> {ok, Data};
-		error -> {error, room_not_found}
+		error -> {error, conf_not_found}
 	end,
     {reply, Reply, State};
 
@@ -290,12 +290,12 @@ handle_info(connect, #state{id=Id, config=Config}=State) ->
 			{stop, normal, State2}
 	end;
 
-handle_info(get_rooms, #state{conn=Conn}=State) ->
+handle_info(get_confs, #state{conn=Conn}=State) ->
 	State2 = case is_pid(Conn) of
-		true -> get_rooms(State);
+		true -> get_confs(State);
 		false -> State
 	end,
-	erlang:send_after(?KEEPALIVE, self(), get_rooms),
+	erlang:send_after(?KEEPALIVE, self(), get_confs),
 	{noreply, State2};
 
 handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{conn=Pid}=State) ->
@@ -374,7 +374,7 @@ connect_janus(Host, Base, Tries) ->
 
 
 %% @private
-get_rooms(#state{id=Id, conn=Conn, session=Session, handle=Handle}=State) ->
+get_confs(#state{id=Id, conn=Conn, session=Session, handle=Handle}=State) ->
 	{ok, Data, _} = 
 		nkmedia_janus_client:message(Conn, Session, Handle, #{request=>list}, #{}),
 	#{<<"data">>:=#{<<"list">>:=List}} = Data, 
@@ -382,12 +382,12 @@ get_rooms(#state{id=Id, conn=Conn, session=Session, handle=Handle}=State) ->
 		fun
 			(#{<<"room">>:=1234}) ->
 				ok;
-			(#{<<"description">>:=Desc}=RoomData) ->
-				nkmedia_janus_room:janus_check(Id, Desc, RoomData)
+			(#{<<"description">>:=Desc}=ConfData) ->
+				nkmedia_janus_conf:janus_check(Id, Desc, ConfData)
 		end,
 		List),
-	Rooms = maps:from_list([{Room, Map} || #{<<"description">>:=Room}=Map<-List]),
-	State#state{rooms=Rooms}.
+	Confs = maps:from_list([{Conf, Map} || #{<<"description">>:=Conf}=Map<-List]),
+	State#state{confs=Confs}.
 
 
 

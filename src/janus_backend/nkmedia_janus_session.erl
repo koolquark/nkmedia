@@ -222,10 +222,10 @@ cmd(update_media, Opts, #{type:=Type}=Session)
     end;
 
 cmd(set_type, #{type:=listen, publisher_id:=Publisher}, #{type:=listen}=Session) ->
-    #{nkmedia_janus_pid:=Pid, type_ext:=#{room_id:=RoomId}=Ext} = Session,
+    #{nkmedia_janus_pid:=Pid, type_ext:=#{conf_id:=ConfId}=Ext} = Session,
     case nkmedia_janus_op:listen_switch(Pid, Publisher) of
         ok ->
-            notify_listener(RoomId, Publisher, Session),
+            notify_listener(ConfId, Publisher, Session),
             update_type(listen, Ext#{publisher_id=>Publisher}),
             {ok, #{}, Session};
         {error, Error} ->
@@ -287,10 +287,10 @@ cmd(_Update, _Opts, Session) ->
 
 stop(_Reason, #{session_id:=SessId}=Session) ->
     case Session of
-        #{type:=publish, type_ext:=#{room_id:=RoomId}} ->
-            nkmedia_room:stopped_member(RoomId, SessId);
-        #{type:=listen, type_ext:=#{room_id:=RoomId}} ->
-            nkmedia_room:stopped_member(RoomId, SessId);
+        #{type:=publish, type_ext:=#{conf_id:=ConfId}} ->
+            nkmedia_conf:stopped_member(ConfId, SessId);
+        #{type:=listen, type_ext:=#{conf_id:=ConfId}} ->
+            nkmedia_conf:stopped_member(ConfId, SessId);
         _ ->
             ok
     end,
@@ -298,11 +298,11 @@ stop(_Reason, #{session_id:=SessId}=Session) ->
 
 
 %% @private
-handle_call(get_room_id, _From, #{type:=publish}=Session) ->
-    #{type_ext:=#{room_id:=RoomId}} = Session,
-    {reply, {ok, RoomId}, Session};
+handle_call(get_conf_id, _From, #{type:=publish}=Session) ->
+    #{type_ext:=#{conf_id:=ConfId}} = Session,
+    {reply, {ok, ConfId}, Session};
 
-handle_call(get_room_id, _From, Session) ->
+handle_call(get_conf_id, _From, Session) ->
     {reply, {error, invalid_publisher}, Session};
 
 handle_call({set_media_proxy, Data}, _From, #{nkmedia_janus_pid:=Pid}=Session) ->
@@ -348,12 +348,12 @@ is_supported(_) -> false.
     {error, nkservice:error(), session()} | continue().
 
 start_offerer(listen, #{publisher_id:=Publisher, nkmedia_janus_pid:=Pid}=Session) ->
-    case get_room(listen, Session) of
-        {ok, RoomId} ->
-            case nkmedia_janus_op:listen(Pid, RoomId, Publisher) of
+    case get_conf(listen, Session) of
+        {ok, ConfId} ->
+            case nkmedia_janus_op:listen(Pid, ConfId, Publisher) of
                 {ok, Offer} ->
-                    notify_listener(RoomId, Publisher, Session),
-                    update_type(listen, #{room_id=>RoomId, publisher_id=>Publisher}),
+                    notify_listener(ConfId, Publisher, Session),
+                    update_type(listen, #{conf_id=>ConfId, publisher_id=>Publisher}),
                     {ok, set_offer(Offer, Session)};
                 {error, Error} ->
                     {error, Error, Session}
@@ -414,12 +414,12 @@ start_offeree(proxy, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
     end;
 
 start_offeree(publish, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
-    case get_room(publish, Session) of
-        {ok, RoomId} ->
-            case nkmedia_janus_op:publish(Pid, RoomId, Offer) of
+    case get_conf(publish, Session) of
+        {ok, ConfId} ->
+            case nkmedia_janus_op:publish(Pid, ConfId, Offer) of
                 {ok, Answer} ->
-                    notify_publisher(RoomId, Session),
-                    update_type(publish, #{room_id=>RoomId}),
+                    notify_publisher(ConfId, Session),
+                    update_type(publish, #{conf_id=>ConfId}),
                     Session2 = set_answer(Answer, Session),
                     set_default_media(Session2);
                 {error, Error} ->
@@ -476,23 +476,23 @@ set_proxy_answer(Answer, #{session_id:=SessId, peer_id:=PeerId}=Session) ->
 
 
 %% @private
--spec get_room(publish|listen, session()) ->
-    {ok, nkmedia_janus_room:id()} | {error, term()}.
+-spec get_conf(publish|listen, session()) ->
+    {ok, nkmedia_janus_conf:id()} | {error, term()}.
 
-get_room(Type, #{nkmedia_janus_id:=JanusId}=Session) ->
-    case get_room_id(Type, Session) of
-        {ok, RoomId} ->
-            Create = maps:get(create_room, Session, false),
-            case nkmedia_room:get_room(RoomId) of
+get_conf(Type, #{nkmedia_janus_id:=JanusId}=Session) ->
+    case get_conf_id(Type, Session) of
+        {ok, ConfId} ->
+            Create = maps:get(create_conf, Session, false),
+            case nkmedia_conf:get_conf(ConfId) of
                 {ok, #{nkmedia_janus_id:=JanusId}} ->
-                    % lager:error("Room exists in same Janus"),
-                    {ok, RoomId};
+                    % lager:error("Conf exists in same Janus"),
+                    {ok, ConfId};
                 {ok, _O} ->
                     {error, different_mediaserver};
-                {error, room_not_found} when Create->
-                    create_room(RoomId, Session);
-                {error, room_not_found} ->
-                    {error, room_not_found};
+                {error, conf_not_found} when Create->
+                    create_conf(ConfId, Session);
+                {error, conf_not_found} ->
+                    {error, conf_not_found};
                 {error, Error} ->
                     {error, Error}
             end;
@@ -502,20 +502,20 @@ get_room(Type, #{nkmedia_janus_id:=JanusId}=Session) ->
 
 
 %% @private
--spec get_room_id(publish|listen, session()) ->
-    {ok, nkmedia_room:id()} | {error, term()}.
+-spec get_conf_id(publish|listen, session()) ->
+    {ok, nkmedia_conf:id()} | {error, term()}.
 
-get_room_id(Type, Session) ->
-    case maps:find(room_id, Session) of
-        {ok, RoomId} -> 
-            {ok, nklib_util:to_binary(RoomId)};
+get_conf_id(Type, Session) ->
+    case maps:find(conf_id, Session) of
+        {ok, ConfId} -> 
+            {ok, nklib_util:to_binary(ConfId)};
         error when Type==publish -> 
             {ok, nklib_util:uuid_4122()};
         error when Type==listen ->
             case Session of
                 #{publisher_id:=Publisher} ->
-                    case session_call(Publisher, get_room_id) of
-                        {ok, RoomId} -> {ok, RoomId};
+                    case session_call(Publisher, get_conf_id) of
+                        {ok, ConfId} -> {ok, ConfId};
                         {error, _Error} -> {error, invalid_publisher}
                     end;
                 _ ->
@@ -525,54 +525,54 @@ get_room_id(Type, Session) ->
 
 
 %% @private
-create_room(RoomId, #{srv_id:=SrvId, nkmedia_janus_id:=JanusId}=Session) ->
+create_conf(ConfId, #{srv_id:=SrvId, nkmedia_janus_id:=JanusId}=Session) ->
     Opts1 = [
-        {room_id, RoomId},
+        {conf_id, ConfId},
         {backend, nkmedia_janus},
         {nkmedia_janus_id, JanusId},
-        case maps:find(room_audio_codec, Session) of
+        case maps:find(conf_audio_codec, Session) of
             {ok, AC} -> {audio_codec, AC};
             error -> []
         end,
-        case maps:find(room_video_codec, Session) of
+        case maps:find(conf_video_codec, Session) of
             {ok, VC} -> {video_codec, VC};
             error -> []
         end,
-        case maps:find(room_bitrate, Session) of
+        case maps:find(conf_bitrate, Session) of
             {ok, BR} -> {bitrate, BR};
             error -> []
         end
     ],
     Opts2 = maps:from_list(lists:flatten(Opts1)),
-    case nkmedia_room:start(SrvId, Opts2) of
-        {ok, RoomId, _} ->
-            {ok, RoomId};
+    case nkmedia_conf:start(SrvId, Opts2) of
+        {ok, ConfId, _} ->
+            {ok, ConfId};
         {error, Error} ->
             {error, Error}
     end.
 
 
 %% @private
-notify_publisher(RoomId, #{session_id:=SessId}=Session) ->
+notify_publisher(ConfId, #{session_id:=SessId}=Session) ->
     UserId = maps:get(user_id, Session, <<>>),
     Info = #{role => publisher, user_id => UserId},
-    case nkmedia_room:started_member(RoomId, SessId, Info, self()) of
+    case nkmedia_conf:started_member(ConfId, SessId, Info, self()) of
         ok ->
             ok;
         {error, Error} ->
-            ?LLOG(warning, "room publish error: ~p", [Error], Session)
+            ?LLOG(warning, "conf publish error: ~p", [Error], Session)
     end.
 
 
 %% @private
-notify_listener(RoomId, PeerId, #{session_id:=SessId}=Session) ->
+notify_listener(ConfId, PeerId, #{session_id:=SessId}=Session) ->
     UserId = maps:get(user_id, Session, <<>>),
     Info = #{role => listener, user_id => UserId, peer_id => PeerId},
-    case nkmedia_room:started_member(RoomId, SessId, Info, self()) of
+    case nkmedia_conf:started_member(ConfId, SessId, Info, self()) of
         ok ->
             ok;
         {error, Error} ->
-            ?LLOG(warning, "room publish error: ~p", [Error], Session)
+            ?LLOG(warning, "conf publish error: ~p", [Error], Session)
     end.
 
 

@@ -422,8 +422,8 @@ parse_event(<<"conference::maintenance">>, Data, State) ->
         		_ -> CallId
         	end,
         	Conf = #{
-        		room_name => ConfName,
-        		room_member_id => MemberId
+        		conf_name => ConfName,
+        		conf_member_id => MemberId
         	},
         	send_event(SessId, {mcu, Conf}, State);
         _ ->

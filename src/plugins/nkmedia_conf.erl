@@ -18,26 +18,26 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc Room Plugin
--module(nkmedia_room).
+%% @doc Conf Plugin
+-module(nkmedia_conf).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([start/2, stop/1, stop/2, get_room/1, get_info/1]).
+-export([start/2, stop/1, stop/2, get_conf/1, get_info/1]).
 -export([started_member/3, started_member/4, stopped_member/2]).
 -export([send_event/2, restart_timer/1, register/2, unregister/2, get_all/0]).
--export([get_all_with_role/2]).
+-export([stop_all/0, get_all_with_role/2]).
 -export([find/1, do_call/2, do_call/3, do_cast/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
--export_type([id/0, room/0, event/0]).
+-export_type([id/0, conf/0, event/0]).
 
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkMEDIA Room ~s (~p) "++Txt, 
+    lager:Type("NkMEDIA Conference ~s (~p) "++Txt, 
                [State#state.id, State#state.backend | Args])).
 
--include("../../include/nkmedia_room.hrl").
+-include("../../include/nkmedia_conf.hrl").
 -include_lib("nkservice/include/nkservice.hrl").
 
 
@@ -62,10 +62,10 @@
         bitrate => integer()                                    % "
     }.
 
--type room() ::
+-type conf() ::
     config() |
     #{
-        room_id => id(),
+        conf_id => id(),
         srv_id => nkservice:id(),
         members => #{session_id() => member_info()}
     }.
@@ -89,23 +89,23 @@
 %% ===================================================================
 
 
-%% @doc Creates a new room
+%% @doc Creates a new conf
 -spec start(nkservice:id(), config()) ->
     {ok, id(), pid()} | {error, term()}.
 
 start(Srv, Config) ->
-    {RoomId, Config2} = nkmedia_util:add_id(room_id, Config, room),
-    case find(RoomId) of
+    {ConfId, Config2} = nkmedia_util:add_id(conf_id, Config, conf),
+    case find(ConfId) of
         {ok, _} ->
-            {error, room_already_exists};
+            {error, conf_already_exists};
         not_found ->
             case nkservice_srv:get_srv_id(Srv) of
                 {ok, SrvId} ->
-                    Config3 = Config2#{room_id=>RoomId, srv_id=>SrvId},
-                    case SrvId:nkmedia_room_init(RoomId, Config3) of
+                    Config3 = Config2#{conf_id=>ConfId, srv_id=>SrvId},
+                    case SrvId:nkmedia_conf_init(ConfId, Config3) of
                         {ok, #{backend:=_}=Config4} ->
                             {ok, Pid} = gen_server:start(?MODULE, [Config4], []),
-                            {ok, RoomId, Pid};
+                            {ok, ConfId, Pid};
                         {ok, _} ->
                             {error, not_implemented};
                         {error, Error} ->
@@ -134,20 +134,29 @@ stop(Id, Reason) ->
 
 
 %% @doc
--spec get_room(id()) ->
-    {ok, room()} | {error, term()}.
+-spec stop_all() ->
+    ok.
 
-get_room(Id) ->
-    do_call(Id, get_room).
+stop_all() ->
+    lists:foreach(fun({Id, _Bk, _Pid}) -> stop(Id, user_stop) end, get_all()).
+
+
+
+%% @doc
+-spec get_conf(id()) ->
+    {ok, conf()} | {error, term()}.
+
+get_conf(Id) ->
+    do_call(Id, get_conf).
 
 
 %% @doc
 -spec get_info(id()) ->
-    {ok, room()} | {error, term()}.
+    {ok, conf()} | {error, term()}.
 
 get_info(Id) ->
-    case get_room(Id) of
-        {ok, Room} ->
+    case get_conf(Id) of
+        {ok, Conf} ->
             Keys = [
                 class, 
                 backend,
@@ -156,7 +165,7 @@ get_info(Id) ->
                 video_codec, 
                 bitrate
             ],
-            {ok, maps:with(Keys, Room)};
+            {ok, maps:with(Keys, Conf)};
         {error, Error} ->
             {error, Error}
     end.
@@ -166,24 +175,24 @@ get_info(Id) ->
 -spec started_member(id(), session_id(), member_info()) ->
     ok | {error, term()}.
 
-started_member(RoomId, SessId, MemberInfo) ->
-    started_member(RoomId, SessId, MemberInfo, undefined).
+started_member(ConfId, SessId, MemberInfo) ->
+    started_member(ConfId, SessId, MemberInfo, undefined).
 
 
 %% @doc
 -spec started_member(id(), session_id(), member_info(), pid()|undefined) ->
     ok | {error, term()}.
 
-started_member(RoomId, SessId, MemberInfo, Pid) ->
-    do_cast(RoomId, {started_member, SessId, MemberInfo, Pid}).
+started_member(ConfId, SessId, MemberInfo, Pid) ->
+    do_cast(ConfId, {started_member, SessId, MemberInfo, Pid}).
 
 
 %% @doc
 -spec stopped_member(id(), session_id()) ->
     ok | {error, term()}.
 
-stopped_member(RoomId, SessId) ->
-    do_cast(RoomId, {stopped_member, SessId}).
+stopped_member(ConfId, SessId) ->
+    do_cast(ConfId, {stopped_member, SessId}).
 
 
 %% @private
@@ -202,17 +211,17 @@ restart_timer(Id) ->
     do_cast(Id, restart_timer).
 
 
-%% @doc Registers a process with the room
+%% @doc Registers a process with the conf
 -spec register(id(), nklib:link()) ->     
     {ok, pid()} | {error, nkservice:error()}.
 
-register(RoomId, Link) ->
-    case find(RoomId) of
+register(ConfId, Link) ->
+    case find(ConfId) of
         {ok, Pid} -> 
-            do_cast(RoomId, {register, Link}),
+            do_cast(ConfId, {register, Link}),
             {ok, Pid};
         not_found ->
-            {error, room_not_found}
+            {error, conf_not_found}
     end.
 
 
@@ -220,11 +229,11 @@ register(RoomId, Link) ->
 -spec unregister(id(), nklib:link()) ->
     ok | {error, nkservice:error()}.
 
-unregister(RoomId, Link) ->
-    do_call(RoomId, {unregister, Link}).
+unregister(ConfId, Link) ->
+    do_call(ConfId, {unregister, Link}).
 
 
-%% @doc Gets all started rooms
+%% @doc Gets all started confs
 -spec get_all() ->
     [{id(), nkmedia:backend(), pid()}].
 
@@ -245,7 +254,7 @@ get_all() ->
     timer :: reference(),
     stop_sent = false :: boolean(),
     links :: nklib_links:links(),
-    room :: room()
+    conf :: conf()
 }).
 
 
@@ -253,16 +262,16 @@ get_all() ->
 -spec init(term()) ->
     {ok, tuple()}.
 
-init([#{srv_id:=SrvId, room_id:=RoomId}=Room]) ->
-    Backend = maps:get(backend, Room, undefined),
-    nklib_proc:put(?MODULE, {RoomId, Backend}),
-    nklib_proc:put({?MODULE, RoomId}),
+init([#{srv_id:=SrvId, conf_id:=ConfId}=Conf]) ->
+    Backend = maps:get(backend, Conf, undefined),
+    nklib_proc:put(?MODULE, {ConfId, Backend}),
+    nklib_proc:put({?MODULE, ConfId}),
     State = #state{
-        id = RoomId, 
+        id = ConfId, 
         srv_id = SrvId, 
         backend = Backend,
         links = nklib_links:new(),
-        room = Room#{members=>#{}}
+        conf = Conf#{members=>#{}}
     },
     ?LLOG(notice, "started", [], State),
     State2 = do_event(started, State),
@@ -274,14 +283,14 @@ init([#{srv_id:=SrvId, room_id:=RoomId}=Room]) ->
     {noreply, #state{}} | {reply, term(), #state{}} |
     {stop, Reason::term(), #state{}} | {stop, Reason::term(), Reply::term(), #state{}}.
 
-handle_call(get_room, _From, #state{room=Room}=State) -> 
-    {reply, {ok, Room}, State};
+handle_call(get_conf, _From, #state{conf=Conf}=State) -> 
+    {reply, {ok, Conf}, State};
 
 handle_call(get_state, _From, State) ->
     {reply, State, State};
 
 handle_call(Msg, From, State) -> 
-    handle(nkmedia_room_handle_call, [Msg, From], State).
+    handle(nkmedia_conf_handle_call, [Msg, From], State).
 
 
 %% @private
@@ -316,15 +325,15 @@ handle_cast({stop, Reason}, State) ->
     do_stop(Reason, State);
 
 handle_cast(Msg, State) -> 
-    handle(nkmedia_room_handle_cast, [Msg], State).
+    handle(nkmedia_conf_handle_cast, [Msg], State).
 
 
 %% @private
 -spec handle_info(term(), #state{}) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
-handle_info(room_tick, #state{id=RoomId}=State) ->
-    case handle(nkmedia_room_tick, [RoomId], State) of
+handle_info(conf_tick, #state{id=ConfId}=State) ->
+    case handle(nkmedia_conf_tick, [ConfId], State) of
         {ok, State2} ->
             {noreply, do_restart_timer(State2)};
         {stop, Reason, State2} ->
@@ -341,11 +350,11 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, State) ->
                   [Link, Reason], State2),
             do_stop(registered_down, State2);
         not_found ->
-            handle(nkmedia_room_handle_info, [Msg], State)
+            handle(nkmedia_conf_handle_info, [Msg], State)
     end;
 
 handle_info(Msg, #state{}=State) -> 
-    handle(nkmedia_room_handle_info, [Msg], State).
+    handle(nkmedia_conf_handle_info, [Msg], State).
 
 
 %% @private
@@ -360,7 +369,7 @@ code_change(_OldVsn, State, _Extra) ->
     ok.
 
 terminate(Reason, State) ->
-    {ok, State2} = handle(nkmedia_room_terminate, [Reason], State),
+    {ok, State2} = handle(nkmedia_conf_terminate, [Reason], State),
     case Reason of
         normal ->
             ?LLOG(info, "terminate: ~p", [Reason], State2),
@@ -384,7 +393,7 @@ get_all_with_role(Role, #{members:=Members}) ->
         {Id, Info} <- maps:to_list(Members), {ok, Role}==maps:find(role, Info)].
 
 %% @private
-do_started_member(SessId, Info, Pid, #state{room=#{members:=Members}=Room}=State) ->
+do_started_member(SessId, Info, Pid, #state{conf=#{members:=Members}=Conf}=State) ->
     State2 = links_remove(SessId, State),
     State3 = case is_pid(Pid) of
         true ->
@@ -392,13 +401,13 @@ do_started_member(SessId, Info, Pid, #state{room=#{members:=Members}=Room}=State
         _ ->
             State2
     end,
-    Room2 = ?ROOM(#{members=>maps:put(SessId, Info, Members)}, Room),
-    State4 = State3#state{room=Room2},
+    Conf2 = ?CONF(#{members=>maps:put(SessId, Info, Members)}, Conf),
+    State4 = State3#state{conf=Conf2},
     do_event({started_member, SessId, Info}, State4).
 
 
 %% @private
-do_stopped_member(SessId, #state{room=#{members:=Members}=Room}=State) ->
+do_stopped_member(SessId, #state{conf=#{members:=Members}=Conf}=State) ->
     case maps:find(SessId, Members) of
         {ok, Info} ->
             State2 = links_remove(SessId, State),
@@ -409,8 +418,8 @@ do_stopped_member(SessId, #state{room=#{members:=Members}=Room}=State) ->
                     ok
             end,
             Members2 = maps:remove(SessId, Members),
-            Room2 = ?ROOM(#{members=>Members2}, Room),
-            State3 = State2#state{room=Room2},
+            Conf2 = ?CONF(#{members=>Members2}, Conf),
+            State3 = State2#state{conf=Conf2},
             do_event({stopped_member, SessId, Info}, State3);
         error ->
             State
@@ -436,8 +445,8 @@ stop_listeners(PubId, [{ListenId, Info}|Rest]) ->
 find(Pid) when is_pid(Pid) ->
     {ok, Pid};
 
-find(#{room_id:=RoomId}) ->
-    find(RoomId);
+find(#{conf_id:=ConfId}) ->
+    find(ConfId);
 
 find(Id) ->
     Id2 = nklib_util:to_binary(Id),
@@ -458,7 +467,7 @@ do_call(Id, Msg, Timeout) ->
         {ok, Pid} -> 
             nkservice_util:call(Pid, Msg, Timeout);
         not_found -> 
-            {error, room_not_found}
+            {error, conf_not_found}
     end.
 
 
@@ -468,7 +477,7 @@ do_cast(Id, Msg) ->
         {ok, Pid} -> 
             gen_server:cast(Pid, Msg);
         not_found -> 
-            {error, room_not_found}
+            {error, conf_not_found}
     end.
 
 
@@ -476,9 +485,9 @@ do_cast(Id, Msg) ->
 do_stop(_Reason, #state{stop_sent=true}=State) ->
     {stop, normal, State};
 
-do_stop(Reason, #state{room=#{members:=Members}}=State) ->
+do_stop(Reason, #state{conf=#{members:=Members}}=State) ->
     lists:foreach(
-        fun({SessId, _}) -> nkmedia_session:stop(SessId, room_destroyed) end,
+        fun({SessId, _}) -> nkmedia_session:stop(SessId, conf_destroyed) end,
         maps:to_list(Members)),
     State2 = do_event({stopped, Reason}, State#state{stop_sent=true}),
     % Allow events to be processed
@@ -493,20 +502,20 @@ do_event(Event, #state{id=Id}=State) ->
         fun
             (Link, reg, AccState) ->
                 {ok, AccState2} = 
-                    handle(nkmedia_room_reg_event, [Id, Link, Event], AccState),
+                    handle(nkmedia_conf_reg_event, [Id, Link, Event], AccState),
                     AccState2;
             (_SessId, member, AccState) ->
                 AccState
         end,
         State,
         State),
-    {ok, State3} = handle(nkmedia_room_event, [Id, Event], State2),
+    {ok, State3} = handle(nkmedia_conf_event, [Id, Event], State2),
     State3.
 
 
 %% @private
 handle(Fun, Args, State) ->
-    nklib_gen_server:handle_any(Fun, Args, State, #state.srv_id, #state.room).
+    nklib_gen_server:handle_any(Fun, Args, State, #state.srv_id, #state.conf).
 
 
 %% @private
@@ -537,5 +546,5 @@ links_fold(Fun, Acc, #state{links=Links}) ->
 do_restart_timer(#state{timer=Timer}=State) ->
     nklib_util:cancel_timer(Timer),
     Time = 1000 * ?CHECK_TIME,
-    State#state{timer=erlang:send_after(Time, self(), room_tick)}.
+    State#state{timer=erlang:send_after(Time, self(), conf_tick)}.
 

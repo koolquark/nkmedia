@@ -18,8 +18,8 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc Room Plugin API
--module(nkmedia_room_api_events).
+%% @doc Conf Plugin API
+-module(nkmedia_conf_api_events).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([event/3]).
@@ -33,31 +33,31 @@
 
 
 %% @private
--spec event(nkmedia_room:id(), nkmedia_room:event(), nkmedia_room:room()) ->
-    {ok, nkmedia_room:room()}.
+-spec event(nkmedia_conf:id(), nkmedia_conf:event(), nkmedia_conf:conf()) ->
+    {ok, nkmedia_conf:conf()}.
 
-event(RoomId, started, Room) ->
-    Data = maps:with([audio_codec, video_codec, bitrate, class, backend], Room),
-    send_event(RoomId, created, Data, Room);
+event(ConfId, started, Conf) ->
+    Data = maps:with([audio_codec, video_codec, bitrate, class, backend], Conf),
+    send_event(ConfId, created, Data, Conf);
 
-event(RoomId, {stopped, Reason}, #{srv_id:=SrvId}=Room) ->
+event(ConfId, {stopped, Reason}, #{srv_id:=SrvId}=Conf) ->
     {Code, Txt} = nkservice_util:error_code(SrvId, Reason),
-    send_event(RoomId, destroyed, #{code=>Code, reason=>Txt}, Room);
+    send_event(ConfId, destroyed, #{code=>Code, reason=>Txt}, Conf);
 
-event(RoomId, {started_member, SessId, Info}, Room) ->
-    send_event(RoomId, started_member, Info#{session_id=>SessId}, Room);
+event(ConfId, {started_member, SessId, Info}, Conf) ->
+    send_event(ConfId, started_member, Info#{session_id=>SessId}, Conf);
 
-event(RoomId, {stopped_member, SessId, Info}, Room) ->
-    send_event(RoomId, stopped_member, Info#{session_id=>SessId}, Room);
+event(ConfId, {stopped_member, SessId, Info}, Conf) ->
+    send_event(ConfId, stopped_member, Info#{session_id=>SessId}, Conf);
 
-event(_RoomId, _Event, Room) ->
-    {ok, Room}.
+event(_ConfId, _Event, Conf) ->
+    {ok, Conf}.
 
 
 %% @private
-send_event(RoomId, Type, Body, #{srv_id:=SrvId}=Room) ->
-    nkmedia_api_events:send_event(SrvId, room, RoomId, Type, Body),
-    {ok, Room}.
+send_event(ConfId, Type, Body, #{srv_id:=SrvId}=Conf) ->
+    nkmedia_api_events:send_event(SrvId, conf, ConfId, Type, Body),
+    {ok, Conf}.
 
 
 

@@ -39,15 +39,15 @@
 syntax(<<"session">>, <<"create">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
-            room_bitrate => {integer, 0, none},
-            room_audio_codec => {enum, [opus, isac32, isac16, pcmu, pcma]},
-            room_video_codec => {enum , [vp8, vp9, h264]}
+            conf_bitrate => {integer, 0, none},
+            conf_audio_codec => {enum, [opus, isac32, isac16, pcmu, pcma]},
+            conf_video_codec => {enum , [vp8, vp9, h264]}
         },
         Defaults,
         Mandatory
     };
 
-syntax(<<"room">>, <<"create">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"conf">>, <<"create">>, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             bitrate => {integer, 0, none},
