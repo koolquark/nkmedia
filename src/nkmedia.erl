@@ -22,8 +22,12 @@
 
 -module(nkmedia).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export_type([offer/0, answer/0]).
+-export_type([offer/0, answer/0, role/0, candidate/0]).
 -export_type([engine_id/0, engine_config/0]).
+
+-include("nkmedia.hrl").
+-include_lib("nksip/include/nksip.hrl").
+
 
 %% ===================================================================
 %% Types
@@ -34,19 +38,8 @@
 	#{
 		sdp => binary(),
 		sdp_type => rtp | webrtc,
-		dest => binary(),
-        caller_name => binary(),
-        caller_id => binary(),
-        callee_name => binary(),
-        callee_id => binary(),
-        use_audio => boolean(),
-        use_stereo => boolean(),
-        use_video => boolean(),
-        use_screen => boolean(),
-        use_data => boolean(),
-        in_bw => integer(),
-        out_bw => integer(),
-        module() => term()
+		trickle_ice => boolean(),	% Default false, all candidates must be in SDP
+		backend => atom()
 	}.
 
 
@@ -54,13 +47,12 @@
 	#{
 		sdp => binary(),
 		sdp_type => rtp | webrtc,
-        use_audio => boolean(),
-        use_video => boolean(),
-        use_screen => boolean(),
-        use_data => boolean(),
-        module() => term()
+		trickle_ice => boolean(),	% Default false, all candidates must be in SDP
+		backend => atom()
 	}.
 
+-type role() ::
+	offerer | offeree.
 
 
 -type engine_id() :: binary().
@@ -77,6 +69,9 @@
 		pass => binary(),				% Pass		
 		base => integer()				% Base Port
 	}.
+
+
+-type candidate() :: #candidate{}.
 
 
 

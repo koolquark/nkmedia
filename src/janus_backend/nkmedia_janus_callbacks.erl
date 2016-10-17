@@ -22,19 +22,28 @@
 -module(nkmedia_janus_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([plugin_deps/0, plugin_syntax/0, plugin_config/2,
+-export([plugin_deps/0, plugin_group/0, plugin_syntax/0, plugin_config/2,
          plugin_start/2, plugin_stop/2]).
 -export([error_code/1]).
 -export([nkmedia_janus_get_mediaserver/1]).
--export([nkmedia_session_init/2, nkmedia_session_terminate/2]).
--export([nkmedia_session_start/2, nkmedia_session_answer/3,
-         nkmedia_session_update/4, nkmedia_session_stop/2, 
-         nkmedia_session_handle_call/3, nkmedia_session_handle_info/2]).
+-export([nkmedia_session_start/3, nkmedia_session_stop/2,
+         nkmedia_session_offer/4, nkmedia_session_answer/4,
+         nkmedia_session_candidate/2,
+         nkmedia_session_cmd/3,
+         nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2, 
+         nkmedia_session_handle_info/2]).
+-export([nkmedia_room_init/2, nkmedia_room_terminate/2, nkmedia_room_tick/2,
+         nkmedia_room_handle_cast/2]).
+-export([nkmedia_call_start_caller_session/3, nkmedia_call_start_callee_session/4,
+         nkmedia_call_set_answer/5]).
+
+
 -export([api_syntax/4]).
 -export([nkdocker_notify/2]).
 
 -include_lib("nkservice/include/nkservice.hrl").
-
+-include("../../include/nkmedia.hrl").
+-include("../../include/nkmedia_call.hrl").
 
 
 %% ===================================================================
@@ -50,7 +59,11 @@
 
 
 plugin_deps() ->
-    [nkmedia].
+    [nkmedia, nkmedia_room].
+
+
+plugin_group() ->
+    nkmedia_backends.
 
 
 plugin_syntax() ->
@@ -61,7 +74,7 @@ plugin_syntax() ->
 
 plugin_config(Config, _Service) ->
     Cache = case Config of
-        #{janus_docker_image:=FsConfig} -> FsConfig;
+        #{janus_docker_image:=JanusConfig} -> JanusConfig;
         _ -> nkmedia_janus_build:defaults(#{})
     end,
     {ok, Config, Cache}.
@@ -99,8 +112,8 @@ plugin_stop(Config, #{name:=Name}) ->
 
 nkmedia_janus_get_mediaserver(SrvId) ->
     case nkmedia_janus_engine:get_all(SrvId) of
-        [{FsId, _}|_] ->
-            {ok, FsId};
+        [{JanusId, _}|_] ->
+            {ok, JanusId};
         [] ->
             {error, no_mediaserver}
     end.
@@ -112,120 +125,208 @@ nkmedia_janus_get_mediaserver(SrvId) ->
 %% Implemented Callbacks - error
 %% ===================================================================
 
-error_code(janus_error)             ->  {200, <<"Janus error">>};
-error_code(janus_connection_error)  ->  {200, <<"Janus connection error">>};
-error_code(janus_op_down)           ->  {200, <<"Janus op process down">>};
-error_code(janus_bye)               ->  {200, <<"Janus bye">>};
-error_code(invalid_publisher)       ->  {200, <<"Invalid publisher">>};
-error_code(publisher_stopped)       ->  {200, <<"Publisher stopped">>};
-error_code(room_destroyed)          ->  {200, <<"Room destroyed">>};
-
-error_code(_)                       ->  continue.
+%% @private See nkservice_callbacks
+error_code({janus_error, Code, Txt})    ->  {301001, "Janus error ~p: ~s", Code, Txt};
+error_code(janus_connection_error)      ->  {301002, <<"Janus connection error">>};
+error_code(janus_session_down)          ->  {301003, <<"Janus op process down">>};
+error_code(janus_bye)                   ->  {301004, <<"Janus bye">>};
+error_code(_)                           ->  continue.
 
 
 %% ===================================================================
 %% Implemented Callbacks - nkmedia_session
 %% ===================================================================
 
-%% @private
-nkmedia_session_init(Id, Session) ->
-    State = maps:get(nkmedia_janus, Session, #{}),
-    {ok, State2} = nkmedia_janus_session:init(Id, Session, State),
-    {ok, Session#{nkmedia_janus=>State2}}.
 
 
 %% @private
-nkmedia_session_terminate(Reason, Session) ->
-    nkmedia_janus_session:terminate(Reason, Session, state(Session)),
-    {ok, maps:remove(nkmedia_janus, Session)}.
-
-
-%% @private
-nkmedia_session_start(Type, Session) ->
+nkmedia_session_start(Type, Role, Session) ->
     case maps:get(backend, Session, nkmedia_janus) of
         nkmedia_janus ->
-            State = state(Session),
-            case nkmedia_janus_session:start(Type, Session, State) of
-                {ok, Type2, Reply, Offer, Answer, State2} ->
-                    {ok, Type2, Reply, session(Offer, Answer, State2, Session)};
-                {error, Error, State2} ->
-                    {error, Error, session(State2, Session)};
-                continue ->
-                    continue
-            end;
+            nkmedia_janus_session:start(Type, Role, Session);
         _ ->
             continue
     end.
 
 
 %% @private
-nkmedia_session_answer(Type, Answer, Session) ->
-    case maps:get(backend, Session, nkmedia_janus) of
-        nkmedia_janus ->
-            State = state(Session),
-            case nkmedia_janus_session:answer(Type, Answer, Session, State) of
-                {ok, Reply, Answer2, State2} ->
-                    {ok, Reply, Answer2, session(none, Answer2, State2, Session)};
-                {error, Error, State2} ->
-                    {error, Error, session(State2, Session)};
-                continue ->
-                    continue
-            end;
-        _ ->
-            continue
-    end.
+nkmedia_session_offer(Type, Role, Offer, #{nkmedia_janus_id:=_}=Session) ->
+    nkmedia_janus_session:offer(Type, Role, Offer, Session);
 
+nkmedia_session_offer(_Type, _Role, _Offer, _Session) ->
+    continue.
 
 
 %% @private
-nkmedia_session_update(Update, Opts, Type, Session) ->
-    case maps:get(backend, Session, nkmedia_janus) of
-        nkmedia_janus ->
-            State = state(Session),
-            case nkmedia_janus_session:update(Update, Opts, Type, Session, State) of
-                {ok, Type2, Reply, State2} ->
-                    {ok, Type2, Reply, session(State2, Session)};
-                {error, Error, State2} ->
-                    {error, Error, session(State2, Session)};
-                continue ->
-                    continue
-            end;
-        _ ->
-            continue
-    end.
+nkmedia_session_answer(Type, Role, Answer, #{nkmedia_janus_id:=_}=Session) ->
+    nkmedia_janus_session:answer(Type, Role, Answer, Session);
+
+nkmedia_session_answer(_Type, _Role, _Answer, _Session) ->
+    continue.
 
 
 %% @private
-nkmedia_session_stop(Reason, Session) ->
-    {ok, State2} = nkmedia_janus_session:stop(Reason, Session, state(Session)),
-    {continue, [Reason, session(State2, Session)]}.
+nkmedia_session_cmd(Update, Opts, #{nkmedia_janus_id:=_}=Session) ->
+    nkmedia_janus_session:cmd(Update, Opts, Session);
+
+nkmedia_session_cmd(_Update, _Opts, _Session) ->
+    continue.
 
 
 %% @private
-nkmedia_session_handle_call(nkmedia_janus_get_room, _From, Session) ->
-    Reply = case Session of
-        #{srv_id:=SrvId, type:=publish} ->
-            case state(Session) of
-                #{room:=Room} ->
-                    {ok, SrvId, Room};
-                _ ->
-                    {error, invalid_state}
-            end;
-        _ ->
-            {error, invalid_state}
-    end,
-    {reply, Reply, Session}.
+nkmedia_session_candidate(Candidate, #{nkmedia_janus_id:=_}=Session) ->
+    nkmedia_janus_session:candidate(Candidate, Session);
+
+nkmedia_session_candidate(_Candidate, _Session) ->
+    continue.
+
+
+% %% @private
+% nkmedia_session_peer_candidate(Candidate, #{nkmedia_janus_id:=_}=Session) ->
+%     nkmedia_janus_session:peer_candidate(Candidate, Session);
+
+% nkmedia_session_peer_candidate(_Candidate, _Session) ->
+%     continue.
+
+
+%% @private
+nkmedia_session_stop(Reason, #{nkmedia_janus_id:=_}=Session) ->
+    nkmedia_janus_session:stop(Reason, Session);
+
+nkmedia_session_stop(_Reason, _Session) ->
+    continue.
+
+
+% @private
+nkmedia_session_handle_call({nkmedia_janus, Msg}, From, Session) ->
+    nkmedia_janus_session:handle_call(Msg, From, Session);
+
+nkmedia_session_handle_call(_Msg, _From, _Session) ->
+    continue.
+
+
+% @private
+nkmedia_session_handle_cast({nkmedia_janus, Msg}, Session) ->
+    nkmedia_janus_session:handle_cast(Msg, Session);
+
+nkmedia_session_handle_cast(_Msg, _Session) ->
+    continue.
+
 
 
 %% @private The janus_op process is down
 nkmedia_session_handle_info({'DOWN', Ref, process, _Pid, _Reason}, Session) ->
-    case state(Session) of
-        #{janus_mon:=Ref} ->
-            nkmedia_session:stop(self(), janus_op_down),
+    case Session of
+        #{nkmedia_janus_mon:=Ref} ->
+            nkmedia_session:stop(self(), janus_session_down),
             {noreply, Session};
         _ ->
             continue
+    end;
+
+nkmedia_session_handle_info(_Msg, _Session) ->
+    continue.
+
+
+%% ===================================================================
+%% Implemented Callbacks - nkmedia_room
+%% ===================================================================
+
+%% @private
+nkmedia_room_init(Id, Room) ->
+    case maps:get(backend, Room, nkmedia_janus) of
+        nkmedia_janus  ->
+            case maps:get(class, Room, sfu) of
+                sfu ->
+                    nkmedia_janus_room:init(Id, Room);
+                _ ->
+                    {ok, Room}
+            end;
+        _ ->
+            {ok, Room}
     end.
+
+
+%% @private
+nkmedia_room_terminate(Reason, #{nkmedia_janus_id:=_}=Room) ->
+    nkmedia_janus_room:terminate(Reason, Room);
+
+nkmedia_room_terminate(_Reason, Room) ->
+    {ok, Room}.
+
+
+%% @private
+nkmedia_room_tick(RoomId, #{nkmedia_janus_id:=_}=Room) ->
+    nkmedia_janus_room:tick(RoomId, Room);
+
+nkmedia_room_tick(_RoomId, _Room) ->
+    continue.
+
+
+%% @private
+nkmedia_room_handle_cast({nkmedia_janus, Msg}, Room) ->
+    nkmedia_janus_room:handle_cast(Msg, Room);
+
+nkmedia_room_handle_cast(_Msg, _Room) ->
+    continue.
+
+
+
+%% ===================================================================
+%% Implemented Callbacks - nkmedia_call
+%% ===================================================================
+
+
+nkmedia_call_start_caller_session(CallId, Config, #{srv_id:=SrvId, offer:=Offer}=Call) ->
+    case maps:get(backend, Call, nkmedia_janus) of
+        nkmedia_janus ->
+            Config2 = Config#{
+                backend => nkmedia_janus, 
+                offer => Offer,
+                call_id => CallId
+            },
+            {ok, MasterId, Pid} = nkmedia_session:start(SrvId, proxy, Config2),
+            {ok, MasterId, Pid, ?CALL(#{backend=>nkmedia_janus}, Call)};
+        _ ->
+            continue
+    end.
+
+
+nkmedia_call_start_callee_session(CallId, MasterId, Config, 
+                                  #{backend:=nkmedia_janus, srv_id:=SrvId}=Call) ->
+    case nkmedia_session:cmd(MasterId, get_type, #{}) of
+        {ok, #{type:=proxy, backend:=nkmedia_janus}} ->
+            Config2 = Config#{
+                backend => nkmedia_janus,
+                peer_id => MasterId,
+                call_id => CallId
+            },
+            {ok, SlaveId, Pid} = nkmedia_session:start(SrvId, bridge, Config2),
+            case nkmedia_session:get_offer(SlaveId) of
+                {ok, Offer} ->
+                    {ok, SlaveId, Pid, Offer, Call};
+                {error, Error} ->
+                    {error, Error, Call}
+            end;
+        _ ->
+            {error, incompatible_session, Call}
+    end;
+
+nkmedia_call_start_callee_session(_CallId, _MasterId, _Config, _Call) ->
+    continue.
+
+
+nkmedia_call_set_answer(_CallId, _MasterId, SlaveId, Answer, 
+                        #{backend:=nkmedia_janus}=Call) ->
+    case nkmedia_session:set_answer(SlaveId, Answer) of
+        ok ->
+            {ok, Call};
+        {error, Error} ->
+            {error, Error, Call}
+    end;
+
+nkmedia_call_set_answer(_CallId, _MasterId, _SlaveId, _Answer, _Call) ->
+    continue.
 
 
 
@@ -233,10 +334,19 @@ nkmedia_session_handle_info({'DOWN', Ref, process, _Pid, _Reason}, Session) ->
 %% API
 %% ===================================================================
 
+% %% @private
+% api_cmd(#api_req{class = <<"media">>}=Req, State) ->
+%     #api_req{subclass=Sub, cmd=Cmd} = Req,
+%     nkmedia_janus_api:cmd(Sub, Cmd, Req, State);
+
+% api_cmd(_Req, _State) ->
+%     continue.
+
+
 %% @private
 api_syntax(#api_req{class = <<"media">>}=Req, Syntax, Defaults, Mandatory) ->
     #api_req{subclass=Sub, cmd=Cmd} = Req,
-    {S2, D2, M2} = syntax(Sub, Cmd, Syntax, Defaults, Mandatory),
+    {S2, D2, M2} = nkmedia_janus_api_syntax:syntax(Sub, Cmd, Syntax, Defaults, Mandatory),
     {continue, [Req, S2, D2, M2]};
 
 api_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
@@ -259,66 +369,6 @@ nkdocker_notify(_MonId, _Op) ->
 %% ===================================================================
 %% Internal
 %% ===================================================================
-
-%% @private
-syntax(<<"session">>, <<"start">>, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{
-            record => boolean,
-            bitrate => {integer, 0, none},
-            proxy_type => {enum, [webrtc, rtp]},
-            room => binary,
-            publisher => binary,
-            use_audio => boolean,
-            use_video => boolean,
-            use_data => boolean,
-            room_bitrate => {integer, 0, none},
-            room_audio_codec => {enum, [opus, isac32, isac16, pcmu, pcma]},
-            room_video_codec => {enum , [vp8, vp9, h264]}
-        },
-        Defaults,
-        Mandatory
-    };
-
-syntax(<<"session">>, <<"update">>, Syntax, Defaults, Mandatory) ->
-    {
-        Syntax#{
-            bitrate => integer,
-            use_audio => boolean,
-            use_video => boolean,
-            use_data => boolean,
-            record => boolean,
-            publisher => binary
-        },
-        Defaults,
-        Mandatory
-    };
-
-syntax(_Sub, _Cmd, Syntax, Defaults, Mandatory) ->
-    {Syntax, Defaults, Mandatory}.
-
-
-%% @private
-state(#{nkmedia_janus:=State}) ->
-    State.
-
-
-%% @private
-session(Offer, Answer, State, Session) ->
-    Session2 = case Offer of
-        #{} -> Session#{offer=>Offer};
-        none -> Session
-    end,
-    Session3 = case Answer of
-        #{} -> Session2#{answer=>Answer};
-        none -> Session2
-    end,
-    Session3#{nkmedia_janus:=State}.
-
-
-%% @private
-session(State, Session) ->
-    Session#{nkmedia_janus:=State}.
 
 
 

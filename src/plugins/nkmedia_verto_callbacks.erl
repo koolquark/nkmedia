@@ -31,8 +31,10 @@
          nkmedia_verto_dtmf/4, nkmedia_verto_terminate/2,
          nkmedia_verto_handle_call/3, nkmedia_verto_handle_cast/2,
          nkmedia_verto_handle_info/2]).
--export([nkmedia_call_resolve/3, nkmedia_call_invite/4, nkmedia_call_cancel/3,
+-export([nkmedia_call_resolve/4, nkmedia_call_invite/6, 
+         nkmedia_call_answer/6, nkmedia_call_cancelled/3, 
          nkmedia_call_reg_event/4]).
+-export([nkmedia_session_reg_event/4]).
 
 -define(VERTO_WS_TIMEOUT, 60*60*1000).
 -include_lib("nkservice/include/nkservice.hrl").
@@ -55,7 +57,7 @@
 
 
 plugin_deps() ->
-    [nkmedia].
+    [nkmedia, nkmedia_call].
 
 
 plugin_syntax() ->
@@ -87,9 +89,6 @@ plugin_stop(Config, #{name:=Name}) ->
 
 
 
-%% ===================================================================
-%% Offering Callbacks
-%% ===================================================================
 
 -type call_id() :: nkmedia_verto:call_id().
 -type verto() :: nkmedia_verto:verto().
@@ -111,62 +110,107 @@ nkmedia_verto_login(_Login, _Pass, Verto) ->
     {false, Verto}.
 
 
-%% @doc Called when the client sends an INVITE
-%% If {ok, ...} is returned, we must call nkmedia_verto:answer/3.
+%% @doc Called when the Verto client sends an INVITE
+%% This default implementation will start a call:
+%% - The caller_link is {nkmedia_verto, Call, Pid}, so that NkMEDIA will 
+%%   monitor the caller and use it for nkmedia_answer (when the answer is availanble)
+%%   and other events (in nkmedia_call_reg_event).
+%% - Verto is registered with nkmedia_call, to be able to send byes and detect kills
+%% - The call generates the 'caller' session and registers itself with it.
+%%   Then it generates a 'callee' session and call nkmedia_call_invite
+%% - Use the backend field to select backends for the bridge
+%% - The call monitors both sessions, and stop thems if it stops.
+%% - The call monitors also both the caller and the callee processes
+%% - The sessions monitor the call, as a fallback mechanism
 -spec nkmedia_verto_invite(nkservice:id(), call_id(), nkmedia:offer(), verto()) ->
-    {ok, nklib:proc_id(), verto()} | 
-    {answer, nkmedia:answer(), nklib_:proc_id(), verto()} | 
+    {ok, nklib:link(), verto()} | 
+    {answer, nkmedia:answer(), nklib_:link(), verto()} | 
     {rejected, nkservice:error(), verto()} | continue().
 
-nkmedia_verto_invite(_SrvId, _CallId, _Offer, Verto) ->
-    {rejected, not_implemented, Verto}.
+nkmedia_verto_invite(SrvId, CallId, #{dest:=Dest}=Offer, Verto) ->
+    Config = #{
+        call_id => CallId,
+        offer => Offer, 
+        caller_link => {nkmedia_verto, CallId, self()},
+        caller => #{info=>verto_native},
+        no_answer_trickle_ice => true
+    },
+    case nkmedia_call:start2(SrvId, Dest, Config) of
+        {ok, CallId, CallPid} ->
+            {ok, {nkmedia_call, CallId, CallPid}, Verto};
+        {error, Error} ->
+            lager:warning("NkMEDIA Verto session error: ~p", [Error]),
+            {rejected, Error, Verto}
+    end.
 
 
 %% @doc Called when the client sends an ANSWER after nkmedia_verto:invite/4
--spec nkmedia_verto_answer(call_id(), nklib:proc_id(), nkmedia:answer(), verto()) ->
+-spec nkmedia_verto_answer(call_id(), nklib:link(), nkmedia:answer(), verto()) ->
     {ok, verto()} |{hangup, nkservice:error(), verto()} | continue().
 
-nkmedia_verto_answer(_CallId, {nkmedia_verto_call, CallId, _Pid}, Answer, Verto) ->
-    case nkmedia_call:answered(CallId, {nkmedia_verto, self()}, Answer) of
+% If the registered process happens to be {nkmedia_session, ...} and we have
+% an answer for an invite we received, we set the answer in the session
+nkmedia_verto_answer(_CallId, {nkmedia_session, SessId, _Pid}, Answer, Verto) ->
+    case nkmedia_session:set_answer(SessId, Answer) of
         ok ->
+            {ok, Verto};
+        {error, Error} -> 
+            {hangup, Error, Verto}
+    end;
+
+% If the registered process happens to be {nkmedia_call, ...} and we have
+% an answer for an invite we received, we set the answer in the call
+nkmedia_verto_answer(CallId, {nkmedia_call, CallId, _Pid}, Answer, Verto) ->
+    Id = {nkmedia_verto, CallId, self()},
+    case nkmedia_call:accepted(CallId, Id, Answer, #{module=>nkmedia_verto}) of
+        {ok, _} ->
             {ok, Verto};
         {error, Error} ->
             {hangup, Error, Verto}
     end;
 
-nkmedia_verto_answer(_CallId, _ProcId, _Answer, Verto) ->
+nkmedia_verto_answer(_CallId, _Link, _Answer, Verto) ->
     {ok, Verto}.
 
 
 %% @doc Called when the client sends an BYE after nkmedia_verto:invite/4
--spec nkmedia_verto_rejected(call_id(), nklib:proc_id(), verto()) ->
+-spec nkmedia_verto_rejected(call_id(), nklib:link(), verto()) ->
     {ok, verto()} | continue().
 
-nkmedia_verto_rejected(_CallId, {nkmedia_verto_call, CallId, _Pid}, Verto) ->
-    nkmedia_call:rejected(CallId, {nkmedia_verto, self()}),
+nkmedia_verto_rejected(_CallId, {nkmedia_session, SessId, _Pid}, Verto) ->
+    nkmedia_session:stop(SessId, verto_rejected),
     {ok, Verto};
 
-nkmedia_verto_rejected(_CallId, _ProcId, Verto) ->
+nkmedia_verto_rejected(CallId, {nkmedia_call, CallId, _Pid}, Verto) ->
+    nkmedia_call:rejected(CallId, {nkmedia_verto, CallId, self()}),
+    {ok, Verto};
+
+nkmedia_verto_rejected(_CallId, _Link, Verto) ->
     {ok, Verto}.
 
 
 %% @doc Sends when the client sends a BYE during a call
--spec nkmedia_verto_bye(call_id(), nklib:proc_id(), verto()) ->
+-spec nkmedia_verto_bye(call_id(), nklib:link(), verto()) ->
     {ok, verto()} | continue().
 
-nkmedia_verto_bye(_CallId, {nkmedia_verto_call, CallId, _Pid}, Verto) ->
+% We recognize some special Links
+nkmedia_verto_bye(_CallId, {nkmedia_session, SessId, _Pid}, Verto) ->
+    nkmedia_session:stop(SessId, verto_bye),
+    {ok, Verto};
+
+nkmedia_verto_bye(CallId, {nkmedia_call, CallId, _Pid}, Verto) ->
     nkmedia_call:hangup(CallId, verto_bye),
     {ok, Verto};
 
-nkmedia_verto_bye(_CallId, _ProcId, Verto) ->
+nkmedia_verto_bye(_CallId, _Link, Verto) ->
     {ok, Verto}.
 
 
 %% @doc
--spec nkmedia_verto_dtmf(call_id(), nklib:proc_id(), DTMF::binary(), verto()) ->
+-spec nkmedia_verto_dtmf(call_id(), nklib:link(), DTMF::binary(), verto()) ->
     {ok, verto()} | continue().
 
-nkmedia_verto_dtmf(_CallId, _ProcId, _DTMF, Verto) ->
+nkmedia_verto_dtmf(_CallId, _Link, _DTMF, Verto) ->
     {ok, Verto}.
 
 
@@ -208,57 +252,111 @@ nkmedia_verto_handle_info(Msg, Verto) ->
 
 
 %% ===================================================================
-%% Implemented Callbacks
+%% Implemented Callbacks - Error
 %% ===================================================================
 
-%% @private
-error_code(verto_bye) -> {0, <<"Verto BYE">>};
+
+%% @private See nkservice_callbacks
+error_code(verto_bye)       -> {306001, "Verto bye"};
+error_code(verto_rejected)  -> {306002, "Verto rejected"};
 error_code(_) -> continue.
 
 
+
+%% ===================================================================
+%% Implemented Callbacks - Session
+%% ===================================================================
+
+
 %% @private
-%% If call has type 'nkmedia_verto' we will capture it
-nkmedia_call_resolve(Callee, Acc, Call) ->
-    lager:error("DEST: ~p", [Callee]),
-    case maps:get(type, Call, nkmedia_verto) of
-        nkmedia_verto ->
-            DestExts = [
-                #{dest=>{nkmedia_verto, Pid}}
-                || Pid <- nkmedia_verto:find_user(Callee)
-            ],
-            {continue, [Callee, Acc++DestExts, Call]};
+%% Convenient functions in case we are registered with the session as
+%% {nkmedia_verto, CallId, Pid}
+nkmedia_session_reg_event(_SessId, {nkmedia_verto, CallId, Pid}, Event, _Session) ->
+    case Event of
+        {answer, Answer} ->
+            % we may be blocked waiting for the same session creation
+            case nkmedia_verto:answer_async(Pid, CallId, Answer) of
+                ok ->
+                    ok;
+                {error, Error} ->
+                    lager:error("Error setting Verto answer: ~p", [Error])
+            end;
+        {stop, Reason} ->
+            lager:info("Verto stopping after session stop: ~p", [Reason]),
+            nkmedia_verto:hangup(Pid, CallId, Reason);
         _ ->
-            continue
-    end.
+            ok
+    end,
+    continue;
 
+nkmedia_session_reg_event(_SessId, _Link, _Event, _Call) ->
+    continue.
+
+
+%% ===================================================================
+%% Implemented Callbacks - Call
+%% ===================================================================
 
 %% @private
-%% When a call is sento to {nkmedia_verto, pid()}, we capture it here
-%% We register with verto as {nkmedia_verto_call, CallId, PId},
-%% and with the call as {nkmedia_verto, Pid}
-nkmedia_call_invite(CallId, {nkmedia_verto, Pid}, Offer, Call) when is_pid(Pid) ->
-    ProcId = {nkmedia_verto_call, CallId, self()},
-    ok = nkmedia_verto:invite(Pid, CallId, Offer, ProcId),
-    {ok, {nkmedia_verto, Pid}, Call};
+%% If call has type 'verto' we will capture it
+nkmedia_call_resolve(Callee, Type, Acc, Call) when Type==verto; Type==all ->
+    Dest = [
+        #{dest=>{nkmedia_verto, Pid}, session_config=>#{no_offer_trickle_ice=>true}}
+        || Pid <- nkmedia_verto:find_user(Callee)
+    ],
+    {continue, [Callee, Type, Acc++Dest, Call]};
 
-nkmedia_call_invite(_CallId, _Dest, _Offer, _Call) ->
+nkmedia_call_resolve(_Callee, _Type, _Acc, _Call) ->
+    continue.
+
+
+%% @private Called when a call want to INVITE a Verto session
+%% - We start a verto INVITE with this CallId and registered with the call
+%%   (to be able to send BYEs)
+%% - The Verto session registers with the call as {nkmedia_verto, CallId, Pid}, 
+%%   and will send hangups and rejected using this
+nkmedia_call_invite(CallId, {nkmedia_verto, Pid}, _SessId, Offer, _Caller, Call) ->
+    CallLink = {nkmedia_call, CallId, self()},
+    {ok, VertoLink} = nkmedia_verto:invite(Pid, CallId, Offer, CallLink),
+    {ok, VertoLink, Call};
+
+nkmedia_call_invite(_CallId, _Dest, _SessId, _Offer, _Caller, _Call) ->
     continue.
 
 
 %% @private
-nkmedia_call_cancel(CallId, {nkmedia_verto, Pid}, _Call) when is_pid(Pid) ->
+nkmedia_call_answer(CallId, {nkmedia_verto, CallId, Pid}, _SessId, Answer, 
+                    _Callee, Call) ->
+    case nkmedia_verto:answer(Pid, CallId, Answer) of
+        ok ->
+            {ok, Call};
+        {error, Error} ->
+            lager:error("Error setting Verto answer: ~p", [Error]),
+            {error, Error, Call}
+    end;
+
+nkmedia_call_answer(_CallId, _Link, _SessId, _Answer, _Callee, _Call) ->
+    continue.
+
+
+%% @private
+nkmedia_call_cancelled(_CallId, {nkmedia_verto, CallId, Pid}, _Call) ->
     nkmedia_verto:hangup(Pid, CallId, originator_cancel),
     continue;
 
-nkmedia_call_cancel(_CallId, _ProcId, _Call) ->
+nkmedia_call_cancelled(_CallId, _Link, _Call) ->
     continue.
 
 
-nkmedia_call_reg_event(CallId, {nkmedia_verto, Pid}, {hangup, Reason}, _Call) ->
+%% @private
+%% Convenient functions in case we are registered with the call as
+%% {nkmedia_verto, CallId, Pid}
+nkmedia_call_reg_event(CallId, {nkmedia_verto, CallId, Pid}, {hangup, Reason}, _Call) ->
     nkmedia_verto:hangup(Pid, CallId, Reason),
     continue;
 
-nkmedia_call_reg_event(_CallId, _ProcId, _Event, _Call) ->
+nkmedia_call_reg_event(_CallId, _Link, _Event, _Call) ->
+    % lager:error("CALL REG: ~p", [_Link]),
     continue.
 
 
@@ -266,7 +364,6 @@ nkmedia_call_reg_event(_CallId, _ProcId, _Event, _Call) ->
 %% ===================================================================
 %% Internal
 %% ===================================================================
-
 
 parse_listen(_Key, [{[{_, _, _, _}|_], Opts}|_]=Multi, _Ctx) when is_map(Opts) ->
     {ok, Multi};

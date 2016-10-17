@@ -22,8 +22,8 @@
 -module(nkmedia_janus_proto).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([invite/4, answer/3, hangup/2, hangup/3]).
--export([find_user/1, find_call_id/1, get_all/0]).
+-export([invite/4, answer/3, answer_async/3, hangup/2, hangup/3]).
+-export([candidate/2, find_user/1, find_call_id/1, get_all/0]).
 -export([register_play/3]).
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_stop/3,
@@ -41,6 +41,9 @@
 -define(OP_TIME, 15000).            % Maximum operation time
 -define(CALL_TIMEOUT, 30000).       % 
 
+-define(USE_TRICKLE, false).        % Set to false if Verto client is configured so
+
+-include_lib("nksip/include/nksip.hrl").
 
 %% ===================================================================
 %% Types
@@ -51,7 +54,10 @@
         remote => binary(),
         srv_id => nkservice:id(),
         sess_id => binary(),
-        user => binary()
+        user => binary(),
+        call_id => binary(),        % Last one registered
+        role => caller | callee,
+        link => nklib:link()        % Last one registered
 	}.
 
 -type call_id() :: binary().
@@ -63,11 +69,16 @@
 
 %% @doc Sends an INVITE. 
 %% Follow 
--spec invite(pid(), call_id(), nkmedia:offer(), nklib:proc_id()) ->
-    ok | {error, term()}.
+-spec invite(pid(), call_id(), nkmedia:offer(), nklib:link()) ->
+    {ok, nklin:link()} | {error, term()}.
     
-invite(Pid, CallId, Offer, ProcId) ->
-    do_call(Pid, {invite, CallId, Offer, ProcId}).
+invite(Pid, CallId, Offer, Link) ->
+    case do_call(Pid, {invite, CallId, Offer, Link}) of
+        ok ->
+            {ok, {nkmedia_janus, CallId, Pid}};
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
 %% @doc Sends an ANSWER (only sdp is used in answer())
@@ -76,6 +87,14 @@ invite(Pid, CallId, Offer, ProcId) ->
 
 answer(Pid, CallId, Answer) ->
     do_call(Pid, {answer, CallId, Answer}).
+
+
+%% @doc Sends an ANSWER (only sdp is used in answer())
+-spec answer_async(pid(), call_id(), nkmedia:answer()) ->
+    ok | {error, term()}.
+
+answer_async(Pid, CallId, Answer) ->
+    gen_server:cast(Pid, {answer, CallId, Answer}).
 
 
 %% @doc Equivalent to hangup(Pid, CallId, 16)
@@ -93,6 +112,14 @@ hangup(Pid, CallId) ->
 
 hangup(Pid, CallId, Reason) ->
     gen_server:cast(Pid, {hangup, CallId, Reason}).
+
+
+%% @doc Sends an SDP candidate from the other side
+-spec candidate(pid(), nkmedia:candidate()) ->
+    ok.
+
+candidate(Pid, #candidate{}=Candidate) ->
+    gen_server:cast(Pid, {candidate, Candidate}).
 
 
 %% @doc Gets the pids() for currently logged user
@@ -150,7 +177,6 @@ get_all() ->
     pos :: integer(),
     user :: binary(),
     links :: nklib_links:links(),
-    % calls = [] :: [{CallId::binary(), reference()}],
     janus :: janus()
 }).
 
@@ -257,10 +283,10 @@ conn_handle_cast(Msg, NkPort, State) ->
 -spec conn_handle_info(term(), nkpacket:nkport(), #state{}) ->
     {ok, #state{}} | {stop, Reason::term(), #state{}}.
 
-conn_handle_info({'DOWN', _Ref, process, Pid, _Reason}=Info, _NkPort, State) ->
-    case links_down(Pid, State) of
-        {ok, CallId, ProcId, State2} ->
-            ?LLOG(notice, "monitor process down for ~s (~p)", [CallId, ProcId], State),
+conn_handle_info({'DOWN', Ref, process, _Pid, _Reason}=Info, _NkPort, State) ->
+    case links_down(Ref, State) of
+        {ok, CallId, Link, State2} ->
+            ?LLOG(notice, "monitor process down for ~s (~p)", [CallId, Link], State),
             {stop, normal, State2};
         not_found ->
             handle(nkmedia_janus_handle_info, [Info], State)
@@ -282,23 +308,26 @@ conn_stop(Reason, _NkPort, State) ->
 %% Requests
 %% ===================================================================
 
-send_req({invite, CallId, #{sdp:=SDP}, ProcId}, From, NkPort, State) ->
+send_req({invite, CallId, Offer, Link}, From, NkPort, State) ->
+    #{sdp:=SDP} = Offer,
     nklib_util:reply(From, ok),
     % ?LLOG(info, "ordered INVITE (~s)", [CallId], State),
     Result = #{
         event => incomingcall, 
         username => unknown
     },
-    Jsep = #{sdp=>SDP, type=>offer, trickle=>false},
+    % Jsep = #{sdp=>SDP, type=>offer, trickle=>?USE_TRICKLE},
+    % Janus does not support receiving candidates...
+    Jsep = #{sdp=>SDP, type=>offer},
     Req = make_videocall_req(Result, Jsep, State),
-    State2 = links_add(CallId, ProcId, State),
+    State2 = links_add(CallId, Link, callee, State),
     % Client will send us accept
     send(Req, NkPort, State2#state{call_id=CallId});
 
 send_req({answer, CallId, #{sdp:=SDP}}, From, NkPort, State) ->
     % ?LLOG(info, "ordered ANSWER (~s)", [CallId], State),
     case links_get(CallId, State) of
-        {ok, _ProcId} ->
+        {ok, _Link} ->
             ok;
         not_found ->
             ?LLOG(warning, "answer for unknown call: ~s", [CallId], State)
@@ -307,7 +336,9 @@ send_req({answer, CallId, #{sdp:=SDP}}, From, NkPort, State) ->
         event => accepted, 
         username => unknown
     },
-    Jsep = #{sdp=>SDP, type=>answer, trickle=>false},
+    % Jsep = #{sdp=>SDP, type=>answer, trickle=>?USE_TRICKLE},
+    % Janus does not support receiving candidates...
+    Jsep = #{sdp=>SDP, type=>answer},
     Req = make_videocall_req(Result, Jsep, State),
     nklib_util:reply(From, ok),
     send(Req, NkPort, State);
@@ -328,6 +359,23 @@ send_req({hangup, CallId, Reason}, From, NkPort, State) ->
     State2 = links_remove(CallId, State),
     send(Req, NkPort, State2);
 
+send_req({candidate, Candidate}, From, NkPort, State) ->
+    #state{session_id=SessionId, handle=Handle} = State,
+    nklib_util:reply(From, ok),
+    #candidate{m_id=MId, m_index=MIndex, a_line=ALine} = Candidate,
+    Data = #{
+        transaction => nklib_util:uid(),
+        session_id => SessionId,
+        handle_id => Handle,
+        janus => trickle,
+        candidate => #{
+            sdpMid => MId,
+            sdpMLineIndex => MIndex,
+            candidate => ALine
+        }
+    },
+    send(Data, NkPort, State);
+
 send_req(_Op, _From, _NkPort, _State) ->
     unknown_op.
 
@@ -337,6 +385,7 @@ send_req(_Op, _From, _NkPort, _State) ->
 process_client_req(create, Msg, NkPort, State) ->
 	Id = erlang:phash2(make_ref()),
 	Resp = make_resp(#{janus=>success, data=>#{id=>Id}}, Msg),
+    % lager:error("SESSION ID IS ~p", [Id]),
 	send(Resp, NkPort, State#state{session_id=Id});
 
 process_client_req(attach, Msg, NkPort, #state{session_id=SessionId}=State) ->
@@ -396,8 +445,41 @@ process_client_req(keepalive, Msg, NkPort, #state{session_id=SessionId}=State) -
     Resp = make_resp(#{janus=>ack, session_id=>SessionId}, Msg),
     send(Resp, NkPort, State);
 
+process_client_req(trickle, Msg, NkPort, #state{session_id=SessionId}=State) ->
+    #state{call_id=CallId} = State,
+    #{
+        <<"candidate">> := CandidateGroup, 
+        <<"session_id">> := SessionId, 
+        <<"handle_id">> := _Handle
+    } = Msg,
+    % Type = case State of
+    %     #state{janus=#{role:=caller}} -> offer;
+    %     #state{janus=#{role:=callee}} -> answer
+    % end,
+    Candidate = case CandidateGroup of
+        #{
+            <<"sdpMid">> := MId,
+            <<"sdpMLineIndex">> := MIndex,
+            <<"candidate">> := ALine
+        } ->
+            #candidate{m_id=MId, m_index=MIndex, a_line=ALine};
+        #{
+            <<"completed">> := true
+        } ->
+            #candidate{last=true}
+    end,
+    case links_get(CallId, State) of
+        {ok, Link} ->
+            {ok, State2} = 
+                handle(nkmedia_janus_candidate, [CallId, Link, Candidate], State);
+        not_found ->
+            State2 = error(not_found_on_accept_trickle)
+    end,
+    Resp = make_resp(#{janus=>ack, session_id=>SessionId}, Msg),
+    send(Resp, NkPort, State2);
+
 process_client_req(Cmd, _Msg, _NkPort, State) ->
-    ?LLOG(warning, "unexpected client REQ: ~s", [Cmd], State),
+    ?LLOG(warning, "unexpected client REQ: ~s\n~p", [Cmd, _Msg], State),
     {ok, State}.
 
 
@@ -407,39 +489,48 @@ process_client_msg(register, Body, Msg, NkPort, State) ->
     ?LLOG(info, "received REGISTER (~s)", [User], State),
     nklib_proc:put(?MODULE, User),
     nklib_proc:put({?MODULE, user, User}),
+    {ok, State2} = handle(nkmedia_janus_registered, [User], State),
     Result = #{event=>registered, username=>User},
-    Resp = make_videocall_resp(Result, Msg, State),
-    #state{janus=Janus} = State,
-    Janus2 = Janus#{user=>User, session_id=>nklib_util:uuid_4122()},
-    send(Resp, NkPort, State#state{user=User, janus=Janus2});
+    Resp = make_videocall_resp(Result, Msg, State2),
+    #state{janus=Janus2} = State2,
+    Janus3 = Janus2#{user=>User, session_id=>nklib_util:uuid_4122()},
+    send(Resp, NkPort, State2#state{user=User, janus=Janus3});
 
 process_client_msg(call, Body, Msg, NkPort, #state{srv_id=SrvId}=State) ->
     CallId = nklib_util:uuid_4122(),
     ?LLOG(info, "received CALL (~s)", [CallId], State),
     #{<<"username">>:=Dest} = Body,
-    #{<<"jsep">>:=#{<<"sdp">>:=SDP}} = Msg,
-    Offer = #{dest=>Dest, sdp=>SDP, sdp_type=>webrtc},
+    #{<<"jsep">>:=JSep} = Msg,
+    #{<<"type">>:=<<"offer">>, <<"sdp">>:=SDP} = JSep,
+    Trickle = maps:get(<<"trickle">>, JSep, true),
+    lager:warning("janus offer, trickle: ~p", [Trickle]),
+    Offer = #{dest=>Dest, sdp=>SDP, sdp_type=>webrtc, trickle_ice=>Trickle},
+    % io:format("SDP: ~s\n", [SDP]),
+    % lager:notice("JSEP: ~p", [Msg#{<<"jsep">>=>maps:remove(<<"sdp">>, JSep)}]),
     case handle(nkmedia_janus_invite, [SrvId, CallId, Offer], State) of
-        {ok, ProcId, State2} ->
+        {ok, Link, State2} ->
             ok;
-        {answer, Answer, ProcId, State2} ->
+        {answer, Answer, Link, State2} ->
             gen_server:cast(self(), {answer, CallId, Answer});
         {rejected, Reason, State2} ->
-            ProcId = undefined,
+            Link = undefined,
             hangup(self(), CallId, Reason)
     end,
-    State3 = links_add(CallId, ProcId, State2#state{call_id=CallId}),
+    State3 = links_add(CallId, Link, caller, State2#state{call_id=CallId}),
     Resp = make_videocall_resp(#{event=>calling}, Msg, State3),
     send(Resp, NkPort, State3);
 
 process_client_msg(accept, _Body, Msg, NkPort, State) ->
     #state{call_id=CallId} = State,
     ?LLOG(info, "received ACCEPT (~s)", [CallId], State),
-    #{<<"jsep">>:=#{<<"sdp">>:=SDP}} = Msg,
-    Answer = #{sdp=>SDP, sdp_type=>webrtc},
+    #{<<"jsep">>:=JSep} = Msg,
+    #{<<"type">>:=<<"answer">>, <<"sdp">>:=SDP} = JSep,
+    Trickle = maps:get(<<"trickle">>, JSep, true),
+    ?LLOG(notice, "answer, trickle: ~p", [Trickle], State),
+    Answer = #{sdp=>SDP, sdp_type=>webrtc, trickle_ice=>Trickle},
     case links_get(CallId, State) of
-        {ok, ProcId} ->
-            case handle(nkmedia_janus_answer, [CallId, ProcId, Answer], State) of
+        {ok, Link} ->
+            case handle(nkmedia_janus_answer, [CallId, Link, Answer], State) of
                 {ok, State2} ->
                     ok;
                 {hangup, Reason, State2} ->
@@ -456,8 +547,8 @@ process_client_msg(accept, _Body, Msg, NkPort, State) ->
 process_client_msg(hangup, _Body, _Msg, _NkPort, State) ->
     #state{call_id=CallId} = State,
     {ok, State2} = case links_get(CallId, State) of
-        {ok, ProcId} ->
-            handle(nkmedia_janus_bye, [CallId, ProcId], State);
+        {ok, Link} ->
+            handle(nkmedia_janus_bye, [CallId, Link], State);
         not_found ->
             {ok, State}
     end,
@@ -498,7 +589,7 @@ process_client_msg(play, Body, Msg, NkPort, State) ->
             case erlang:phash2(CallId) of
                 Id ->
                     ?LLOG(info, "received PLAY (~s)", [CallId], State),
-                    State2 = links_add(CallId, {play, Pid}, State),
+                    State2 = links_add(CallId, {play, Pid}, caller, State),
                     Data = #{
                         recordplay => event,
                         result => #{id=>Id, status=>preparing}
@@ -639,42 +730,13 @@ make_recordplay_resp2(Data, Jsep, Msg, #state{plugin=recordplay}=State) ->
 make_resp(Data, Msg) ->
     #{<<"transaction">>:=Trans} = Msg,
     Data#{transaction => Trans}.
-    %% @private
 
 
 %% @private
 do_call(JanusPid, Msg) ->
     nkservice_util:call(JanusPid, Msg, 1000*?CALL_TIMEOUT).
 
-
-
-% %% @private
-% add_call(CallId, Pid, #state{calls=Calls}=State) ->
-%     nklib_proc:put({?MODULE, call, CallId}),
-%     case lists:keymember(CallId, 1, Calls) of
-%         false ->
-%             Ref = case is_pid(Pid) of
-%                 true -> monitor(process, Pid);
-%                 _ -> undefined
-%             end,
-%             State#state{calls=[{CallId, Ref}|Calls]};
-%         true ->
-%             ?LLOG(notice, "duplicated reg!", [], State),
-%             State
-%     end.
-
-
-% %% @private
-% del_call(CallId, #state{calls=Calls}=State) ->
-%     nklib_proc:del({?MODULE, call, CallId}),
-%     case lists:keytake(CallId, 1, Calls) of
-%         {value, {CallId, Ref}, Calls2} -> 
-%             nklib_util:demonitor(Ref),
-%             State#state{calls=Calls2};
-%         false ->
-%             State
-%     end.
-    
+   
 
 %% @private
 send(Msg, NkPort, State) ->
@@ -698,37 +760,31 @@ handle(Fun, Args, State) ->
     nklib_gen_server:handle_any(Fun, Args, State, #state.srv_id, #state.janus).
 
 
-
-
-% %% @private
-% user_reply(#trans{from={async, Pid, Ref}}, Msg) ->
-%     Pid ! {?MODULE, Ref, Msg};
-% user_reply(#trans{from=From}, Msg) ->
-%     nklib_util:reply(From, Msg).
+%% @private
+links_add(CallId, Link, Role, #state{links=Links, janus=Janus}=State) ->
+    Janus2 = Janus#{call_id=>CallId, link=>Link, role=>Role},
+    Pid = nklib_links:get_pid(Link),
+    State#state{links=nklib_links:add(CallId, Link, Pid, Links), janus=Janus2}.
 
 
 %% @private
-links_add(Id, ProcId, #state{links=Links}=State) ->
-    Pid = nklib_links:get_pid(ProcId),
-    State#state{links=nklib_links:add(Id, ProcId, Pid, Links)}.
+links_get(CallId, #state{links=Links}) ->
+    nklib_links:get_value(CallId, Links).
 
 
 %% @private
-links_get(Id, #state{links=Links}) ->
-    nklib_links:get(Id, Links).
-
-
-%% @private
-links_down(Pid, #state{links=Links}=State) ->
-    case nklib_links:down(Pid, Links) of
-        {ok, Id, Data, Links2} -> {ok, Id, Data, State#state{links=Links2}};
-        not_found -> not_found
+links_down(Mon, #state{links=Links}=State) ->
+    case nklib_links:down(Mon, Links) of
+        {ok, CallId, Link, Links2} -> 
+            {ok, CallId, Link, State#state{links=Links2}};
+        not_found -> 
+            not_found
     end.
 
 
 %% @private
-links_remove(Id, #state{links=Links}=State) ->
-    State#state{links=nklib_links:remove(Id, Links)}.
+links_remove(CallId, #state{links=Links}=State) ->
+    State#state{links=nklib_links:remove(CallId, Links)}.
 
 
 %% @private
@@ -743,27 +799,15 @@ print(Txt, [#{}=Map], State) ->
         #{<<"jsep">>:=#{<<"sdp">>:=_SDP}=Jsep} -> 
             Map#{<<"jsep">>:=Jsep#{<<"sdp">>=><<"...">>}};
         _ -> 
-            _SDP = <<>>,
+            _SDP = none,
             Map
     end,
-    % io:format("~s\n", [_SDP]),
-    print(Txt, [nklib_json:encode_pretty(Map2)], State);
+    print(Txt, [nklib_json:encode_pretty(Map2)], State),
+    case _SDP of
+        none -> ok;
+        _ -> io:format("Janus SDP\n~s\n", [_SDP])
+    end,
+    ok;
 print(Txt, Args, State) ->
     ?LLOG(info, Txt, Args, State).
 
-
-
-% {
-%   "janus": "event",
-%   "plugindata": {
-%     "data": {
-%       "error": "You can't call yourself... use the EchoTest for that",
-%       "error_code": 479,
-%       "videocall": "event"
-%     },
-%     "plugin": "janus.plugin.videocall"
-%   },
-%   "sender": 2256035211,
-%   "session_id": 1837249640,
-%   "transaction": "YFTMkOeSwwAo"
-% }

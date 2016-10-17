@@ -24,20 +24,20 @@
 
 -export([start/1, start/2, stop/1, get_all/0]).
 -export([info/1, create/3, attach/3, message/5, detach/3, destroy/2]).
--export([keepalive/2, get_clients/1]).
+-export([keepalive/2, candidate/4, get_clients/1]).
 
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_stop/3]).
 -export([conn_handle_call/4, conn_handle_cast/3, conn_handle_info/3]).
 -export([print/3]).
 
--include("../../include/nkmedia.hrl").
+-include_lib("nksip/include/nksip.hrl").
 
 -define(LLOG(Type, Txt, Args, State),
     lager:Type("NkMEDIA Janus Client (~p) "++Txt, [self()|Args])).
 
 -define(PRINT(Txt, Args, State), 
-        print(Txt, Args, State),    % Comment this
+        % print(Txt, Args, State),    % Comment this
         ok).
 
 
@@ -156,6 +156,14 @@ destroy(Pid, SessId) ->
 
 keepalive(Pid, SessId) ->
     cast(Pid, {keepalive, SessId}).
+
+
+%% @doc Sends a trickle candidate to the server
+-spec candidate(pid(), id(), handle(), nkmedia:candidate()) ->
+    ok.
+
+candidate(Pid, SessId, Handle, Candidate) ->
+    cast(Pid, {candidate, SessId, Handle, Candidate}).
 
 
 %% @private
@@ -365,9 +373,9 @@ conn_handle_cast(Msg, NkPort, State) ->
 
 conn_handle_info({timeout, _, {op_timeout, OpId}}, _NkPort, State) ->
     case extract_op(OpId, State) of
-        {#trans{from=From}, State2} ->
+        {#trans{from=From, req=Req}, State2} ->
             nklib_util:reply(From, {error, timeout}),
-            ?LLOG(warning, "operation timeout", [], State),
+            ?LLOG(warning, "operation timeout: ~p", [Req], State),
             {ok, State2};
         not_found ->
             {ok, State}
@@ -457,6 +465,28 @@ make_msg({message, Id, Handle, Body, Jsep}, TransId, State) ->
 make_msg({keepalive, Id}, TransId, State) ->
     Data = #{session_id=>Id},
     make_req(keepalive, TransId, Data, State);
+
+make_msg({candidate, Id, Handle, #candidate{last=true}}, TransId, State) ->
+    Data = #{
+        session_id => Id,
+        handle_id => Handle,
+        candidate => #{completed=>true}
+    },
+    make_req(trickle, TransId, Data, State);
+
+make_msg({candidate, Id, Handle, Candidate}, TransId, State) ->
+    #candidate{m_id=MId, m_index=MLineIndex, a_line=ALine} = Candidate,
+    Data = #{
+        session_id => Id,
+        handle_id => Handle,
+        candidate => #{
+            sdpMid => MId,
+            sdpMLineIndex => MLineIndex,
+            candidate => ALine
+        }
+    },
+    make_req(trickle, TransId, Data, State);
+
 
 make_msg(_Type, _TransId, _State) ->
     unknown_op.
@@ -625,6 +655,16 @@ print(_Txt, [#{janus:=keepalive}], _State) ->
     ok;
 print(_Txt, [#{<<"janus">>:=<<"ack">>}], _State) ->
     ok;
+print(Txt, [#{<<"jsep">>:=Jsep}=Msg], State) ->
+    Msg2 = Msg#{<<"jsep">>:=Jsep#{<<"sdp">>:=<<"...">>}},
+    print(Txt, [nklib_json:encode_pretty(Msg2)], State),
+    timer:sleep(10),
+    io:format("\n~s\n", [maps:get(<<"sdp">>, Jsep)]);
+print(Txt, [#{jsep:=Jsep}=Msg], State) ->
+    Msg2 = Msg#{jsep:=Jsep#{sdp:=<<"...">>}},
+    print(Txt, [nklib_json:encode_pretty(Msg2)], State),
+    timer:sleep(10),
+    io:format("\n~s\n", [maps:get(sdp, Jsep)]);
 print(Txt, [#{}=Map], State) ->
     print(Txt, [nklib_json:encode_pretty(Map)], State);
 print(Txt, Args, _State) ->

@@ -27,10 +27,10 @@
 -export([run_name/1]).
 -export([defaults/1]).
 
--include("nkmedia.hrl").
+-include("../../include/nkmedia.hrl").
 
 -define(FS_COMP, <<"netcomposer">>).
--define(FS_VSN, <<"v1.6.8">>).
+-define(FS_VSN, <<"v1.6.9">>).
 -define(FS_REL, <<"r01">>).
 
 
@@ -94,6 +94,7 @@ build_run(Config) ->
         {"nkmedia_dp.xml", run_dialplan()},
         {"event_socket.conf.xml", run_event_socket()},
         {"sip.xml", run_sip()},
+        {"acl.conf.xml", run_acl()},
         {"verto.conf.xml", run_verto()},
         {"start.sh", run_start()}
     ]),
@@ -244,6 +245,7 @@ run_dockerfile(Config) ->
     "mv autoload_configs/modules.conf.xml autoload_configs/modules.conf.xml.backup\n"
 
 "ADD sip.xml /usr/local/freeswitch/conf/sip_profiles/\n"
+"ADD acl.conf.xml /usr/local/freeswitch/conf/autoload_configs/\n"
 "ADD event_socket.conf.xml /usr/local/freeswitch/conf/autoload_configs/\n"
 "ADD verto.conf.xml /usr/local/freeswitch/conf/autoload_configs/\n"
 "ADD modules.conf.xml /usr/local/freeswitch/conf/autoload_configs/\n"
@@ -260,7 +262,8 @@ run_event_socket() -> <<"
     <param name=\"listen-ip\" value=\"$${nk_fs_ip}\"/>
     <param name=\"listen-port\" value=\"$${nk_event_port}\"/>
     <param name=\"password\" value=\"$${default_password}\"/>
-    <param name=\"apply-inbound-acl\" value=\"0.0.0.0/0\"/>
+    <!-- <param name=\"apply-inbound-acl\" value=\"0.0.0.0/0\"/> -->
+    <param name=\"apply-inbound-acl\" value=\"nk_lan\"/>
     <param name=\"stop-on-bind-error\" value=\"true\"/>
   </settings>
 </configuration>
@@ -295,6 +298,50 @@ run_verto() -> <<"
 ">>.
 
 
+run_acl() -> <<"
+<configuration name=\"acl.conf\" description=\"Network Lists\">
+  <network-lists>
+    <!--
+     These ACL's are automatically created on startup.
+
+     rfc1918.auto  - RFC1918 Space
+     nat.auto      - RFC1918 Excluding your local lan.
+     localnet.auto - ACL for your local lan.
+     loopback.auto - ACL for your local lan.
+    -->
+
+    <list name=\"lan\" default=\"allow\">
+      <node type=\"deny\" cidr=\"192.168.42.0/24\"/>
+      <node type=\"allow\" cidr=\"192.168.42.42/32\"/>
+    </list>
+
+    <!--
+    This will traverse the directory adding all users
+    with the cidr= tag to this ACL, when this ACL matches
+    the users variables and params apply as if they
+    digest authenticated.
+    -->
+    <list name=\"domains\" default=\"deny\">
+      <!-- domain= is special it scans the domain from the directory to build the ACL -->
+      <node type=\"allow\" domain=\"$${domain}\"/>
+      <!-- use cidr= if you wish to allow ip ranges to this domains acl. -->
+      <node type=\"allow\" cidr=\"192.168.0.0/24\"/>
+
+    </list>
+
+    <!-- ADDED -->
+    <list name=\"nk_lan\" default=\"deny\">
+      <node type=\"allow\" cidr=\"127.0.0.1/8\"/>
+      <node type=\"allow\" cidr=\"10.0.0.1/8\"/>
+      <node type=\"allow\" cidr=\"192.168.0.0/16\"/>
+    </list>
+
+  </network-lists>
+</configuration>
+">>.
+
+
+
 run_sip() -> <<"
 <profile name=\"internal\">
   <aliases>
@@ -316,7 +363,7 @@ run_sip() -> <<"
     <param name=\"watchdog-event-timeout\" value=\"30000\"/>
     <param name=\"log-auth-failures\" value=\"false\"/>
     <param name=\"forward-unsolicited-mwi-notify\" value=\"false\"/>
-    <param name=\"context\" value=\"public\"/>
+    <param name=\"context\" value=\"default\"/>
     <param name=\"rfc2833-pt\" value=\"101\"/>
     <param name=\"sip-port\" value=\"$${internal_sip_port}\"/>
     <param name=\"dialplan\" value=\"XML\"/>
@@ -328,7 +375,10 @@ run_sip() -> <<"
     <param name=\"sip-ip\" value=\"$${nk_fs_ip}\"/>
     <param name=\"hold-music\" value=\"$${hold_music}\"/>
     <param name=\"apply-nat-acl\" value=\"nat.auto\"/>
-    <param name=\"apply-inbound-acl\" value=\"domains\"/>
+    <!--<param name=\"apply-inbound-acl\" value=\"domains\"/> -->
+    
+    <param name=\"apply-inbound-acl\" value=\"nk_lan\"/>
+    
     <param name=\"local-network-acl\" value=\"localnet.auto\"/>
     <!--<param name=\"dtmf-type\" value=\"info\"/>-->
     <param name=\"record-path\" value=\"$${recordings_dir}\"/>
@@ -345,7 +395,8 @@ run_sip() -> <<"
     <!-- Let calls hit the dialplan before selecting codec for the a-leg -->
     <param name=\"inbound-late-negotiation\" value=\"true\"/>
     <param name=\"nonce-ttl\" value=\"60\"/>
-    <param name=\"auth-calls\" value=\"$${internal_auth_calls}\"/>
+    <!--<param name=\"auth-calls\" value=\"$${internal_auth_calls}\"/>-->
+    <param name=\"auth-calls\" value=\"false\"/>
     <param name=\"inbound-reg-force-matching-username\" value=\"true\"/>
     <param name=\"auth-all-packets\" value=\"false\"/>
     <param name=\"ext-rtp-ip\" value=\"$${nk_ext_ip}\"/>
@@ -410,9 +461,18 @@ run_modules() -> <<"
 run_dialplan() -> 
 <<"
 <include>
-
     <extension name=\"nkmedia_inbound\">
         <condition field=\"destination_number\" expression=\"^nkmedia_in$\">
+            <action application=\"set\" data=\"nkmedia_session_id=${call_uuid}\"/>
+            <action application=\"answer\"/>
+            <action application=\"park\"/>
+        </condition>
+    </extension>
+    <extension name=\"nkmedia_sip_inbound\">
+        <condition field=\"destination_number\" expression=\"^nkmedia_sip_in_(.*)$\">
+            <action application=\"set\" data=\"nkmedia_session_id=$1\"/>
+            <action application=\"set\" data=\"sip_rh_X-UUID=${call_uuid}\"/>
+            <action application=\"info\"/>
             <action application=\"answer\"/>
             <action application=\"park\"/>
         </condition>
@@ -420,6 +480,11 @@ run_dialplan() ->
 </include>
 ">>.
 
+    % <extension name=\"nkmedia_outbound\">
+    %     <condition field=\"destination_number\" expression=\"^nkmedia_out$\">
+    %         <action application=\"park\"/>
+    %     </condition>
+    % </extension>
 
 %% Expects:
 %% - NK_FS_IP

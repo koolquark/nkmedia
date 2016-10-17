@@ -30,7 +30,7 @@
 
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkMEDIA Kurento proxy server (~s) "++Txt, [State#state.remote | Args])).
+    lager:Type("NkMEDIA KMS proxy server (~s) "++Txt, [State#state.remote | Args])).
 
 
 %% ===================================================================
@@ -70,7 +70,8 @@ send_reply(Pid, Event) ->
 -spec transports(nklib:scheme()) ->
     [nkpacket:transport()].
 
-transports(_) -> [wss, ws].
+transports(kms) -> [ws];
+transports(kmss) -> [wss].
 
 -spec default_port(nkpacket:transport()) ->
     inet:port_number() | invalid.
@@ -86,7 +87,7 @@ conn_init(NkPort) ->
     {ok, {_, SrvId}, _} = nkpacket:get_user(NkPort),
     {ok, Remote} = nkpacket:get_remote_bin(NkPort),
     State = #state{srv_id=SrvId, remote=Remote},
-    ?LLOG(notice, "new connection (~p)", [self()], State),
+    ?LLOG(notice, "new connection (~s, ~p)", [Remote, self()], State),
     {ok, State2} = handle(nkmedia_kms_proxy_init, [NkPort], State),
     {ok, List, State3} = handle(nkmedia_kms_proxy_find_kms, [SrvId], State2),
     connect(List, State3).

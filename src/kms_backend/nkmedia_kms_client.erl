@@ -23,17 +23,19 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([start/1, start/2, stop/1, stop_all/0, get_all/0]).
--export([info/1]).
-
+-export([connect/1, reconnect/2]).
+-export([manager/2, create/4, invoke/4, release/2, subscribe/3, unsubscribe/3]).
+-export([register/4]).
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_stop/3]).
 -export([conn_handle_call/4, conn_handle_cast/3, conn_handle_info/3]).
 -export([print/3]).
+-export_type([event/0]).
 
--include("nkmedia.hrl").
+-include("../../include/nkmedia.hrl").
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkMEDIA KMS Client "++Txt, Args)).
+    lager:Type("NkMEDIA KMS Client ~s "++Txt, [State#state.sess_id|Args])).
 
 -define(PRINT(Txt, Args, State), 
         % print(Txt, Args, State),    % Comment this
@@ -51,16 +53,24 @@
 %% Types
 %% ===================================================================
 
--type id() :: integer().
+-type id() :: nkmedia_kms_engine:id().
+
+-type session_id() :: integer().
+
+-type event() ::
+    {ice_state, 
+        ObjId::binary(), State::binary(), StreamId::integer(), ComponentId::integer()} |
+    {candidate, ObjId::binary(), nkmedia:candidate()}.
 
 
 %% ===================================================================
 %% Public
 %% ===================================================================
 
-%% @doc Starts a new verto session to FS
--spec start(nkmedia_kms_engine:id(), nkmedia_kms:config()) ->
-    {ok, pid()} | {error, term()}.
+%% @doc Starts a new verto session to Kurento
+%% You must then use connect/1 or reconnect/2.
+-spec start(id(), nkmedia_kms:config()) ->
+    {ok, SessId::binary(), pid()} | {error, term()}.
 
 start(KurentoId, #{host:=Host, base:=Base}) ->
     ConnOpts = #{
@@ -72,16 +82,11 @@ start(KurentoId, #{host:=Host, base:=Base}) ->
     },
     {ok, Ip} = nklib_util:to_ip(Host),
     Conn = {?MODULE, ws, Ip, Base},
-    case nkpacket:connect(Conn, ConnOpts) of
-        {ok, Pid} ->
-            call(Pid, get_info);
-        {error, Error} ->
-            {error, Error}
-    end.
+    nkpacket:connect(Conn, ConnOpts).
 
 
 %% @doc Starts a new verto session to FS
--spec start(nkmedia_kms_engine:id()) ->
+-spec start(id()) ->
     {ok, pid()} | {error, term()}.
 
 start(KurentoId) ->
@@ -98,7 +103,7 @@ start(KurentoId) ->
     ok.
 
 stop(Pid) ->
-    cast(Pid, stop).
+    gen_server:cast(Pid, stop).
 
 
 %% @doc 
@@ -109,12 +114,77 @@ stop_all() ->
     lists:foreach(fun({_, Pid}) -> stop(Pid) end, get_all()).
 
 
+%% @doc Connects to get a new session
+-spec connect(id()|pid()) ->
+    {ok, ServerId::binary(), session_id()}.
+
+connect(Pid) ->
+    do_call(Pid, connect).
+
+
+%% @doc Tries to reconnect to an old session (does not seem to work)
+-spec reconnect(id()|pid(), session_id()) ->
+    ok | {error, term()}.
+
+reconnect(Pid, SessId) ->
+    do_call(Pid, {reconnect, SessId}).
+
+
 %% @doc Gets info from Kurento
--spec info(pid()) ->
+%% For example getInfo, getName, getSessions, getPipelines
+-spec manager(id()|pid(), atom()) ->
     {ok, map()} | {error, term()}.
 
-info(Pid) ->
-    call(Pid, info).
+manager(Pid, Cmd) ->
+    do_call(Pid, {manager, Cmd}).
+
+
+%% @doc Registers with this process
+-spec register(id()|pid(), module(), atom(), list()) ->
+    {ok, pid()} | {error, term()}.
+
+register(Pid, Module, Fun, Args) ->
+    do_call(Pid, {register, Module, Fun, Args}).
+
+
+%% @doc Creates media pipelines and media elements
+-spec create(id()|pid(), binary(), map(), map()) ->
+    {ok, ObjId::binary()} | {error, term()}.
+
+create(Pid, Type, Params, Properties) ->
+    do_call(Pid, {create, Type, Params, Properties}).
+
+
+%% @doc
+-spec invoke(id()|pid(), binary(), map(), map()) ->
+    {ok, map()|null} | {error, term()}.
+
+invoke(Pid, ObjId, Operation, Params) ->
+    do_call(Pid, {invoke, ObjId, Operation, Params}).
+
+
+%% @doc
+-spec release(id()|pid(), binary()) ->
+    ok | {error, term()}.
+
+release(Pid, ObjId) ->
+    do_call(Pid, {release, ObjId}).
+
+
+%% @doc
+-spec subscribe(id()|pid(), binary(), binary()) ->
+    {ok, SubsId::binary()} | {error, term()}.
+
+subscribe(Pid, ObjId, Type) ->
+    do_call(Pid, {subscribe, ObjId, Type}).
+
+
+%% @doc
+-spec unsubscribe(id()|pid(), binary(), binary()) ->
+    ok | {error, term()}.
+
+unsubscribe(Pid, ObjId, SubsId) ->
+    do_call(Pid, {subscribe, ObjId, SubsId}).
 
 
 %% @private
@@ -123,16 +193,6 @@ info(Pid) ->
 
 get_all() ->
     nklib_proc:values(?MODULE).
-
-
-%% @private
-call(Pid, Msg) ->
-    nkservice_util:call(Pid, Msg, ?CALL_TIMEOUT).
-
-
-%% @private
-cast(Pid, Msg) ->
-    gen_server:cast(Pid, Msg).
 
 
 
@@ -152,8 +212,7 @@ cast(Pid, Msg) ->
     trans = #{} :: #{integer() => #trans{}},
     sess_id :: binary(),
     pos :: integer(),
-    from :: {pid(), term()},
-    info :: map()
+    callback :: {Mod::module(), Fun::atom(), Args::list()}
 }).
 
 
@@ -183,8 +242,8 @@ conn_init(NkPort) ->
         pos = 0
     },
     ?LLOG(info, "new session (~p)", [self()], State),
-    nklib_proc:put(?MODULE),
-    gen_server:cast(self(), get_info1),
+    nklib_proc:put(?MODULE, KurentoId),
+    % gen_server:cast(self(), get_info),
     self() ! send_ping,
     {ok, State}.
 
@@ -194,10 +253,11 @@ conn_init(NkPort) ->
     {ok, #state{}} | {stop, term(), #state{}}.
 
 conn_parse(close, _NkPort, State) ->
+    ?LLOG(warning, "TCP close", [], State),
     {ok, State};
 
 %% Messages received from Kurento
-conn_parse({text, Data}, NkPort, State) ->
+conn_parse({text, Data}, NkPort, #state{sess_id=SessId}=State) ->
     Msg = nklib_json:decode(Data),
     case Msg of
         error -> 
@@ -208,18 +268,55 @@ conn_parse({text, Data}, NkPort, State) ->
     end,
     ?PRINT("receiving ~s", [Msg], State),
     case Msg of
-        #{<<"id">>:=Id, <<"method">>:=Method} ->
-            process_server_req(Id, Method, NkPort, State);
-        #{<<"id">>:=Id, <<"result">>:=Result} ->
-            case extract_op(Id, State) of
+        #{<<"id">>:=TransId, <<"method">>:=Method} ->
+            process_server_req(TransId, Method, NkPort, State);
+        #{<<"id">>:=TransId, <<"result">>:=Result} ->
+            case extract_op(TransId, State) of
                 {Op, State2} ->
-                    process_server_resp(Op, Result, NkPort, State2);
+                    State3 = case Result of
+                        #{<<"sessionId">>:=MsgSessId} when SessId==undefined ->
+                            ?LLOG(info, "session id is ~s", [MsgSessId], State),
+                            nklib_proc:put(?MODULE, SessId),
+                            nklib_proc:put({?MODULE, SessId}),
+                            State2#state{sess_id=MsgSessId};
+                        _ ->
+                            State2
+                    end,
+                    process_resp(Op, Result, NkPort, State3);
                 not_found ->
                     ?LLOG(warning, "received unexpected server result!", [], State),
                     {ok, State}
             end;
-        #{<<"method">>:=<<"onEvent">>, <<"params">>:=Params} ->
-            process_server_event(Params, NkPort, State);
+        #{<<"id">>:=TransId, <<"error">>:=Result} ->
+            #{<<"code">>:=Code, <<"message">>:=Error} = Result,
+            case extract_op(TransId, State) of
+                {#trans{from=From}, State2} ->
+                    nklib_util:reply(From, {error, {kms_error, Code, Error}}),
+                    {ok, State2};
+                not_found ->
+                    ?LLOG(warning, "received unexpected server result!", [], State),
+                    {ok, State}
+            end;
+        #{<<"method">>:=<<"onEvent">>, <<"params">> := #{<<"value">>:=Value}} ->
+            case Value of
+                #{<<"type">>:=Type, <<"object">>:=_ObjId, <<"data">>:=EvData} ->
+                    case EvData of
+                        #{<<"tags">>:=[
+                            #{<<"key">>:=<<"nkmedia">>, <<"value">>:=NkSessId}
+                        ]} ->
+                            nkmedia_kms_session_lib:kms_event(NkSessId, Type, EvData);
+                        #{<<"tags">>:=[Tag]} ->
+                            ?LLOG(warning, "unexpected tags: ~s", 
+                                  [nklib_json:encode_pretty(Tag)], State);
+                        _ ->
+                            ?LLOG(warning, "unexpected event: ~s", 
+                                  [nklib_json:encode_pretty(Value)], State)
+                    end;
+                _ ->
+                    ?LLOG(warning, "unrecognized event: ~s", 
+                          [nklib_json:encode_pretty(Value)], State)
+            end,
+            {ok, State};
         _ ->
             ?LLOG(warning, "unrecognized msg: ~s", 
                   [nklib_json:encode_pretty(Msg)], State),
@@ -242,24 +339,21 @@ conn_encode(Msg, _NkPort) when is_binary(Msg) ->
 -spec conn_handle_call(term(), {pid(), term()}, nkpacket:nkport(), #state{}) ->
     {ok, #state{}} | {stop, term(), #state{}}.
 
-conn_handle_call(get_info, From, _NkPort, #state{info=Info}=State) ->
-    case is_map(Info) of
-        true ->
-            nklib_util:reply(From, {ok, self(), Info}),
-            {ok, State};
-        false ->
-            {ok, State#state{from=From}}
-    end;
+conn_handle_call({register, M, F, A}, From, _NkPort, State) ->
+    gen_server:reply(From, ok),
+    {ok, State#state{callback={M, F, A}}};
 
 conn_handle_call(get_state, From, _NkPort, State) ->
     nklib_util:reply(From, State),
     {ok, State};
 
 conn_handle_call(Msg, From, NkPort, State) ->
-    case send_client_req(Msg, From, NkPort, State) of
+    case send_req(Msg, From, NkPort, State) of
         unknown_op ->
             lager:error("Module ~p received unexpected call: ~p", [?MODULE, Msg]),
             {stop, unexpected_call, State};
+        missing_session ->
+            {reply, {error, missing_session}, State};
         Other ->
             Other
     end.
@@ -269,13 +363,16 @@ conn_handle_call(Msg, From, NkPort, State) ->
     {ok, #state{}} | {stop, term(), #state{}}.
 
 conn_handle_cast(stop, _NkPort, State) ->
+    lager:error("User stop"),
     {stop, normal, State};
 
 conn_handle_cast(Msg, NkPort, State) ->
-    case send_client_req(Msg, undefined, NkPort, State) of
+    case send_req(Msg, undefined, NkPort, State) of
         unknown_op ->
             lager:error("Module ~p received unexpected cast: ~p", [?MODULE, Msg]),
             {stop, unexpected_cast, State};
+        missing_session ->
+            {stop, missing_session, State};
         Other ->
             Other
     end.
@@ -286,7 +383,9 @@ conn_handle_cast(Msg, NkPort, State) ->
     {ok, #state{}} | {stop, term(), #state{}}.
 
 conn_handle_info(send_ping, NkPort, State) ->
-    send_client_req(ping, undefined, NkPort, State);
+    Res = conn_handle_cast(ping, NkPort, State),
+    erlang:send_after(?PING_INTERVAL, self(), send_ping),
+    Res;
 
 conn_handle_info({timeout, _, {op_timeout, OpId}}, _NkPort, State) ->
     case extract_op(OpId, State) of
@@ -308,7 +407,6 @@ conn_handle_info(Msg, _NkPort, State) ->
     ok.
 
 conn_stop(Reason, _NkPort, _State) ->
-    % session_event(stop, State),
     ?LLOG(info, "connection stop: ~p", [Reason], _State).
 
 
@@ -317,58 +415,137 @@ conn_stop(Reason, _NkPort, _State) ->
 %% ===================================================================
 
 %% @private
-send_client_req(Op, From, NkPort, #state{pos=Pos}=State) ->
+send_req(Op, From, NkPort, State) ->
     case make_msg(Op, State) of
-        {ok, Msg} ->
+        unknown_op ->
+            unknown_op;
+        missing_session ->
+            missing_session;
+        Req when is_map(Req) ->
             State2 = insert_op(Op, From, State),
-            send(Msg, NkPort, State2#state{pos=Pos+1});
-        {error, Error} ->
-            nklib_util:reply(From, {error, Error}),
-            {ok, State}
+            send(Req, NkPort, State2)
     end.
 
 
 %% @private
-make_msg(ping, State) ->
-    erlang:send_after(?PING_INTERVAL, self(), send_ping),
-    {ok, make_req(ping, #{interval=>?PING_TIMEOUT}, State)};
+make_msg(connect, State) ->
+    make_req(connect, #{}, State);
 
-make_msg(get_info1, State) ->
-    Params = #{object=><<"manager_ServerManager">>},
-    {ok, make_req(describe, Params, State)};
+make_msg({reconnect, SessId}, State) ->
+    make_req(connect, #{sessionId=>SessId}, State);
+
+make_msg(ping, State) ->
+    make_req(ping, #{interval=>?PING_TIMEOUT}, State);
+
+make_msg({manager, Cmd}, State) ->
+    Params = #{object=>manager_ServerManager, operation=>Cmd},
+    make_req(invoke, Params, State);
+
+make_msg(get_info, State) ->
+    Params = #{object => manager_ServerManager},
+    make_req(describe, Params, State);
+
+make_msg({create, Type, Params, Properties}, #state{sess_id=undefined}=State) ->
+    Data = #{
+        type => Type,
+        constructorParams => Params,
+        properties => Properties
+    },
+    make_req(create, Data, State);
+
+make_msg(_, #state{sess_id=undefined}) ->
+    missing_session;
 
 make_msg(get_info2, #state{sess_id=SessId}=State) ->
     Params = #{
-        object => <<"manager_ServerManager">>, 
+        object => manager_ServerManager,
         operation => getInfo,
         sessionId => SessId
     },
-    {ok, make_req(invoke, Params, State)};
+    make_req(invoke, Params, State);
 
-make_msg(Op, _State) ->
-    ?LLOG(warning, "unknown op: ~p", [Op], State),
-    {error, {unknown_op, Op}}.
+make_msg({create, Type, Params, Properties}, #state{sess_id=SessId}=State) ->
+    Data = #{
+        type => Type,
+        constructorParams => Params,
+        properties => Properties,
+        sessionId => SessId
+    },
+    make_req(create, Data, State);
+
+make_msg({invoke, ObjId, Operation, Params}, #state{sess_id=SessId}=State) ->
+    Data = #{
+        object => ObjId,
+        operation => Operation,
+        operationParams => Params,
+        sessionId => SessId
+    },
+    make_req(invoke, Data, State);
+
+make_msg({release, ObjId}, #state{sess_id=SessId}=State) ->
+    Data = #{
+        object => ObjId,
+        sessionId => SessId
+    },
+    make_req(release, Data, State);
+
+make_msg({subscribe, ObjId, Type}, #state{sess_id=SessId}=State) ->
+    Data = #{
+        object => ObjId,
+        type => Type,
+        sessionId => SessId
+    },
+    make_req(subscribe, Data, State);
+
+make_msg({unsubscribe, ObjId, SubsId}, #state{sess_id=SessId}=State) ->
+    Data = #{
+        object => ObjId,
+        subscription => SubsId,
+        sessionId => SessId
+    },
+    make_req(unsubscribe, Data, State);
+
+make_msg(_Op, _State) ->
+    unknown_op.
+
 
 
 %% @private
-process_server_resp(#trans{op=get_info1, from=From}, Result, NkPort, State) ->
-    #{<<"sessionId">>:=SessId} = Result,
-    nklib_proc:put(?MODULE, SessId),
-    nklib_proc:put({?MODULE, SessId}),
-    send_client_req(get_info2, From, NkPort, State#state{sess_id=SessId});
+process_resp(#trans{op=connect, from=From}, Result, _NkPort, State) ->
+    #{<<"serverId">> := ServerId, <<"sessionId">> := SessId} = Result,
+    nklib_util:reply(From, {ok, ServerId, SessId}),
+    {ok, State};
+    
+process_resp(#trans{op={reconnect, _}, from=From}, _Result, _NkPort, State) ->
+    nklib_util:reply(From, ok),
+    {ok, State};
 
-process_server_resp(#trans{op=get_info2, from=From}, Result, _NkPort, State) ->
-    nklib_util:reply(From, {ok, Result}),
-    State2 = case State of
-        #state{from=UserFrom} when UserFrom /= undefined ->
-            nklib_util:reply(UserFrom, {ok, self(), Result}),
-            State#state{from=undefined};
-        _ ->
-            State
-    end,
-    {ok, State2#state{info=Result}};
+process_resp(#trans{op={manager, _}, from=From}, Result, _NkPort, State) ->
+    nklib_util:reply(From, {ok, value(Result)}),
+    {ok, State};
 
-process_server_resp(#trans{from=From}, Result, _NkPort, State) ->
+process_resp(#trans{op={create, _, _, _}, from=From}, Result, _NkPort, State) ->
+    nklib_util:reply(From, {ok, value(Result)}),
+    {ok, State};
+
+process_resp(#trans{op={invoke, _, _, _}, from=From}, Result, _NkPort, State) ->
+    nklib_util:reply(From, {ok, value(Result)}),
+    {ok, State};
+
+process_resp(#trans{op={subscribe, _, _}, from=From}, Result, _NkPort, State) ->
+    nklib_util:reply(From, {ok, value(Result)}),
+    {ok, State};
+
+process_resp(#trans{op={unsubscribe, _, _}, from=From}, _Result, _NkPort, State) ->
+    nklib_util:reply(From, ok),
+    {ok, State};
+
+process_resp(#trans{op={release, _}, from=From}, _Result, _NkPort, State) ->
+    nklib_util:reply(From, ok),
+    {ok, State};
+
+process_resp(#trans{from=From}=_Op, Result, _NkPort, State) ->
+    % lager:error("RES: ~p ~p", [Op#trans.op, Result]),
     nklib_util:reply(From, {ok, Result}),
     {ok, State}.
 
@@ -379,19 +556,44 @@ process_server_req(Request, Params, _NkPort, State) ->
     {ok, State}.
 
 
-%% @private
-process_server_event(Params, _NkPort, State) ->
-    ?LLOG(warning, "unexpected server event: ~p", [Params], State),
-    {ok, State}.
-   
-
 
 %% ===================================================================
 %% Util
 %% ===================================================================
 
 %% @private
-insert_op(Op, From, #state{trans=AllOps, pos=Pos}=State) ->
+do_call(Id, Msg) ->
+    case do_find(Id) of
+        {ok, Pid} ->
+            nkservice_util:call(Pid, Msg, ?CALL_TIMEOUT);
+        not_found ->
+            {error, no_mediaserver}
+    end.
+
+
+% %% @private
+% do_cast(Id, Msg) ->
+%     case do_find(Id) of
+%         {ok, Pid} ->
+%             gen_server:cast(Pid, Msg);
+%         not_found ->
+%             {error, no_mediaserver}
+%     end.
+
+
+%% @private
+do_find(Pid) when is_pid(Pid) ->
+    {ok, Pid};
+
+do_find(Id) ->
+    case nkmedia_kms_engine:get_client(Id) of
+        {ok, Pid} -> {ok, Pid};
+        _ -> not_found
+    end.
+
+
+%% @private
+insert_op(Op, From, #state{trans=AllTrans, pos=Pos}=State) ->
     Time = case Op of
         ping -> ?PING_TIMEOUT;
         _ -> ?OP_TIMEOUT
@@ -401,35 +603,36 @@ insert_op(Op, From, #state{trans=AllOps, pos=Pos}=State) ->
         from = From,
         timer = erlang:start_timer(Time, self(), {op_timeout, Pos})
     },
-    State#state{trans=maps:put(Pos, NewOp, AllOps)}.
+    Pos2 = (Pos+1) rem 100000000000,
+    State#state{trans=maps:put(Pos, NewOp, AllTrans), pos=Pos2}.
 
 
 %% @private
-extract_op(Id, #state{trans=AllOps}=State) ->
-    case maps:find(Id, AllOps) of
+extract_op(TransId, #state{trans=AllTrans}=State) ->
+    case maps:find(TransId, AllTrans) of
         {ok, #trans{timer=Timer}=Op} ->
             nklib_util:cancel_timer(Timer),
-            State2 = State#state{trans=maps:remove(Id, AllOps)},
+            State2 = State#state{trans=maps:remove(TransId, AllTrans)},
             {Op, State2};
         error ->
             not_found
     end.
 
 
+%% @private
+make_req(Method, Params, #state{pos=Pos}) ->
+    #{
+        jsonrpc => <<"2.0">>,
+        id => Pos,
+        method => Method,
+        params => Params
+    }.
 
 
-% %% @private
-% event(undefined, _ClientId, _SessId, _Handle, _Event, State) ->
-%     State;
+%% @private
+value(Result) ->
+    maps:get(<<"value">>, Result, null).
 
-% event(CallBack, ClientId, SessId, Handle, Event, State) ->
-%     case catch CallBack:kms_event(ClientId, SessId, Handle, Event) of
-%         ok ->
-%             ok;
-%         _ ->
-%             ?LLOG(warning, "Error calling ~p:kms_event/4: ~p", [CallBack], Error)
-%     end,
-%     State.
 
 
 %% @private
@@ -449,14 +652,12 @@ send(Msg, NkPort) ->
     nkpacket_connection:send(NkPort, Msg).
 
 
-%% @private
-make_req(Method, Params, #state{pos=Pos}) ->
-    #{
-        id => Pos,
-        jsonrpc => <<"2.0">>,
-        method => Method,
-        params => Params
-    }.
+% %% @private
+% send_event(Event, #state{callback={Module, Fun, Args}}) ->
+%     apply(Module, Fun, Args++[Event]);
+
+% send_event(Event, State) ->
+%     ?LLOG(warning, "could not send event: ~p", [Event], State).
 
 
 %% @private

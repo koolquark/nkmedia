@@ -21,9 +21,10 @@
 -module(nkmedia_util).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([error/1, get_q850/1, add_uuid/1]).
+-export([get_q850/1, add_id/2, add_id/3, filter_codec/3]).
+-export([mangle_sdp_ip/1]).
 -export([kill/1]).
-
+-export([remove_sdp_data_channel/1]).
 -export_type([stop_reason/0, q850/0]).
 
 -type stop_reason() :: atom() | q850() | binary() | string().
@@ -35,49 +36,62 @@
 % -type notify_refs() :: [{notify(), reference()|undefined}].
 
 -include_lib("nkservice/include/nkservice.hrl").
+-include_lib("nksip/include/nksip.hrl").
 
 
 %% @private
-add_uuid(#{id:=Id}=Config) when is_binary(Id) ->
-    {Id, Config};
-
-add_uuid(Config) ->
-    Id = nklib_util:uuid_4122(),
-    {Id, Config#{id=>Id}}.
+add_id(Key, Config) ->
+	add_id(Key, Config, <<>>).
 
 
+%% @private
+add_id(Key, Config, Prefix) ->
+	case maps:find(Key, Config) of
+		{ok, Id} when is_binary(Id) ->
+			{Id, Config};
+		{ok, Id} ->
+			Id2 = nklib_util:to_binary(Id),
+			{Id2, maps:put(Key, Id2, Config)};
+		_ when Prefix == <<>> ->
+			Id = nklib_util:uuid_4122(),
+			{Id, maps:put(Key, Id, Config)};
+		_ ->
+			Id1 = nklib_util:uuid_4122(),
+			Id2 = <<(nklib_util:to_binary(Prefix))/binary, $-, Id1/binary>>,
+			{Id2, maps:put(Key, Id2, Config)}
+	end.
 
 
--spec error(stop_reason()) ->
-	{integer(), binary()} | not_foubd. 
 
-error(no_mediaserver) 			-> 	{0, <<"No mediaserver available">>};
-error(unknown_session_type) 	-> 	{0, <<"Unknown session type">>};
-error(missing_offer) 			-> 	{0, <<"Missing offer">>};
-error(duplicated_offer) 		-> 	{0, <<"Duplicated offer">>};
-error(offer_not_set) 			-> 	{0, <<"Offer not set">>};
-error(duplicated_answer) 		-> 	{0, <<"Duplicated answer">>};
-error(answer_not_set) 			-> 	{0, <<"Answer not set">>};
-error(answer_already_set) 		-> 	{0, <<"Answer already set">>};
-error(call_rejected)			->  {0, <<"Call rejected">>};
-error(no_answer) 				->  {0, <<"No answer">>};
-error(no_destination) 			->  {0, <<"No destination">>};
-error(originator_cancel)		-> 	{0, <<"Originator cancel">>};
-error(caller_hangup)			-> 	{0, <<"Caller hangup">>};
-error(callee_hangup)			-> 	{0, <<"Callee hangup">>};
-error(unknown_linked_session) 	-> 	{0, <<"Unknown linked session">>};
-error(user_monitor_stop) 		-> 	{0, <<"User monitor stop">>};
-error(registered_stop) 		    -> 	{0, <<"Registered process stop">>};
-error(room_not_found)			->  {0, <<"Room not found">>};
-error(room_already_exists)	    ->  {0, <<"Room already exists">>};
-error(call_not_found) 			->  {0, <<"Call not found">>};
-error(already_answered) 		->  {0, <<"Already answred">>};
-error(verto_unknown_call)		->  {0, <<"Verto unknown call">>};
-error({verto, error, Code, Txt})-> 	
-	{0, nklib_util:msg("Verto Error (~p): ~s", [Code, Txt])};
-error(Code) when is_integer(Code) -> get_q850(Code);
-error(_) -> not_found.
 
+%% @doc Allow only one codec family, removing all other
+-spec filter_codec(audio|video, atom()|string()|binary(), 
+				   nkmedia:offer()|nkmedia:answer()) ->
+	nkmedia:offer()|nkmedia:answer().
+
+filter_codec(Media, Codec, #{sdp:=SDP1}=OffAns) ->
+    {CodecMap, SDP2} = nksip_sdp_util:extract_codec_map(SDP1),
+    CodecMap2 = nksip_sdp_util:filter_codec(Media, Codec, CodecMap),
+    SDP3 = nksip_sdp_util:insert_codec_map(CodecMap2, SDP2),
+    OffAns#{sdp:=nksip_sdp:unparse(SDP3)}.
+
+
+
+%% @doc
+mangle_sdp_ip(#{sdp:=SDP}=Map) ->
+    MainIp = nklib_util:to_host(nkpacket_config_cache:main_ip()),
+    ExtIp = nklib_util:to_host(nkpacket_config_cache:ext_ip()),
+    case re:replace(SDP, MainIp, ExtIp, [{return, binary}, global]) of
+        SDP ->
+            lager:warning("no SIP mangle, ~s not found!", [MainIp]),
+            Map;
+        SDP2 ->
+            lager:warning("done SIP mangle ~s -> ~s", [MainIp, ExtIp]),
+            Map#{sdp:=SDP2}
+    end;
+
+mangle_sdp_ip(Map) ->
+    Map.
 
 
 
@@ -175,6 +189,14 @@ kill(Type) ->
 	end,
 	lists:foreach(fun(Pid) -> exit(Pid, kill) end, Pids).
 
+
+
+%% @private Removes the datachannel (m=application)
+remove_sdp_data_channel(SDP) ->
+    #sdp{medias=Medias} = SDP2 = nksip_sdp:parse(SDP),
+    Medias2 = [Media || #sdp_m{media=Name}=Media <- Medias, Name /= <<"application">>],
+    SDP3 = SDP2#sdp{medias=Medias2},
+    nksip_sdp:unparse(SDP3).
 
 
 

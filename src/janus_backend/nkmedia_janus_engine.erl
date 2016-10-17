@@ -37,7 +37,7 @@
 
 -define(CALL_TIME, 30000).
 -define(KEEPALIVE, 30000).
--include("nkmedia.hrl").
+-include("../../include/nkmedia.hrl").
 
 
 %% ===================================================================
@@ -74,8 +74,10 @@ connect(#{name:=Name, host:=Host, base:=Base, pass:=Pass}=Config) ->
 			case get_config(JanusPid) of
 				{ok, #{vsn:=Vsn, rel:=Rel, pass:=Pass}} ->
 					{error, {already_started, JanusPid}};
-				_ ->
-					{error, {incompatible_version}}
+				{ok, _} ->
+					{error, incompatible_version};
+				{error, Error} ->
+					{error, Error}
 			end
 	end.
 
@@ -381,7 +383,7 @@ get_rooms(#state{id=Id, conn=Conn, session=Session, handle=Handle}=State) ->
 			(#{<<"room">>:=1234}) ->
 				ok;
 			(#{<<"description">>:=Desc}=RoomData) ->
-				nkmedia_janus_room:check(Id, Desc, RoomData)
+				nkmedia_janus_room:janus_check(Id, Desc, RoomData)
 		end,
 		List),
 	Rooms = maps:from_list([{Room, Map} || #{<<"description">>:=Room}=Map<-List]),

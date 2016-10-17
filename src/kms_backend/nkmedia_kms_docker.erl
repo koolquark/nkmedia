@@ -25,7 +25,7 @@
 -export([start/1, stop/1, stop_all/0]).
 -export([notify/4]).
 
--include("nkmedia.hrl").
+-include("../../include/nkmedia.hrl").
 
 %% ===================================================================
 %% Types    
@@ -47,8 +47,7 @@ start(Service) ->
             not_found -> throw(unknown_service)
         end,
         Config = nkservice_srv:get_item(SrvId, config_nkmedia_kms),
-        BasePort = crypto:rand_uniform(32768, 65535),
-        Pass = nklib_util:luid(),
+        BasePort = 36000, %crypto:rand_uniform(32768, 65535),
         Image = nkmedia_kms_build:run_name(Config),
         KmsIp = nklib_util:to_host(nkmedia_app:get(docker_ip)),
         Name = list_to_binary([
@@ -56,12 +55,16 @@ start(Service) ->
             nklib_util:to_binary(SrvId), "_",
             nklib_util:to_binary(BasePort)
         ]),
+        {_, [{StunIp, StunPort}|_]} = nkpacket_stun:get_stun_servers(),
         _LogDir = <<(nkmedia_app:get(log_dir))/binary, $/, Name/binary>>,
+        _RecDir = filename:join(nkmedia_app:get(record_dir), <<"tmp">>),
         Env = [
             {"NK_KMS_IP", KmsIp},                
             {"NK_BASE", nklib_util:to_binary(BasePort)},
             {"NK_SRV_ID", nklib_util:to_binary(SrvId)},
-            {"ENV GST_DEBUG", "Kurento*:5"}
+            {"NK_STUN_IP", nklib_util:to_host(StunIp)},
+            {"NK_STUN_PORT", StunPort},
+            {"GST_DEBUG", "Kurento*:5"}
 
         ],
         Labels = [
@@ -72,7 +75,8 @@ start(Service) ->
             env => Env,
             net => host,
             interactive => true,
-            labels => Labels
+            labels => Labels,
+            ulimits => [{nproc, 65536, 65536}]
             % volumes => [{LogDir, "/usr/local/kurento/log"}]
         },
         DockerPid = case get_docker_pid() of
@@ -126,7 +130,7 @@ stop_all() ->
         {ok, DockerPid} ->
             {ok, List} = nkdocker:ps(DockerPid),
             lists:foreach(
-                fun(#{<<"Names">>:=[<<"/", Name/binary>>]}) ->
+                fun(#{<<"Names">>:=[<<"/", Name/binary>>|_]}) ->
                     case Name of
                         <<"nk_kms_", _/binary>> ->
                             lager:info("Stopping ~s", [Name]),
@@ -208,13 +212,14 @@ notify(_MonId, stats, Name, Stats) ->
 %% ===================================================================
 
 %% @private
-connect_kms(MonId, #{name:=Name}=Config) ->
+connect_kms(_MonId, #{name:=Name}=Config) ->
     spawn(
         fun() -> 
-            timer:sleep(2000),
+            % timer:sleep(2000),
             case nkmedia_kms_engine:connect(Config) of
                 {ok, _Pid} -> 
-                    ok = nkdocker_monitor:start_stats(MonId, Name);
+                    % ok = nkdocker_monitor:start_stats(MonId, Name);
+                    ok;
                 {error, {already_started, _Pid}} ->
                     ok;
                 {error, Error} -> 

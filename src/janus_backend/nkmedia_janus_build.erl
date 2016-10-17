@@ -30,7 +30,7 @@
 -include("../../include/nkmedia.hrl").
 
 -define(JANUS_COMP, <<"netcomposer">>).
--define(JANUS_VSN, <<"1c8871e">>).
+-define(JANUS_VSN, <<"f88b08a">>).
 -define(JANUS_REL, <<"r01">>).
 
 
@@ -82,6 +82,7 @@ build_run() ->
 %% @doc Builds run image (netcomposer/nk_janus:v1.6.5-r01)
 %% Environment variables:
 build_run(Config) ->
+    remove_run(Config),
     Name = run_name(Config),
     Tar = nkdocker_util:make_tar([
         {"Dockerfile", run_dockerfile(Config)},
@@ -289,7 +290,6 @@ PASS=${NK_PASS-nkmedia_janus}
 BASE=${NK_BASE-50000}
 WS_PORT=$BASE
 ADMIN_PORT=$(($BASE + 1))
-RECORDS_DIR=${NK_RECORDS_DIR-'/usr/local/share/janus/recordings'}
 export CONF=\"/usr/local/etc/janus\"
 
 cat > $CONF/janus.cfg <<EOF\n", Base/binary, "\nEOF
@@ -306,8 +306,8 @@ cat > $CONF/janus.plugin.voicemail.cfg <<EOF\n", Voicemail/binary, "\nEOF
 
 mkdir /usr/local/log
 mkdir /usr/local/log/janus
-#exec /usr/local/bin/janus
-exec /bin/bash
+exec /usr/local/bin/janus
+#exec /bin/bash
 ">>.
 
 
@@ -343,10 +343,10 @@ cert_key = /usr/local/share/janus/certs/mycert.key
 ;force-rtcp-mux = true              ; Default false
 
 [nat]
-;stun_server = stun.voip.eutelia.it
-;stun_port = 3478
-nice_debug = false
-;ice_lite = true
+stun_server = stun.voip.eutelia.it
+stun_port = 3478
+;nice_debug = true
+ice_lite = true
 ;ice_tcp = true
 nat_1_1_mapping = $EXT_IP          ; All host candidates will have (only) this
 ;turn_server = myturnserver.com
@@ -435,7 +435,7 @@ record = false
 %% @private
 config_recordplay() -> <<"
 [general]
-path = $RECORDS_DIR
+path = /usr/local/share/janus/recordings
 ">>.
 
 
@@ -443,8 +443,9 @@ path = $RECORDS_DIR
 config_sip() -> <<"
 [general]
 ; local_ip = 1.2.3.4        ; Guessed if omitted
+local_ip = $EXT_IP
 keepalive_interval = 120    ; OPTIONS, 0 to disable
-behind_nat = no             ; Use STUN
+behind_nat = no            ; Use STUN
 ; user_agent = Cool WebRTC Gateway
 register_ttl = 3600
 ">>.

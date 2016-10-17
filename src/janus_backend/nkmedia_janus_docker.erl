@@ -55,7 +55,7 @@ start(Service) ->
         Pass = nklib_util:luid(),
         Image = nkmedia_janus_build:run_name(Config),
         JanusIp  = nklib_util:to_host(nkmedia_app:get(docker_ip)),
-            Name = list_to_binary([
+        Name = list_to_binary([
             "nk_janus_", 
             nklib_util:to_binary(SrvId), "_",
             nklib_util:to_binary(BasePort)
@@ -75,7 +75,7 @@ start(Service) ->
             {"nkmedia", "janus"}
         ],
         % Cmds = ["bash"],
-        DockerOpts = #{
+        DockerOpts1 = #{
             name => Name,
             env => Env,
             net => host,
@@ -83,16 +83,21 @@ start(Service) ->
             labels => Labels,
             volumes => [{LogDir, "/var/log/janus"}, {RecDir, "/tmp/record"}]
         },
+        DockerOpts2 = case nkmedia_app:get(docker_log) of
+            undefined -> DockerOpts1;
+            DockerLog -> DockerOpts1#{docker_log=>DockerLog}
+        end,
         DockerPid = case get_docker_pid() of
             {ok, DockerPid0} -> DockerPid0;
             {error, Error1} -> throw(Error1)
         end,
         nkdocker:rm(DockerPid, Name),
-        case nkdocker:create(DockerPid, Image, DockerOpts) of
+        case nkdocker:create(DockerPid, Image, DockerOpts2) of
             {ok, _} -> ok;
             {error, Error2} -> throw(Error2)
         end,
         lager:info("NkMEDIA JANUS Docker: starting instance ~s", [Name]),
+        lager:info("Log dir: ~s\nRecord dir: ~s", [LogDir, RecDir]),
         case nkdocker:start(DockerPid, Name) of
             ok ->
                 {ok, Name};

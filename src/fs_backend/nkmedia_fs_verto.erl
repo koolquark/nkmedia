@@ -29,7 +29,7 @@
 -export([conn_handle_call/4, conn_handle_cast/3, conn_handle_info/3]).
 -export([print/3]).
 
--include("nkmedia.hrl").
+-include("../../include/nkmedia.hrl").
 
 
 
@@ -63,12 +63,15 @@
 %% @doc Starts a new verto session and place an inbound call with the same 
 %% CallId as the SessId.
 -spec start_in(id(), nkmedia_fs_engine:id(), nkmedia:offer()) ->
-    {ok, SDP::binary()} | {error, term()}.
+    {ok, UUID::binary(), SDP::binary()} | {error, term()}.
 
 start_in(SessId, FsId, Offer) ->
     case start(SessId, FsId) of
         {ok, SessPid} ->
-            invite(SessPid, SessId, Offer#{callee_id=><<"nkmedia_in">>});
+            case invite(SessPid, SessId, Offer#{callee_id=><<"nkmedia_in">>}) of
+                {ok, SDP} -> {ok, SessId, SDP};
+                {error, Error} -> {error, Error}
+            end;
         {error, Error} ->
             {error, Error}
     end.
@@ -77,12 +80,15 @@ start_in(SessId, FsId, Offer) ->
 %% @doc Starts a new verto session and generates an outbound call with the same
 %% CallId as the SessId. Must call answer_out/3.
 -spec start_out(id(), nkmedia_fs_engine:id(), map()) ->
-    {ok, SDP::binary()} | {error, term()}.
+    {ok, UUID::binary(), SDP::binary()} | {error, term()}.
 
 start_out(SessId, FsId, Opts) ->
     case start(SessId, FsId) of
         {ok, SessPid} ->
-            outbound(SessPid, SessId, Opts);
+            case outbound(SessPid, SessId, Opts) of
+                {ok, SDP} -> {ok, SessId, SDP};
+                {error, Error} -> {error, Error}
+            end;
         {error, Error} ->
             {error, Error}
     end.
@@ -371,6 +377,8 @@ conn_handle_cast({originate_error, CallId, Error}, _NkPort, State) ->
             gen_server:reply(From, {error, Error}),
             ?LLOG(notice, "originate error: ~p", [Error], State),
             {stop, normal, State};
+        _ when Error==normal_clearing ->
+            {ok, State};
         _ ->
             lager:error("ORIGINATE ERROR: ~s, ~p", [CallId, Error]),
             {ok, State}
@@ -414,7 +422,7 @@ conn_handle_info(Msg, _NkPort, State) ->
     ok.
 
 conn_stop(Reason, _NkPort, State) ->
-    session_event(stop, State),
+    session_event(verto_stop, State),
     ?LLOG(info, "connection stop: ~p", [Reason], State).
 
 
@@ -480,7 +488,7 @@ process_server_resp(#session_op{type=invite}, {error, Code, Error},
 
 process_server_resp(#session_op{type=hangup, from=From}, {ok, _}, _Msg, _NkPort, State) ->
     nklib_util:reply(From, ok),
-    {stop, normal, session_event({hangup, 16}, State)};
+    {stop, normal, session_event(verto_hangup, State)};
 
 process_server_resp(#session_op{type=hangup}, {error, Code, Error}, _Msg, _NkPort, State) ->
     ?LLOG(info, "error response to hangup: ~p (~s)", [Code, Error], State),
@@ -544,7 +552,7 @@ process_server_req(<<"verto.bye">>, Msg, NkPort, State) ->
     #{<<"params">>:=#{<<"callID">>:=_CallId}} = Msg,
     Msg2 = nkmedia_fs_util:verto_resp(<<"verto.bye">>, Msg),
     _ = send(Msg2, NkPort, State),
-    {stop, normal, session_event({hangup, 16}, State)};
+    {stop, normal, session_event(verto_hangup, State)};
 
 %% Sent when FS detects another session for the same session id
 process_server_req(<<"verto.punt">>, _Msg, _NkPort, State) ->
@@ -654,12 +662,13 @@ make_msg(Id, cmd, Cmd, _State) ->
 %% @private
 originate(CallId, Opts, #state{fs_id=FsId, sess_id=SessId, originates=Pids}=State) ->
     Dest = <<"verto.rtc/u:", SessId/binary>>,
-    Vars = [{<<"nkstatus">>, <<"outbound">>}], 
+    Vars = [{<<"nkstatus">>, <<"outbound">>}, {<<"nkmedia_session_id">>, SessId}], 
     Opts2 = Opts#{vars => Vars, call_id=>CallId, timeout=>5*60},
     Self = self(),
     Pid = spawn_link(
         fun() ->
             case nkmedia_fs_cmd:call(FsId, Dest, <<"&park">>, Opts2) of
+            % case nkmedia_fs_cmd:call(FsId, Dest, <<"nkmedia_out">>, Opts2) of
                 {ok, CallId} -> 
                     ok;
                 {error, Error} -> 

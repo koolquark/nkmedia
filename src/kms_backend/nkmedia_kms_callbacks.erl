@@ -22,21 +22,29 @@
 -module(nkmedia_kms_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([plugin_deps/0, plugin_syntax/0, plugin_defaults/0, plugin_config/2,
+-export([plugin_deps/0, plugin_group/0, plugin_syntax/0, plugin_config/2,
          plugin_start/2, plugin_stop/2]).
 -export([nkmedia_kms_get_mediaserver/1]).
+-export([error_code/1]).
+-export([nkmedia_session_start/3, nkmedia_session_stop/2,
+         nkmedia_session_offer/4, nkmedia_session_answer/4, nkmedia_session_cmd/3, 
+         nkmedia_session_candidate/2,
+         nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2]).
+-export([nkmedia_room_init/2, nkmedia_room_terminate/2, nkmedia_room_tick/2]).
+-export([nkmedia_call_start_caller_session/3, nkmedia_call_start_callee_session/4,
+         nkmedia_call_set_answer/5]).
+-export([api_cmd/2, api_syntax/4]).
 -export([nkdocker_notify/2]).
 
 -include_lib("nkservice/include/nkservice.hrl").
-
+-include("../../include/nkmedia_room.hrl").
+-include("../../include/nkmedia_call.hrl").
 
 
 %% ===================================================================
 %% Types
 %% ===================================================================
 
--type session() :: nkmedia_session:session().
-% -type continue() :: continue | {continue, list()}.
 
 
 
@@ -46,28 +54,24 @@
 
 
 plugin_deps() ->
-    [nkmedia].
+    [nkmedia, nkmedia_room].
+
+
+plugin_group() ->
+    nkmedia_backends.
 
 
 plugin_syntax() ->
     #{
-        docker_company => binary,
-        kms_version => binary,
-        kms_release => binary
-    }.
-
-
-plugin_defaults() ->
-    Defs = nkmedia_kms_build:defaults(#{}),
-    #{
-        docker_company => maps:get(comp, Defs),
-        kms_version => maps:get(vsn, Defs),
-        kms_release => maps:get(rel, Defs)
+        kms_docker_image => fun parse_image/3
     }.
 
 
 plugin_config(Config, _Service) ->
-    Cache = maps:with([docker_company, kms_version, kms_release], Config),
+    Cache = case Config of
+        #{kms_docker_image:=KmsConfig} -> KmsConfig;
+        _ -> nkmedia_kms_build:defaults(#{})
+    end,
     {ok, Config, Cache}.
 
 
@@ -98,24 +102,219 @@ plugin_stop(Config, #{name:=Name}) ->
 
 
 %% @private
--spec nkmedia_kms_get_mediaserver(session()) ->
+-spec nkmedia_kms_get_mediaserver(nkservice:id()) ->
     {ok, nkmedia_kms_engine:id()} | {error, term()}.
 
-nkmedia_kms_get_mediaserver(#{srv_id:=SrvId}) ->
+nkmedia_kms_get_mediaserver(SrvId) ->
     case nkmedia_kms_engine:get_all(SrvId) of
-        [{FsId, _}|_] ->
-            {ok, FsId};
+        [{KmsId, _}|_] ->
+            {ok, KmsId};
         [] ->
             {error, no_mediaserver}
     end.
 
 
+%% ===================================================================
+%% Implemented Callbacks - error
+%% ===================================================================
+
+%% @private See nkservice_callbacks
+error_code({kms_error, Code, Txt})->  {303001, {"Kurento error ~p: ~s", [Code, Txt]}};
+error_code(_) -> continue.
 
 
 %% ===================================================================
 %% Implemented Callbacks - nkmedia_session
 %% ===================================================================
 
+%% @private
+nkmedia_session_start(Type, Role, Session) ->
+    case maps:get(backend, Session, nkmedia_kms) of
+        nkmedia_kms ->
+            nkmedia_kms_session:start(Type, Role, Session);
+        _ ->
+            continue
+    end.
+
+
+%% @private
+nkmedia_session_offer(Type, Role, Offer, #{nkmedia_kms_id:=_}=Session) ->
+    nkmedia_kms_session:offer(Type, Role, Offer, Session);
+
+nkmedia_session_offer(_Type, _Role, _Offer, _Session) ->
+    continue.
+
+
+%% @private
+nkmedia_session_answer(Type, Role, Answer, #{nkmedia_kms_id:=_}=Session) ->
+    nkmedia_kms_session:answer(Type, Role, Answer, Session);
+
+nkmedia_session_answer(_Type, _Role, _Answer, _Session) ->
+    continue.
+
+
+%% @private
+nkmedia_session_cmd(Cmd, Opts, #{nkmedia_kms_id:=_}=Session) ->
+   nkmedia_kms_session:cmd(Cmd, Opts, Session);
+
+nkmedia_session_cmd(_Cmd, _Opts, _Session) ->
+    continue.
+
+
+%% @private
+nkmedia_session_candidate(Candidate, #{nkmedia_kms_id:=_}=Session) ->
+    nkmedia_kms_session:candidate(Candidate, Session);
+
+nkmedia_session_candidate(_Candidate, _Session) ->
+    continue.
+
+
+%% @private
+nkmedia_session_stop(Reason, #{nkmedia_kms_id:=_}=Session) ->
+    nkmedia_kms_session:stop(Reason, Session);
+
+nkmedia_session_stop(_Reason, _Session) ->
+    continue.
+
+
+%% @private
+nkmedia_session_handle_call({nkmedia_kms, Msg}, From, Session) ->
+    nkmedia_kms_session:handle_call(Msg, From, Session);
+
+nkmedia_session_handle_call(_Msg, _From, _Session) ->
+    continue.
+
+
+%% @private
+nkmedia_session_handle_cast({nkmedia_kms, Msg}, Session) ->
+    nkmedia_kms_session:handle_cast(Msg, Session);
+
+nkmedia_session_handle_cast(_Msg, _Session) ->
+    continue.
+
+
+
+%% ===================================================================
+%% Implemented Callbacks - nkmedia_room
+%% ===================================================================
+
+%% @private
+nkmedia_room_init(Id, Room) ->
+    case maps:get(backend, Room, nkmedia_kms) of
+        nkmedia_kms ->
+            case maps:get(class, Room, sfu) of
+                sfu ->
+                    nkmedia_kms_room:init(Id, Room);
+                _ ->
+                    {ok, Room}
+            end;
+        _ ->
+            {ok, Room}
+    end.
+
+
+%% @private
+nkmedia_room_terminate(Reason, #{nkmedia_kms_id:=_}=Room) ->
+    nkmedia_kms_room:terminate(Reason, Room);
+
+nkmedia_room_terminate(_Reason, Room) ->
+    {ok, Room}.
+
+
+%% @private
+nkmedia_room_tick(RoomId, #{nkmedia_kms_id:=_}=Room) ->
+    nkmedia_kms_room:tick(RoomId, Room);
+
+nkmedia_room_tick(_RoomId, _Room) ->
+    continue.
+
+
+% %% @private
+% nkmedia_room_handle_cast({nkmedia_kms, Msg}, Room) ->
+%     nkmedia_kms_room:handle_cast(Msg, Room);
+
+% nkmedia_room_handle_cast(_Msg, _Room) ->
+%     continue.
+
+
+
+%% ===================================================================
+%% Implemented Callbacks - nkmedia_call
+%% ===================================================================
+
+
+nkmedia_call_start_caller_session(CallId, Config, #{srv_id:=SrvId, offer:=Offer}=Call) ->
+    case maps:get(backend, Call, nkmedia_kms) of
+        nkmedia_kms ->
+            Config2 = Config#{
+                backend => nkmedia_kms, 
+                offer => Offer,
+                call_id => CallId
+            },
+            {ok, MasterId, Pid} = nkmedia_session:start(SrvId, park, Config2),
+            {ok, MasterId, Pid, ?CALL(#{backend=>nkmedia_kms}, Call)};
+        _ ->
+            continue
+    end.
+
+nkmedia_call_start_callee_session(CallId, _MasterId, Config, 
+                                  #{backend:=nkmedia_kms, srv_id:=SrvId}=Call) ->
+    Config2 = Config#{
+        backend => nkmedia_kms,
+        call_id => CallId
+    },
+    {ok, SlaveId, Pid} = nkmedia_session:start(SrvId, park, Config2),
+    case nkmedia_session:get_offer(SlaveId) of
+        {ok, Offer} ->
+            {ok, SlaveId, Pid, Offer, Call};
+        {error, Error} ->
+            {error, Error, Call}
+    end;
+
+nkmedia_call_start_callee_session(_CallId, _MasterId, _Config, _Call) ->
+    continue.
+
+
+nkmedia_call_set_answer(_CallId, MasterId, SlaveId, Answer, 
+                        #{backend:=nkmedia_kms}=Call) ->
+    case nkmedia_session:set_answer(SlaveId, Answer) of
+        ok ->
+            Opts = #{type=>bridge, peer_id=>MasterId},
+            case nkmedia_session:cmd(SlaveId, set_type, Opts) of
+                {ok, _} ->
+                    {ok, Call};
+                {error, Error} ->
+                    {error, Error, Call}
+            end;
+        {error, Error} ->
+            {error, Error, Call}
+    end;
+
+nkmedia_call_set_answer(_CallId, _MasterId, _SlaveId, _Answer, _Call) ->
+    continue.
+
+
+%% ===================================================================
+%% API
+%% ===================================================================
+
+%% @private
+api_cmd(#api_req{class = <<"media">>}=Req, State) ->
+    #api_req{subclass=Sub, cmd=Cmd} = Req,
+    nkmedia_kms_api:cmd(Sub, Cmd, Req, State);
+
+api_cmd(_Req, _State) ->
+    continue.
+
+
+%% @private
+api_syntax(#api_req{class = <<"media">>}=Req, Syntax, Defaults, Mandatory) ->
+    #api_req{subclass=Sub, cmd=Cmd} = Req,
+    {S2, D2, M2} = nkmedia_kms_api_syntax:syntax(Sub, Cmd, Syntax, Defaults, Mandatory),
+    {continue, [Req, S2, D2, M2]};
+
+api_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
+    continue.
 
 
 
@@ -136,17 +335,21 @@ nkdocker_notify(_MonId, _Op) ->
 %% ===================================================================
 
 
-% %% @private
-% state(#{nkmedia_kms:=State}) ->
-%     State.
 
+%% @private
+parse_image(_Key, Map, _Ctx) when is_map(Map) ->
+    {ok, Map};
 
-% %% @private
-% session(State, Session) ->
-%     Session#{nkmedia_kms:=State}.
+parse_image(_, Image, _Ctx) ->
+    case binary:split(Image, <<"/">>) of
+        [Comp, <<"nk_kms:", Tag/binary>>] -> 
+            [Vsn, Rel] = binary:split(Tag, <<"-">>),
+            Def = #{comp=>Comp, vsn=>Vsn, rel=>Rel},
+            {ok, nkmedia_kms_build:defaults(Def)};
+        _ ->
+            error
+    end.
 
-
--compile([export_all]).
 
 %% @private
 find_images(MonId) ->

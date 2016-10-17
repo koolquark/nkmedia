@@ -25,7 +25,7 @@
 -export([start/1, stop/1, stop_all/0]).
 -export([notify/4]).
 
--include("nkmedia.hrl").
+-include("../../include/nkmedia.hrl").
 
 %% ===================================================================
 %% Types    
@@ -50,7 +50,7 @@ start(Service) ->
             not_found -> throw(unknown_service)
         end,
         Config = nkservice_srv:get_item(SrvId, config_nkmedia_fs),
-        BasePort = crypto:rand_uniform(32768, 65535),
+        BasePort = 35000, %crypto:rand_uniform(32768, 65535),
         Pass = nklib_util:luid(),
         Image = nkmedia_fs_build:run_name(Config),
         ErlangIp = nklib_util:to_host(nkmedia_app:get(erlang_ip)),
@@ -76,7 +76,7 @@ start(Service) ->
         ],
         % Cmds = ["bash"],
         Cmds = ["bash", "/usr/local/freeswitch/start.sh"],
-        DockerOpts = #{
+        DockerOpts1 = #{
             name => Name,
             env => Env,
             cmds => Cmds,
@@ -85,12 +85,16 @@ start(Service) ->
             labels => Labels,
             volumes => [{LogDir, "/usr/local/freeswitch/log"}]
         },
+        DockerOpts2 = case nkmedia_app:get(docker_log) of
+            undefined -> DockerOpts1;
+            DockerLog -> DockerOpts1#{docker_log=>DockerLog}
+        end,
         DockerPid = case get_docker_pid() of
             {ok, DockerPid0} -> DockerPid0;
             {error, Error1} -> throw(Error1)
         end,
         nkdocker:rm(DockerPid, Name),
-        case nkdocker:create(DockerPid, Image, DockerOpts) of
+        case nkdocker:create(DockerPid, Image, DockerOpts2) of
             {ok, _} -> ok;
             {error, Error2} -> throw(Error2)
         end,

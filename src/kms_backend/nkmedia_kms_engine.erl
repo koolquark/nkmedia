@@ -24,7 +24,8 @@
 -behaviour(gen_server).
 
 -export([connect/1, stop/1, find/1]).
--export([stats/2, get_config/1, get_all/0, get_all/1, stop_all/0]).
+-export([get_pipeline/1]).
+-export([stats/2, get_config/1, get_client/1, get_all/0, get_all/1, stop_all/0]).
 -export([start_link/1, init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
 -export_type([id/0, config/0]).
@@ -36,7 +37,7 @@
 
 -define(CALL_TIME, 30000).
 -define(KEEPALIVE, 30000).
--include("nkmedia.hrl").
+-include("../../include/nkmedia.hrl").
 
 
 %% ===================================================================
@@ -72,8 +73,10 @@ connect(#{name:=Name, host:=Host, base:=Base}=Config) ->
 			case get_config(KmsPid) of
 				{ok, #{vsn:=Vsn, rel:=Rel}} ->
 					{error, {already_started, KmsPid}};
-				_ ->
-					{error, {incompatible_version}}
+				{ok, _} ->
+					{error, incompatible_version};
+				{error, Error} ->
+					{error, Error}
 			end
 	end.
 
@@ -89,6 +92,15 @@ stop(Name) ->
 	end.
 
 
+
+%% @doc Creates media pipelines and media elements
+-spec get_pipeline(id()) ->
+    {ok, Pipeline::binary()} | {error, term()}.
+
+get_pipeline(Id) ->
+    do_call(Id, get_pipeline).
+
+
 %% @private
 stats(Id, Stats) ->
 	case find(Id) of
@@ -102,11 +114,18 @@ stats(Id, Stats) ->
 	{ok, config()} | {error, term()}.
 
 get_config(Id) ->
+	do_call(Id, get_config).
+
+
+%% @private
+-spec get_client(id()) ->
+	{ok, pid()} | {error, term()}.
+
+get_client(Id) ->
 	case find(Id) of
-		{ok, _Status, KmsPid, _ConnPid} ->
-			nkservice_util:call(KmsPid, get_config, ?CALL_TIME);
-		not_found ->
-			{error, no_connection}
+		{ok, ready, _KmsPid, ConnPid} -> {ok, ConnPid};
+		{ok, _, _, _} -> {error, not_ready};
+		not_found -> {error, not_found}
 	end.
 
 
@@ -124,6 +143,16 @@ get_all() ->
 
 get_all(SrvId) ->
 	[{Id, Pid} || {S, Id, Pid} <- get_all(), S==SrvId].
+
+
+%% @private
+do_call(Id, Msg) ->
+	case find(Id) of
+		{ok, _Status, KmsPid, _ConnPid} ->
+			nkservice_util:call(KmsPid, Msg, ?CALL_TIME);
+		not_found ->
+			{error, no_connection}
+	end.
 
 
 %% @private
@@ -161,9 +190,13 @@ start_link(Config) ->
 
 -record(state, {
 	id :: id(),
+	srv_id :: nkservice:id(),
 	config :: config(),
 	status :: status(),
-	conn :: pid()
+	conn :: pid(),
+	server_id :: binary(),
+	session_id :: binary(),
+	pipeline :: binary()
 }).
 
 
@@ -172,13 +205,13 @@ start_link(Config) ->
     {ok, tuple()} | {ok, tuple(), timeout()|hibernate} |
     {stop, term()} | ignore.
 
-init([#{name:=Id, srv_id:=SrvId}=Config]) ->
-	State = #state{id=Id, config=Config},
+init([#{srv_id:=SrvId, name:=Id}=Config]) ->
+	State = #state{id=Id, srv_id=SrvId, config=Config},
 	nklib_proc:put(?MODULE, {SrvId, Id}),
 	true = nklib_proc:reg({?MODULE, Id}, {connecting, undefined}),
 	self() ! connect,
 	?LLOG(info, "started (~p)", [self()], State),
-	{ok, update_status(ready, State)}.
+	{ok, State}.
 
 
 %% @private
@@ -191,6 +224,12 @@ handle_call(get_state, _From, State) ->
 
 handle_call(get_config, _From, #state{config=Config}=State) ->
     {reply, {ok, Config}, State};
+
+handle_call(_, _From, #state{status=Status}=State) when Status /= ready ->
+	{reply, {error, not_ready}, State};
+
+handle_call(get_pipeline, _From, #state{pipeline=Pipeline}=State) ->
+	{reply, {ok, Pipeline}, State};
 
 handle_call(Msg, _From, State) ->
     lager:error("Module ~p received unexpected call ~p", [?MODULE, Msg]),
@@ -223,11 +262,14 @@ handle_info(connect, #state{conn=Pid}=State) when is_pid(Pid) ->
 handle_info(connect, #state{id=Id, config=Config}=State) ->
 	State2 = update_status(connecting, State#state{conn=undefined}),
 	case nkmedia_kms_client:start(Id, Config) of
-		{ok, Pid, Info} ->
-			print_info(Info, State),
+		{ok, Pid} ->
+			{ok, ServerId, SessId} = nkmedia_kms_client:connect(Pid),
+			State3 = State2#state{conn=Pid, server_id=ServerId, session_id=SessId},
+			{ok, Info} = nkmedia_kms_client:manager(Pid, getInfo),
+			print_info(Info, State3),
 			monitor(process, Pid),
-			State3 = State2#state{conn = Pid},
-			{noreply, update_status(ready, State3)};
+			State4 = do_get_pipeline(State3),
+			{noreply, update_status(ready, State4)};
 		{error, Error} ->
 			?LLOG(warning, "could not connect: ~p", [Error], State2),
 			{stop, normal, State2}
@@ -264,6 +306,25 @@ terminate(Reason, State) ->
 %% Internal
 %% ===================================================================
 
+%% @private
+do_get_pipeline(#state{conn=Pid, pipeline=undefined}=State) ->
+	{ok, Pipeline} = nkmedia_kms_client:create(Pid, 'MediaPipeline', #{}, #{}),
+	{ok, _} = nkmedia_kms_client:subscribe(Pid, Pipeline, 'Error'),
+	Params2 = #{latencyStats=>true},
+	{ok, null} = nkmedia_kms_client:invoke(Pid, Pipeline, setLatencyStats, Params2),
+	?LLOG(info, "created Pipeline ~s", [Pipeline], State),
+	State#state{pipeline=Pipeline};
+
+do_get_pipeline(#state{conn=Pid, pipeline=Pipeline}=State) ->
+	{ok, Pipelines} = nkmedia_kms_client:manager(Pid, getPipelines),
+	case lists:member(Pipeline, Pipelines) of
+		true ->
+			State;
+		false ->
+			?LLOG(warning, "Pipeline ~s is no longer valid!", [Pipeline], State),
+			do_get_pipeline(State#state{pipeline=undefined})
+	end.
+
 
 %% @private
 update_status(Status, #state{status=Status}=State) ->
@@ -295,12 +356,10 @@ connect_kms(Host, Base, Tries) ->
 
 %% @private
 print_info(Info, State) ->
-	#{
-		<<"sessionId">> := SessId, 
-		<<"value">> := #{<<"type">>:=Type, <<"version">>:=Vsn}
-	} = Info,
-	?LLOG(info, "connected to KMS (type:~s, vsn:~s, id:~s)", 
-		  [Type, Vsn, SessId], State).
+	#{<<"type">>:=Type, <<"version">>:=Vsn} = Info,
+	#state{server_id=ServerId, session_id=SessId} = State,
+	?LLOG(info, "connected to KMS (type:~s, vsn:~s, id:~s, session:~s)", 
+		  [Type, Vsn, ServerId, SessId], State).
 
 
 
