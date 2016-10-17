@@ -59,7 +59,8 @@
         backend => nkmedia:backend(),
         audio_codec => opus | isac32 | isac16 | pcmu | pcma,    % info only
         video_codec => vp8 | vp9 | h264,                        % "
-        bitrate => integer()                                    % "
+        bitrate => integer(),                                   % "
+        register => nklib:link()
     }.
 
 -type room() ::
@@ -221,7 +222,7 @@ register(RoomId, Link) ->
     ok | {error, nkservice:error()}.
 
 unregister(RoomId, Link) ->
-    do_call(RoomId, {unregister, Link}).
+    do_cast(RoomId, {unregister, Link}).
 
 
 %% @doc Gets all started rooms
@@ -254,19 +255,25 @@ get_all() ->
     {ok, tuple()}.
 
 init([#{srv_id:=SrvId, room_id:=RoomId}=Room]) ->
+    yes = nklib_proc:reg({?MODULE, RoomId}),
     Backend = maps:get(backend, Room, undefined),
     nklib_proc:put(?MODULE, {RoomId, Backend}),
-    nklib_proc:put({?MODULE, RoomId}),
-    State = #state{
+    State1 = #state{
         id = RoomId, 
         srv_id = SrvId, 
         backend = Backend,
         links = nklib_links:new(),
         room = Room#{members=>#{}}
     },
-    ?LLOG(notice, "started", [], State),
-    State2 = do_event(started, State),
-    {ok, do_restart_timer(State2)}.
+    State2 = case Room of
+        #{register:=Link} ->
+            links_add(Link, State1);
+        _ ->
+            State1
+    end,
+    ?LLOG(notice, "started", [], State2),
+    State3 = do_event(started, State2),
+    {ok, do_restart_timer(State3)}.
 
 
 %% @private
@@ -303,8 +310,7 @@ handle_cast({send_event, Event}, State) ->
 
 handle_cast({register, Link}, State) ->
     ?LLOG(info, "proc registered (~p)", [Link], State),
-    Pid = nklib_links:get_pid(Link),
-    State2 = links_add(Link, reg, Pid, State),
+    State2 = links_add(Link, State),
     {noreply, State2};
 
 handle_cast({unregister, Link}, State) ->
@@ -337,7 +343,7 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, State) ->
             ?LLOG(notice, "member ~s down", [SessId], State2),
             {noreply, do_stopped_member(SessId, State2)};
         {ok, Link, reg, State2} ->
-            ?LLOG(notice, "stopping beacuse of reg '~p' down (~p)",
+            ?LLOG(notice, "stopping because of reg '~p' down (~p)",
                   [Link, Reason], State2),
             do_stop(registered_down, State2);
         not_found ->
@@ -507,6 +513,12 @@ do_event(Event, #state{id=Id}=State) ->
 %% @private
 handle(Fun, Args, State) ->
     nklib_gen_server:handle_any(Fun, Args, State, #state.srv_id, #state.room).
+
+
+%% @private
+links_add(Id, #state{links=Links}=State) ->
+    Pid = nklib_links:get_pid(Id),
+    State#state{links=nklib_links:add(Id, reg, Pid, Links)}.
 
 
 %% @private
