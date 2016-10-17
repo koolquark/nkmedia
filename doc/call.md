@@ -31,7 +31,7 @@ See also each backend documentation:
 * [nkmedia_fs](fs.md#calls)
 * [nkmedia_kms](kms.md#calls)
 
-Also, for Erlang developers, you can have a look at the command [syntax specification](../src/nkmedia_call_api_syntax.erl) and [command implementation](../src/nkmedia_call_api.erl).
+Also, for Erlang developers, you can have a look at the command [syntax specification](../src/nkcollab_call_api_syntax.erl) and [command implementation](../src/nkcollab_call_api.erl).
 
 
 # Commands

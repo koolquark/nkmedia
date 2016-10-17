@@ -117,7 +117,7 @@
         type => type(),
         type_ext => type_ext(),
         slave_id => id(),
-        call_id => binary(),                        % Used by nkmedia_call
+        call_id => binary(),                        % Used by nkcollab_call
         record_pos => integer(),                    % Record position
         player_loops => boolean() |integer()
     }.

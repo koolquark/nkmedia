@@ -23,8 +23,9 @@
 
 -export([get_q850/1, add_id/2, add_id/3, filter_codec/3]).
 -export([mangle_sdp_ip/1]).
--export([kill/1]).
+% -export([kill/1]).
 -export([remove_sdp_data_channel/1]).
+-export([add_certs/1]).
 -export_type([stop_reason/0, q850/0]).
 
 -type stop_reason() :: atom() | q850() | binary() | string().
@@ -181,13 +182,13 @@ q850_map() ->
 
 
 
-kill(Type) ->
-	Pids = case Type of
-		in -> [Pid || {_, inbound, Pid} <- nkmedia_session:get_all()];
-		out -> [Pid || {_, outbound, Pid} <- nkmedia_session:get_all()];
-		calls -> [Pid || {_, _, Pid} <- nkmedia_call:get_all()]
-	end,
-	lists:foreach(fun(Pid) -> exit(Pid, kill) end, Pids).
+% kill(Type) ->
+% 	Pids = case Type of
+% 		in -> [Pid || {_, inbound, Pid} <- nkmedia_session:get_all()];
+% 		out -> [Pid || {_, outbound, Pid} <- nkmedia_session:get_all()];
+% 		calls -> [Pid || {_, _, Pid} <- nkcollab_call:get_all()]
+% 	end,
+% 	lists:foreach(fun(Pid) -> exit(Pid, kill) end, Pids).
 
 
 
@@ -200,5 +201,15 @@ remove_sdp_data_channel(SDP) ->
 
 
 
-
-
+add_certs(Spec) ->
+    Dir = "./priv/certs",
+	case file:read_file(filename:join(Dir, "cert.pem")) of
+        {ok, _} ->
+            Spec#{
+                tls_certfile => filename:join(Dir, "cert.pem"),
+                tls_keyfile => filename:join(Dir, "privkey.pem"),
+                tls_cacertfile => filename:join(Dir, "fullchain.pem")
+            };
+        _ ->
+        	Spec
+    end.

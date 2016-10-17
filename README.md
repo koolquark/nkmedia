@@ -43,7 +43,7 @@ See the [User Guide](doc/index.md#user-guide) for a more detailed explanation of
 * [**nkmedia_fs**](doc/fs.md): Freeswitch backend with support for echo, calls through the server, MCUs and and SIP (in and out) gateways. SIP calls can participate in MCU sessions or be connected to webrtc endpoints.
 * [**nkmedia_kms**](doc/kms.md): Kurento backend with support for echo, calls through the server, SFUs and and SIP (in and out) gateways. SIP calls can participate in SFU sessions or be connected to webrtc endpoints. State of the art recording support, inmediately playable and seekable.
 * [**nkmedia_room**](doc/room.md): Support for SFU and MCU rooms, with event generation for members in and out, member list and in-room user messaging.
-* [**nkmedia_call**](doc/call.md): Provides an optional signaling server to be used over WS, WSS, TCP or TLS. Support for calling, accepting, rejecting, multiple parallel calls, etc.
+* [**nkcollab_call**](doc/call.md): Provides an optional signaling server to be used over WS, WSS, TCP or TLS. Support for calling, accepting, rejecting, multiple parallel calls, etc.
 * [**nkmedia_sip**](doc/sip.md) : Provides full SIP support.
 * [**nkmedia_verto**](doc/verto.md): Provides Verto protocol emulation for clients
 

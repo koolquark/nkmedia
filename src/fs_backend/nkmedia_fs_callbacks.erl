@@ -29,13 +29,10 @@
 -export([nkmedia_session_start/3, nkmedia_session_stop/2,
          nkmedia_session_offer/4, nkmedia_session_answer/4, nkmedia_session_cmd/3, 
          nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2]).
--export([nkmedia_call_start_caller_session/3, nkmedia_call_start_callee_session/4,
-         nkmedia_call_set_answer/5]).
 -export([api_syntax/4]).
 -export([nkdocker_notify/2]).
 
 -include_lib("nkservice/include/nkservice.hrl").
--include("../../include/nkmedia_call.hrl").
 
 
 
@@ -191,63 +188,6 @@ nkmedia_session_handle_cast({nkmedia_fs, Msg}, Session) ->
     nkmedia_fs_session:handle_cast(Msg, Session);
 
 nkmedia_session_handle_cast(_Msg, _Session) ->
-    continue.
-
-
-
-%% ===================================================================
-%% Implemented Callbacks - nkmedia_call
-%% ===================================================================
-
-
-nkmedia_call_start_caller_session(CallId, Config, #{srv_id:=SrvId, offer:=Offer}=Call) ->
-    case maps:get(backend, Call, nkmedia_fs) of
-        nkmedia_fs ->
-            Config2 = Config#{
-                backend => nkmedia_fs, 
-                offer => Offer,
-                call_id => CallId
-            },
-            {ok, MasterId, Pid} = nkmedia_session:start(SrvId, park, Config2),
-            {ok, MasterId, Pid, ?CALL(#{backend=>nkmedia_fs}, Call)};
-        _ ->
-            continue
-    end.
-
-nkmedia_call_start_callee_session(CallId, _MasterId, Config, 
-                                  #{backend:=nkmedia_fs, srv_id:=SrvId}=Call) ->
-    Config2 = Config#{
-        backend => nkmedia_fs,
-        call_id => CallId
-    },
-    {ok, SlaveId, Pid} = nkmedia_session:start(SrvId, park, Config2),
-    case nkmedia_session:get_offer(SlaveId) of
-        {ok, Offer} ->
-            {ok, SlaveId, Pid, Offer, Call};
-        {error, Error} ->
-            {error, Error, Call}
-    end;
-
-nkmedia_call_start_callee_session(_CallId, _MasterId, _Config, _Call) ->
-    continue.
-
-
-nkmedia_call_set_answer(_CallId, MasterId, SlaveId, Answer, 
-                        #{backend:=nkmedia_fs}=Call) ->
-    case nkmedia_session:set_answer(SlaveId, Answer) of
-        ok ->
-            Opts = #{type=>bridge, peer_id=>MasterId},
-            case nkmedia_session:cmd(SlaveId, set_type, Opts) of
-                {ok, _} ->
-                    {ok, Call};
-                {error, Error} ->
-                    {error, Error, Call}
-            end;
-        {error, Error} ->
-            {error, Error, Call}
-    end;
-
-nkmedia_call_set_answer(_CallId, _MasterId, _SlaveId, _Answer, _Call) ->
     continue.
 
 
