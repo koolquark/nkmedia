@@ -25,7 +25,7 @@
 
 -export([start/2, stop/1, stop/2, get_room/1, get_info/1]).
 -export([started_member/3, started_member/4, stopped_member/2]).
--export([send_event/2, restart_timer/1, register/2, unregister/2, get_all/0]).
+-export([info/3, restart_timer/1, register/2, unregister/2, get_all/0]).
 -export([get_all_with_role/2]).
 -export([find/1, do_call/2, do_call/3, do_cast/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
@@ -78,11 +78,16 @@
         peer_id => session_id()
     }.
 
+
+-type info() :: atom().
+
+
 -type event() :: 
     started |
     {stopped, nkservice:error()} |
     {started_member, session_id(), member_info()} |
-    {stopped_member, session_id(), member_info()}.
+    {stopped_member, session_id(), member_info()} |
+    {info, info(), map()}.
 
 
 %% ===================================================================
@@ -188,11 +193,11 @@ stopped_member(RoomId, SessId) ->
 
 
 %% @private
--spec send_event(id(), map()) ->
+-spec info(id(), info(), map()) ->
     ok | {error, term()}.
 
-send_event(Id, Event) ->
-    do_cast(Id, {send_event, Event}).
+info(Id, Info, Meta) when is_map(Meta) ->
+    do_cast(Id, {info, Info, Meta}).
 
 
 %% @private
@@ -305,8 +310,8 @@ handle_cast({stopped_member, SessId}, State) ->
 handle_cast(restart_timer, State) ->
     {noreply, do_restart_timer(State)};
 
-handle_cast({send_event, Event}, State) ->
-    {noreply, do_event(Event, State)};
+handle_cast({info, Info, Meta}, State) ->
+    {noreply, do_event({info, Info, Meta}, State)};
 
 handle_cast({register, Link}, State) ->
     ?LLOG(info, "proc registered (~p)", [Link], State),

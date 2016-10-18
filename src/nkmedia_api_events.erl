@@ -53,8 +53,8 @@ event(SessId, {candidate, #candidate{a_line=Line, m_id=Id, m_index=Index}}, Sess
     Data = #{sdpMid=>Id, sdpMLineIndex=>Index, candidate=>Line},
     do_send_event(SessId, candidate, Data, Session);
 
-event(SessId, {info, Info}, Session) ->
-    do_send_event(SessId, info, #{info=>Info}, Session);
+event(SessId, {info, Info, Meta}, Session) ->
+    do_send_event(SessId, info, Meta#{info=>Info}, Session);
 
 event(SessId, {stop, Reason}, #{srv_id:=SrvId}=Session) ->
     {Code, Txt} = nkservice_util:error_code(SrvId, Reason),

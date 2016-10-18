@@ -25,7 +25,7 @@
 -behaviour(gen_server).
 
 -export([start/3, get_type/1, get_session/1, get_offer/1, get_answer/1]).
--export([set_answer/2, set_type/3, cmd/3, cmd_async/3, info/2]).
+-export([set_answer/2, set_type/3, cmd/3, cmd_async/3, info/3]).
 -export([stop/1, stop/2, stop_all/0]).
 -export([candidate/2]).
 -export([register/2, unregister/2]).
@@ -125,13 +125,14 @@
 
 -type type_ext() :: map().
 
+-type info() :: atom().
 
 -type event() ::
     {offer, nkmedia:offer()}                            | 
     {answer, nkmedia:answer()}                          | 
     {type, atom(), map()}                               |
     {candidate, nkmedia:candidate()}                    |
-    {info, binary()}                                    |   % User info
+    {info, info(), map()}                               |   % User info
     {stop, nkservice:error()} .                          % Session is about to stop
 
 
@@ -252,11 +253,11 @@ cmd_async(SessId, Cmd, Opts) ->
 
 
 %% @doc Sends an info to the sesison
--spec info(id(), term()) ->
+-spec info(id(), info(), map()) ->
     ok | {error, nkservice:error()}.
 
-info(SessId, Info) ->
-    do_cast(SessId, {info, Info}).
+info(SessId, Info, Meta) when is_map(Meta) ->
+    do_cast(SessId, {info, Info, Meta}).
 
 
 %% @doc Links this session to another. We are master, other is slave
@@ -518,8 +519,8 @@ handle_cast({cmd, Cmd, Opts}, State) ->
     {_Reply, State2} = do_cmd(Cmd, Opts, State),
     noreply(State2);
 
-handle_cast({info, Info}, State) ->
-    noreply(event({info, Info}, State));
+handle_cast({info, Info, Meta}, State) ->
+    noreply(event({info, Info, Meta}, State));
 
 handle_cast({client_candidate, Candidate}, State) ->
     noreply(do_client_candidate(Candidate, State));

@@ -528,7 +528,9 @@ handle_cast({event, _Id, _Handle, #{<<"janus">>:=<<"media">>}=Msg}, State) ->
 handle_cast({event, _Id, _Handle, #{<<"janus">>:=<<"slowlink">>}=Msg}, State) ->
     Nacks = maps:get(<<"nacks">>, Msg, 0), 
     UpLink = maps:get(<<"uplink">>, Msg, <<>>),
-    ?LLOG(notice, "Janus slowlink (nacks: ~p, uplink: ~p)", [Nacks, UpLink], State),
+    #state{id=SessId} = State,
+    nkmedia_session:info(SessId, slow_link, #{nacks=>Nacks, uplink=>UpLink}),
+    % ?LLOG(notice, "Janus slowlink (nacks: ~p, uplink: ~p)", [Nacks, UpLink], State),
     {noreply, State};
 
 handle_cast({event, Id, Handle, Msg}, State) ->
@@ -1241,10 +1243,11 @@ do_event(_Id, _Handle, {event, <<"hangup">>, _, _}, State) ->
     ?LLOG(info, "hangup from Janus", [], State),
     {stop, normal, State};
 
-do_event(_Id, _Handle, 
-         {data, #{<<"videoroom">>:=<<"slow_link">>, <<"current-bitrate">>:=BR}}, 
-         State) ->
-    ?LLOG(notice, "videroom slow_link (~p)", [BR], State),
+do_event(_Id, _Handle, {data, #{<<"videoroom">>:=<<"slow_link">>}=Data}, State) ->
+    BR = maps:get(<<"current-bitrate">>, Data, 0),
+    #state{room=Room} = State,
+    nkmedia_room:info(Room, slow_link, #{bitrate=>BR}),
+    % ?LLOG(notice, "videroom slow_link (~p)", [BR], State),
     {noreply, State};
 
 do_event(_Id, _Handle, {data, #{<<"result">>:=Result}}, State) ->
