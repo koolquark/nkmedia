@@ -45,7 +45,9 @@
 
 %% Create a session from the API
 %% We create the session linked with the API server process
-%% (we capture the stop event and remove it from the API session, and stop if it fails)
+%% - we capture the stop event and remove it from the API session, 
+%%   in nkmedia_session_reg_event() here and stop if it fails
+%% - if the session is killed, it is detected in api_server_reg_down
 %% We then register the session at the API server
 %% (if the session fails, we print an error)
 %% It also subscribes the API session to events
@@ -195,7 +197,11 @@ nkmedia_session_reg_event(_SessId, _RegId, _Event, Session) ->
 %% Normally it should have been unregistered first
 %% (detected above and sent in the cast after)
 api_server_reg_down({nkmedia_session, SessId, _SessPid}, Reason, State) ->
+	#{srv_id:=SrvId} = State,
 	lager:warning("API Server: Session ~s is down: ~p", [SessId, Reason]),
+	RegId = session_reg_id(SrvId, <<"*">>, SessId),
+	nkservice_api_server:unregister_events(self(), RegId),
+	nkmedia_api_events:session_down(SrvId, SessId),
 	{ok, State};
 
 api_server_reg_down(_Link, _Reason, _State) ->

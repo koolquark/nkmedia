@@ -23,7 +23,8 @@
 -module(nkmedia_api_events).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([event/3, send_event/5, send_event/6]).
+-export([event/3, session_down/2]).
+-export([send_event/5, send_event/6]).
 
 -include_lib("nkservice/include/nkservice.hrl").
 -include_lib("nksip/include/nksip.hrl").
@@ -61,6 +62,17 @@ event(SessId, {stop, Reason}, #{srv_id:=SrvId}=Session) ->
 
 event(_SessId, _Event, Session) ->
     {ok, Session}.
+
+
+
+%% @private
+-spec session_down(nkservice:id(), nkmedia_session:id()) ->
+    ok.
+
+session_down(SrvId, SessId) ->
+    {Code, Txt} = nkservice_util:error_code(SrvId, process_down),
+    send_event(SrvId, session, SessId, destroyed, #{code=>Code, reason=>Txt}).
+
 
 
 %% ===================================================================
