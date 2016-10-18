@@ -345,9 +345,9 @@ cert_key = /usr/local/share/janus/certs/mycert.key
 [nat]
 stun_server = stun.voip.eutelia.it
 stun_port = 3478
-;nice_debug = true
-ice_lite = true
-;ice_tcp = true
+nice_debug = true
+ice_lite = false
+ice_tcp = true
 nat_1_1_mapping = $EXT_IP          ; All host candidates will have (only) this
 ;turn_server = myturnserver.com
 ;turn_port = 3478

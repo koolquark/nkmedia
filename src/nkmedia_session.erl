@@ -619,7 +619,7 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, #state{id=Id}=State) ->
                 {stop, normal, State3} ->
                     do_stop(normal, State3);    
                 {stop, Error, State3} ->
-                    ?LLOG(notice, "stopping beacuse of reg '~p' down (~p)",
+                    ?LLOG(notice, "stopping because of reg '~p' down (~p)",
                           [Link, Reason], State3),
                     do_stop(Error, State3)
             end;
