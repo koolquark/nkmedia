@@ -255,7 +255,7 @@ get_all() ->
     {ok, tuple()}.
 
 init([#{srv_id:=SrvId, room_id:=RoomId}=Room]) ->
-    yes = nklib_proc:reg({?MODULE, RoomId}),
+    true = nklib_proc:reg({?MODULE, RoomId}),
     Backend = maps:get(backend, Room, undefined),
     nklib_proc:put(?MODULE, {RoomId, Backend}),
     State1 = #state{
