@@ -22,9 +22,8 @@
 
 -module(nkmedia_api).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([cmd/4]).
--export([api_server_reg_down/3]).
--export([nkmedia_session_reg_event/4]).
+-export([cmd/3]).
+-export([session_stopped/3, api_session_down/3]).
 
 -include_lib("nkservice/include/nkservice.hrl").
 -include_lib("nksip/include/nksip.hrl").
@@ -40,7 +39,7 @@
 %% ===================================================================
 
 %% @doc
--spec cmd(nkservice:id(), atom(), Data::map(), map()) ->
+-spec cmd(binary(), Data::map(), map()) ->
 	{ok, map(), State::map()} | {error, nkservice:error(), State::map()}.
 
 %% Create a session from the API
@@ -51,7 +50,7 @@
 %% We then register the session at the API server
 %% (if the session fails, we print an error)
 %% It also subscribes the API session to events
-cmd(<<"session">>, <<"create">>, Req, State) ->
+cmd(<<"create">>, Req, State) ->
 	#api_req{srv_id=SrvId, data=Data, user=User, session=UserSession} = Req,
 	#{type:=Type} = Data,
 	Config = Data#{
@@ -77,12 +76,12 @@ cmd(<<"session">>, <<"create">>, Req, State) ->
 			{error, Error, State}
 	end;
 
-cmd(<<"session">>, <<"destroy">>, #api_req{data=Data}, State) ->
+cmd(<<"destroy">>, #api_req{data=Data}, State) ->
 	#{session_id:=SessId} = Data,
 	nkmedia_session:stop(SessId),
 	{ok, #{}, State};
 
-cmd(<<"session">>, <<"set_answer">>, #api_req{data=Data}, State) ->
+cmd(<<"set_answer">>, #api_req{data=Data}, State) ->
 	#{answer:=Answer, session_id:=SessId} = Data,
 	case nkmedia_session:cmd(SessId, set_answer, #{answer=>Answer}) of
 		{ok, Reply} ->
@@ -91,7 +90,7 @@ cmd(<<"session">>, <<"set_answer">>, #api_req{data=Data}, State) ->
 			{error, Error, State}
 	end;
 
-cmd(<<"session">>, <<"get_offer">>, #api_req{data=#{session_id:=SessId}}, State) ->
+cmd(<<"get_offer">>, #api_req{data=#{session_id:=SessId}}, State) ->
 	case nkmedia_session:get_offer(SessId) of
 		{ok, Offer} ->
 			{ok, Offer, State};
@@ -99,15 +98,15 @@ cmd(<<"session">>, <<"get_offer">>, #api_req{data=#{session_id:=SessId}}, State)
 			{error, Error, State}
 	end;
 
-cmd(<<"session">>, <<"get_answer">>, #api_req{data=#{session_id:=SessId}}, State) ->
+cmd(<<"get_answer">>, #api_req{data=#{session_id:=SessId}}, State) ->
 	case nkmedia_session:get_answer(SessId) of
-		{ok, Offer} ->
-			{ok, Offer, State};
+		{ok, Answer} ->
+			{ok, Answer, State};
 		{error, Error} ->
 			{error, Error, State}
 	end;
 
-cmd(<<"session">>, Cmd, #api_req{data=Data}, State)
+cmd(Cmd, #api_req{data=Data}, State)
 		when Cmd == <<"update_media">>; 
 			 Cmd == <<"set_type">>;
 		     Cmd == <<"recorder_action">>; 
@@ -122,7 +121,7 @@ cmd(<<"session">>, Cmd, #api_req{data=Data}, State)
 			{error, Error, State}
 	end;
 
-cmd(<<"session">>, <<"set_candidate">>, #api_req{data=Data}, State) ->
+cmd(<<"set_candidate">>, #api_req{data=Data}, State) ->
 	#{
 		session_id := SessId, 
 		sdpMid := Id, 
@@ -137,7 +136,7 @@ cmd(<<"session">>, <<"set_candidate">>, #api_req{data=Data}, State) ->
 			{error, Error, State}
 	end;
 
-cmd(<<"session">>, <<"set_candidate_end">>, #api_req{data=Data}, State) ->
+cmd(<<"set_candidate_end">>, #api_req{data=Data}, State) ->
 	#{session_id := SessId} = Data,
 	Candidate = #candidate{last=true},
 	case nkmedia_session:candidate(SessId, Candidate) of
@@ -147,7 +146,7 @@ cmd(<<"session">>, <<"set_candidate_end">>, #api_req{data=Data}, State) ->
 			{error, Error, State}
 	end;
 
-cmd(<<"session">>, <<"get_info">>, #api_req{data=Data}, State) ->
+cmd(<<"get_info">>, #api_req{data=Data}, State) ->
 	#{session_id:=SessId} = Data,
 	case nkmedia_session:get_session(SessId) of
 		{ok, Session} ->
@@ -158,12 +157,12 @@ cmd(<<"session">>, <<"get_info">>, #api_req{data=Data}, State) ->
 			{error, Error, State}
 	end;
 
-cmd(<<"session">>, <<"get_list">>, _Req, State) ->
+cmd(<<"get_list">>, _Req, State) ->
 	Res = [#{session_id=>Id} || {Id, _Pid} <- nkmedia_session:get_all()],
 	{ok, Res, State};
 
 
-cmd(_SrvId, Other, _Data, State) ->
+cmd(Other, _Data, State) ->
 	{error, {unknown_command, Other}, State}.
 
 
@@ -176,14 +175,11 @@ cmd(_SrvId, Other, _Data, State) ->
 %% @private Sent by the session when it is stopping
 %% We sent a message to the API session to remove the session before 
 %% it receives the DOWN.
-nkmedia_session_reg_event(SessId, {nkmedia_api, Pid}, {stop, _Reason}, Session) ->
+session_stopped(SessId, Pid, Session) ->
 	#{srv_id:=SrvId} = Session,
 	RegId = session_reg_id(SrvId, <<"*">>, SessId),
 	nkservice_api_server:unregister_events(Pid, RegId),
 	nkservice_api_server:unregister(Pid, {nkmedia_session, SessId, self()}),
-	{ok, Session};
-
-nkmedia_session_reg_event(_SessId, _RegId, _Event, Session) ->
 	{ok, Session}.
 
 
@@ -196,16 +192,12 @@ nkmedia_session_reg_event(_SessId, _RegId, _Event, Session) ->
 %% @private Called when API server detects a registered session is down
 %% Normally it should have been unregistered first
 %% (detected above and sent in the cast after)
-api_server_reg_down({nkmedia_session, SessId, _SessPid}, Reason, State) ->
+api_session_down(SessId, Reason, State) ->
 	#{srv_id:=SrvId} = State,
 	lager:warning("API Server: Session ~s is down: ~p", [SessId, Reason]),
 	RegId = session_reg_id(SrvId, <<"*">>, SessId),
 	nkservice_api_server:unregister_events(self(), RegId),
-	nkmedia_api_events:session_down(SrvId, SessId),
-	{ok, State};
-
-api_server_reg_down(_Link, _Reason, _State) ->
-	continue.
+	nkmedia_api_events:session_down(SrvId, SessId).
 
 
 

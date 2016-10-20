@@ -49,7 +49,7 @@
 -define(MAX_ICE_TIME, 5000).
 -define(MAX_CALL_TIME, 5000).
 
--define(DEBUG_MEDIA, true).   % Uncomment to debug media
+-define(DEBUG_MEDIA, false). 
 
 
 %% ===================================================================
@@ -366,7 +366,7 @@ backend_candidate(SessId, Candidate) ->
     timer :: reference(),
     wait_offer = [] :: [from()],
     wait_answer = [] :: [from()],
-    stop_sent = false :: boolean(),
+    stop_reason = false :: false | nkservice:error(),
     links :: nklib_links:links(),
     client_candidates = trickle :: trickle | last | [nkmedia:candidate()],
     backend_candidates = trickle :: trickle | last | [nkmedia:candidate()],
@@ -644,19 +644,24 @@ code_change(OldVsn, State, Extra) ->
 -spec terminate(term(), #state{}) ->
     ok.
 
-terminate(Reason, #state{wait_offer=WaitOffer, wait_answer=WaitAnswer}=State) ->
+terminate(Reason, State) ->
+    #state{wait_offer=WaitOffer, wait_answer=WaitAnswer, stop_reason=Stop} = State,
     reply_all_waiting({error, session_stopped}, WaitOffer),
     reply_all_waiting({error, session_stopped}, WaitAnswer),
-    case Reason of
-        normal ->
-            ?LLOG(info, "terminate: ~p", [Reason], State),
-            _ = do_stop(normal_termination, State);
-        _ ->
+    send_stop_peers(State),
+    Stop2 = case Stop of
+        false ->
             Ref = nklib_util:uid(),
             ?LLOG(notice, "terminate error ~s: ~p", [Ref, Reason], State),
-            _ = do_stop({internal_error, Ref}, State)
+            {internal_error, Ref};
+        _ ->
+            Stop
     end,
-    {ok, _State2} = handle(nkmedia_session_terminate, [Reason], State).
+    {ok, State2} = handle(nkmedia_session_stop, [Stop2], State),
+    State3 = event({stopped, Stop2}, State2),
+    {ok, _State4} = handle(nkmedia_session_terminate, [Reason], State3),
+    timer:sleep(100),
+    ok.
 
 
 
@@ -1015,11 +1020,6 @@ reply_all_waiting(Msg, List) ->
     lists:foreach(fun(From) -> nklib_util:reply(From, Msg) end, List).
 
 
-% %% @private
-% reply(Reply, From, State) ->
-%     nklib_util:reply(From, Reply),
-%     noreply(State).
-
 
 %% @private
 noreply(State) ->
@@ -1027,12 +1027,12 @@ noreply(State) ->
 
 
 %% @private
-do_stop(_Reason, #state{stop_sent=true}=State) ->
-    {stop, normal, State};
+do_stop(Reason, State) ->
+    {stop, normal, State#state{stop_reason=Reason}}.
 
-do_stop(Reason, #state{id=SessId, session=Session}=State) ->
-    {ok, State2} = handle(nkmedia_session_stop, [Reason], State),
-    State3 = event({stop, Reason}, State2#state{stop_sent=true}),
+
+%% @private
+send_stop_peers( #state{id=SessId, session=Session}) ->
     case Session of
         #{master_id:=MasterId} -> 
             do_cast(MasterId, {peer_stopped, SessId});
@@ -1044,10 +1044,7 @@ do_stop(Reason, #state{id=SessId, session=Session}=State) ->
             do_cast(SlaveId, {peer_stopped, SessId});
         _ -> 
             ok
-    end,
-    % Allow events to be processed
-    timer:sleep(100),
-    {stop, normal, State3}.
+    end.
 
 
 %% @private

@@ -128,7 +128,7 @@ start(Srv, Config) ->
     ok | {error, term()}.
 
 stop(Id) ->
-    stop(Id, normal).
+    stop(Id, user_stop).
 
 
 %% @doc
@@ -249,7 +249,7 @@ get_all() ->
     srv_id :: nkservice:id(),
     backend :: nkmedia:backend(),
     timer :: reference(),
-    stop_sent = false :: boolean(),
+    stop_reason = false :: false | nkservice:error(),
     links :: nklib_links:links(),
     room :: room()
 }).
@@ -272,6 +272,7 @@ init([#{srv_id:=SrvId, room_id:=RoomId}=Room]) ->
     },
     State2 = case Room of
         #{register:=Link} ->
+            lager:error("REGISTER"),
             links_add(Link, State1);
         _ ->
             State1
@@ -370,17 +371,19 @@ code_change(_OldVsn, State, _Extra) ->
 -spec terminate(term(), #state{}) ->
     ok.
 
-terminate(Reason, State) ->
-    {ok, State2} = handle(nkmedia_room_terminate, [Reason], State),
-    case Reason of
-        normal ->
-            ?LLOG(info, "terminate: ~p", [Reason], State2),
-            _ = do_stop(normal_termination, State2);
+terminate(Reason, #state{stop_reason=Stop}=State) ->
+    do_stop_all(State),
+    Stop2 = case Stop of
+        false ->
+            Ref = nklib_util:uid(),
+            ?LLOG(notice, "terminate error ~s: ~p", [Ref, Reason], State),
+            {internal_error, Ref};
         _ ->
-            Ref = nkmedia_lib:uid(),
-            ?LLOG(notice, "terminate error ~s: ~p", [Ref, Reason], State2),
-            _ = do_stop({internal_error, Ref}, State2)
-    end,    
+            Stop
+    end,
+    State2 = do_event({stopped, Stop2}, State),
+    {ok, _State3} = handle(nkmedia_room_terminate, [Reason], State2),
+    % Allow events
     timer:sleep(100),
     ok.
 
@@ -484,17 +487,15 @@ do_cast(Id, Msg) ->
 
 
 %% @private
-do_stop(_Reason, #state{stop_sent=true}=State) ->
-    {stop, normal, State};
+do_stop(Reason, State) ->
+    {stop, normal, State#state{stop_reason=Reason}}.
 
-do_stop(Reason, #state{room=#{members:=Members}}=State) ->
+
+%% @private
+do_stop_all(#state{room=#{members:=Members}}) ->
     lists:foreach(
         fun({SessId, _}) -> nkmedia_session:stop(SessId, room_destroyed) end,
-        maps:to_list(Members)),
-    State2 = do_event({stopped, Reason}, State#state{stop_sent=true}),
-    % Allow events to be processed
-    timer:sleep(100),
-    {stop, normal, State2}.
+        maps:to_list(Members)).
 
 
 %% @private

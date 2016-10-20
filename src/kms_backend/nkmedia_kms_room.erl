@@ -67,7 +67,7 @@ init(_RoomId, Room) ->
         {ok, Room2} ->
             {ok, ?ROOM(#{class=>sfu, backend=>nkmedia_kms}, Room2)};
        error ->
-            {error, mediaserver_not_available}
+            {error, no_mediaserver}
     end.
 
 

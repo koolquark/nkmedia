@@ -212,9 +212,11 @@ nkmedia_session_event(SessId, Event, Session) ->
 								media_session:event(), session()) ->
 	{ok, session()} | continue().
 
-nkmedia_session_reg_event(SessId, Link, Event, Session) ->
-	% lager:warning("RE: ~p, ~p", [Link, Event]),
-	nkmedia_api:nkmedia_session_reg_event(SessId, Link, Event, Session),
+nkmedia_session_reg_event(SessId, {nkmedia_api, Pid}, {stop, _Reason}, Session) ->
+	nkmedia_api:session_stopped(SessId, Pid, Session),
+	{ok, Session};
+
+nkmedia_session_reg_event(_SessId, _Link, _Event, Session) ->
 	{ok, Session}.
 
 
@@ -267,18 +269,18 @@ nkmedia_session_stop(_Reason, Session) ->
 %% ===================================================================
 
 %% @private
-api_cmd(#api_req{class = <<"media">>}=Req, State) ->
-	#api_req{subclass=Sub, cmd=Cmd} = Req,
-	nkmedia_api:cmd(Sub, Cmd, Req, State);
+api_cmd(#api_req{class = <<"media">>, subclass = <<"session">>}=Req, State) ->
+	#api_req{cmd=Cmd} = Req,
+	nkmedia_api:cmd(Cmd, Req, State);
 
 api_cmd(_Req, _State) ->
 	continue.
 
 
 %% @private
-api_syntax(#api_req{class = <<"media">>}=Req, Syntax, Defaults, Mandatory) ->
-	#api_req{subclass=Sub, cmd=Cmd} = Req,
-	nkmedia_api_syntax:syntax(Sub, Cmd, Syntax, Defaults, Mandatory);
+api_syntax(#api_req{class = <<"media">>, subclass = <<"session">>, cmd=Cmd}, 
+		   Syntax, Defaults, Mandatory) ->
+	nkmedia_api_syntax:syntax(Cmd, Syntax, Defaults, Mandatory);
 	
 api_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
 	continue.
@@ -298,8 +300,12 @@ api_server_cmd(_Req, _State) ->
 
 
 %% @private
-api_server_reg_down(Link, Reason, State) ->
-	nkmedia_api:api_server_reg_down(Link, Reason, State).
+api_server_reg_down({nkmedia_session, SessId, _SessPid}, Reason, State) ->
+	nkmedia_api:api_session_down(SessId, Reason, State),
+	continue;
+
+api_server_reg_down(_Link, _Reason, _State) ->
+	continue.
 
 
 % %% @private
@@ -308,9 +314,9 @@ api_server_reg_down(Link, Reason, State) ->
 
 
 %% @private
-api_server_handle_info({'DOWN', Ref, process, _Pid, Reason}, State) ->
-	#{srv_id:=SrvId} = State,
-	nkmedia_api:handle_down(SrvId, Ref, Reason, State);
+% api_server_handle_info({'DOWN', Ref, process, _Pid, Reason}, State) ->
+% 	#{srv_id:=SrvId} = State,
+% 	nkmedia_api:handle_down(SrvId, Ref, Reason, State);
 
 api_server_handle_info(_Msg, _State) ->
 	continue.

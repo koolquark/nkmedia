@@ -85,7 +85,7 @@ init(_RoomId, Room) ->
                     {error, Error}
             end;
        error ->
-            {error, mediaserver_not_available}
+            {error, no_mediaserver}
     end.
 
 
