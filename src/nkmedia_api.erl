@@ -62,9 +62,9 @@ cmd(<<"create">>, Req, State) ->
 	nkservice_api_server:register(self(), {nkmedia_session, SessId, Pid}),
 	case maps:get(subscribe, Data, true) of
 		true ->
-			RegId = session_reg_id(SrvId, <<"*">>, SessId),
 			Body = maps:get(events_body, Data, #{}),
-			nkservice_api_server:register_events(self(), RegId, Body);
+			Event = get_session_event(SrvId, <<"*">>, SessId, Body),
+			nkservice_api_server:register_events(self(), Event, Body);
 		false ->
 			ok
 	end,
@@ -150,8 +150,7 @@ cmd(<<"get_info">>, #api_req{data=Data}, State) ->
 	#{session_id:=SessId} = Data,
 	case nkmedia_session:get_session(SessId) of
 		{ok, Session} ->
-			Keys = nkmedia_api_syntax:session_fields(),
-			Data2 = maps:with(Keys, Session),
+			Data2 = nkmedia_api_syntax:get_info(Session),
 			{ok, Data2, State};
 		{error, Error} ->
 			{error, Error, State}
@@ -177,8 +176,8 @@ cmd(Other, _Data, State) ->
 %% it receives the DOWN.
 session_stopped(SessId, Pid, Session) ->
 	#{srv_id:=SrvId} = Session,
-	RegId = session_reg_id(SrvId, <<"*">>, SessId),
-	nkservice_api_server:unregister_events(Pid, RegId),
+	Event = get_session_event(SrvId, <<"*">>, SessId, undefined),
+	nkservice_api_server:unregister_events(Pid, Event),
 	nkservice_api_server:unregister(Pid, {nkmedia_session, SessId, self()}),
 	{ok, Session}.
 
@@ -195,8 +194,8 @@ session_stopped(SessId, Pid, Session) ->
 api_session_down(SessId, Reason, State) ->
 	#{srv_id:=SrvId} = State,
 	lager:warning("API Server: Session ~s is down: ~p", [SessId, Reason]),
-	RegId = session_reg_id(SrvId, <<"*">>, SessId),
-	nkservice_api_server:unregister_events(self(), RegId),
+	Event = get_session_event(SrvId, <<"*">>, SessId, undefined),
+	nkservice_api_server:unregister_events(self(), Event),
 	nkmedia_api_events:session_down(SrvId, SessId).
 
 
@@ -233,13 +232,14 @@ get_create_reply(SessId, Config) ->
 
 
 %% @private
-session_reg_id(SrvId, Type, SessId) ->
-	#reg_id{
+get_session_event(SrvId, Type, SessId, Body) ->
+	#event{
 		srv_id = SrvId, 
 		class = <<"media">>, 
 		subclass = <<"session">>,
 		type = nklib_util:to_binary(Type),
-		obj_id = SessId
+		obj_id = SessId,
+		body = Body
 	}.
 
 

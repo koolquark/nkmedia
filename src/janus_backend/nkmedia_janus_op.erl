@@ -529,7 +529,7 @@ handle_cast({event, _Id, _Handle, #{<<"janus">>:=<<"slowlink">>}=Msg}, State) ->
     Nacks = maps:get(<<"nacks">>, Msg, 0), 
     UpLink = maps:get(<<"uplink">>, Msg, <<>>),
     #state{id=SessId} = State,
-    nkmedia_session:info(SessId, slow_link, #{nacks=>Nacks, uplink=>UpLink}),
+    nkmedia_session:send_info(SessId, slow_link, #{nacks=>Nacks, uplink=>UpLink}),
     % ?LLOG(notice, "Janus slowlink (nacks: ~p, uplink: ~p)", [Nacks, UpLink], State),
     {noreply, State};
 

@@ -178,7 +178,7 @@ api_cmd(_Req, _State) ->
     continue.
 
 
-%% @privat
+%% @private
 api_syntax(#api_req{class = <<"media">>, subclass = <<"room">>, cmd=Cmd}, 
            Syntax, Defaults, Mandatory) ->
     nkmedia_room_api_syntax:syntax(Cmd, Syntax, Defaults, Mandatory);
@@ -186,4 +186,9 @@ api_syntax(#api_req{class = <<"media">>, subclass = <<"room">>, cmd=Cmd},
 api_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
     continue.
 
+
+
+%% ===================================================================
+%% API Server
+%% ===================================================================
 

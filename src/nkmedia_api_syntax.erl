@@ -22,50 +22,13 @@
 
 -module(nkmedia_api_syntax).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([syntax/4, session_fields/0, offer/0, answer/0]).
+-export([syntax/4, offer/0, answer/0, get_info/1]).
 
 
 
 %% ===================================================================
 %% Syntax
 %% ===================================================================
-
-
-%% @private
-session_fields() ->
-	[
-		session_id, 
-		offer,
-		answer,
-		no_offer_trickle_ice,
-		no_answer_trickle_ice,
-		trickle_ice_timeout,
-		sdp_type,
-		backend,
-		master_id,
-		slave_id,
-		set_master_answer,
-		stop_after_peer,
-		wait_timeout,
-		ready_timeout,
-		user_id,
-		user_session,
-		backend_role,
-		type,
-		type_ext,
-
-		peer_id,
-		room_id,
-		create_room,
-		publisher_id,
-		layout,
-		loops,
-		uri,
-		mute_audio,
-        mute_video,
-        mute_data,
-        bitrate
-    ].
 
 
 %% @private
@@ -262,6 +225,47 @@ answer() ->
 
 
 
+%% ===================================================================
+%% Get info
+%% ===================================================================
+
+
+%% @private
+get_info(Session) ->
+	Keys = [
+		session_id, 
+		offer,
+		answer,
+		no_offer_trickle_ice,
+		no_answer_trickle_ice,
+		trickle_ice_timeout,
+		sdp_type,
+		backend,
+		master_id,
+		slave_id,
+		set_master_answer,
+		stop_after_peer,
+		wait_timeout,
+		ready_timeout,
+		user_id,
+		user_session,
+		backend_role,
+		type,
+		type_ext,
+
+		peer_id,
+		room_id,
+		create_room,
+		publisher_id,
+		layout,
+		loops,
+		uri,
+		mute_audio,
+        mute_video,
+        mute_data,
+        bitrate
+    ],
+    maps:with(Keys, Session).
 
 
 

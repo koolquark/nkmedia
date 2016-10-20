@@ -22,7 +22,7 @@
 -module(nkmedia_room_api_syntax).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([syntax/4]).
+-export([syntax/4, get_info/1]).
 
 % -include_lib("nkservice/include/nkservice.hrl").
 
@@ -68,5 +68,18 @@ syntax(<<"get_info">>, Syntax, Defaults, Mandatory) ->
 
 syntax(_Cmd, Syntax, Defaults, Mandatory) ->
     {Syntax, Defaults, Mandatory}.
+
+
+
+%% ===================================================================
+%% Keys
+%% ===================================================================
+
+
+get_info(Room) ->
+    Keys = [audio_codec, video_codec, bitrate, class, backend],
+    maps:with(Keys, Room).
+    
+
 
 

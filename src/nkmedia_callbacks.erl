@@ -34,15 +34,13 @@
 		 nkmedia_session_cmd/3, nkmedia_session_candidate/2]).
 -export([error_code/1]).
 -export([api_cmd/2, api_syntax/4]).
--export([api_server_cmd/2, api_server_reg_down/3, 
-	     api_server_handle_info/2]).
+-export([api_server_cmd/2, api_server_reg_down/3]).
 -export([nkdocker_notify/2]).
 
 -include("nkmedia.hrl").
 -include_lib("nkservice/include/nkservice.hrl").
 
 
--define(BASE_ERROR, 2000).
 
 %% ===================================================================
 %% Types
@@ -305,20 +303,6 @@ api_server_reg_down({nkmedia_session, SessId, _SessPid}, Reason, State) ->
 	continue;
 
 api_server_reg_down(_Link, _Reason, _State) ->
-	continue.
-
-
-% %% @private
-% api_server_handle_cast(Msg, State) ->
-% 	nkmedia_api:api_server_handle_cast(Msg, State).
-
-
-%% @private
-% api_server_handle_info({'DOWN', Ref, process, _Pid, Reason}, State) ->
-% 	#{srv_id:=SrvId} = State,
-% 	nkmedia_api:handle_down(SrvId, Ref, Reason, State);
-
-api_server_handle_info(_Msg, _State) ->
 	continue.
 
 

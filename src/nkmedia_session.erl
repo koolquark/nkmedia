@@ -25,7 +25,7 @@
 -behaviour(gen_server).
 
 -export([start/3, get_type/1, get_session/1, get_offer/1, get_answer/1]).
--export([set_answer/2, set_type/3, cmd/3, cmd_async/3, info/3]).
+-export([set_answer/2, set_type/3, cmd/3, cmd_async/3, send_info/3]).
 -export([stop/1, stop/2, stop_all/0]).
 -export([candidate/2]).
 -export([register/2, unregister/2]).
@@ -49,7 +49,7 @@
 -define(MAX_ICE_TIME, 5000).
 -define(MAX_CALL_TIME, 5000).
 
--define(DEBUG_MEDIA, false). 
+% -define(DEBUG_MEDIA, true). 
 
 
 %% ===================================================================
@@ -128,12 +128,13 @@
 -type info() :: atom().
 
 -type event() ::
+    created                                             |
     {offer, nkmedia:offer()}                            | 
     {answer, nkmedia:answer()}                          | 
     {type, atom(), map()}                               |
     {candidate, nkmedia:candidate()}                    |
     {info, info(), map()}                               |   % User info
-    {stop, nkservice:error()} .                          % Session is about to stop
+    {destroyed, nkservice:error()} .                        % Session is about to stop
 
 
 -type from() :: {pid(), term()}.
@@ -253,11 +254,11 @@ cmd_async(SessId, Cmd, Opts) ->
 
 
 %% @doc Sends an info to the sesison
--spec info(id(), info(), map()) ->
+-spec send_info(id(), info(), map()) ->
     ok | {error, nkservice:error()}.
 
-info(SessId, Info, Meta) when is_map(Meta) ->
-    do_cast(SessId, {info, Info, Meta}).
+send_info(SessId, Info, Meta) when is_map(Meta) ->
+    do_cast(SessId, {send_info, Info, Meta}).
 
 
 %% @doc Links this session to another. We are master, other is slave
@@ -418,7 +419,8 @@ init([#{session_id:=Id, type:=Type, srv_id:=SrvId}=Session]) ->
     ?LLOG(info, "starting (~p, ~p)", [Role, self()], State2),
     ?LLOG(info, "config: ~p", [maps:remove(offer, Session3)], State2),
     gen_server:cast(self(), do_start),
-    handle(nkmedia_session_init, [Id], State2).
+    {ok, State3} = handle(nkmedia_session_init, [Id], State2),
+    {ok, event(created, State3)}.
         
 
 %% @private
@@ -519,7 +521,7 @@ handle_cast({cmd, Cmd, Opts}, State) ->
     {_Reply, State2} = do_cmd(Cmd, Opts, State),
     noreply(State2);
 
-handle_cast({info, Info, Meta}, State) ->
+handle_cast({send_info, Info, Meta}, State) ->
     noreply(event({info, Info, Meta}, State));
 
 handle_cast({client_candidate, Candidate}, State) ->
@@ -658,7 +660,7 @@ terminate(Reason, State) ->
             Stop
     end,
     {ok, State2} = handle(nkmedia_session_stop, [Stop2], State),
-    State3 = event({stopped, Stop2}, State2),
+    State3 = event({destroyed, Stop2}, State2),
     {ok, _State4} = handle(nkmedia_session_terminate, [Reason], State3),
     timer:sleep(100),
     ok.

@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([start/2, stop/1, stop/2, get_room/1, get_info/1]).
+-export([start/2, stop/1, stop/2, get_room/1]).
 -export([started_member/3, started_member/4, stopped_member/2]).
 -export([info/3, restart_timer/1, register/2, unregister/2, get_all/0]).
 -export([get_all_with_role/2]).
@@ -83,11 +83,11 @@
 
 
 -type event() :: 
-    started |
-    {stopped, nkservice:error()} |
-    {started_member, session_id(), member_info()} |
-    {stopped_member, session_id(), member_info()} |
-    {info, info(), map()}.
+    {created, room()}                               |
+    {started_member, session_id(), member_info()}   |
+    {stopped_member, session_id(), member_info()}   |
+    {info, info(), map()}                           |
+    {destroyed, nkservice:error()}.
 
 
 %% ===================================================================
@@ -145,27 +145,6 @@ stop(Id, Reason) ->
 
 get_room(Id) ->
     do_call(Id, get_room).
-
-
-%% @doc
--spec get_info(id()) ->
-    {ok, room()} | {error, term()}.
-
-get_info(Id) ->
-    case get_room(Id) of
-        {ok, Room} ->
-            Keys = [
-                class, 
-                backend,
-                members, 
-                audio_codec, 
-                video_codec, 
-                bitrate
-            ],
-            {ok, maps:with(Keys, Room)};
-        {error, Error} ->
-            {error, Error}
-    end.
 
 
 %% @doc
@@ -263,12 +242,13 @@ init([#{srv_id:=SrvId, room_id:=RoomId}=Room]) ->
     true = nklib_proc:reg({?MODULE, RoomId}),
     Backend = maps:get(backend, Room, undefined),
     nklib_proc:put(?MODULE, {RoomId, Backend}),
+    Room2 = Room#{members=>#{}},
     State1 = #state{
         id = RoomId, 
         srv_id = SrvId, 
         backend = Backend,
         links = nklib_links:new(),
-        room = Room#{members=>#{}}
+        room = Room2
     },
     State2 = case Room of
         #{register:=Link} ->
@@ -278,7 +258,7 @@ init([#{srv_id:=SrvId, room_id:=RoomId}=Room]) ->
             State1
     end,
     ?LLOG(notice, "started", [], State2),
-    State3 = do_event(started, State2),
+    State3 = do_event({created, Room2}, State2),
     {ok, do_restart_timer(State3)}.
 
 
@@ -381,7 +361,7 @@ terminate(Reason, #state{stop_reason=Stop}=State) ->
         _ ->
             Stop
     end,
-    State2 = do_event({stopped, Stop2}, State),
+    State2 = do_event({destroyed, Stop2}, State),
     {ok, _State3} = handle(nkmedia_room_terminate, [Reason], State2),
     % Allow events
     timer:sleep(100),

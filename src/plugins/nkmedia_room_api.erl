@@ -53,9 +53,9 @@ cmd(<<"get_list">>, _Req, State) ->
     {ok, Ids, State};
 
 cmd(<<"get_info">>, #api_req{data=#{room_id:=RoomId}}, State) ->
-    case nkmedia_room:get_info(RoomId) of
-        {ok, Info} ->
-            {ok, Info, State};
+    case nkmedia_room:get_room(RoomId) of
+        {ok, Room} ->
+            {ok, nkmedia_room_api_syntax:get_info(Room), State};
         {error, Error} ->
             {error, Error, State}
     end;
