@@ -517,12 +517,20 @@ handle_cast({event, _Id, _Handle, #{<<"janus">>:=<<"hangup">>}=Msg}, State) ->
     {stop, normal, State};
 
 handle_cast({event, _Id, _Handle, #{<<"janus">>:=<<"webrtcup">>}}, State) ->
-    ?LLOG(info, "WEBRTC UP", [], State),
+    #state{id=SessId} = State,
+    nkmedia_session:send_info(SessId, webrtc, #{status=>up}),
     {noreply, State};
 
 handle_cast({event, _Id, _Handle, #{<<"janus">>:=<<"media">>}=Msg}, State) ->
+    #state{id=SessId} = State,
     #{<<"type">>:=Type, <<"receiving">>:=Bool} = Msg,
-    ?LLOG(info, "WEBRTC Media ~s: ~s", [Type, Bool], State),
+    % ?LLOG(warning, "Media ~s: ~s", [Type, Bool], State),
+    Status = case Bool of
+        <<"true">> -> up;
+        <<"false">> -> down
+    end,
+    Body = #{media => nklib_util:to_existing_atom(Type), status=>Status},
+    nkmedia_session:send_info(SessId, media, Body),
     {noreply, State};
 
 handle_cast({event, _Id, _Handle, #{<<"janus">>:=<<"slowlink">>}=Msg}, State) ->
