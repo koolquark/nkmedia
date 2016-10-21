@@ -64,7 +64,7 @@ cmd(<<"create">>, Req, State) ->
 		true ->
 			Body = maps:get(events_body, Data, #{}),
 			Event = get_session_event(SrvId, <<"*">>, SessId, Body),
-			nkservice_api_server:register_events(self(), Event, Body);
+			nkservice_api_server:register_event(self(), Event, Body);
 		false ->
 			ok
 	end,
@@ -177,7 +177,7 @@ cmd(Other, _Data, State) ->
 session_stopped(SessId, Pid, Session) ->
 	#{srv_id:=SrvId} = Session,
 	Event = get_session_event(SrvId, <<"*">>, SessId, undefined),
-	nkservice_api_server:unregister_events(Pid, Event),
+	nkservice_api_server:unregister_event(Pid, Event),
 	nkservice_api_server:unregister(Pid, {nkmedia_session, SessId, self()}),
 	{ok, Session}.
 
@@ -195,7 +195,7 @@ api_session_down(SessId, Reason, State) ->
 	#{srv_id:=SrvId} = State,
 	lager:warning("API Server: Session ~s is down: ~p", [SessId, Reason]),
 	Event = get_session_event(SrvId, <<"*">>, SessId, undefined),
-	nkservice_api_server:unregister_events(self(), Event),
+	nkservice_api_server:unregister_event(self(), Event),
 	nkmedia_api_events:session_down(SrvId, SessId).
 
 
