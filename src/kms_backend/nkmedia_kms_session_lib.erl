@@ -956,7 +956,8 @@ print_event(SessId, <<"MediaFlowOutStateChange">>, Data) ->
         <<"FLOWING">> -> up;
         <<"NOT FLOWING">> -> down
     end,
-    nkmedia_session:send_info(SessId, media, #{media=>Media, status=>Flowing});
+    Body = #{direction=>out, media=>Media, status=>Flowing},
+    nkmedia_session:send_info(SessId, media, Body);
 
 print_event(SessId, <<"MediaFlowInStateChange">>, Data) ->
     #{
@@ -964,7 +965,18 @@ print_event(SessId, <<"MediaFlowInStateChange">>, Data) ->
         <<"padName">> := _Pad,
         <<"state">> := State
     }  = Data,
-    ?LLOG(info, "event media in out state change (~s: ~s)", [Type, State], SessId);    
+    % ?LLOG(info, "event media in out state change (~s: ~s)", [Type, State], SessId), 
+    Media = case Type of
+        <<"AUDIO">> -> audio;
+        <<"VIDEO">> -> video;
+        <<"DATA">> -> data
+    end,
+    Flowing = case State of
+        <<"FLOWING">> -> up;
+        <<"NOT FLOWING">> -> down
+    end,
+    Body = #{direction=>in, media=>Media, status=>Flowing},
+    nkmedia_session:send_info(SessId, media, Body);
 
 print_event(SessId, <<"MediaStateChanged">>, Data) ->
     #{
