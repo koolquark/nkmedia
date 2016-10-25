@@ -30,7 +30,7 @@
          nkmedia_session_offer/4, nkmedia_session_answer/4, nkmedia_session_cmd/3, 
          nkmedia_session_candidate/2,
          nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2]).
--export([nkmedia_room_init/2, nkmedia_room_terminate/2, nkmedia_room_tick/2]).
+-export([nkmedia_room_init/2, nkmedia_room_terminate/2, nkmedia_room_timeout/2]).
 -export([api_cmd/2, api_syntax/4]).
 -export([nkdocker_notify/2]).
 
@@ -219,10 +219,10 @@ nkmedia_room_terminate(_Reason, Room) ->
 
 
 %% @private
-nkmedia_room_tick(RoomId, #{nkmedia_kms_id:=_}=Room) ->
-    nkmedia_kms_room:tick(RoomId, Room);
+nkmedia_room_timeout(RoomId, #{nkmedia_kms_id:=_}=Room) ->
+    nkmedia_kms_room:timeout(RoomId, Room);
 
-nkmedia_room_tick(_RoomId, _Room) ->
+nkmedia_room_timeout(_RoomId, _Room) ->
     continue.
 
 

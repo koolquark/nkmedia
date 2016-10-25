@@ -22,7 +22,7 @@
 -module(nkmedia_kms_room).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([init/2, terminate/2, tick/2]).
+-export([init/2, terminate/2, timeout/2]).
 
 -define(LLOG(Type, Txt, Args, Room),
     lager:Type("NkMEDIA Kms Room ~s "++Txt, [maps:get(room_id, Room) | Args])).
@@ -82,17 +82,16 @@ terminate(_Reason, Room) ->
 
 
 %% @private
--spec tick(room_id(), room()) ->
+-spec timeout(room_id(), room()) ->
     {ok, room()} | {stop, nkservice:error(), room()}.
 
-tick(_RoomId, Room) ->
+timeout(_RoomId, Room) ->
     case length(nkmedia_room:get_all_with_role(publisher, Room)) of
         0 ->
-            nkmedia_room:stop(self(), timeout);
+            {stop, timeout, Room};
         _ ->
-            ok
-    end,
-    {ok, Room}.
+            {ok, Room}
+    end.
 
 
 
