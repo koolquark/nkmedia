@@ -252,6 +252,7 @@ get_info(Session) ->
 		backend_role,
 		type,
 		type_ext,
+		status,
 
 		peer_id,
 		room_id,

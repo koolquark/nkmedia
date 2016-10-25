@@ -50,6 +50,9 @@ event(RoomId, {started_member, SessId, Info}, Room) ->
 event(RoomId, {stopped_member, SessId, Info}, Room) ->
     send_event(RoomId, stopped_member, Info#{session_id=>SessId}, Room);
 
+event(SessId, {status, Class, Data}, Session) ->
+    send_event(SessId, status, Data#{class=>Class}, Session);
+
 event(RoomId, {info, Info, Meta}, Room) ->
     send_event(RoomId, info, Meta#{info=>Info}, Room);
 

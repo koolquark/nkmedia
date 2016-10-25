@@ -25,7 +25,7 @@
 -behaviour(gen_server).
 
 -export([start/3, get_type/1, get_session/1, get_offer/1, get_answer/1]).
--export([set_answer/2, set_type/3, cmd/3, cmd_async/3, send_info/3]).
+-export([set_answer/2, set_type/3, cmd/3, cmd_async/3, send_info/3, set_status/3]).
 -export([stop/1, stop/2, stop_all/0]).
 -export([candidate/2]).
 -export([register/2, unregister/2]).
@@ -117,6 +117,7 @@
         type => type(),
         type_ext => type_ext(),
         slave_id => id(),
+        status => map(),
         call_id => binary(),                        % Used by nkcollab_call
         record_pos => integer(),                    % Record position
         player_loops => boolean() |integer()
@@ -133,6 +134,7 @@
     {answer, nkmedia:answer()}                          | 
     {type, atom(), map()}                               |
     {candidate, nkmedia:candidate()}                    |
+    {status, atom(), map()}                             |
     {info, info(), map()}                               |   % User info
     {destroyed, nkservice:error()} .                        % Session is about to stop
 
@@ -251,6 +253,14 @@ cmd(SessId, Cmd, Opts) ->
 
 cmd_async(SessId, Cmd, Opts) ->
     do_cast(SessId, {cmd, Cmd, Opts}).
+
+
+%% @doc Sends an info to the sesison
+-spec set_status(id(), atom(), map()) ->
+    ok | {error, nkservice:error()}.
+
+set_status(SessId, Class, Data) ->
+    do_cast(SessId, {set_status, Class, Data}).
 
 
 %% @doc Sends an info to the sesison
@@ -395,7 +405,8 @@ init([#{session_id:=Id, type:=Type, srv_id:=SrvId}=Session]) ->
         backend_role => Role,       
         type => Type,
         type_ext => #{},
-        start_time => nklib_util:l_timestamp()
+        start_time => nklib_util:l_timestamp(),
+        status => #{}
     },
     Session3 = case Type of
         p2p -> Session2#{backend=>p2p};
@@ -520,6 +531,12 @@ handle_cast({set_type, Type, TypeExt}, #state{session=Session}=State) ->
 handle_cast({cmd, Cmd, Opts}, State) ->
     {_Reply, State2} = do_cmd(Cmd, Opts, State),
     noreply(State2);
+
+handle_cast({set_status, Class, Data}, #state{session=Session}=State) ->
+    Status1 = maps:get(status, Session),
+    Status2 = maps:put(Class, Data, Status1),
+    State2 = add_to_session(status, Status2, State),
+    {noreply, event({status, Class, Data}, State2)};
 
 handle_cast({send_info, Info, Meta}, State) ->
     noreply(event({info, Info, Meta}, State));

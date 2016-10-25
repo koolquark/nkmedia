@@ -57,6 +57,9 @@ event(SessId, {candidate, #candidate{a_line=Line, m_id=Id, m_index=Index}}, Sess
     Data = #{sdpMid=>Id, sdpMLineIndex=>Index, candidate=>Line},
     do_send_event(SessId, candidate, Data, Session);
 
+event(SessId, {status, Class, Data}, Session) ->
+    do_send_event(SessId, status, Data#{class=>Class}, Session);
+
 event(SessId, {info, Info, Meta}, Session) ->
     do_send_event(SessId, info, Meta#{info=>Info}, Session);
 

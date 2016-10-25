@@ -37,6 +37,7 @@ syntax(<<"create">>, Syntax, Defaults, Mandatory) ->
             class => atom,
             room_id => binary,
             backend => atom,
+            timeout => {integer, 5, 3*24*60*60},
             bitrate => {integer, 0, none},
             audio_codec => {enum, [opus, isac32, isac16, pcmu, pcma]},
             video_codec => {enum , [vp8, vp9, h264]}
@@ -77,7 +78,7 @@ syntax(_Cmd, Syntax, Defaults, Mandatory) ->
 
 
 get_info(Room) ->
-    Keys = [audio_codec, video_codec, bitrate, class, backend],
+    Keys = [audio_codec, video_codec, bitrate, class, backend, status],
     maps:with(Keys, Room).
     
 

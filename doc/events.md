@@ -44,6 +44,7 @@ answer|`{answer: ...}`|Fired when a session has an answer available
 type|{`type: ..., ...}`|The session type has been updated
 candidate|`{sdpMid: .., sdpMLineIndex: ..., candidate: ...}`|A new _trickle ICE_ candidate is available
 candidate_end|`{}`|No more _trickle ICE_ candidates arte available
+status|`{...}`|Some session-specific status is fired
 info|`{...}`|Some user-specific event is fired
 destroyed|`{code: Code, reason: Reason}`|The session has been stopped
 

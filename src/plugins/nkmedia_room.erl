@@ -25,7 +25,8 @@
 
 -export([start/2, stop/1, stop/2, get_room/1]).
 -export([started_member/3, started_member/4, stopped_member/2]).
--export([info/3, restart_timer/1, register/2, unregister/2, get_all/0]).
+-export([send_info/3, set_status/3]).
+-export([restart_timer/1, register/2, unregister/2, get_all/0]).
 -export([get_all_with_role/2]).
 -export([find/1, do_call/2, do_call/3, do_cast/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
@@ -57,10 +58,11 @@
     #{
         class => atom(),                    % sfu | mcu
         backend => nkmedia:backend(),
+        timeout => integer(),               % secs
+        register => nklib:link(),    
         audio_codec => opus | isac32 | isac16 | pcmu | pcma,    % info only
         video_codec => vp8 | vp9 | h264,                        % "
-        bitrate => integer(),                                   % "
-        register => nklib:link()
+        bitrate => integer()
     }.
 
 -type room() ::
@@ -68,7 +70,8 @@
     #{
         room_id => id(),
         srv_id => nkservice:id(),
-        members => #{session_id() => member_info()}
+        members => #{session_id() => member_info()},
+        status => map()
     }.
 
 -type member_info() ::
@@ -86,6 +89,7 @@
     {created, room()}                               |
     {started_member, session_id(), member_info()}   |
     {stopped_member, session_id(), member_info()}   |
+    {status, map(), map()}                          |
     {info, info(), map()}                           |
     {destroyed, nkservice:error()}.
 
@@ -172,10 +176,18 @@ stopped_member(RoomId, SessId) ->
 
 
 %% @private
--spec info(id(), info(), map()) ->
+-spec set_status(id(), atom(), map()) ->
     ok | {error, term()}.
 
-info(Id, Info, Meta) when is_map(Meta) ->
+set_status(Id, Class, Data) when is_map(Data) ->
+    do_cast(Id, {set_status, Class, Data}).
+
+
+%% @private
+-spec send_info(id(), info(), map()) ->
+    ok | {error, term()}.
+
+send_info(Id, Info, Meta) when is_map(Meta) ->
     do_cast(Id, {info, Info, Meta}).
 
 
@@ -242,7 +254,7 @@ init([#{srv_id:=SrvId, room_id:=RoomId}=Room]) ->
     true = nklib_proc:reg({?MODULE, RoomId}),
     Backend = maps:get(backend, Room, undefined),
     nklib_proc:put(?MODULE, {RoomId, Backend}),
-    Room2 = Room#{members=>#{}},
+    Room2 = Room#{members=>#{}, status=>#{}},
     State1 = #state{
         id = RoomId, 
         srv_id = SrvId, 
@@ -283,16 +295,26 @@ handle_call(Msg, From, State) ->
 
 %% @private
 handle_cast({started_member, SessId, Info, Pid}, State) ->
-    {noreply, do_started_member(SessId, Info, Pid, State)};
+    State2 = do_restart_timer(State),
+    {noreply, do_started_member(SessId, Info, Pid, State2)};
 
 handle_cast({stopped_member, SessId}, State) ->
-    {noreply, do_stopped_member(SessId, State)};
+    State2 = do_restart_timer(State),
+    {noreply, do_stopped_member(SessId, State2)};
 
 handle_cast(restart_timer, State) ->
     {noreply, do_restart_timer(State)};
 
-handle_cast({info, Info, Meta}, State) ->
-    {noreply, do_event({info, Info, Meta}, State)};
+handle_cast({set_status, Class, Data}, #state{room=Room}=State) ->
+    State2 = do_restart_timer(State),
+    Status1 = maps:get(status, Room),
+    Status2 = maps:put(Class, Data, Status1),
+    State3 = State2#state{room=?ROOM(#{status=>Status2}, Room)},
+    {noreply, do_event({status, Class, Data}, State3)};
+
+handle_cast({send_info, Info, Meta}, State) ->
+    State2 = do_restart_timer(State),
+    {noreply, do_event({info, Info, Meta}, State2)};
 
 handle_cast({register, Link}, State) ->
     ?LLOG(info, "proc registered (~p)", [Link], State),
@@ -315,8 +337,8 @@ handle_cast(Msg, State) ->
 -spec handle_info(term(), #state{}) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
-handle_info(room_tick, #state{id=RoomId}=State) ->
-    case handle(nkmedia_room_tick, [RoomId], State) of
+handle_info(room_timeout, #state{id=RoomId}=State) ->
+    case handle(nkmedia_room_timeout, [RoomId], State) of
         {ok, State2} ->
             {noreply, do_restart_timer(State2)};
         {stop, Reason, State2} ->
@@ -532,8 +554,8 @@ links_fold(Fun, Acc, #state{links=Links}) ->
 
 
 %% @private
-do_restart_timer(#state{timer=Timer}=State) ->
+do_restart_timer(#state{timer=Timer, room=Room}=State) ->
     nklib_util:cancel_timer(Timer),
-    Time = 1000 * ?CHECK_TIME,
-    State#state{timer=erlang:send_after(Time, self(), room_tick)}.
+    Time = 1000 * maps:get(timeout, Room, ?CHECK_TIME),
+    State#state{timer=erlang:send_after(Time, self(), room_timeout)}.
 
