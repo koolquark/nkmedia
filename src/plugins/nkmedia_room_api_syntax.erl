@@ -78,7 +78,7 @@ syntax(_Cmd, Syntax, Defaults, Mandatory) ->
 
 
 get_info(Room) ->
-    Keys = [audio_codec, video_codec, bitrate, class, backend, status],
+    Keys = [audio_codec, video_codec, bitrate, class, backend, members, status],
     maps:with(Keys, Room).
     
 
