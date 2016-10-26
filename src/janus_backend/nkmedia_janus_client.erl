@@ -37,11 +37,12 @@
     lager:Type("NkMEDIA Janus Client (~p) "++Txt, [self()|Args])).
 
 -define(PRINT(Txt, Args, State), 
-        % print(Txt, Args, State),    % Comment this
+        print(Txt, Args, State),    % Comment this
         ok).
 
 
--define(OP_TIME, 5*60*1000).    % Maximum operation time
+% -define(OP_TIME, 5*60*1000).    % Maximum operation time
+-define(OP_TIME, 5*1000).    % Maximum operation time
 -define(CALL_TIMEOUT, 5*60*1000).
 -define(CODECS, [opus,vp8,speex,iLBC,'GSM','PCMU','PCMA']).
 
@@ -373,9 +374,9 @@ conn_handle_cast(Msg, NkPort, State) ->
 
 conn_handle_info({timeout, _, {op_timeout, OpId}}, _NkPort, State) ->
     case extract_op(OpId, State) of
-        {#trans{req={candidate, _, _, _}}, State2} ->
-            % Candidates are sometimes? not replied by Janus...
-            {ok, State2};
+        % {#trans{req={candidate, _, _, _}}, State2} ->
+        %     % Candidates are sometimes? not replied by Janus...
+        %     {ok, State2};
         {#trans{from=From, req=Req}, State2} ->
             nklib_util:reply(From, {error, timeout}),
             ?LLOG(warning, "operation timeout: ~p", [Req], State),
@@ -671,7 +672,7 @@ print(Txt, [#{jsep:=Jsep}=Msg], State) ->
 print(Txt, [#{}=Map], State) ->
     print(Txt, [nklib_json:encode_pretty(Map)], State);
 print(Txt, Args, _State) ->
-    ?LLOG(info, Txt, Args, _State).
+    ?LLOG(notice, Txt, Args, _State).
 
 
 

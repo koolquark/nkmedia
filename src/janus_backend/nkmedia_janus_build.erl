@@ -343,11 +343,11 @@ cert_key = /usr/local/share/janus/certs/mycert.key
 ;force-rtcp-mux = true              ; Default false
 
 [nat]
-stun_server = stun.voip.eutelia.it
-stun_port = 3478
-nice_debug = true
-ice_lite = false
-ice_tcp = true
+;stun_server = stun.voip.eutelia.it
+;stun_port = 3478
+nice_debug = false
+;ice_lite = false
+;ice_tcp = false
 nat_1_1_mapping = $EXT_IP          ; All host candidates will have (only) this
 ;turn_server = myturnserver.com
 ;turn_port = 3478
