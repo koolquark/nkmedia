@@ -37,7 +37,7 @@
     lager:Type("NkMEDIA Janus Client (~p) "++Txt, [self()|Args])).
 
 -define(PRINT(Txt, Args, State), 
-        print(Txt, Args, State),    % Comment this
+        % print(Txt, Args, State),    % Comment this
         ok).
 
 
