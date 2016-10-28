@@ -383,9 +383,11 @@ terminate(Reason, #state{stop_reason=Stop}=State) ->
         _ ->
             Stop
     end,
+    timer:sleep(100),
+    % Give time for registrations to success
     State2 = do_event({destroyed, Stop2}, State),
     {ok, _State3} = handle(nkmedia_room_terminate, [Reason], State2),
-    % Allow events
+    % Wait to receive events before receiving DOWN
     timer:sleep(100),
     ok.
 

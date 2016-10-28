@@ -25,6 +25,7 @@
 -module(nkmedia_janus_session).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
+-export([set_status/4]).
 -export([start/3, offer/4, answer/4, candidate/2, cmd/3, stop/2]).
 -export([handle_call/3, handle_cast/2]).
 
@@ -77,6 +78,19 @@
     nkmedia_session:cmd() |
     {listener_switch, binary()}.
 
+
+
+
+%% ===================================================================
+%% External
+%% ===================================================================
+
+%% Called from nkmedia_janus_op
+set_status(SessId, caller, Status, Data) ->
+    nkmedia_session:set_status(SessId, Status, Data);
+
+set_status(SessId, callee, Status, Data) ->
+    session_cast(SessId, {callee_status, Status, Data}).
 
 
 
@@ -322,8 +336,16 @@ handle_cast({proxy_candidate, Candidate}, #{nkmedia_janus_pid:=Pid}=Session) ->
         _ ->
             nkmedia_janus_op:candidate(Pid, Candidate)
     end,
-    {noreply, Session}.
+    {noreply, Session};
 
+handle_cast({callee_status, Status, Data}, Session) ->
+    case Session of
+        #{type:=bridge, type_ext:=#{peer_id:=PeerId}} ->
+            nkmedia_session:set_status(PeerId, Status, Data);
+        _ ->
+            ?LLOG(warning, "received unexpected callee_status", [], Session)
+    end,
+    {noreply, Session}.
 
 
 %% ===================================================================

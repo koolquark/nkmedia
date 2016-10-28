@@ -516,13 +516,19 @@ handle_cast({event, _Id, _Handle, #{<<"janus">>:=<<"hangup">>}=Msg}, State) ->
     ?LLOG(info, "hangup from janus (~s)", [Reason], State),
     {stop, normal, State};
 
-handle_cast({event, _Id, _Handle, #{<<"janus">>:=<<"webrtcup">>}}, State) ->
-    #state{id=SessId} = State,
-    nkmedia_session:set_status(SessId, webrtc, #{status=>up}),
+handle_cast({event, _Id, Handle, #{<<"janus">>:=<<"webrtcup">>}}, State) ->
+    Side = case State of
+        #state{handle_id=Handle, id=SessId} -> caller;
+        #state{handle_id2=Handle, id=SessId} -> callee
+    end,
+    nkmedia_janus_session:set_status(SessId, Side, webrtc, #{status=>up}),
     {noreply, State};
 
-handle_cast({event, _Id, _Handle, #{<<"janus">>:=<<"media">>}=Msg}, State) ->
-    #state{id=SessId} = State,
+handle_cast({event, _Id, Handle, #{<<"janus">>:=<<"media">>}=Msg}, State) ->
+    Side = case State of
+        #state{handle_id=Handle, id=SessId} -> caller;
+        #state{handle_id2=Handle, id=SessId} -> callee
+    end,
     #{<<"type">>:=Type, <<"receiving">>:=Bool} = Msg,
     % ?LLOG(warning, "Media ~s: ~s", [Type, Bool], State),
     Status = case Bool of
@@ -530,14 +536,18 @@ handle_cast({event, _Id, _Handle, #{<<"janus">>:=<<"media">>}=Msg}, State) ->
         <<"false">> -> down
     end,
     Body = #{media => nklib_util:to_existing_atom(Type), status=>Status},
-    nkmedia_session:set_status(SessId, media, Body),
+    nkmedia_janus_session:set_status(SessId, Side, media, Body),
     {noreply, State};
 
-handle_cast({event, _Id, _Handle, #{<<"janus">>:=<<"slowlink">>}=Msg}, State) ->
+handle_cast({event, _Id, Handle, #{<<"janus">>:=<<"slowlink">>}=Msg}, State) ->
+    Side = case State of
+        #state{handle_id=Handle, id=SessId} -> caller;
+        #state{handle_id2=Handle, id=SessId} -> callee
+    end,
     Nacks = maps:get(<<"nacks">>, Msg, 0), 
     UpLink = maps:get(<<"uplink">>, Msg, <<>>),
-    #state{id=SessId} = State,
-    nkmedia_session:set_status(SessId, slow_link, #{nacks=>Nacks, uplink=>UpLink}),
+    Body = #{nacks=>Nacks, uplink=>UpLink},
+    nkmedia_janus_session:set_status(SessId, Side, slow_link, Body),
     % ?LLOG(notice, "Janus slowlink (nacks: ~p, uplink: ~p)", [Nacks, UpLink], State),
     {noreply, State};
 

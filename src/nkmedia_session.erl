@@ -676,9 +676,12 @@ terminate(Reason, State) ->
         _ ->
             Stop
     end,
+    % Give time for registrations to success
+    timer:sleep(100),
     {ok, State2} = handle(nkmedia_session_stop, [Stop2], State),
     State3 = event({destroyed, Stop2}, State2),
     {ok, _State4} = handle(nkmedia_session_terminate, [Reason], State3),
+    % Wait to receive events events before receiving DOWN
     timer:sleep(100),
     ok.
 

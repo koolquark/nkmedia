@@ -44,11 +44,9 @@
 
 %% Create a session from the API
 %% We create the session linked with the API server process
-%% - we capture the stop event and remove it from the API session, 
-%%   in nkmedia_session_reg_event() here and stop if it fails
-%% - if the session is killed, it is detected in api_server_reg_down
-%% We then register the session at the API server
-%% (if the session fails, we print an error)
+%% - we capture the destroy event (nkmedia_session_reg_event() -> session_stopped() here)
+%% - if the session is killed, it is detected in 
+%%   api_server_reg_down() -> api_session_down() here
 %% It also subscribes the API session to events
 cmd(<<"create">>, Req, State) ->
 	#api_req{srv_id=SrvId, data=Data, user=User, session=UserSession} = Req,
@@ -63,8 +61,8 @@ cmd(<<"create">>, Req, State) ->
 	case maps:get(subscribe, Data, true) of
 		true ->
 			Body = maps:get(events_body, Data, #{}),
-			Event = get_session_event(SrvId, <<"*">>, SessId, Body),
-			nkservice_api_server:register_event(self(), Event, Body);
+			Event = get_session_event(SrvId, SessId, Body),
+			nkservice_api_server:register_event(self(), Event);
 		false ->
 			ok
 	end,
@@ -174,11 +172,11 @@ cmd(Other, _Data, State) ->
 %% @private Sent by the session when it is stopping
 %% We sent a message to the API session to remove the session before 
 %% it receives the DOWN.
-session_stopped(SessId, Pid, Session) ->
+session_stopped(SessId, ApiPid, Session) ->
 	#{srv_id:=SrvId} = Session,
-	Event = get_session_event(SrvId, <<"*">>, SessId, undefined),
-	nkservice_api_server:unregister_event(Pid, Event),
-	nkservice_api_server:unregister(Pid, {nkmedia_session, SessId, self()}),
+	Event = get_session_event(SrvId, SessId, undefined),
+	nkservice_api_server:unregister_event(ApiPid, Event),
+	nkservice_api_server:unregister(ApiPid, {nkmedia_session, SessId, self()}),
 	{ok, Session}.
 
 
@@ -194,7 +192,7 @@ session_stopped(SessId, Pid, Session) ->
 api_session_down(SessId, Reason, State) ->
 	#{srv_id:=SrvId} = State,
 	lager:warning("API Server: Session ~s is down: ~p", [SessId, Reason]),
-	Event = get_session_event(SrvId, <<"*">>, SessId, undefined),
+	Event = get_session_event(SrvId, SessId, undefined),
 	nkservice_api_server:unregister_event(self(), Event),
 	nkmedia_api_events:session_down(SrvId, SessId).
 
@@ -232,12 +230,12 @@ get_create_reply(SessId, Config) ->
 
 
 %% @private
-get_session_event(SrvId, Type, SessId, Body) ->
+get_session_event(SrvId, SessId, Body) ->
 	#event{
 		srv_id = SrvId, 
 		class = <<"media">>, 
 		subclass = <<"session">>,
-		type = nklib_util:to_binary(Type),
+		type = <<"*">>,
 		obj_id = SessId,
 		body = Body
 	}.

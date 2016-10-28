@@ -83,9 +83,9 @@ plugin_stop(Config, #{name:=Name}) ->
 
 error_code(no_mediaserver) 			-> 	{300001, "No mediaserver available"};
 error_code(different_mediaserver) 	-> 	{300002, "Different mediaserver"};
-error_code(session_failed) 			-> 	{300003, "Session has failed"};
-error_code(incompatible_session)    -> 	{300004, "Incompatible session"};
-error_code(call_stopped)            ->  {300005, "Call stopped"};
+error_code(unknown_backend)         ->  {300003, "Unknown backend"};
+error_code(session_failed) 			-> 	{300004, "Session has failed"};
+error_code(incompatible_session)    -> 	{300005, "Incompatible session"};
 
 error_code(offer_not_set) 			-> 	{300010, "Offer not set"};
 error_code(offer_already_set) 		-> 	{300011, "Offer already set"};
