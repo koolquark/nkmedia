@@ -23,7 +23,8 @@
 -module(nkmedia_api_events).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([event/3, send_event/5, send_event/6]).
+-export([event/3, session_down/2]).
+-export([send_event/5, send_event/6]).
 
 -include_lib("nkservice/include/nkservice.hrl").
 -include_lib("nksip/include/nksip.hrl").
@@ -39,6 +40,10 @@
             nkmedia_session:session()) ->
 	{ok, nkmedia_session:session()}.
 
+event(SessId, created, Session) ->
+    Data = nkmedia_api_syntax:get_info(Session),
+    do_send_event(SessId, created, Data, Session);
+
 event(SessId, {answer, Answer}, Session) ->
     do_send_event(SessId, answer, #{answer=>Answer}, Session);
 
@@ -52,15 +57,29 @@ event(SessId, {candidate, #candidate{a_line=Line, m_id=Id, m_index=Index}}, Sess
     Data = #{sdpMid=>Id, sdpMLineIndex=>Index, candidate=>Line},
     do_send_event(SessId, candidate, Data, Session);
 
-event(SessId, {info, Info}, Session) ->
-    do_send_event(SessId, info, #{info=>Info}, Session);
+event(SessId, {status, Class, Data}, Session) ->
+    do_send_event(SessId, status, Data#{class=>Class}, Session);
 
-event(SessId, {stop, Reason}, #{srv_id:=SrvId}=Session) ->
+event(SessId, {info, Info, Meta}, Session) ->
+    do_send_event(SessId, info, Meta#{info=>Info}, Session);
+
+event(SessId, {destroyed, Reason}, #{srv_id:=SrvId}=Session) ->
     {Code, Txt} = nkservice_util:error_code(SrvId, Reason),
     do_send_event(SessId, destroyed, #{code=>Code, reason=>Txt}, Session);
 
 event(_SessId, _Event, Session) ->
     {ok, Session}.
+
+
+
+%% @private
+-spec session_down(nkservice:id(), nkmedia_session:id()) ->
+    ok.
+
+session_down(SrvId, SessId) ->
+    {Code, Txt} = nkservice_util:error_code(SrvId, process_down),
+    send_event(SrvId, session, SessId, destroyed, #{code=>Code, reason=>Txt}).
+
 
 
 %% ===================================================================
@@ -72,7 +91,7 @@ event(_SessId, _Event, Session) ->
     ok.
 
 send_event(SrvId, Class, Id, Type, Body) ->
-    send_event(SrvId, Class, Id, Type, Body, all).
+    send_event(SrvId, Class, Id, Type, Body, undefined).
 
 
 %% @doc Sends an event
@@ -80,15 +99,17 @@ send_event(SrvId, Class, Id, Type, Body) ->
     ok.
 
 send_event(SrvId, Class, Id, Type, Body, Pid) ->
-    lager:notice("MEDIA EVENT (~s:~s:~s): ~p", [Class, Type, Id, Body]),
-    RegId = #reg_id{
+    lager:info("MEDIA EVENT (~s:~s:~s): ~p", [Class, Type, Id, Body]),
+    Event = #event{
         srv_id = SrvId,     
         class = <<"media">>, 
         subclass = nklib_util:to_binary(Class),
         type = nklib_util:to_binary(Type),
-        obj_id = Id
+        obj_id = Id,
+        body = Body,
+        pid = Pid
     },
-    nkservice_events:send(RegId, Body, Pid).
+    nkservice_events:send(Event).
 
 
 %% @private

@@ -930,10 +930,15 @@ print_event(SessId, <<"NewCandidatePairSelected">>, Data) ->
 
 print_event(SessId, <<"ConnectionStateChanged">>, Data) ->
     #{
-        <<"newState">> := New,
-        <<"oldState">> := Old
+        <<"oldState">> := _Old,
+        <<"newState">> := New
     } = Data,
-    ?LLOG(info, "event connection state changed (~s -> ~s)", [Old, New], SessId);
+    % ?LLOG(info, "event connection state changed (~s -> ~s)", [Old, New], SessId),
+    Status = case New of
+        <<"CONNECTED">> -> up;
+        <<"DISCONNECTED">> -> down
+    end,
+    nkmedia_session:send_info(SessId, webrtc, #{status=>Status});
 
 print_event(SessId, <<"MediaFlowOutStateChange">>, Data) ->
     #{
@@ -941,7 +946,18 @@ print_event(SessId, <<"MediaFlowOutStateChange">>, Data) ->
         <<"padName">> := _Pad,
         <<"state">> := State
     }  = Data,
-    ?LLOG(info, "event media flow out state change (~s: ~s)", [Type, State], SessId);
+    % ?LLOG(info, "event media flow out state change (~s: ~s)", [Type, State], SessId),
+    Media = case Type of
+        <<"AUDIO">> -> audio;
+        <<"VIDEO">> -> video;
+        <<"DATA">> -> data
+    end,
+    Flowing = case State of
+        <<"FLOWING">> -> up;
+        <<"NOT FLOWING">> -> down
+    end,
+    Body = #{direction=>out, media=>Media, status=>Flowing},
+    nkmedia_session:send_info(SessId, media, Body);
 
 print_event(SessId, <<"MediaFlowInStateChange">>, Data) ->
     #{
@@ -949,7 +965,18 @@ print_event(SessId, <<"MediaFlowInStateChange">>, Data) ->
         <<"padName">> := _Pad,
         <<"state">> := State
     }  = Data,
-    ?LLOG(info, "event media in out state change (~s: ~s)", [Type, State], SessId);    
+    % ?LLOG(info, "event media in out state change (~s: ~s)", [Type, State], SessId), 
+    Media = case Type of
+        <<"AUDIO">> -> audio;
+        <<"VIDEO">> -> video;
+        <<"DATA">> -> data
+    end,
+    Flowing = case State of
+        <<"FLOWING">> -> up;
+        <<"NOT FLOWING">> -> down
+    end,
+    Body = #{direction=>in, media=>Media, status=>Flowing},
+    nkmedia_session:send_info(SessId, media, Body);
 
 print_event(SessId, <<"MediaStateChanged">>, Data) ->
     #{

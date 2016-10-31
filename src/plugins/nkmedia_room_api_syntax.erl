@@ -22,7 +22,7 @@
 -module(nkmedia_room_api_syntax).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([syntax/4]).
+-export([syntax/4, get_info/1]).
 
 % -include_lib("nkservice/include/nkservice.hrl").
 
@@ -37,6 +37,7 @@ syntax(<<"create">>, Syntax, Defaults, Mandatory) ->
             class => atom,
             room_id => binary,
             backend => atom,
+            timeout => {integer, 5, 3*24*60*60},
             bitrate => {integer, 0, none},
             audio_codec => {enum, [opus, isac32, isac16, pcmu, pcma]},
             video_codec => {enum , [vp8, vp9, h264]}
@@ -68,5 +69,18 @@ syntax(<<"get_info">>, Syntax, Defaults, Mandatory) ->
 
 syntax(_Cmd, Syntax, Defaults, Mandatory) ->
     {Syntax, Defaults, Mandatory}.
+
+
+
+%% ===================================================================
+%% Keys
+%% ===================================================================
+
+
+get_info(Room) ->
+    Keys = [audio_codec, video_codec, bitrate, class, backend, members, status],
+    maps:with(Keys, Room).
+    
+
 
 

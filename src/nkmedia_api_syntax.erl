@@ -22,7 +22,7 @@
 
 -module(nkmedia_api_syntax).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
--export([syntax/5, session_fields/0, offer/0, answer/0]).
+-export([syntax/4, offer/0, answer/0, get_info/1]).
 
 
 
@@ -32,44 +32,7 @@
 
 
 %% @private
-session_fields() ->
-	[
-		session_id, 
-		offer,
-		answer,
-		no_offer_trickle_ice,
-		no_answer_trickle_ice,
-		trickle_ice_timeout,
-		sdp_type,
-		backend,
-		master_id,
-		slave_id,
-		set_master_answer,
-		stop_after_peer,
-		wait_timeout,
-		ready_timeout,
-		user_id,
-		user_session,
-		backend_role,
-		type,
-		type_ext,
-
-		peer_id,
-		room_id,
-		create_room,
-		publisher_id,
-		layout,
-		loops,
-		uri,
-		mute_audio,
-        mute_video,
-        mute_data,
-        bitrate
-    ].
-
-
-%% @private
-syntax(<<"session">>, <<"create">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"create">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			type => atom,							%% p2p, proxy...
@@ -107,14 +70,14 @@ syntax(<<"session">>, <<"create">>, Syntax, Defaults, Mandatory) ->
 		[type|Mandatory]
 	};
 
-syntax(<<"session">>, <<"destroy">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"destroy">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{session_id => binary},
 		Defaults,
 		[session_id|Mandatory]
 	};
 
-syntax(<<"session">>, <<"set_answer">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"set_answer">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
@@ -124,21 +87,21 @@ syntax(<<"session">>, <<"set_answer">>, Syntax, Defaults, Mandatory) ->
 		[session_id, answer|Mandatory]
 	};
 
-syntax(<<"session">>, <<"get_offer">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"get_offer">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{session_id => binary},
 		Defaults,
 		[session_id|Mandatory]
 	};
 
-syntax(<<"session">>, <<"get_answer">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"get_answer">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{session_id => binary},
 		Defaults,
 		[session_id|Mandatory]
 	};
 
-syntax(<<"session">>, <<"update_media">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"update_media">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
@@ -151,7 +114,7 @@ syntax(<<"session">>, <<"update_media">>, Syntax, Defaults, Mandatory) ->
 		[session_id|Mandatory]
 	};
 
-syntax(<<"session">>, <<"set_type">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"set_type">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
@@ -168,7 +131,7 @@ syntax(<<"session">>, <<"set_type">>, Syntax, Defaults, Mandatory) ->
 		[session_id, type|Mandatory]
 	};
 
-syntax(<<"session">>, <<"recorder_action">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"recorder_action">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
@@ -179,7 +142,7 @@ syntax(<<"session">>, <<"recorder_action">>, Syntax, Defaults, Mandatory) ->
 		[session_id|Mandatory]
 	};
 
-syntax(<<"session">>, <<"player_action">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"player_action">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
@@ -192,7 +155,7 @@ syntax(<<"session">>, <<"player_action">>, Syntax, Defaults, Mandatory) ->
 		[session_id|Mandatory]
 	};
 
-syntax(<<"session">>, <<"room_action">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"room_action">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
@@ -203,7 +166,7 @@ syntax(<<"session">>, <<"room_action">>, Syntax, Defaults, Mandatory) ->
 		[session_id|Mandatory]
 	};
 
-syntax(<<"session">>, <<"set_candidate">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"set_candidate">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
@@ -215,7 +178,7 @@ syntax(<<"session">>, <<"set_candidate">>, Syntax, Defaults, Mandatory) ->
 		[session_id, sdpMLineIndex, candidate|Mandatory]
 	};
 
-syntax(<<"session">>, <<"set_candidate_end">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"set_candidate_end">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary
@@ -224,14 +187,14 @@ syntax(<<"session">>, <<"set_candidate_end">>, Syntax, Defaults, Mandatory) ->
 		[session_id|Mandatory]
 	};
 
-syntax(<<"session">>, <<"get_info">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"get_info">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{session_id => binary},
 		Defaults,
 		[session_id|Mandatory]
 	};
 
-syntax(<<"session">>, <<"get_list">>, Syntax, Defaults, Mandatory) ->
+syntax(<<"get_list">>, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax,
 		Defaults,
@@ -239,7 +202,7 @@ syntax(<<"session">>, <<"get_list">>, Syntax, Defaults, Mandatory) ->
 	};
 
 
-syntax(_Sub, _Cmd, Syntax, Defaults, Mandatory) ->
+syntax(_Cmd, Syntax, Defaults, Mandatory) ->
 	{Syntax, Defaults, Mandatory}.
 
 
@@ -262,6 +225,48 @@ answer() ->
 
 
 
+%% ===================================================================
+%% Get info
+%% ===================================================================
+
+
+%% @private
+get_info(Session) ->
+	Keys = [
+		session_id, 
+		offer,
+		answer,
+		no_offer_trickle_ice,
+		no_answer_trickle_ice,
+		trickle_ice_timeout,
+		sdp_type,
+		backend,
+		master_id,
+		slave_id,
+		set_master_answer,
+		stop_after_peer,
+		wait_timeout,
+		ready_timeout,
+		user_id,
+		user_session,
+		backend_role,
+		type,
+		type_ext,
+		status,
+
+		peer_id,
+		room_id,
+		create_room,
+		publisher_id,
+		layout,
+		loops,
+		uri,
+		mute_audio,
+        mute_video,
+        mute_data,
+        bitrate
+    ],
+    maps:with(Keys, Session).
 
 
 

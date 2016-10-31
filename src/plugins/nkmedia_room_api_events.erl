@@ -36,11 +36,11 @@
 -spec event(nkmedia_room:id(), nkmedia_room:event(), nkmedia_room:room()) ->
     {ok, nkmedia_room:room()}.
 
-event(RoomId, started, Room) ->
-    Data = maps:with([audio_codec, video_codec, bitrate, class, backend], Room),
+event(RoomId, created, Room) ->
+    Data = nkmedia_room_api_syntax:get_info(Room),
     send_event(RoomId, created, Data, Room);
 
-event(RoomId, {stopped, Reason}, #{srv_id:=SrvId}=Room) ->
+event(RoomId, {destroyed, Reason}, #{srv_id:=SrvId}=Room) ->
     {Code, Txt} = nkservice_util:error_code(SrvId, Reason),
     send_event(RoomId, destroyed, #{code=>Code, reason=>Txt}, Room);
 
@@ -49,6 +49,12 @@ event(RoomId, {started_member, SessId, Info}, Room) ->
 
 event(RoomId, {stopped_member, SessId, Info}, Room) ->
     send_event(RoomId, stopped_member, Info#{session_id=>SessId}, Room);
+
+event(SessId, {status, Class, Data}, Session) ->
+    send_event(SessId, status, Data#{class=>Class}, Session);
+
+event(RoomId, {info, Info, Meta}, Room) ->
+    send_event(RoomId, info, Meta#{info=>Info}, Room);
 
 event(_RoomId, _Event, Room) ->
     {ok, Room}.

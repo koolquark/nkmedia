@@ -58,7 +58,8 @@ start(_Type, _Args) ->
         no_docker => boolean,
         log_dir => fullpath,
         record_dir => fullpath,
-        docker_log => any
+        docker_log => any,
+        default_bitrate => {integer, 0, none}
     },
     Defaults = #{
         admin_url => "wss://all:9010",
@@ -66,7 +67,8 @@ start(_Type, _Args) ->
         sip_port => 0,
         no_docker => false,
         log_dir => "./log",
-        record_dir => "./record"
+        record_dir => "./record",
+        default_bitrate => 100000
     },
     case nklib_config:load_env(?APP, Syntax, Defaults) of
         {ok, _} ->

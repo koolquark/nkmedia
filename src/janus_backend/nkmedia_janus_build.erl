@@ -323,7 +323,7 @@ log_to_file = /var/log/janus/janus.log
 ;daemonize = true               
 ;pid_file = /tmp/janus.pid
 interface = $JANUS_IP               ; Interface to use (will be used in SDP)
-debug_level = 7                     ; Debug/logging level, valid values are 0-7
+debug_level = 4                     ; Debug/logging level, valid values are 0-7
 ;debug_timestamps = yes
 ;debug_colors = no
 ;api_secret = $PASS
@@ -343,11 +343,11 @@ cert_key = /usr/local/share/janus/certs/mycert.key
 ;force-rtcp-mux = true              ; Default false
 
 [nat]
-stun_server = stun.voip.eutelia.it
-stun_port = 3478
-;nice_debug = true
-ice_lite = true
-;ice_tcp = true
+;stun_server = stun.voip.eutelia.it
+;stun_port = 3478
+nice_debug = false
+;ice_lite = false
+;ice_tcp = false                   ; Needs ice_lite also 
 nat_1_1_mapping = $EXT_IP          ; All host candidates will have (only) this
 ;turn_server = myturnserver.com
 ;turn_port = 3478

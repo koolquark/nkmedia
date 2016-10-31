@@ -34,15 +34,13 @@
 		 nkmedia_session_cmd/3, nkmedia_session_candidate/2]).
 -export([error_code/1]).
 -export([api_cmd/2, api_syntax/4]).
--export([api_server_cmd/2, api_server_reg_down/3, 
-	     api_server_handle_info/2]).
+-export([api_server_cmd/2, api_server_reg_down/3]).
 -export([nkdocker_notify/2]).
 
 -include("nkmedia.hrl").
 -include_lib("nkservice/include/nkservice.hrl").
 
 
--define(BASE_ERROR, 2000).
 
 %% ===================================================================
 %% Types
@@ -85,9 +83,9 @@ plugin_stop(Config, #{name:=Name}) ->
 
 error_code(no_mediaserver) 			-> 	{300001, "No mediaserver available"};
 error_code(different_mediaserver) 	-> 	{300002, "Different mediaserver"};
-error_code(session_failed) 			-> 	{300003, "Session has failed"};
-error_code(incompatible_session)    -> 	{300004, "Incompatible session"};
-error_code(call_stopped)            ->  {300005, "Call stopped"};
+error_code(unknown_backend)         ->  {300003, "Unknown backend"};
+error_code(session_failed) 			-> 	{300004, "Session has failed"};
+error_code(incompatible_session)    -> 	{300005, "Incompatible session"};
 
 error_code(offer_not_set) 			-> 	{300010, "Offer not set"};
 error_code(offer_already_set) 		-> 	{300011, "Offer already set"};
@@ -212,9 +210,11 @@ nkmedia_session_event(SessId, Event, Session) ->
 								media_session:event(), session()) ->
 	{ok, session()} | continue().
 
-nkmedia_session_reg_event(SessId, Link, Event, Session) ->
-	% lager:warning("RE: ~p, ~p", [Link, Event]),
-	nkmedia_api:nkmedia_session_reg_event(SessId, Link, Event, Session),
+nkmedia_session_reg_event(SessId, {nkmedia_api, Pid}, {destroyed, _Reason}, Session) ->
+	nkmedia_api:session_stopped(SessId, Pid, Session),
+	{ok, Session};
+
+nkmedia_session_reg_event(_SessId, _Link, _Event, Session) ->
 	{ok, Session}.
 
 
@@ -267,18 +267,18 @@ nkmedia_session_stop(_Reason, Session) ->
 %% ===================================================================
 
 %% @private
-api_cmd(#api_req{class = <<"media">>}=Req, State) ->
-	#api_req{subclass=Sub, cmd=Cmd} = Req,
-	nkmedia_api:cmd(Sub, Cmd, Req, State);
+api_cmd(#api_req{class = <<"media">>, subclass = <<"session">>}=Req, State) ->
+	#api_req{cmd=Cmd} = Req,
+	nkmedia_api:cmd(Cmd, Req, State);
 
 api_cmd(_Req, _State) ->
 	continue.
 
 
 %% @private
-api_syntax(#api_req{class = <<"media">>}=Req, Syntax, Defaults, Mandatory) ->
-	#api_req{subclass=Sub, cmd=Cmd} = Req,
-	nkmedia_api_syntax:syntax(Sub, Cmd, Syntax, Defaults, Mandatory);
+api_syntax(#api_req{class = <<"media">>, subclass = <<"session">>, cmd=Cmd}, 
+		   Syntax, Defaults, Mandatory) ->
+	nkmedia_api_syntax:syntax(Cmd, Syntax, Defaults, Mandatory);
 	
 api_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
 	continue.
@@ -298,21 +298,11 @@ api_server_cmd(_Req, _State) ->
 
 
 %% @private
-api_server_reg_down(Link, Reason, State) ->
-	nkmedia_api:api_server_reg_down(Link, Reason, State).
+api_server_reg_down({nkmedia_session, SessId, _SessPid}, Reason, State) ->
+	nkmedia_api:api_session_down(SessId, Reason, State),
+	continue;
 
-
-% %% @private
-% api_server_handle_cast(Msg, State) ->
-% 	nkmedia_api:api_server_handle_cast(Msg, State).
-
-
-%% @private
-api_server_handle_info({'DOWN', Ref, process, _Pid, Reason}, State) ->
-	#{srv_id:=SrvId} = State,
-	nkmedia_api:handle_down(SrvId, Ref, Reason, State);
-
-api_server_handle_info(_Msg, _State) ->
+api_server_reg_down(_Link, _Reason, _State) ->
 	continue.
 
 

@@ -516,19 +516,39 @@ handle_cast({event, _Id, _Handle, #{<<"janus">>:=<<"hangup">>}=Msg}, State) ->
     ?LLOG(info, "hangup from janus (~s)", [Reason], State),
     {stop, normal, State};
 
-handle_cast({event, _Id, _Handle, #{<<"janus">>:=<<"webrtcup">>}}, State) ->
-    ?LLOG(info, "WEBRTC UP", [], State),
+handle_cast({event, _Id, Handle, #{<<"janus">>:=<<"webrtcup">>}}, State) ->
+    Side = case State of
+        #state{handle_id=Handle, id=SessId} -> caller;
+        #state{handle_id2=Handle, id=SessId} -> callee
+    end,
+    nkmedia_janus_session:set_status(SessId, Side, webrtc, #{status=>up}),
     {noreply, State};
 
-handle_cast({event, _Id, _Handle, #{<<"janus">>:=<<"media">>}=Msg}, State) ->
+handle_cast({event, _Id, Handle, #{<<"janus">>:=<<"media">>}=Msg}, State) ->
+    Side = case State of
+        #state{handle_id=Handle, id=SessId} -> caller;
+        #state{handle_id2=Handle, id=SessId} -> callee
+    end,
     #{<<"type">>:=Type, <<"receiving">>:=Bool} = Msg,
-    ?LLOG(info, "WEBRTC Media ~s: ~s", [Type, Bool], State),
+    % ?LLOG(warning, "Media ~s: ~s", [Type, Bool], State),
+    Status = case Bool of
+        <<"true">> -> up;
+        <<"false">> -> down
+    end,
+    Body = #{media => nklib_util:to_existing_atom(Type), status=>Status},
+    nkmedia_janus_session:set_status(SessId, Side, media, Body),
     {noreply, State};
 
-handle_cast({event, _Id, _Handle, #{<<"janus">>:=<<"slowlink">>}=Msg}, State) ->
+handle_cast({event, _Id, Handle, #{<<"janus">>:=<<"slowlink">>}=Msg}, State) ->
+    Side = case State of
+        #state{handle_id=Handle, id=SessId} -> caller;
+        #state{handle_id2=Handle, id=SessId} -> callee
+    end,
     Nacks = maps:get(<<"nacks">>, Msg, 0), 
     UpLink = maps:get(<<"uplink">>, Msg, <<>>),
-    ?LLOG(notice, "Janus slowlink (nacks: ~p, uplink: ~p)", [Nacks, UpLink], State),
+    Body = #{nacks=>Nacks, uplink=>UpLink},
+    nkmedia_janus_session:set_status(SessId, Side, slow_link, Body),
+    % ?LLOG(notice, "Janus slowlink (nacks: ~p, uplink: ~p)", [Nacks, UpLink], State),
     {noreply, State};
 
 handle_cast({event, Id, Handle, Msg}, State) ->
@@ -640,16 +660,10 @@ terminate(Reason, #state{from=From}=State) ->
 %% Echo
 %% ===================================================================
 
-%% If we set trickle=>true (or not including it) Verto does not work
-%% The answer seems to be the same, but Janus does not send media 
-%% (until it receives the final candidate?)
-%% However, with trickle=false, Verto works and also the candidates are processed
-
 %% @private Echo plugin
-do_echo(#{sdp:=SDP}, State) ->
+do_echo(Offer, State) ->
     {ok, Handle} = attach(echotest, State),
-    Jsep = #{sdp=>SDP, type=>offer, trickle=>false},
-    case message(Handle, #{}, Jsep, State) of
+    case message(Handle, #{}, jsep_offer(Offer), State) of
         {ok, #{<<"result">>:=<<"ok">>}, #{<<"sdp">>:=SDP2}} ->
             State2 = State#state{handle_id=Handle},
             reply({ok, sdp(SDP2)}, status(echo, State2));
@@ -681,7 +695,7 @@ do_play(File, _Opts, State) ->
     {ok, Handle} = attach(recordplay, State),
     State2 = State#state{handle_id=Handle},
     case message(Handle, #{request=>update}, #{}, State2) of
-        {ok, #{<<"list">>:=List}, _} ->
+        {ok, #{<<"recordplay">>:=<<"ok">>}, _} ->
             case message(Handle, #{request=>list}, #{}, State2) of
                 {ok, #{<<"list">>:=List}, _} ->
                     lager:error("List: ~p", [List]),
@@ -707,10 +721,9 @@ do_play(File, _Opts, State) ->
     
 
 %% @private Caller answers
-do_play_answer(#{sdp:=SDP}, #state{handle_id=Handle} = State) ->
+do_play_answer(Answer, #state{handle_id=Handle} = State) ->
     Body = #{request=>start},
-    Jsep = #{sdp=>SDP, type=>answer, trickle=>false},
-    case message(Handle, Body, Jsep, State) of
+    case message(Handle, Body, jsep_answer(Answer), State) of
         {ok, #{<<"result">>:=#{<<"status">>:=<<"playing">>}}, _} ->
             reply(ok, status(play, State));
         {error, Error} ->
@@ -724,14 +737,14 @@ do_play_answer(#{sdp:=SDP}, #state{handle_id=Handle} = State) ->
 %% ===================================================================
 
 %% @private First node registers
-do_videocall(#{sdp:=SDP}, From, State) ->
+do_videocall(Offer, From, State) ->
     {ok, Handle} = attach(videocall, State),
     UserName = nklib_util:to_binary(Handle),
     Body = #{request=>register, username=>UserName},
     case message(Handle, Body, #{}, State) of
         {ok, #{<<"result">>:=#{<<"event">>:=<<"registered">>}}, _} ->
             State2 = State#state{handle_id = Handle, from = From},
-            do_videocall_2(SDP, State2);
+            do_videocall_2(Offer, State2);
         {error, Error} ->
             ?LLOG(notice, "videocall error1: ~p", [Error], State),
             reply_stop({error, Error}, State)
@@ -739,14 +752,14 @@ do_videocall(#{sdp:=SDP}, From, State) ->
 
 
 %% @private Second node registers
-do_videocall_2(SDP, State) ->
+do_videocall_2(Offer, State) ->
     {ok, Handle2} = attach(videocall, State),
     UserName2 = nklib_util:to_binary(Handle2),
     Body = #{request=>register, username=>UserName2},
     case message(Handle2, Body, #{}, State) of
         {ok, #{<<"result">>:=#{<<"event">>:=<<"registered">>}}, _} ->
             State2 = State#state{handle_id2 = Handle2},
-            do_videocall_3(SDP, State2);
+            do_videocall_3(Offer, State2);
         {error, Error} ->
             ?LLOG(notice, "videocall error2: ~p", [Error], State),
             reply({error, Error}, State)
@@ -754,11 +767,10 @@ do_videocall_2(SDP, State) ->
 
 
 %% @private We launch the call and wait for Juanus's remote offer
-do_videocall_3(SDP, State) ->
+do_videocall_3(Offer, State) ->
     #state{handle_id = Handle, handle_id2 = Handle2} = State,
     Body = #{request=>call, username=>nklib_util:to_binary(Handle2)},
-    Jsep = #{sdp=>SDP, type=>offer, trickle=>false},
-    case message(Handle, Body, Jsep, State) of
+    case message(Handle, Body, jsep_offer(Offer), State) of
         {ok, #{<<"result">>:=#{<<"event">>:=<<"calling">>}}, _} ->
             noreply(wait(videocall_offer, State));
         {error, Error} ->
@@ -768,10 +780,9 @@ do_videocall_3(SDP, State) ->
 
 
 %% @private. We receive answer from called party and wait Janus
-do_videocall_answer(#{sdp:=SDP}, From, #state{handle_id2=Handle2}=State) ->
+do_videocall_answer(Answer, From, #state{handle_id2=Handle2}=State) ->
     Body = #{request=>accept},
-    Jsep = #{sdp=>SDP, type=>answer, trickle=>false},
-    case message(Handle2, Body, Jsep, State) of
+    case message(Handle2, Body, jsep_answer(Answer), State) of
         {ok, #{<<"result">>:=#{<<"event">>:=<<"accepted">>}}, _} ->
             State2 = State#state{from=From},
             noreply(wait(videocall_reply, State2));
@@ -866,7 +877,7 @@ do_destroy_room(Room, State) ->
 %% ===================================================================
 
 %% @private Create session and join
-do_publish(#{sdp:=SDP}, Room, #state{id=SessId} = State) ->
+do_publish(Offer, Room, #state{id=SessId} = State) ->
     {ok, Handle} = attach(videoroom, State),
     RoomId = to_room_id(Room),
     Feed = erlang:phash2(SessId),
@@ -880,7 +891,7 @@ do_publish(#{sdp:=SDP}, Room, #state{id=SessId} = State) ->
     case message(Handle, Body, #{}, State) of
         {ok, #{<<"videoroom">>:=<<"joined">>, <<"id">>:=Feed}, _} ->
             State2 = State#state{handle_id=Handle, room=Room},
-            do_publish_2(SDP, State2);
+            do_publish_2(Offer, State2);
         {error, Error} ->
             ?LLOG(notice, "publish error1: ~p", [Error], State),
             reply_stop({error, Error}, State)
@@ -888,8 +899,8 @@ do_publish(#{sdp:=SDP}, Room, #state{id=SessId} = State) ->
 
 
 %% @private
-do_publish_2(SDP_A, #state{handle_id=Handle} = State) ->
-    Jsep = #{sdp=>SDP_A, type=>offer, trickle=>false},
+do_publish_2(Offer_A, #state{handle_id=Handle} = State) ->
+    Jsep = jsep_offer(Offer_A),
     Body = #{use_audio=>true, use_video=>true},
     case message(Handle, Body#{request=>configure}, Jsep, State) of
         {ok, #{<<"configured">>:=<<"ok">>}, #{<<"sdp">>:=SDP_B}} ->
@@ -951,11 +962,10 @@ do_listen(Listen, Room, State) ->
 
 
 %% @private Caller answers
-do_listen_answer(#{sdp:=SDP}, State) ->
+do_listen_answer(Answer, State) ->
     #state{handle_id=Handle, room=Room} = State,
     Body = #{request=>start, room=>Room},
-    Jsep = #{sdp=>SDP, type=>answer, trickle=>false},
-    case message(Handle, Body, Jsep, State) of
+    case message(Handle, Body, jsep_answer(Answer), State) of
         {ok, #{<<"started">>:=<<"ok">>}, _} ->
             reply(ok, status(listen, State));
         {error, Error} ->
@@ -1048,11 +1058,10 @@ do_from_sip(#state{sip_contact=Contact, offer=Offer}=State) ->
 %% We send the answer to Janus, and wait for the SIP-side answer
 %% We the INVITE we sent in do_from_sip replies, cast {invite, _} is sent and
 %% the SIP-answer is returned to the caller
-do_from_sip_answer(#{sdp:=SDP}, From, State) ->
+do_from_sip_answer(Answer, From, State) ->
     #state{handle_id=Handle} = State,
     Body = #{request=>accept},
-    Jsep = #{sdp=>SDP, type=>answer, trickle=>false},
-    case message(Handle, Body, Jsep, State) of
+    case message(Handle, Body, jsep_answer(Answer), State) of
         {ok, #{<<"result">>:=#{<<"event">>:=<<"accepted">>}}, _} ->
             noreply(wait(from_sip_invite, State#state{from=From}));
         {error, Error} ->
@@ -1090,8 +1099,7 @@ do_to_sip(#state{sess_id=Id, handle_id=Handle, offer=#{sdp:=SDP}}=State) ->
         request => call,
         uri => <<"sip:nkmedia_janus_op-", BinId/binary, "@nkmedia">>
     },
-    Jsep = #{sdp=>SDP2, type=>offer, trickle=>false},
-    case message(Handle, Body, Jsep, State) of
+    case message(Handle, Body, jsep_offer(#{sdp=>SDP2}), State) of
         {ok, #{<<"result">>:=#{<<"event">>:=<<"calling">>}}, _} ->
             State2 = State#state{offer=undefined},
             noreply(wait(to_sip_invite, State2));
@@ -1241,10 +1249,11 @@ do_event(_Id, _Handle, {event, <<"hangup">>, _, _}, State) ->
     ?LLOG(info, "hangup from Janus", [], State),
     {stop, normal, State};
 
-do_event(_Id, _Handle, 
-         {data, #{<<"videoroom">>:=<<"slow_link">>, <<"current-bitrate">>:=BR}}, 
-         State) ->
-    ?LLOG(notice, "videroom slow_link (~p)", [BR], State),
+do_event(_Id, _Handle, {data, #{<<"videoroom">>:=<<"slow_link">>}=Data}, State) ->
+    BR = maps:get(<<"current-bitrate">>, Data, 0),
+    #state{room=Room} = State,
+    nkmedia_room:set_status(Room, slow_link, #{bitrate=>BR}),
+    % ?LLOG(notice, "videroom slow_link (~p)", [BR], State),
     {noreply, State};
 
 do_event(_Id, _Handle, {data, #{<<"result">>:=Result}}, State) ->
@@ -1466,6 +1475,22 @@ media_body(Opts) ->
         end
     ],
     maps:from_list(lists:flatten(Body)).
+
+
+%% @private
+
+%% If we set trickle=>true (or not including it) Verto does not work
+%% The answer seems to be the same, but Janus does not send media 
+%% (until it receives the final candidate?)
+%% However, with trickle=false, Verto works and also the candidates are processed
+
+jsep_offer(#{sdp:=SDP}=Offer) ->
+    #{type=>offer, sdp=>SDP, trickle=>maps:get(trickle_ice, Offer, false)}.
+
+
+%% @private
+jsep_answer(#{sdp:=SDP}=Answer) ->
+    #{type=>answer, sdp=>SDP, trickle=>maps:get(trickle_ice, Answer, false)}.
 
 
 % %% @private

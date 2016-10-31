@@ -30,6 +30,7 @@
 
 %% ===================================================================
 %% Types    
+
 %% ===================================================================
 
 %% ===================================================================
@@ -67,7 +68,8 @@ start(Service) ->
             {"NK_EXT_IP", ExtIp},  
             {"NK_PASS", nklib_util:to_binary(Pass)},
             {"NK_BASE", nklib_util:to_binary(BasePort)},
-            {"NK_SRV_ID", nklib_util:to_binary(SrvId)}
+            {"NK_SRV_ID", nklib_util:to_binary(SrvId)},
+            {"NK_RECORDS_DIR", "/tmp/record"}
         ],
         Labels = [
             {"nkmedia", "janus"}

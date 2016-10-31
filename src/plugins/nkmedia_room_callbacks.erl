@@ -25,7 +25,7 @@
 -export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
 -export([nkmedia_room_init/2, nkmedia_room_terminate/2, 
          nkmedia_room_event/3, nkmedia_room_reg_event/4, nkmedia_room_reg_down/4,
-         nkmedia_room_tick/2, 
+         nkmedia_room_timeout/2, 
          nkmedia_room_handle_call/3, nkmedia_room_handle_cast/2, 
          nkmedia_room_handle_info/2]).
 -export([error_code/1]).
@@ -130,11 +130,11 @@ nkmedia_room_reg_down(_RoomId, _Link, _Reason, Room) ->
     {stop, registered_down, Room}.
 
 
-%% @doc Called when a registered process fails
--spec nkmedia_room_tick(room_id(), room()) ->
+%% @doc Called when the timeout timer fires
+-spec nkmedia_room_timeout(room_id(), room()) ->
     {ok, room()} | {stop, nkservice:error(), room()} | continue().
 
-nkmedia_room_tick(_RoomId, Room) ->
+nkmedia_room_timeout(_RoomId, Room) ->
     {stop, timeout, Room}.
 
 
@@ -178,7 +178,7 @@ api_cmd(_Req, _State) ->
     continue.
 
 
-%% @privat
+%% @private
 api_syntax(#api_req{class = <<"media">>, subclass = <<"room">>, cmd=Cmd}, 
            Syntax, Defaults, Mandatory) ->
     nkmedia_room_api_syntax:syntax(Cmd, Syntax, Defaults, Mandatory);
@@ -186,4 +186,9 @@ api_syntax(#api_req{class = <<"media">>, subclass = <<"room">>, cmd=Cmd},
 api_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
     continue.
 
+
+
+%% ===================================================================
+%% API Server
+%% ===================================================================
 

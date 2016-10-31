@@ -11,7 +11,7 @@ See also each backend and plugin documentation:
 * [nkmedia_fs](fs.md)
 * [nkmedia_kms](kms.md)
 * [nkmedia_room](room.md)
-* [nkmedia_call](call.md)
+* [nkcollab_call](call.md)
 * [nkmedia_sip](sip.md)
 * [nkmedia_verto](verto.md)
 
@@ -44,6 +44,7 @@ answer|`{answer: ...}`|Fired when a session has an answer available
 type|{`type: ..., ...}`|The session type has been updated
 candidate|`{sdpMid: .., sdpMLineIndex: ..., candidate: ...}`|A new _trickle ICE_ candidate is available
 candidate_end|`{}`|No more _trickle ICE_ candidates arte available
+status|`{...}`|Some session-specific status is fired
 info|`{...}`|Some user-specific event is fired
 destroyed|`{code: Code, reason: Reason}`|The session has been stopped
 

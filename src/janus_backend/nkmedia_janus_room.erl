@@ -22,7 +22,7 @@
 -module(nkmedia_janus_room).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([init/2, terminate/2, tick/2, handle_cast/2]).
+-export([init/2, terminate/2, timeout/2, handle_cast/2]).
 -export([janus_check/3]).
 
 -define(LLOG(Type, Txt, Args, Room),
@@ -85,7 +85,7 @@ init(_RoomId, Room) ->
                     {error, Error}
             end;
        error ->
-            {error, mediaserver_not_available}
+            {error, no_mediaserver}
     end.
 
 
@@ -105,24 +105,23 @@ terminate(_Reason, Room) ->
 
 
 %% @private
--spec tick(room_id(), room()) ->
+-spec timeout(room_id(), room()) ->
     {ok, room()} | {stop, nkservice:error(), room()}.
 
-tick(RoomId, #{nkmedia_janus_id:=JanusId}=Room) ->
+timeout(RoomId, #{nkmedia_janus_id:=JanusId}=Room) ->
     case length(nkmedia_room:get_all_with_role(publisher, Room)) of
         0 ->
-            nkmedia_room:stop(self(), timeout);
+            {stop, timeout, Room};
         _ ->
            case nkmedia_janus_engine:check_room(JanusId, RoomId) of
                 {ok, _} ->      
-                    ok;
+                    {ok, Room};
                 _ ->
                     ?LLOG(warning, "room is not on engine ~p ~p", 
                           [JanusId, RoomId], Room),
-                    nkmedia_room:stop(self(), timeout)
+                    {stop, timeout, Room}
             end
-    end,
-    {ok, Room}.
+    end.
 
 
 %% @private

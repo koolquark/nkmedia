@@ -30,15 +30,12 @@
          nkmedia_session_offer/4, nkmedia_session_answer/4, nkmedia_session_cmd/3, 
          nkmedia_session_candidate/2,
          nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2]).
--export([nkmedia_room_init/2, nkmedia_room_terminate/2, nkmedia_room_tick/2]).
--export([nkmedia_call_start_caller_session/3, nkmedia_call_start_callee_session/4,
-         nkmedia_call_set_answer/5]).
+-export([nkmedia_room_init/2, nkmedia_room_terminate/2, nkmedia_room_timeout/2]).
 -export([api_cmd/2, api_syntax/4]).
 -export([nkdocker_notify/2]).
 
 -include_lib("nkservice/include/nkservice.hrl").
 -include("../../include/nkmedia_room.hrl").
--include("../../include/nkmedia_call.hrl").
 
 
 %% ===================================================================
@@ -222,10 +219,10 @@ nkmedia_room_terminate(_Reason, Room) ->
 
 
 %% @private
-nkmedia_room_tick(RoomId, #{nkmedia_kms_id:=_}=Room) ->
-    nkmedia_kms_room:tick(RoomId, Room);
+nkmedia_room_timeout(RoomId, #{nkmedia_kms_id:=_}=Room) ->
+    nkmedia_kms_room:timeout(RoomId, Room);
 
-nkmedia_room_tick(_RoomId, _Room) ->
+nkmedia_room_timeout(_RoomId, _Room) ->
     continue.
 
 
@@ -237,61 +234,6 @@ nkmedia_room_tick(_RoomId, _Room) ->
 %     continue.
 
 
-
-%% ===================================================================
-%% Implemented Callbacks - nkmedia_call
-%% ===================================================================
-
-
-nkmedia_call_start_caller_session(CallId, Config, #{srv_id:=SrvId, offer:=Offer}=Call) ->
-    case maps:get(backend, Call, nkmedia_kms) of
-        nkmedia_kms ->
-            Config2 = Config#{
-                backend => nkmedia_kms, 
-                offer => Offer,
-                call_id => CallId
-            },
-            {ok, MasterId, Pid} = nkmedia_session:start(SrvId, park, Config2),
-            {ok, MasterId, Pid, ?CALL(#{backend=>nkmedia_kms}, Call)};
-        _ ->
-            continue
-    end.
-
-nkmedia_call_start_callee_session(CallId, _MasterId, Config, 
-                                  #{backend:=nkmedia_kms, srv_id:=SrvId}=Call) ->
-    Config2 = Config#{
-        backend => nkmedia_kms,
-        call_id => CallId
-    },
-    {ok, SlaveId, Pid} = nkmedia_session:start(SrvId, park, Config2),
-    case nkmedia_session:get_offer(SlaveId) of
-        {ok, Offer} ->
-            {ok, SlaveId, Pid, Offer, Call};
-        {error, Error} ->
-            {error, Error, Call}
-    end;
-
-nkmedia_call_start_callee_session(_CallId, _MasterId, _Config, _Call) ->
-    continue.
-
-
-nkmedia_call_set_answer(_CallId, MasterId, SlaveId, Answer, 
-                        #{backend:=nkmedia_kms}=Call) ->
-    case nkmedia_session:set_answer(SlaveId, Answer) of
-        ok ->
-            Opts = #{type=>bridge, peer_id=>MasterId},
-            case nkmedia_session:cmd(SlaveId, set_type, Opts) of
-                {ok, _} ->
-                    {ok, Call};
-                {error, Error} ->
-                    {error, Error, Call}
-            end;
-        {error, Error} ->
-            {error, Error, Call}
-    end;
-
-nkmedia_call_set_answer(_CallId, _MasterId, _SlaveId, _Answer, _Call) ->
-    continue.
 
 
 %% ===================================================================
