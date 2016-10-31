@@ -954,7 +954,7 @@ print_event(SessId, <<"MediaFlowOutStateChange">>, Data) ->
     end,
     Flowing = case State of
         <<"FLOWING">> -> up;
-        <<"NOT FLOWING">> -> down
+        <<"NOT_FLOWING">> -> down
     end,
     Body = #{direction=>out, media=>Media, status=>Flowing},
     nkmedia_session:send_info(SessId, media, Body);
@@ -973,7 +973,7 @@ print_event(SessId, <<"MediaFlowInStateChange">>, Data) ->
     end,
     Flowing = case State of
         <<"FLOWING">> -> up;
-        <<"NOT FLOWING">> -> down
+        <<"NOT_FLOWING">> -> down
     end,
     Body = #{direction=>in, media=>Media, status=>Flowing},
     nkmedia_session:send_info(SessId, media, Body);

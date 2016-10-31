@@ -116,7 +116,7 @@ nkmedia_kms_get_mediaserver(SrvId) ->
 %% ===================================================================
 
 %% @private See nkservice_callbacks
-error_code({kms_error, Code, Txt})->  {303001, {"Kurento error ~p: ~s", [Code, Txt]}};
+error_code({kms_error, Code, Txt})->  {303001, "Kurento error ~p: ~s", [Code, Txt]};
 error_code(_) -> continue.
 
 
