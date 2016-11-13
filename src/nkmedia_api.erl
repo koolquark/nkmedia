@@ -48,8 +48,8 @@
 %% - if the session is killed, it is detected in 
 %%   api_server_reg_down() -> api_session_down() here
 %% It also subscribes the API session to events
-cmd(<<"create">>, Req, State) ->
-	#api_req{srv_id=SrvId, data=Data, user=User, session=UserSession} = Req,
+cmd(create, Req, State) ->
+	#api_req{srv_id=SrvId, data=Data, user=User, session_id=UserSession} = Req,
 	#{type:=Type} = Data,
 	Config = Data#{
 		register => {nkmedia_api, self()},
@@ -74,12 +74,12 @@ cmd(<<"create">>, Req, State) ->
 			{error, Error, State}
 	end;
 
-cmd(<<"destroy">>, #api_req{data=Data}, State) ->
+cmd(destroy, #api_req{data=Data}, State) ->
 	#{session_id:=SessId} = Data,
 	nkmedia_session:stop(SessId),
 	{ok, #{}, State};
 
-cmd(<<"set_answer">>, #api_req{data=Data}, State) ->
+cmd(set_answer, #api_req{data=Data}, State) ->
 	#{answer:=Answer, session_id:=SessId} = Data,
 	case nkmedia_session:cmd(SessId, set_answer, #{answer=>Answer}) of
 		{ok, Reply} ->
@@ -88,7 +88,7 @@ cmd(<<"set_answer">>, #api_req{data=Data}, State) ->
 			{error, Error, State}
 	end;
 
-cmd(<<"get_offer">>, #api_req{data=#{session_id:=SessId}}, State) ->
+cmd(get_offer, #api_req{data=#{session_id:=SessId}}, State) ->
 	case nkmedia_session:get_offer(SessId) of
 		{ok, Offer} ->
 			{ok, Offer, State};
@@ -96,7 +96,7 @@ cmd(<<"get_offer">>, #api_req{data=#{session_id:=SessId}}, State) ->
 			{error, Error, State}
 	end;
 
-cmd(<<"get_answer">>, #api_req{data=#{session_id:=SessId}}, State) ->
+cmd(get_answer, #api_req{data=#{session_id:=SessId}}, State) ->
 	case nkmedia_session:get_answer(SessId) of
 		{ok, Answer} ->
 			{ok, Answer, State};
@@ -105,11 +105,11 @@ cmd(<<"get_answer">>, #api_req{data=#{session_id:=SessId}}, State) ->
 	end;
 
 cmd(Cmd, #api_req{data=Data}, State)
-		when Cmd == <<"update_media">>; 
-			 Cmd == <<"set_type">>;
-		     Cmd == <<"recorder_action">>; 
-		     Cmd == <<"player_action">>; 
-		     Cmd == <<"room_action">> ->
+		when Cmd == update_media; 
+			 Cmd == set_type;
+		     Cmd == recorder_action; 
+		     Cmd == player_action; 
+		     Cmd == room_action ->
  	#{session_id:=SessId} = Data,
  	Cmd2 = binary_to_atom(Cmd, latin1),
 	case nkmedia_session:cmd(SessId, Cmd2, Data) of
@@ -119,7 +119,7 @@ cmd(Cmd, #api_req{data=Data}, State)
 			{error, Error, State}
 	end;
 
-cmd(<<"set_candidate">>, #api_req{data=Data}, State) ->
+cmd(set_candidate, #api_req{data=Data}, State) ->
 	#{
 		session_id := SessId, 
 		sdpMid := Id, 
@@ -134,7 +134,7 @@ cmd(<<"set_candidate">>, #api_req{data=Data}, State) ->
 			{error, Error, State}
 	end;
 
-cmd(<<"set_candidate_end">>, #api_req{data=Data}, State) ->
+cmd(set_candidate_end, #api_req{data=Data}, State) ->
 	#{session_id := SessId} = Data,
 	Candidate = #candidate{last=true},
 	case nkmedia_session:candidate(SessId, Candidate) of
@@ -144,7 +144,7 @@ cmd(<<"set_candidate_end">>, #api_req{data=Data}, State) ->
 			{error, Error, State}
 	end;
 
-cmd(<<"get_info">>, #api_req{data=Data}, State) ->
+cmd(get_info, #api_req{data=Data}, State) ->
 	#{session_id:=SessId} = Data,
 	case nkmedia_session:get_session(SessId) of
 		{ok, Session} ->
@@ -154,7 +154,7 @@ cmd(<<"get_info">>, #api_req{data=Data}, State) ->
 			{error, Error, State}
 	end;
 
-cmd(<<"get_list">>, _Req, State) ->
+cmd(get_list, _Req, State) ->
 	Res = [#{session_id=>Id} || {Id, _Pid} <- nkmedia_session:get_all()],
 	{ok, Res, State};
 

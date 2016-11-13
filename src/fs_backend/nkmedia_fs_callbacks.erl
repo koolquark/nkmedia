@@ -29,7 +29,7 @@
 -export([nkmedia_session_start/3, nkmedia_session_stop/2,
          nkmedia_session_offer/4, nkmedia_session_answer/4, nkmedia_session_cmd/3, 
          nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2]).
--export([api_syntax/4]).
+-export([api_server_syntax/4]).
 -export([nkdocker_notify/2]).
 
 -include_lib("nkservice/include/nkservice.hrl").
@@ -192,16 +192,16 @@ nkmedia_session_handle_cast(_Msg, _Session) ->
 
 
 %% ===================================================================
-%% API
+%% API Server
 %% ===================================================================
 
 %% @private
-api_syntax(#api_req{class = <<"media">>}=Req, Syntax, Defaults, Mandatory) ->
-    #api_req{subclass=Sub, cmd=Cmd} = Req,
+api_server_syntax(#api_req{class1=media}=Req, Syntax, Defaults, Mandatory) ->
+    #api_req{subclass1=Sub, cmd1=Cmd} = Req,
     {S2, D2, M2} = nkmedia_fs_api_syntax:syntax(Sub, Cmd, Syntax, Defaults, Mandatory),
     {continue, [Req, S2, D2, M2]};
 
-api_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
+api_server_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
     continue.
 
 

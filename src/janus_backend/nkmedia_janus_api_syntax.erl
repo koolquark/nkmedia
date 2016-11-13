@@ -36,7 +36,7 @@
 
 
 %% @private
-syntax(<<"session">>, <<"create">>, Syntax, Defaults, Mandatory) ->
+syntax(session, create, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             room_bitrate => {integer, 0, none},
@@ -47,7 +47,7 @@ syntax(<<"session">>, <<"create">>, Syntax, Defaults, Mandatory) ->
         Mandatory
     };
 
-syntax(<<"room">>, <<"create">>, Syntax, Defaults, Mandatory) ->
+syntax(room, create, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             bitrate => {integer, 0, none},

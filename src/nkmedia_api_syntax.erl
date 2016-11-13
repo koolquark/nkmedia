@@ -32,7 +32,7 @@
 
 
 %% @private
-syntax(<<"create">>, Syntax, Defaults, Mandatory) ->
+syntax(create, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			type => atom,							%% p2p, proxy...
@@ -70,14 +70,14 @@ syntax(<<"create">>, Syntax, Defaults, Mandatory) ->
 		[type|Mandatory]
 	};
 
-syntax(<<"destroy">>, Syntax, Defaults, Mandatory) ->
+syntax(destroy, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{session_id => binary},
 		Defaults,
 		[session_id|Mandatory]
 	};
 
-syntax(<<"set_answer">>, Syntax, Defaults, Mandatory) ->
+syntax(set_answer, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
@@ -87,21 +87,21 @@ syntax(<<"set_answer">>, Syntax, Defaults, Mandatory) ->
 		[session_id, answer|Mandatory]
 	};
 
-syntax(<<"get_offer">>, Syntax, Defaults, Mandatory) ->
+syntax(get_offer, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{session_id => binary},
 		Defaults,
 		[session_id|Mandatory]
 	};
 
-syntax(<<"get_answer">>, Syntax, Defaults, Mandatory) ->
+syntax(get_answer, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{session_id => binary},
 		Defaults,
 		[session_id|Mandatory]
 	};
 
-syntax(<<"update_media">>, Syntax, Defaults, Mandatory) ->
+syntax(update_media, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
@@ -114,7 +114,7 @@ syntax(<<"update_media">>, Syntax, Defaults, Mandatory) ->
 		[session_id|Mandatory]
 	};
 
-syntax(<<"set_type">>, Syntax, Defaults, Mandatory) ->
+syntax(set_type, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
@@ -131,7 +131,7 @@ syntax(<<"set_type">>, Syntax, Defaults, Mandatory) ->
 		[session_id, type|Mandatory]
 	};
 
-syntax(<<"recorder_action">>, Syntax, Defaults, Mandatory) ->
+syntax(recorder_action, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
@@ -142,7 +142,7 @@ syntax(<<"recorder_action">>, Syntax, Defaults, Mandatory) ->
 		[session_id|Mandatory]
 	};
 
-syntax(<<"player_action">>, Syntax, Defaults, Mandatory) ->
+syntax(player_action, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
@@ -155,7 +155,7 @@ syntax(<<"player_action">>, Syntax, Defaults, Mandatory) ->
 		[session_id|Mandatory]
 	};
 
-syntax(<<"room_action">>, Syntax, Defaults, Mandatory) ->
+syntax(room_action, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
@@ -166,7 +166,7 @@ syntax(<<"room_action">>, Syntax, Defaults, Mandatory) ->
 		[session_id|Mandatory]
 	};
 
-syntax(<<"set_candidate">>, Syntax, Defaults, Mandatory) ->
+syntax(set_candidate, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
@@ -178,7 +178,7 @@ syntax(<<"set_candidate">>, Syntax, Defaults, Mandatory) ->
 		[session_id, sdpMLineIndex, candidate|Mandatory]
 	};
 
-syntax(<<"set_candidate_end">>, Syntax, Defaults, Mandatory) ->
+syntax(set_candidate_end, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary
@@ -187,14 +187,14 @@ syntax(<<"set_candidate_end">>, Syntax, Defaults, Mandatory) ->
 		[session_id|Mandatory]
 	};
 
-syntax(<<"get_info">>, Syntax, Defaults, Mandatory) ->
+syntax(get_info, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{session_id => binary},
 		Defaults,
 		[session_id|Mandatory]
 	};
 
-syntax(<<"get_list">>, Syntax, Defaults, Mandatory) ->
+syntax(get_list, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax,
 		Defaults,

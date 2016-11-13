@@ -29,7 +29,7 @@
          nkmedia_room_handle_call/3, nkmedia_room_handle_cast/2, 
          nkmedia_room_handle_info/2]).
 -export([error_code/1]).
--export([api_cmd/2, api_syntax/4]).
+-export([api_server_cmd/2, api_server_syntax/4]).
 
 
 -include("../../include/nkmedia.hrl").
@@ -171,19 +171,19 @@ nkmedia_room_handle_info(Msg, Room) ->
 %% ===================================================================
 
 %% @private
-api_cmd(#api_req{class = <<"media">>, subclass = <<"room">>, cmd=Cmd}=Req, State) ->
+api_server_cmd(#api_req{class1=media, subclass1=room, cmd1=Cmd}=Req, State) ->
     nkmedia_room_api:cmd(Cmd, Req, State);
 
-api_cmd(_Req, _State) ->
+api_server_cmd(_Req, _State) ->
     continue.
 
 
 %% @private
-api_syntax(#api_req{class = <<"media">>, subclass = <<"room">>, cmd=Cmd}, 
-           Syntax, Defaults, Mandatory) ->
+api_server_syntax(#api_req{class1=media, subclass1=room, cmd1=Cmd}, 
+                  Syntax, Defaults, Mandatory) ->
     nkmedia_room_api_syntax:syntax(Cmd, Syntax, Defaults, Mandatory);
     
-api_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
+api_server_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
     continue.
 
 

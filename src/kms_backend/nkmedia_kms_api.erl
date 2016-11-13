@@ -41,8 +41,8 @@
 -spec cmd(nkservice:id(), atom(), Data::map(), map()) ->
 	{ok, map(), State::map()} | {error, nkservice:error(), State::map()}.
 
-cmd(<<"session">>, Cmd, #api_req{data=Data}, State)
-		when Cmd == <<"pause_record">>; Cmd == <<"resume_record">> ->
+cmd(session, Cmd, #api_req{data=Data}, State)
+		when Cmd == pause_record; Cmd == resume_record ->
  	#{session_id:=SessId} = Data,
  	Cmd2 = binary_to_atom(Cmd, latin1),
 	case nkmedia_session:cmd(SessId, Cmd2, Data) of

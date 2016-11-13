@@ -31,7 +31,7 @@
 %% Syntax
 %% ===================================================================
 
-syntax(<<"create">>, Syntax, Defaults, Mandatory) ->
+syntax(create, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{
             class => atom,
@@ -46,21 +46,21 @@ syntax(<<"create">>, Syntax, Defaults, Mandatory) ->
         [class|Mandatory]
     };
 
-syntax(<<"destroy">>, Syntax, Defaults, Mandatory) ->
+syntax(destroy, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{room_id => binary},
         Defaults,
         [room_id|Mandatory]
     };
 
-syntax(<<"get_list">>, Syntax, Defaults, Mandatory) ->
+syntax(get_list, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{service => fun nkservice_api:parse_service/1},
         Defaults, 
         Mandatory
     };
 
-syntax(<<"get_info">>, Syntax, Defaults, Mandatory) ->
+syntax(get_info, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{room_id => binary},
         Defaults, 

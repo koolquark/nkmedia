@@ -34,9 +34,7 @@
          nkmedia_session_handle_info/2]).
 -export([nkmedia_room_init/2, nkmedia_room_terminate/2, nkmedia_room_timeout/2,
          nkmedia_room_handle_cast/2]).
-
-
--export([api_syntax/4]).
+-export([api_server_syntax/4]).
 -export([nkdocker_notify/2]).
 
 -include_lib("nkservice/include/nkservice.hrl").
@@ -285,12 +283,13 @@ nkmedia_room_handle_cast(_Msg, _Room) ->
 
 
 %% @private
-api_syntax(#api_req{class = <<"media">>}=Req, Syntax, Defaults, Mandatory) ->
+api_server_syntax(#api_req{class = <<"media">>}=Req, Syntax, Defaults, Mandatory) ->
     #api_req{subclass=Sub, cmd=Cmd} = Req,
-    {S2, D2, M2} = nkmedia_janus_api_syntax:syntax(Sub, Cmd, Syntax, Defaults, Mandatory),
+    {S2, D2, M2} = 
+        nkmedia_janus_api_syntax:syntax(Sub, Cmd, Syntax, Defaults, Mandatory),
     {continue, [Req, S2, D2, M2]};
 
-api_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
+api_server_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
     continue.
 
 

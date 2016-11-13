@@ -31,7 +31,7 @@
          nkmedia_session_candidate/2,
          nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2]).
 -export([nkmedia_room_init/2, nkmedia_room_terminate/2, nkmedia_room_timeout/2]).
--export([api_cmd/2, api_syntax/4]).
+-export([api_server_cmd/2, api_server_syntax/4]).
 -export([nkdocker_notify/2]).
 
 -include_lib("nkservice/include/nkservice.hrl").
@@ -241,21 +241,21 @@ nkmedia_room_timeout(_RoomId, _Room) ->
 %% ===================================================================
 
 %% @private
-api_cmd(#api_req{class = <<"media">>}=Req, State) ->
+api_server_cmd(#api_req{class = <<"media">>}=Req, State) ->
     #api_req{subclass=Sub, cmd=Cmd} = Req,
     nkmedia_kms_api:cmd(Sub, Cmd, Req, State);
 
-api_cmd(_Req, _State) ->
+api_server_cmd(_Req, _State) ->
     continue.
 
 
 %% @private
-api_syntax(#api_req{class = <<"media">>}=Req, Syntax, Defaults, Mandatory) ->
+api_server_syntax(#api_req{class = <<"media">>}=Req, Syntax, Defaults, Mandatory) ->
     #api_req{subclass=Sub, cmd=Cmd} = Req,
     {S2, D2, M2} = nkmedia_kms_api_syntax:syntax(Sub, Cmd, Syntax, Defaults, Mandatory),
     {continue, [Req, S2, D2, M2]};
 
-api_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
+api_server_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
     continue.
 
 

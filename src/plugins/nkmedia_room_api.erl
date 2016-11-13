@@ -32,7 +32,7 @@
 %% ===================================================================
 
 
-cmd(<<"create">>, #api_req{srv_id=SrvId, data=Data}, State) ->
+cmd(create, #api_req{srv_id=SrvId, data=Data}, State) ->
     case nkmedia_room:start(SrvId, Data) of
         {ok, Id, _Pid} ->
             {ok, #{room_id=>Id}, State};
@@ -40,7 +40,7 @@ cmd(<<"create">>, #api_req{srv_id=SrvId, data=Data}, State) ->
             {error, Error, State}
     end;
 
-cmd(<<"destroy">>, #api_req{data=#{room_id:=Id}}, State) ->
+cmd(destroy, #api_req{data=#{room_id:=Id}}, State) ->
     case nkmedia_room:stop(Id, api_stop) of
         ok ->
             {ok, #{}, State};
@@ -48,11 +48,11 @@ cmd(<<"destroy">>, #api_req{data=#{room_id:=Id}}, State) ->
             {error, Error, State}
     end;
 
-cmd(<<"get_list">>, _Req, State) ->
+cmd(get_list, _Req, State) ->
     Ids = [#{room_id=>Id, class=>Class} || {Id, Class, _Pid} <- nkmedia_room:get_all()],
     {ok, Ids, State};
 
-cmd(<<"get_info">>, #api_req{data=#{room_id:=RoomId}}, State) ->
+cmd(get_info, #api_req{data=#{room_id:=RoomId}}, State) ->
     case nkmedia_room:get_room(RoomId) of
         {ok, Room} ->
             {ok, nkmedia_room_api_syntax:get_info(Room), State};
