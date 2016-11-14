@@ -241,8 +241,7 @@ nkmedia_room_timeout(_RoomId, _Room) ->
 %% ===================================================================
 
 %% @private
-api_server_cmd(#api_req{class = <<"media">>}=Req, State) ->
-    #api_req{subclass=Sub, cmd=Cmd} = Req,
+api_server_cmd(#api_req{class1=media, subclass1=Sub, cmd1=Cmd}=Req, State) ->
     nkmedia_kms_api:cmd(Sub, Cmd, Req, State);
 
 api_server_cmd(_Req, _State) ->
@@ -250,8 +249,8 @@ api_server_cmd(_Req, _State) ->
 
 
 %% @private
-api_server_syntax(#api_req{class = <<"media">>}=Req, Syntax, Defaults, Mandatory) ->
-    #api_req{subclass=Sub, cmd=Cmd} = Req,
+api_server_syntax(#api_req{class1=media}=Req, Syntax, Defaults, Mandatory) ->
+    #api_req{subclass1=Sub, cmd1=Cmd} = Req,
     {S2, D2, M2} = nkmedia_kms_api_syntax:syntax(Sub, Cmd, Syntax, Defaults, Mandatory),
     {continue, [Req, S2, D2, M2]};
 

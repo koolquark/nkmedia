@@ -62,7 +62,7 @@ cmd(create, Req, State) ->
 		true ->
 			Body = maps:get(events_body, Data, #{}),
 			Event = get_session_event(SrvId, SessId, Body),
-			nkservice_api_server:register_event(self(), Event);
+			nkservice_api_server:subscribe(self(), Event);
 		false ->
 			ok
 	end,
@@ -111,8 +111,7 @@ cmd(Cmd, #api_req{data=Data}, State)
 		     Cmd == player_action; 
 		     Cmd == room_action ->
  	#{session_id:=SessId} = Data,
- 	Cmd2 = binary_to_atom(Cmd, latin1),
-	case nkmedia_session:cmd(SessId, Cmd2, Data) of
+	case nkmedia_session:cmd(SessId, Cmd, Data) of
 		{ok, Reply} ->
 			{ok, Reply, State};
 		{error, Error} ->
@@ -175,7 +174,7 @@ cmd(Other, _Data, State) ->
 session_stopped(SessId, ApiPid, Session) ->
 	#{srv_id:=SrvId} = Session,
 	Event = get_session_event(SrvId, SessId, undefined),
-	nkservice_api_server:unregister_event(ApiPid, Event),
+	nkservice_api_server:unsubscribe(ApiPid, Event),
 	nkservice_api_server:unregister(ApiPid, {nkmedia_session, SessId, self()}),
 	{ok, Session}.
 
@@ -193,7 +192,7 @@ api_session_down(SessId, Reason, State) ->
 	#{srv_id:=SrvId} = State,
 	lager:warning("API Server: Session ~s is down: ~p", [SessId, Reason]),
 	Event = get_session_event(SrvId, SessId, undefined),
-	nkservice_api_server:unregister_event(self(), Event),
+	nkservice_api_server:unsubscribe(self(), Event),
 	nkmedia_api_events:session_down(SrvId, SessId).
 
 
