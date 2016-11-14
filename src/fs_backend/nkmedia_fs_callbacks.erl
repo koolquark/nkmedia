@@ -196,8 +196,8 @@ nkmedia_session_handle_cast(_Msg, _Session) ->
 %% ===================================================================
 
 %% @private
-api_server_syntax(#api_req{class1=media}=Req, Syntax, Defaults, Mandatory) ->
-    #api_req{subclass1=Sub, cmd1=Cmd} = Req,
+api_server_syntax(#api_req{class=media}=Req, Syntax, Defaults, Mandatory) ->
+    #api_req{subclass=Sub, cmd=Cmd} = Req,
     {S2, D2, M2} = nkmedia_fs_api_syntax:syntax(Sub, Cmd, Syntax, Defaults, Mandatory),
     {continue, [Req, S2, D2, M2]};
 

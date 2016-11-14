@@ -171,7 +171,7 @@ nkmedia_room_handle_info(Msg, Room) ->
 %% ===================================================================
 
 %% @private
-api_server_cmd(#api_req{class1=media, subclass1=room, cmd1=Cmd}=Req, State) ->
+api_server_cmd(#api_req{class=media, subclass=room, cmd=Cmd}=Req, State) ->
     nkmedia_room_api:cmd(Cmd, Req, State);
 
 api_server_cmd(_Req, _State) ->
@@ -179,7 +179,7 @@ api_server_cmd(_Req, _State) ->
 
 
 %% @private
-api_server_syntax(#api_req{class1=media, subclass1=room, cmd1=Cmd}, 
+api_server_syntax(#api_req{class=media, subclass=room, cmd=Cmd}, 
                   Syntax, Defaults, Mandatory) ->
     nkmedia_room_api_syntax:syntax(Cmd, Syntax, Defaults, Mandatory);
     

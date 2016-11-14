@@ -266,7 +266,7 @@ nkmedia_session_stop(_Reason, Session) ->
 %% ===================================================================
 
 %% @private
-api_server_cmd(#api_req{class1=media, subclass1=session, cmd1=Cmd}=Req, State) ->
+api_server_cmd(#api_req{class=media, subclass=session, cmd=Cmd}=Req, State) ->
 	nkmedia_api:cmd(Cmd, Req, State);
 
 api_server_cmd(_Req, _State) ->
@@ -274,7 +274,7 @@ api_server_cmd(_Req, _State) ->
 
 
 %% @private
-api_server_syntax(#api_req{class1=media, subclass1=session, cmd1=Cmd}, 
+api_server_syntax(#api_req{class=media, subclass=session, cmd=Cmd}, 
 		   		  Syntax, Defaults, Mandatory) ->
 	nkmedia_api_syntax:syntax(Cmd, Syntax, Defaults, Mandatory);
 	
