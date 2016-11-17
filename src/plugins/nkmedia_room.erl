@@ -42,7 +42,7 @@
 -include_lib("nkservice/include/nkservice.hrl").
 
 
--define(CHECK_TIME, 5*60).  
+-define(CHECK_TIME, 24*60*60).  
 
 
 %% ===================================================================
