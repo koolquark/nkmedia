@@ -274,7 +274,7 @@ nkmedia_room_handle_cast(_Msg, _Room) ->
 %% ===================================================================
 
 % %% @private
-% api_cmd(#api_req{class = <<"media">>}=Req, State) ->
+% api_cmd(#api_req{class=media}=Req, State) ->
 %     #api_req{subclass=Sub, cmd=Cmd} = Req,
 %     nkmedia_janus_api:cmd(Sub, Cmd, Req, State);
 
