@@ -480,6 +480,8 @@ handle_call({media, Opts}, _From, #state{status=Status, wait=Wait}=State) ->
             do_sip_media(Opts, State);
         from_sip ->
             do_sip_media(Opts, State);
+        listen ->
+            do_listen_media(Opts, State);
         _ ->
             ?LLOG(warning, "media error: ~p, ~p", [Status, Wait], State),
             reply_stop({error, {internal_error, ?LINE}}, State)
@@ -996,6 +998,18 @@ do_unlisten(#state{handle_id=Handle}=State) ->
         {error, Error} ->
             ?LLOG(notice, "unlisten error: ~p", [Error], State),
             reply_stop({error, Error}, State)
+    end.
+
+
+%% @private
+do_listen_media(Opts, #state{handle_id=Handle}=State) ->
+    Body = media_body(Opts),
+    case message(Handle, Body#{request=>configure}, #{}, State) of
+        {ok, #{<<"configured">>:=<<"ok">>}, _} ->
+            reply(ok, State);
+        {error, Error} ->
+            ?LLOG(notice, "listen media error: ~p", [Error], State),
+            reply({error, Error}, State)
     end.
 
 

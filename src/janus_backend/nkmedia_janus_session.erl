@@ -225,7 +225,7 @@ cmd(update_media, Opts, #{type:=bridge, type_ext:=#{role:=slave}}=Session) ->
     end;
 
 cmd(update_media, Opts, #{type:=Type}=Session) 
-        when Type==echo; Type==bridge; Type==publish ->
+        when Type==echo; Type==bridge; Type==publish; Type==listen ->
     case set_media(Opts, Session) of
         {ok, Session2} ->
             {ok, #{}, Session2};
