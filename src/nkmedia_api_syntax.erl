@@ -53,18 +53,20 @@ syntax(create, Syntax, Defaults, Mandatory) ->
 			wait_timeout => {integer, 1, none},
 			ready_timeout => {integer, 1, none},
 
-			% Type-specific
-	        peer_id => binary,
-	        room_id => binary,
-	        create_room => boolean,
-	        publisher_id => binary,
-	        layout => binary,
-	        loops => {integer, 0, none},
-        	uri => binary,
+			% Media
 			mute_audio => boolean,
         	mute_video => boolean,
         	mute_data => boolean,
-        	bitrate => integer
+        	bitrate => integer,
+			
+			% Type-specific
+	        peer_id => binary,					% For bridge
+	        room_id => binary,					% For publisher, listener, mcu
+	        create_room => boolean,				% "
+	        publisher_id => binary,				% "
+	        layout => binary,					% For mcu
+	        loops => {integer, 0, none},		% For player		
+        	uri => binary						% For player
 		},
 		Defaults,
 		[type|Mandatory]

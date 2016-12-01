@@ -117,15 +117,15 @@ Depending on the session type and backend, other fields can be used. Please refe
 
 Field|Description
 ---|---
+mute_audio|Mute the audio
+mute_video|Mute the video
+mute_data|Mute the data channel
+bitrate|Bitrate to set
 room_id|Room to use
 publisher_id|Publisher to connect to
 layout|MCU layout to use
 loops|Loops to repeat in the player
 uri|URI to use for the player
-mute_audio|Mute the audio
-mute_video|Mute the video
-mute_data|Mute the data channel
-bitrate|Bitrate to set
 
 <br>
 

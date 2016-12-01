@@ -398,9 +398,7 @@ start_offerer(_, Session) ->
 start_offeree(echo, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
     case nkmedia_janus_op:echo(Pid, Offer) of
         {ok, Answer} ->
-            % io:format("ANS:\n~s", [maps:get(sdp, Answer)]),
             Session2 = set_answer(Answer, Session),
-            % {ok, Session2};
             set_default_media(Session2);
         {error, Error} ->
             {error, Error, Session}
