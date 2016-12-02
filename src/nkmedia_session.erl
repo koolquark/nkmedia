@@ -24,14 +24,14 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([start/3, get_type/1, get_session/1, get_offer/1, get_answer/1]).
--export([set_answer/2, set_type/3, cmd/3, cmd_async/3, send_info/3, set_status/3]).
+-export([start/3, get_type/1, get_status/1, get_session/1, get_offer/1, get_answer/1]).
+-export([set_answer/2, set_type/3, cmd/3, cmd_async/3, send_info/3, update_status/2]).
 -export([stop/1, stop/2, stop_all/0]).
 -export([candidate/2]).
 -export([register/2, unregister/2]).
 -export([link_to_slave/2, unlink_session/1, unlink_session/2]).
 -export([get_all/0, get_session_file/1]).
--export([set_slave_answer/3, backend_candidate/2]).
+-export([set_slave_answer/3, backend_candidate/2, update_session/2]).
 -export([find/1, do_cast/2, do_call/2, do_call/3, do_info/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
@@ -49,7 +49,7 @@
 -define(MAX_ICE_TIME, 5000).
 -define(MAX_CALL_TIME, 5000).
 
--define(DEBUG_MEDIA, true). 
+% -define(DEBUG_MEDIA, true). 
 
 
 %% ===================================================================
@@ -117,12 +117,25 @@
         type => type(),
         type_ext => type_ext(),
         slave_id => id(),
-        status => map(),
+        status => status(),
         call_id => binary(),                        % Used by nkcollab_call
         record_pos => integer(),                    % Record position
         player_loops => boolean() |integer()
     }.
 
+
+-type status() :: 
+    #{
+        mute_audio => boolean(),
+        mute_video => boolean(),
+        mute_data => boolean(),
+        bitrate => integer(),
+        webrtc_ready => boolean(),
+        audio_ready => boolean(),
+        video_ready => boolean(),
+        data_ready => boolean(),
+        slow_link => false | #{date=>nklib_util:timestamp(), term()=>term()}
+    }.
 
 -type type_ext() :: map().
 
@@ -134,9 +147,10 @@
     {answer, nkmedia:answer()}                          | 
     {type, atom(), map()}                               |
     {candidate, nkmedia:candidate()}                    |
-    {status, atom(), map()}                             |
-    {info, info(), map()}                               |   % User info
-    {destroyed, nkservice:error()} .                        % Session is about to stop
+    {status, status()}                                  |
+    {info, info(), map()}                               |  % User info
+    {stopped, nkservice:error()}                        |  % Session is about to stop
+    destroyed.
 
 
 -type from() :: {pid(), term()}.
@@ -192,6 +206,14 @@ get_answer(SessId) ->
 
 get_type(SessId) ->
     do_call(SessId, get_type).
+
+
+%% @doc Get current status
+-spec get_status(id()) ->
+    {ok, status()} | {error, term()}.
+
+get_status(SessId) ->
+    do_call(SessId, get_status).
 
 
 %% @doc Hangups the session
@@ -256,11 +278,19 @@ cmd_async(SessId, Cmd, Opts) ->
 
 
 %% @doc Sends an info to the sesison
--spec set_status(id(), atom(), map()) ->
+-spec update_status(id(), status()) ->
     ok | {error, nkservice:error()}.
 
-set_status(SessId, Class, Data) ->
-    do_cast(SessId, {set_status, Class, Data}).
+update_status(SessId, Data) ->
+    do_cast(SessId, {update_status, Data}).
+
+
+%% @doc Update session data (like media status)
+-spec update_session(id(), map()) ->
+    ok | {error, nkservice:error()}.
+
+update_session(SessId, Data) when is_map(Data) ->
+    do_cast(SessId, {update_session, Data}).
 
 
 %% @doc Sends an info to the sesison
@@ -427,7 +457,7 @@ init([#{session_id:=Id, type:=Type, srv_id:=SrvId}=Session]) ->
         _ ->
             State1
     end,
-    ?LLOG(info, "starting (~p, ~p)", [Role, self()], State2),
+    ?LLOG(notice, "starting (~p, ~p)", [Role, self()], State2),
     ?LLOG(info, "config: ~p", [maps:remove(offer, Session3)], State2),
     gen_server:cast(self(), do_start),
     {ok, State3} = handle(nkmedia_session_init, [Id], State2),
@@ -459,6 +489,9 @@ handle_call({link_to_slave, SlaveId, PidB}, _From, #state{id=MasterId}=State) ->
     
 handle_call(get_session, _From, #state{session=Session}=State) ->
     reply({ok, Session}, State);
+
+handle_call(get_status, _From, #state{session=Session}=State) ->
+    reply({ok, maps:get(status, Session)}, State);
 
 handle_call(get_type, _From, #state{type=Type, timer=Timer, session=Session}=State) ->
     #{type_ext:=TypeExt} = Session,
@@ -532,11 +565,11 @@ handle_cast({cmd, Cmd, Opts}, State) ->
     {_Reply, State2} = do_cmd(Cmd, Opts, State),
     noreply(State2);
 
-handle_cast({set_status, Class, Data}, #state{session=Session}=State) ->
+handle_cast({update_status, Data}, #state{session=Session}=State) ->
     Status1 = maps:get(status, Session),
-    Status2 = maps:put(Class, Data, Status1),
+    Status2 = maps:merge(Status1, Data),
     State2 = add_to_session(status, Status2, State),
-    {noreply, event({status, Class, Data}, State2)};
+    {noreply, event({status, Data}, State2)};
 
 handle_cast({send_info, Info, Meta}, State) ->
     noreply(event({info, Info, Meta}, State));
@@ -646,6 +679,9 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, #state{id=Id}=State) ->
             handle(nkmedia_session_handle_info, [Msg], State)
     end;
     
+handle_info(destroy, State) ->
+    {stop, normal, State};
+
 handle_info(Msg, State) -> 
     handle(nkmedia_session_handle_info, [Msg], State).
 
@@ -663,26 +699,17 @@ code_change(OldVsn, State, Extra) ->
 -spec terminate(term(), #state{}) ->
     ok.
 
-terminate(Reason, State) ->
-    #state{wait_offer=WaitOffer, wait_answer=WaitAnswer, stop_reason=Stop} = State,
-    reply_all_waiting({error, session_stopped}, WaitOffer),
-    reply_all_waiting({error, session_stopped}, WaitAnswer),
-    send_stop_peers(State),
-    Stop2 = case Stop of
+terminate(Reason, #state{stop_reason=Stop}=State) ->
+    case Stop of
         false ->
             Ref = nklib_util:uid(),
             ?LLOG(notice, "terminate error ~s: ~p", [Ref, Reason], State),
-            {internal_error, Ref};
+            {noreply, State2} = do_stop({internal_error, Ref}, State);
         _ ->
-            Stop
+            State2 = State
     end,
-    % Give time for registrations to success
-    timer:sleep(100),
-    {ok, State2} = handle(nkmedia_session_stop, [Stop2], State),
-    State3 = event({destroyed, Stop2}, State2),
+    State3 = event(destroyed, State2),
     {ok, _State4} = handle(nkmedia_session_terminate, [Reason], State3),
-    % Wait to receive events events before receiving DOWN
-    timer:sleep(100),
     ok.
 
 
@@ -1049,8 +1076,22 @@ noreply(State) ->
 
 
 %% @private
-do_stop(Reason, State) ->
-    {stop, normal, State#state{stop_reason=Reason}}.
+do_stop(Reason, #state{stop_reason=false}=State) ->
+    ?LLOG(notice, "stopped: ~p", [Reason], State),
+    #state{wait_offer=WaitOffer, wait_answer=WaitAnswer} = State,
+    reply_all_waiting({error, session_stopped}, WaitOffer),
+    reply_all_waiting({error, session_stopped}, WaitAnswer),
+    send_stop_peers(State),
+    % Give time for possible registrations to success and capture stop event
+    timer:sleep(100),           
+    State2 = event({stopped, Reason}, State),
+    {ok, State3} = handle(nkmedia_session_stop, [Reason], State2),
+    % Delay the destroyed event
+    erlang:send_after(5000, self(), destroy),
+    {noreply, State3#state{stop_reason=Reason}};
+
+do_stop(_Reason, State) ->
+    {noreply, State}.
 
 
 %% @private

@@ -375,7 +375,7 @@ conn_handle_cast(Msg, NkPort, State) ->
 conn_handle_info({timeout, _, {op_timeout, OpId}}, _NkPort, State) ->
     case extract_op(OpId, State) of
         {#trans{req={candidate, _, _, _}}, State2} ->
-            ?LLOG(info, "candidate not replied from Janus", [], State),
+            % ?LLOG(info, "candidate not replied from Janus", [], State),
             % Candidates are sometimes? not replied by Janus...
             {ok, State2};
         {#trans{from=From, req=Req}, State2} ->

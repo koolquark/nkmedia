@@ -6,7 +6,9 @@ See the [API Introduction](intro.md) for an introduction to the interface, and [
 * [**`create`**](#create): Creates a new media session
 * [**`destroy`**](#destroy): Destroys an existing media session
 * [**`set_answer`**](#set_answer): Sets the answer for a session
+* [**`get_status`**](#get_status): Gets status about a session
 * [**`get_info`**](#get_info): Gets info about a session
+* [**`get_stats`**](#get_stats): Gets info about a session
 * [**`get_list`**](#get_list): Gets the current list of sessions
 * [**`get_offer`**](#get_offer): Gets the offer for a session
 * [**`get_answer`**](#get_answer): Gets the answer for a session
@@ -75,8 +77,6 @@ set_master_answer|false|If `true`, this _slave_ session will set its _answer_ to
 stop_after_peer|true|For _master_ or _slave_ sessions, stop if peer stops
 wait_timeout|60|Timeout for sessions in _wait_ state
 ready_timeout|86400|Timeout for sessions in _ready_ (_answer_ is already set) state
-subscribe|true|Subscribe to session events. Use `false` to avoid automatic subscription.
-event_body|{}|Body to receive in all automatic events.
 
 If you use `wait_reply=true`, the backend will supply the _answer_ (in case you supplied an _offer_), or the _offer_ (if you don't supply one, you must then send the _answer_ to the backend). Otherwhise, you must use the `get_offer` or `get_answer` commands.
 
@@ -256,7 +256,14 @@ Gets extended information about a specific session
 }
 ```
 
+## get_stats
 
+Gets extended information about a specific session
+
+
+## get_status
+
+Gets current status about a session (audio, video, bitrate, slow_link, etc.)
 
 
 ## get_list

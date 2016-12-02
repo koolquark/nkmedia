@@ -48,8 +48,6 @@ syntax(create, Syntax, Defaults, Mandatory) ->
 			master_id => binary,
 			set_master_answer => boolean,
 			stop_after_peer => boolean,
-			subscribe => boolean,
-			events_body => any,
 			wait_timeout => {integer, 1, none},
 			ready_timeout => {integer, 1, none},
 
@@ -62,7 +60,6 @@ syntax(create, Syntax, Defaults, Mandatory) ->
 			% Type-specific
 	        peer_id => binary,					% For bridge
 	        room_id => binary,					% For publisher, listener, mcu
-	        create_room => boolean,				% "
 	        publisher_id => binary,				% "
 	        layout => binary,					% For mcu
 	        loops => {integer, 0, none},		% For player		
@@ -124,7 +121,6 @@ syntax(set_type, Syntax, Defaults, Mandatory) ->
 
 			% Type specific
 			room_id => binary,
-			create_room => boolean,
 			publisher_id => binary,
         	uri => binary,
         	layout => binary
@@ -189,7 +185,21 @@ syntax(set_candidate_end, Syntax, Defaults, Mandatory) ->
 		[session_id|Mandatory]
 	};
 
+syntax(get_status, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{session_id => binary},
+		Defaults,
+		[session_id|Mandatory]
+	};
+
 syntax(get_info, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{session_id => binary},
+		Defaults,
+		[session_id|Mandatory]
+	};
+
+syntax(get_stats, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{session_id => binary},
 		Defaults,
@@ -258,7 +268,6 @@ get_info(Session) ->
 
 		peer_id,
 		room_id,
-		create_room,
 		publisher_id,
 		layout,
 		loops,

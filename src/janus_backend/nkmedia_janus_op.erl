@@ -34,6 +34,7 @@
 -export([from_sip/2, to_sip/2]).
 -export([nkmedia_sip_register/2, nkmedia_sip_invite/2]).
 -export([answer/2, media/2, media_peer/2, candidate/2, candidate_peer/2]).
+-export([get_stats/1]).
 -export([get_all/0, stop_all/0, janus_event/4]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
@@ -274,6 +275,14 @@ candidate_peer(Id, Candidate) ->
     do_cast(Id, {candidate, callee, Candidate}).
 
 
+%% @doc Gets stastics about a session
+-spec get_stats(id()) ->
+    {ok, map()} | {error, term()}.
+
+get_stats(Id) ->
+    do_call(Id, get_stats).
+
+
 %% @private
 -spec get_all() ->
     [{nkmedia:session_id(), pid()}].
@@ -500,6 +509,15 @@ handle_call({media_peer, Opts}, _From, #state{status=Status, wait=Wait}=State) -
             reply({error, {internal_error, ?LINE}}, State)
     end;
 
+handle_call(get_stats, From, State) ->
+    #state{janus_id=JanusId, sess_id=JanusSessId, handle_id=Handle}=State,
+    spawn(
+        fun() ->
+            Rep = nkmedia_janus_admin:handle_info(JanusId, JanusSessId, Handle),
+            gen_server:reply(From, Rep)
+        end),
+    {noreply, State};
+
 handle_call(Msg, _From, #state{status=Status, wait=Wait}=State) -> 
     ?LLOG(warning, "invalid state: ~p, ~p, ~p", [Msg, Status, Wait], State),
     reply({error, {internal_error, ?LINE}}, State).
@@ -523,7 +541,7 @@ handle_cast({event, _Id, Handle, #{<<"janus">>:=<<"webrtcup">>}}, State) ->
         #state{handle_id=Handle, id=SessId} -> caller;
         #state{handle_id2=Handle, id=SessId} -> callee
     end,
-    nkmedia_janus_session:set_status(SessId, Side, webrtc, #{status=>up}),
+    nkmedia_janus_session:update_status(SessId, Side, #{webrtc_ready=>true}),
     {noreply, State};
 
 handle_cast({event, _Id, Handle, #{<<"janus">>:=<<"media">>}=Msg}, State) ->
@@ -534,11 +552,15 @@ handle_cast({event, _Id, Handle, #{<<"janus">>:=<<"media">>}=Msg}, State) ->
     #{<<"type">>:=Type, <<"receiving">>:=Bool} = Msg,
     % ?LLOG(warning, "Media ~s: ~s", [Type, Bool], State),
     Status = case Bool of
-        <<"true">> -> up;
-        <<"false">> -> down
+        <<"true">> -> true;
+        <<"false">> -> false
     end,
-    Body = #{media => nklib_util:to_existing_atom(Type), status=>Status},
-    nkmedia_janus_session:set_status(SessId, Side, media, Body),
+    Data = case Type of
+        <<"audio">> -> #{audio_ready=>Status};
+        <<"video">> -> #{video_ready=>Status};
+        <<"data">> -> #{data_ready=>Status}
+    end,
+    nkmedia_janus_session:update_status(SessId, Side, Data),
     {noreply, State};
 
 handle_cast({event, _Id, Handle, #{<<"janus">>:=<<"slowlink">>}=Msg}, State) ->
@@ -548,9 +570,8 @@ handle_cast({event, _Id, Handle, #{<<"janus">>:=<<"slowlink">>}=Msg}, State) ->
     end,
     Nacks = maps:get(<<"nacks">>, Msg, 0), 
     UpLink = maps:get(<<"uplink">>, Msg, <<>>),
-    Body = #{nacks=>Nacks, uplink=>UpLink},
-    nkmedia_janus_session:set_status(SessId, Side, slow_link, Body),
-    % ?LLOG(notice, "Janus slowlink (nacks: ~p, uplink: ~p)", [Nacks, UpLink], State),
+    Data = #{slow_link=>#{nacks=>Nacks, uplink=>UpLink}},
+    nkmedia_janus_session:update_status(SessId, Side, Data),
     {noreply, State};
 
 handle_cast({event, Id, Handle, Msg}, State) ->
@@ -1266,7 +1287,8 @@ do_event(_Id, _Handle, {event, <<"hangup">>, _, _}, State) ->
 do_event(_Id, _Handle, {data, #{<<"videoroom">>:=<<"slow_link">>}=Data}, State) ->
     BR = maps:get(<<"current-bitrate">>, Data, 0),
     #state{room=Room} = State,
-    nkmedia_room:set_status(Room, slow_link, #{bitrate=>BR}),
+    Data = #{time=>nklib_util:timestamp(), bitrate=>BR},
+    nkmedia_room:update_status(Room, #{slow_link=>Data}),
     % ?LLOG(notice, "videroom slow_link (~p)", [BR], State),
     {noreply, State};
 

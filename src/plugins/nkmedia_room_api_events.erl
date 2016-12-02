@@ -40,21 +40,23 @@ event(RoomId, created, Room) ->
     Data = nkmedia_room_api_syntax:get_info(Room),
     send_event(RoomId, created, Data, Room);
 
-event(RoomId, {destroyed, Reason}, #{srv_id:=SrvId}=Room) ->
-    {Code, Txt} = nkservice_util:error_code(SrvId, Reason),
-    send_event(RoomId, destroyed, #{code=>Code, reason=>Txt}, Room);
-
 event(RoomId, {started_member, SessId, Info}, Room) ->
     send_event(RoomId, started_member, Info#{session_id=>SessId}, Room);
 
 event(RoomId, {stopped_member, SessId, Info}, Room) ->
     send_event(RoomId, stopped_member, Info#{session_id=>SessId}, Room);
 
-event(SessId, {status, Class, Data}, Session) ->
-    send_event(SessId, status, Data#{class=>Class}, Session);
+event(SessId, {status, Update}, Session) ->
+    send_event(SessId, status, Update, Session);
 
 event(RoomId, {info, Info, Meta}, Room) ->
     send_event(RoomId, info, Meta#{info=>Info}, Room);
+
+%% 'destroyed' is an internal event only
+event(RoomId, {stopped, Reason}, #{srv_id:=SrvId}=Room) ->
+    {Code, Txt} = nkservice_util:error_code(SrvId, Reason),
+    send_event(RoomId, destroyed, #{code=>Code, reason=>Txt}, Room);
+
 
 event(_RoomId, _Event, Room) ->
     {ok, Room}.

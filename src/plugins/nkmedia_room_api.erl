@@ -52,6 +52,14 @@ cmd(get_list, _Req, State) ->
     Ids = [#{room_id=>Id, class=>Class} || {Id, Class, _Pid} <- nkmedia_room:get_all()],
     {ok, Ids, State};
 
+cmd(get_status, #api_req{data=#{room_id:=RoomId}}, State) ->
+    case nkmedia_room:get_status(RoomId) of
+        {ok, Status} ->
+            {ok, Status, State};
+        {error, Error} ->
+            {error, Error, State}
+    end;
+
 cmd(get_info, #api_req{data=#{room_id:=RoomId}}, State) ->
     case nkmedia_room:get_room(RoomId) of
         {ok, Room} ->

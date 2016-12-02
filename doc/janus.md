@@ -58,9 +58,9 @@ The available [media updates](#media-update) can also be included in the creatio
 
 ## **bridge**
 
-Allows you to connect a pair of sessions throgh the server, managing medias, bandwidth and recording.
+Allows you to connect a pair of sessions through the server, managing media, bandwidth and recording.
 
-Because of the way Janus works, you must first creata a session with type _proxy_ with the _offer_ from the _caller_. You must then start a second session for the callee, now with type `bridge`, without any offer, but including the field `peer_id` pointing to the first session. 
+You must first creata a session with type _proxy_ with the _offer_ from the _caller_. You must then start a second session for the callee, again with type `bridge`, without any offer, but including the field `peer_id` pointing to the first session. 
 
 You must then get the offer for the second session (calling [get_offer](api.md#get_offer)), and send it to the _callee_. When you have the callee answer (or hangup) you must send it to the slave session (calling [set_answer](api.md#set_answer)). The first session (type _proxy_) will then generate the answer for the caller, and will chnage itself to type _bridge_ also. You can now either wait for the answer event for the first session or call [get_answer](api.md#get_answer) on it.
 
@@ -88,6 +88,8 @@ See the [call plugin](call.md) to be able to use NkMEDIA's SIP signalling.
 ## publish
 
 Allows you to _publish_ a session with audio/video/data to a _room_, working as an _SFU_ (_selective forwarding unit_). Any number of listeners can then be connected to this session.
+
+You must crea a room before 
 
 If you don't include a room, a new one will be created automatically (using options `room_audiocodec`, `room_videocodec` and `room_bitrate`). If you include a room, it must already exist.
 
@@ -230,7 +232,7 @@ This backend allows to you perform, at any moment and in all session types (exce
 
 ## Type udpdate 
 
-Then only [type update](api.md#set_type) that the Janus backend supports is changing a `listen` session type to another `listen` type, but pointing to a publisher on the same room.
+The only [type update](api.md#set_type) that the Janus backend supports is changing a `listen` session type to another `listen` type, but pointing to a publisher on the same room.
 
 
 **Sample**

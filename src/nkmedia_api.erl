@@ -44,10 +44,10 @@
 
 %% Create a session from the API
 %% We create the session linked with the API server process
-%% - we capture the destroy event (nkmedia_session_reg_event() -> session_stopped() here)
+%% - we capture the destroy event 
+%%   (nkmedia_session_reg_event() -> session_stopped() here)
 %% - if the session is killed, it is detected in 
 %%   api_server_reg_down() -> api_session_down() here
-%% It also subscribes the API session to events
 cmd(create, Req, State) ->
 	#api_req{srv_id=SrvId, data=Data, user=User, session_id=UserSession} = Req,
 	#{type:=Type} = Data,
@@ -58,14 +58,6 @@ cmd(create, Req, State) ->
 	},
 	{ok, SessId, Pid} = nkmedia_session:start(SrvId, Type, Config),
 	nkservice_api_server:register(self(), {nkmedia_session, SessId, Pid}),
-	case maps:get(subscribe, Data, true) of
-		true ->
-			Body = maps:get(events_body, Data, #{}),
-			Event = get_session_event(SrvId, SessId, Body),
-			nkservice_api_server:subscribe(self(), Event);
-		false ->
-			ok
-	end,
 	case get_create_reply(SessId, Config) of
 		{ok, Reply} ->
 			{ok, Reply, State};
@@ -109,7 +101,8 @@ cmd(Cmd, #api_req{data=Data}, State)
 			 Cmd == set_type;
 		     Cmd == recorder_action; 
 		     Cmd == player_action; 
-		     Cmd == room_action ->
+		     Cmd == room_action;
+		     Cmd == get_stats ->
  	#{session_id:=SessId} = Data,
 	case nkmedia_session:cmd(SessId, Cmd, Data) of
 		{ok, Reply} ->
@@ -153,6 +146,24 @@ cmd(get_info, #api_req{data=Data}, State) ->
 			{error, Error, State}
 	end;
 
+cmd(get_status, #api_req{data=Data}, State) ->
+	#{session_id:=SessId} = Data,
+	case nkmedia_session:get_status(SessId) of
+		{ok, Status} ->
+			{ok, Status, State};
+		{error, Error} ->
+			{error, Error, State}
+	end;
+
+cmd(get_stats, #api_req{data=Data}, State) ->
+	#{session_id:=SessId} = Data,
+	case nkmedia_session:get_status(SessId) of
+		{ok, Status} ->
+			{ok, Status, State};
+		{error, Error} ->
+			{error, Error, State}
+	end;
+
 cmd(get_list, _Req, State) ->
 	Res = [#{session_id=>Id} || {Id, _Pid} <- nkmedia_session:get_all()],
 	{ok, Res, State};
@@ -168,7 +179,7 @@ cmd(Other, _Data, State) ->
 %% Session callbacks
 %% ===================================================================
 
-%% @private Sent by the session when it is stopping
+%% @private Sent by the media session when it has been stopped
 %% We sent a message to the API session to remove the session before 
 %% it receives the DOWN.
 session_stopped(SessId, ApiPid, Session) ->
@@ -185,7 +196,7 @@ session_stopped(SessId, ApiPid, Session) ->
 %% ===================================================================
 
 
-%% @private Called when API server detects a registered session is down
+%% @private Called when API server detects a registered media session is down
 %% Normally it should have been unregistered first
 %% (detected above and sent in the cast after)
 api_session_down(SessId, Reason, State) ->

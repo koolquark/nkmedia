@@ -18,15 +18,17 @@
 %%
 %% -------------------------------------------------------------------
 
-%% @doc Room Plugin
+%% @doc Room Management Plugin
+%% This process models a room in a mediaserver, implemented as a plugin
+%% Backends must implement callback functions
 -module(nkmedia_room).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([start/2, stop/1, stop/2, get_room/1]).
+-export([start/2, stop/1, stop/2, get_room/1, get_status/1]).
 -export([started_member/3, started_member/4, stopped_member/2]).
--export([send_info/3, set_status/3]).
--export([restart_timer/1, register/2, unregister/2, get_all/0]).
+-export([send_info/3, update_status/2]).
+-export([restart_timeout/1, register/2, unregister/2, get_all/0]).
 -export([get_all_with_role/2]).
 -export([find/1, do_call/2, do_call/3, do_cast/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
@@ -71,7 +73,7 @@
         room_id => id(),
         srv_id => nkservice:id(),
         members => #{session_id() => member_info()},
-        status => map()
+        status => status()
     }.
 
 -type member_info() ::
@@ -82,6 +84,12 @@
     }.
 
 
+-type status() :: 
+    #{
+        slow_link => false | #{date=>nklib_util:timestamp(), term()=>term()}
+    }.
+
+
 -type info() :: atom().
 
 
@@ -89,9 +97,10 @@
     {created, room()}                               |
     {started_member, session_id(), member_info()}   |
     {stopped_member, session_id(), member_info()}   |
-    {status, map(), map()}                          |
+    {status, status()}                              |
     {info, info(), map()}                           |
-    {destroyed, nkservice:error()}.
+    {stopped, nkservice:error()}                    |
+    destroyed.
 
 
 %% ===================================================================
@@ -152,6 +161,14 @@ get_room(Id) ->
 
 
 %% @doc
+-spec get_status(id()) ->
+    {ok, room()} | {error, term()}.
+
+get_status(Id) ->
+    do_call(Id, get_status).
+
+
+%% @doc
 -spec started_member(id(), session_id(), member_info()) ->
     ok | {error, term()}.
 
@@ -176,11 +193,11 @@ stopped_member(RoomId, SessId) ->
 
 
 %% @private
--spec set_status(id(), atom(), map()) ->
+-spec update_status(id(), status()) ->
     ok | {error, term()}.
 
-set_status(Id, Class, Data) when is_map(Data) ->
-    do_cast(Id, {set_status, Class, Data}).
+update_status(Id, Data) when is_map(Data) ->
+    do_cast(Id, {update_status, Data}).
 
 
 %% @private
@@ -192,11 +209,11 @@ send_info(Id, Info, Meta) when is_map(Meta) ->
 
 
 %% @private
--spec restart_timer(id()) ->
+-spec restart_timeout(id()) ->
     ok | {error, term()}.
 
-restart_timer(Id) ->
-    do_cast(Id, restart_timer).
+restart_timeout(Id) ->
+    do_cast(Id, restart_timeout).
 
 
 %% @doc Registers a process with the room
@@ -264,14 +281,13 @@ init([#{srv_id:=SrvId, room_id:=RoomId}=Room]) ->
     },
     State2 = case Room of
         #{register:=Link} ->
-            lager:error("REGISTER"),
             links_add(Link, State1);
         _ ->
             State1
     end,
     ?LLOG(notice, "started", [], State2),
     State3 = do_event({created, Room2}, State2),
-    {ok, do_restart_timer(State3)}.
+    {ok, do_restart_timeout(State3)}.
 
 
 %% @private
@@ -281,6 +297,9 @@ init([#{srv_id:=SrvId, room_id:=RoomId}=Room]) ->
 
 handle_call(get_room, _From, #state{room=Room}=State) -> 
     {reply, {ok, Room}, State};
+
+handle_call(get_status, _From, #state{room=Room}=State) ->
+    {reply, {ok, maps:get(status, Room)}, State};
 
 handle_call(get_state, _From, State) ->
     {reply, State, State};
@@ -295,25 +314,25 @@ handle_call(Msg, From, State) ->
 
 %% @private
 handle_cast({started_member, SessId, Info, Pid}, State) ->
-    State2 = do_restart_timer(State),
+    State2 = do_restart_timeout(State),
     {noreply, do_started_member(SessId, Info, Pid, State2)};
 
 handle_cast({stopped_member, SessId}, State) ->
-    State2 = do_restart_timer(State),
+    State2 = do_restart_timeout(State),
     {noreply, do_stopped_member(SessId, State2)};
 
-handle_cast(restart_timer, State) ->
-    {noreply, do_restart_timer(State)};
+handle_cast(restart_timeout, State) ->
+    {noreply, do_restart_timeout(State)};
 
-handle_cast({set_status, Class, Data}, #state{room=Room}=State) ->
-    State2 = do_restart_timer(State),
+handle_cast({update_status, Data}, #state{room=Room}=State) ->
+    State2 = do_restart_timeout(State),
     Status1 = maps:get(status, Room),
-    Status2 = maps:put(Class, Data, Status1),
+    Status2 = maps:merge(Status1, Data),
     State3 = State2#state{room=?ROOM(#{status=>Status2}, Room)},
-    {noreply, do_event({status, Class, Data}, State3)};
+    {noreply, do_event({status, Data}, State3)};
 
 handle_cast({send_info, Info, Meta}, State) ->
-    State2 = do_restart_timer(State),
+    State2 = do_restart_timeout(State),
     {noreply, do_event({info, Info, Meta}, State2)};
 
 handle_cast({register, Link}, State) ->
@@ -340,7 +359,7 @@ handle_cast(Msg, State) ->
 handle_info(room_timeout, #state{id=RoomId}=State) ->
     case handle(nkmedia_room_timeout, [RoomId], State) of
         {ok, State2} ->
-            {noreply, do_restart_timer(State2)};
+            {noreply, do_restart_timeout(State2)};
         {stop, Reason, State2} ->
             do_stop(Reason, State2)
     end;
@@ -358,6 +377,9 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, State) ->
             handle(nkmedia_room_handle_info, [Msg], State)
     end;
 
+handle_info(destroy, State) ->
+    {stop, normal, State};
+
 handle_info(Msg, #state{}=State) -> 
     handle(nkmedia_room_handle_info, [Msg], State).
 
@@ -374,22 +396,18 @@ code_change(_OldVsn, State, _Extra) ->
     ok.
 
 terminate(Reason, #state{stop_reason=Stop}=State) ->
-    do_stop_all(State),
-    Stop2 = case Stop of
+    case Stop of
         false ->
             Ref = nklib_util:uid(),
             ?LLOG(notice, "terminate error ~s: ~p", [Ref, Reason], State),
-            {internal_error, Ref};
+            {noreply, State2} = do_stop({internal_error, Ref}, State);
         _ ->
-            Stop
+            State2 = State
     end,
-    timer:sleep(100),
-    % Give time for registrations to success
-    State2 = do_event({destroyed, Stop2}, State),
-    {ok, _State3} = handle(nkmedia_room_terminate, [Reason], State2),
-    % Wait to receive events before receiving DOWN
-    timer:sleep(100),
+    State3 = do_event(destroyed, State2),
+    {ok, _State4} = handle(nkmedia_room_terminate, [Reason], State3),
     ok.
+
 
 % ===================================================================
 %% Internal
@@ -491,8 +509,19 @@ do_cast(Id, Msg) ->
 
 
 %% @private
-do_stop(Reason, State) ->
-    {stop, normal, State#state{stop_reason=Reason}}.
+do_stop(Reason, #state{stop_reason=false}=State) ->
+    ?LLOG(notice, "stopped: ~p", [Reason], State),
+    do_stop_all(State),
+    % Give time for possible registrations to success and capture stop event
+    timer:sleep(100),
+    % Give time for registrations to success
+    State2 = do_event({stopped, Reason}, State),
+    {ok, State3} = handle(nkmedia_room_stop, [Reason], State2),
+    erlang:send_after(5000, self(), destroy),
+    {noreply, State3#state{stop_reason=Reason}};
+
+do_stop(_Reason, State) ->
+    {noreply, State}.
 
 
 %% @private
@@ -556,7 +585,7 @@ links_fold(Fun, Acc, #state{links=Links}) ->
 
 
 %% @private
-do_restart_timer(#state{timer=Timer, room=Room}=State) ->
+do_restart_timeout(#state{timer=Timer, room=Room}=State) ->
     nklib_util:cancel_timer(Timer),
     Time = 1000 * maps:get(timeout, Room, ?CHECK_TIME),
     State#state{timer=erlang:send_after(Time, self(), room_timeout)}.

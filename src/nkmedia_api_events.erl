@@ -57,13 +57,14 @@ event(SessId, {candidate, #candidate{a_line=Line, m_id=Id, m_index=Index}}, Sess
     Data = #{sdpMid=>Id, sdpMLineIndex=>Index, candidate=>Line},
     do_send_event(SessId, candidate, Data, Session);
 
-event(SessId, {status, Class, Data}, Session) ->
-    do_send_event(SessId, status, Data#{class=>Class}, Session);
+event(SessId, {status, Update}, Session) ->
+    do_send_event(SessId, status, Update, Session);
 
 event(SessId, {info, Info, Meta}, Session) ->
     do_send_event(SessId, info, Meta#{info=>Info}, Session);
 
-event(SessId, {destroyed, Reason}, #{srv_id:=SrvId}=Session) ->
+% The 'destroyed' event is only internal, to remove things, etc.
+event(SessId, {stopped, Reason}, #{srv_id:=SrvId}=Session) ->
     {Code, Txt} = nkservice_util:error_code(SrvId, Reason),
     do_send_event(SessId, destroyed, #{code=>Code, reason=>Txt}, Session);
 

@@ -60,6 +60,13 @@ syntax(get_list, Syntax, Defaults, Mandatory) ->
         Mandatory
     };
 
+syntax(get_status, Syntax, Defaults, Mandatory) ->
+    {
+        Syntax#{room_id => binary},
+        Defaults, 
+        [room_id|Mandatory]
+    };
+
 syntax(get_info, Syntax, Defaults, Mandatory) ->
     {
         Syntax#{room_id => binary},
@@ -78,7 +85,7 @@ syntax(_Cmd, Syntax, Defaults, Mandatory) ->
 
 
 get_info(Room) ->
-    Keys = [audio_codec, video_codec, bitrate, class, backend, members, status],
+    Keys = [audio_codec, video_codec, bitrate, class, backend, members, timeout, status],
     maps:with(Keys, Room).
     
 

@@ -22,7 +22,7 @@
 -module(nkmedia_kms_room).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([init/2, terminate/2, timeout/2]).
+-export([init/2, stop/2, timeout/2]).
 
 -define(LLOG(Type, Txt, Args, Room),
     lager:Type("NkMEDIA Kms Room ~s "++Txt, [maps:get(room_id, Room) | Args])).
@@ -72,10 +72,10 @@ init(_RoomId, Room) ->
 
 
 %% @doc
--spec terminate(term(), room()) ->
+-spec stop(term(), room()) ->
     {ok, room()} | {error, term()}.
 
-terminate(_Reason, Room) ->
+stop(_Reason, Room) ->
     ?LLOG(info, "stopping, destroying room", [], Room),
     {ok, Room}.
 

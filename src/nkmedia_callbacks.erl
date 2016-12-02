@@ -209,7 +209,7 @@ nkmedia_session_event(SessId, Event, Session) ->
 								media_session:event(), session()) ->
 	{ok, session()} | continue().
 
-nkmedia_session_reg_event(SessId, {nkmedia_api, Pid}, {destroyed, _Reason}, Session) ->
+nkmedia_session_reg_event(SessId, {nkmedia_api, Pid}, {stopped, _Reason}, Session) ->
 	nkmedia_api:session_stopped(SessId, Pid, Session),
 	{ok, Session};
 

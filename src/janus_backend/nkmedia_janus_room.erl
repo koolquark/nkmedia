@@ -22,7 +22,7 @@
 -module(nkmedia_janus_room).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([init/2, terminate/2, timeout/2, handle_cast/2]).
+-export([init/2, stop/2, timeout/2, handle_cast/2]).
 -export([janus_check/3]).
 
 -define(LLOG(Type, Txt, Args, Room),
@@ -90,10 +90,10 @@ init(_RoomId, Room) ->
 
 
 %% @doc
--spec terminate(term(), room()) ->
+-spec stop(term(), room()) ->
     {ok, room()} | {error, term()}.
 
-terminate(_Reason, Room) ->
+stop(_Reason, Room) ->
     case destroy_room(Room) of
         ok ->
             ?LLOG(info, "stopping, destroying room", [], Room);
@@ -117,9 +117,11 @@ timeout(RoomId, #{nkmedia_janus_id:=JanusId}=Room) ->
                 {ok, _} ->      
                     {ok, Room};
                 _ ->
-                    ?LLOG(warning, "room is not on engine ~p ~p", 
-                          [JanusId, RoomId], Room),
-                    {stop, timeout, Room}
+                    % Is timeout < nkmedia_engine check time?
+                    ?LLOG(warning, "room ~p is not on engine ~p", 
+                          [RoomId, JanusId], Room),
+                    {ok, Room}
+                    % {stop, timeout, Room}
             end
     end.
 
@@ -173,13 +175,17 @@ get_janus(#{srv_id:=SrvId}=Room) ->
     {ok, room()} | {error, term()}.
 
 create_room(#{nkmedia_janus_id:=JanusId, room_id:=RoomId}=Room) ->
-    Merge = #{audio_codec=>opus, video_codec=>vp8, bitrate=>500000},
-    Room2 = ?ROOM_MERGE(Merge, Room),
+    Base = #{
+        audio_codec => opus, 
+        video_codec => vp8,
+        bitrate => nkmedia_app:get(default_room_bitrate)
+    },
+    Room2 = ?ROOM_MERGE(Base, Room),
     Opts = #{        
         audiocodec => maps:get(audio_codec, Room2),
         videocodec => maps:get(video_codec, Room2),
-        bitrate => maps:get(bitrate, Room2)
-    },
+        bitrate => maps:get(bitrate, Room2)             % Default for publishers
+    },                                                  
     case nkmedia_janus_op:start(JanusId, RoomId) of
         {ok, Pid} ->
             case nkmedia_janus_op:create_room(Pid, RoomId, Opts) of
