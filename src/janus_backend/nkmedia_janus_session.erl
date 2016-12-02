@@ -467,6 +467,9 @@ start_offeree(publish, Offer, #{room_id:=RoomId, nkmedia_janus_pid:=Pid}=Session
             {error, room_not_found, Session}
     end;
 
+start_offeree(publish, _Offer, Session) ->
+    {error, {missing_field, room_id}, Session};
+
 start_offeree(_Type, _Offer, _Session) ->
     continue.
 

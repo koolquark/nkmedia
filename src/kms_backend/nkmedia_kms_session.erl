@@ -420,21 +420,21 @@ do_type(bridge, #{peer_id:=PeerId}=Opts, Session) ->
 do_type(bridge, _Opts, Session) ->
     {error, {missing_field, peer_id}, Session};
 
-do_type(publish, Opts, Session) ->
+do_type(publish, #{room_id:=RoomId}=Opts, Session) ->
     Session2 = reset_type(Session),
-    case get_room(publish, Opts, Session) of
-        {ok, RoomId} ->
+    case nkmedia_room:get_room(RoomId) of
+        {ok, _Room} ->
             ok = connect_to_proxy(Opts, Session),
             notify_publisher(RoomId, Session),
             {ok, #{room_id=>RoomId}, Session2};
-        {error, Error} ->
-            {error, Error, Session2}
+        {error, _Error} ->
+            {error, room_not_found, Session2}
     end;
 
-do_type(listen, #{publisher_id:=PeerId}=Opts, Session) ->
+do_type(listen, #{publisher_id:=PeerId}, Session) ->
     Session2 = reset_type(Session),
-    case get_room(listen, Opts, Session2) of
-        {ok, RoomId} ->
+    case session_call(PeerId, get_room_id) of
+        {ok, RoomId} -> 
             case connect_from_session(PeerId, Session2) of
                 {ok, Session3} -> 
                     notify_listener(RoomId, PeerId, Session3),
@@ -602,69 +602,6 @@ connect_from_peer(Peer, Session) ->
 
 connect_to_proxy(Opts, Session) ->
     ok = nkmedia_kms_session_lib:connect_to_proxy(Opts, Session).
-
-
-%% @private
--spec get_room(publish|listen, map(), session()) ->
-    {ok, nkmedia_room:id()} | {error, term()}.
-
-get_room(Type, Opts, #{nkmedia_kms_id:=KmsId}=Session) ->
-    case get_room_id(Type, Opts, Session) of
-        {ok, RoomId} ->
-            Create = maps:get(create_room, Session, false),
-            case nkmedia_room:get_room(RoomId) of
-                {ok, #{nkmedia_kms_id:=KmsId}} ->
-                    {ok, RoomId};
-                {ok, _} ->
-                    {error, different_mediaserver};
-                {error, room_not_found} when Create->
-                    create_room(RoomId, Session);
-                {error, room_not_found} ->
-                    {error, room_not_found};
-                {error, Error} ->
-                    {error, Error}
-            end;
-        {error, Error} ->
-            {error, Error}
-    end.
-
-
-%% @private
--spec get_room_id(publish|listen, map(), session()) ->
-    {ok, nkmedia_room:id()} | {error, term()}.
-
-get_room_id(Type, Opts, _Session) ->
-    case maps:find(room_id, Opts) of
-        {ok, RoomId} -> 
-            {ok, nklib_util:to_binary(RoomId)};
-        error when Type==publish -> 
-            {ok, nklib_util:uuid_4122()};
-        error when Type==listen ->
-            case Opts of
-                #{publisher_id:=Publisher} ->
-                    case session_call(Publisher, get_room_id) of
-                        {ok, RoomId} -> {ok, RoomId};
-                        {error, _Error} -> {error, invalid_publisher}
-                    end;
-                _ ->
-                    {error, {missing_field, publisher_id}}
-            end
-    end.
-
-
-%% @private
-create_room(RoomId, #{srv_id:=SrvId, nkmedia_kms_id:=KmsId}) ->
-    Opts = #{
-        room_id => RoomId,
-        backend => nkmedia_kms,
-        nkmedia_kms_id => KmsId
-    },
-    case nkmedia_room:start(SrvId, Opts) of
-        {ok, RoomId, _} ->
-            {ok, RoomId};
-        {error, Error} ->
-            {error, Error}
-    end.
 
 
 %% @private
