@@ -629,8 +629,6 @@ stop_record(Session) ->
 
 %% @private
 set_default_media(Session) ->
-    lager:error("SET DEFAULT: ~p", [maps:get(bitrate, Session)]),
-
     Opts = maps:merge(default_media(), Session),
     set_media(Opts, Session).
 

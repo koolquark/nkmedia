@@ -521,6 +521,7 @@ do_stop(Reason, #state{stop_reason=false}=State) ->
     {noreply, State3#state{stop_reason=Reason}};
 
 do_stop(_Reason, State) ->
+    % destroy already sent
     {noreply, State}.
 
 
