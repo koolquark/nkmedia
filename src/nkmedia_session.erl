@@ -662,9 +662,10 @@ handle_info({timeout, _, backend_ice_timeout}, State) ->
     ?LLOG(info, "Backend ICE timeout", [], State),
     noreply(do_backend_candidate(#candidate{last=true}, State));
 
-handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, #state{id=Id}=State) ->
+handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, State) ->
+    #state{id=Id, stop_reason=Stop} = State,
     case links_down(Ref, State) of
-        {ok, Link, State2} ->
+        {ok, Link, State2} when Stop==false ->
             case handle(nkmedia_session_reg_down, [Id, Link, Reason], State2) of
                 {ok, State3} ->
                     noreply(State3);
@@ -675,10 +676,12 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, #state{id=Id}=State) ->
                           [Link, Reason], State3),
                     do_stop(Error, State3)
             end;
+        {ok, _, State2} ->
+            {noreply, State2};
         not_found ->
             handle(nkmedia_session_handle_info, [Msg], State)
     end;
-    
+
 handle_info(destroy, State) ->
     {stop, normal, State};
 

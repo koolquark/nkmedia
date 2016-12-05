@@ -40,8 +40,8 @@ syntax(create, Syntax, Defaults, Mandatory) ->
 
 			session_id => binary,
 			offer => offer(),
-        	no_offer_trickle_ice => atom,
-        	no_answer_trickle_ice => atom,
+        	no_offer_trickle_ice => boolean,
+        	no_answer_trickle_ice => boolean,
         	trickle_ice_timeout => {integer, 100, 30000},
             sdp_type => {enum, [webrtc, rtp]},		%% For generated SDP only
 			backend => atom,						%% nkmedia_janus, etc.

@@ -37,10 +37,11 @@ syntax(create, Syntax, Defaults, Mandatory) ->
             class => atom,
             room_id => binary,
             backend => atom,
-            timeout => {integer, 5, 3*24*60*60},
-            bitrate => {integer, 0, none},
+            timeout => {integer, 5, 24*60*60},
             audio_codec => {enum, [opus, isac32, isac16, pcmu, pcma]},
-            video_codec => {enum , [vp8, vp9, h264]}
+            video_codec => {enum , [vp8, vp9, h264]},
+            bitrate => {integer, 0, none},
+            meta => map
         },
         Defaults,
         [class|Mandatory]

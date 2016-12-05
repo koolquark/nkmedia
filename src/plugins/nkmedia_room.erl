@@ -364,8 +364,11 @@ handle_info(room_timeout, #state{id=RoomId}=State) ->
             do_stop(Reason, State2)
     end;
 
-handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, State) ->
+handle_info({'DOWN', Ref, process, _Pid, Reason}=M, State) ->
+    #state{stop_reason=Stop} = State,
     case links_down(Ref, State) of
+        {ok, _, _, State2} when Stop /= false ->
+            {noreply, State2};
         {ok, SessId, member, State2} ->
             ?LLOG(notice, "member ~s down", [SessId], State2),
             {noreply, do_stopped_member(SessId, State2)};
@@ -374,7 +377,7 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, State) ->
                   [Link, Reason], State2),
             do_stop(registered_down, State2);
         not_found ->
-            handle(nkmedia_room_handle_info, [Msg], State)
+            handle(nkmedia_room_handle_info, [M], State)
     end;
 
 handle_info(destroy, State) ->
