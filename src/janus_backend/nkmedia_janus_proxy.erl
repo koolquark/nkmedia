@@ -22,8 +22,7 @@
 -module(nkmedia_janus_proxy).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([plugin_deps/0, plugin_syntax/0, plugin_listen/2, 
-         plugin_start/2, plugin_stop/2]).
+-export([plugin_deps/0, plugin_syntax/0, plugin_listen/2]).
 -export([nkmedia_janus_proxy_init/2, nkmedia_janus_proxy_find_janus/2,
          nkmedia_janus_proxy_in/2, nkmedia_janus_proxy_out/2, 
          nkmedia_janus_proxy_terminate/2, nkmedia_janus_proxy_handle_call/3,
@@ -72,17 +71,6 @@ plugin_listen(Config, #{id:=SrvId}) ->
     },                                  
     [{Conns, maps:merge(ConnOpts, Opts)} || {Conns, ConnOpts} <- Listen].
     
-
-
-plugin_start(Config, #{name:=Name}) ->
-    lager:info("Plugin NkMEDIA JANUS Proxy (~s) starting", [Name]),
-    {ok, Config}.
-
-
-plugin_stop(Config, #{name:=Name}) ->
-    lager:info("Plugin NkMEDIA JANUS Proxy (~p) stopping", [Name]),
-    {ok, Config}.
-
 
 
 %% ===================================================================

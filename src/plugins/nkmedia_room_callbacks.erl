@@ -22,7 +22,7 @@
 -module(nkmedia_room_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
+-export([plugin_deps/0]).
 -export([nkmedia_room_init/2, nkmedia_room_terminate/2, 
          nkmedia_room_event/3, nkmedia_room_reg_event/4, nkmedia_room_reg_down/4,
          nkmedia_room_timeout/2, nkmedia_room_stop/2,
@@ -48,16 +48,6 @@
 
 plugin_deps() ->
     [nkmedia].
-
-
-plugin_start(Config, #{name:=Name}) ->
-    lager:info("Plugin NkMEDIA ROOM (~s) starting", [Name]),
-    {ok, Config}.
-
-
-plugin_stop(Config, #{name:=Name}) ->
-    lager:info("Plugin NkMEDIA ROOM (~p) stopping", [Name]),
-    {ok, Config}.
 
 
 

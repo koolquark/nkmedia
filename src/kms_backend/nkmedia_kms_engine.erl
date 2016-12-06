@@ -32,6 +32,14 @@
 
 -define(CONNECT_RETRY, 5000).
 
+% To debug, set debug => [nkmedia_kms_engine]
+
+-define(DEBUG(Txt, Args, State),
+    case erlang:get(nkmedia_kms_engine_debug) of
+        true -> ?LLOG(debug, Txt, Args, State);
+        _ -> ok
+    end).
+
 -define(LLOG(Type, Txt, Args, State),
 	lager:Type("NkMEDIA KMS Engine '~s' "++Txt, [State#state.id|Args])).
 
@@ -209,8 +217,10 @@ init([#{srv_id:=SrvId, name:=Id}=Config]) ->
 	State = #state{id=Id, srv_id=SrvId, config=Config},
 	nklib_proc:put(?MODULE, {SrvId, Id}),
 	true = nklib_proc:reg({?MODULE, Id}, {connecting, undefined}),
+	set_log(State),
+	nkservice_util:register_for_changes(SrvId),
 	self() ! connect,
-	?LLOG(info, "started (~p)", [self()], State),
+	?DEBUG("started (~p)", [self()], State),
 	{ok, State}.
 
 
@@ -259,9 +269,9 @@ handle_info(connect, #state{conn=Pid}=State) when is_pid(Pid) ->
 	true = is_process_alive(Pid),
 	{noreply, State};
 
-handle_info(connect, #state{id=Id, config=Config}=State) ->
+handle_info(connect, #state{srv_id=SrvId, id=Id, config=Config}=State) ->
 	State2 = update_status(connecting, State#state{conn=undefined}),
-	case nkmedia_kms_client:start(Id, Config) of
+	case nkmedia_kms_client:start(SrvId, Id, Config) of
 		{ok, Pid} ->
 			{ok, ServerId, SessId} = nkmedia_kms_client:connect(Pid),
 			State3 = State2#state{conn=Pid, server_id=ServerId, session_id=SessId},
@@ -271,14 +281,17 @@ handle_info(connect, #state{id=Id, config=Config}=State) ->
 			State4 = do_get_pipeline(State3),
 			{noreply, update_status(ready, State4)};
 		{error, Error} ->
-			?LLOG(warning, "could not connect: ~p", [Error], State2),
+			?LLOG(notice, "could not connect: ~p", [Error], State2),
 			{stop, normal, State2}
 	end;
 
 handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{conn=Pid}=State) ->
-	?LLOG(warning, "connection event down", [], State),
+	?LLOG(notice, "connection event down", [], State),
 	erlang:send_after(?CONNECT_RETRY, self(), connect),
 	{noreply, update_status(connecting, State#state{conn=undefined})};
+
+handle_info(nkservice_updated, State) ->
+    {noreply, set_log(State)};
 
 handle_info(Info, State) -> 
     lager:warning("Module ~p received unexpected info: ~p (~p)", [?MODULE, Info, State]),
@@ -298,7 +311,7 @@ code_change(_OldVsn, State, _Extra) ->
     ok.
 
 terminate(Reason, State) ->
-    ?LLOG(info, "stop: ~p", [Reason], State).
+    ?DEBUG("stop: ~p", [Reason], State).
 
 
 
@@ -307,12 +320,21 @@ terminate(Reason, State) ->
 %% ===================================================================
 
 %% @private
+set_log(#state{srv_id=SrvId}=State) ->
+    Debug = case nkservice_util:get_debug_info(SrvId, ?MODULE) of
+        {true, _} -> true;
+        _ -> false
+    end,
+    put(nkmedia_kms_engine_debug, Debug),
+    State.
+
+%% @private
 do_get_pipeline(#state{conn=Pid, pipeline=undefined}=State) ->
 	{ok, Pipeline} = nkmedia_kms_client:create(Pid, 'MediaPipeline', #{}, #{}),
 	{ok, _} = nkmedia_kms_client:subscribe(Pid, Pipeline, 'Error'),
 	Params2 = #{latencyStats=>true},
 	{ok, null} = nkmedia_kms_client:invoke(Pid, Pipeline, setLatencyStats, Params2),
-	?LLOG(info, "created Pipeline ~s", [Pipeline], State),
+	?DEBUG("created Pipeline ~s", [Pipeline], State),
 	State#state{pipeline=Pipeline};
 
 do_get_pipeline(#state{conn=Pid, pipeline=Pipeline}=State) ->
@@ -321,7 +343,7 @@ do_get_pipeline(#state{conn=Pid, pipeline=Pipeline}=State) ->
 		true ->
 			State;
 		false ->
-			?LLOG(warning, "Pipeline ~s is no longer valid!", [Pipeline], State),
+			?LLOG(notice, "Pipeline ~s is no longer valid!", [Pipeline], State),
 			do_get_pipeline(State#state{pipeline=undefined})
 	end.
 

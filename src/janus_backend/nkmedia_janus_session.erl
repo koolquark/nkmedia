@@ -475,8 +475,8 @@ start_offeree(_Type, _Offer, _Session) ->
 
 
 %% @private
-get_janus_op(#{nkmedia_janus_id:=JanusId, session_id:=SessId}=Session) ->
-    case nkmedia_janus_op:start(JanusId, SessId) of
+get_janus_op(#{srv_id:=SrvId, nkmedia_janus_id:=JanusId, session_id:=SessId}=Session) ->
+    case nkmedia_janus_op:start(SrvId, JanusId, SessId) of
         {ok, Pid} ->
             Session2 = Session#{
                 nkmedia_janus_pid => Pid,

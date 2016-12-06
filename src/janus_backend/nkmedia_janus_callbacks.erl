@@ -23,8 +23,9 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([plugin_deps/0, plugin_group/0, plugin_syntax/0, plugin_config/2,
-         plugin_start/2, plugin_stop/2]).
+         plugin_stop/2]).
 -export([error_code/1]).
+-export([service_init/2]).
 -export([nkmedia_janus_get_mediaserver/1]).
 -export([nkmedia_session_start/3, nkmedia_session_stop/2,
          nkmedia_session_offer/4, nkmedia_session_answer/4,
@@ -75,22 +76,7 @@ plugin_config(Config, _Service) ->
     {ok, Config, Cache}.
 
 
-plugin_start(Config, #{name:=Name}) ->
-    lager:info("Plugin NkMEDIA Janus (~s) starting", [Name]),
-    case nkdocker_monitor:register(?MODULE) of
-        {ok, DockerMonId} ->
-            nkmedia_app:put(docker_janus_mon_id, DockerMonId),
-            lager:info("Installed images: ~s", 
-                [nklib_util:bjoin(find_images(DockerMonId))]);
-        {error, Error} ->
-            lager:error("Could not start Docker Monitor: ~p", [Error]),
-            error(docker_monitor)
-    end,
-    {ok, Config}.
-
-
-plugin_stop(Config, #{name:=Name}) ->
-    lager:info("Plugin NkMEDIA Janus (~p) stopping", [Name]),
+plugin_stop(Config, _Service) ->
     nkdocker_monitor:unregister(?MODULE),
     {ok, Config}.
 
@@ -126,6 +112,25 @@ error_code(janus_connection_error)      ->  {301002, <<"Janus connection error">
 error_code(janus_session_down)          ->  {301003, <<"Janus op process down">>};
 error_code(janus_bye)                   ->  {301004, <<"Janus bye">>};
 error_code(_)                           ->  continue.
+
+
+%% ===================================================================
+%% Implemented Callbacks - nkservice    
+%% ===================================================================
+
+%% We delay the start of the Janus Engine util the service is fully started
+service_init(_Service, State) ->
+    case nkdocker_monitor:register(?MODULE) of
+        {ok, DockerMonId} ->
+            nkmedia_app:put(docker_janus_mon_id, DockerMonId),
+            lager:info("NkMEDIA Janus installed images: ~s", 
+                [nklib_util:bjoin(find_images(DockerMonId))]);
+        {error, Error} ->
+            lager:error("Could not start Docker Monitor: ~p", [Error]),
+            error(docker_monitor)
+    end,
+    {ok, State}.
+
 
 
 %% ===================================================================

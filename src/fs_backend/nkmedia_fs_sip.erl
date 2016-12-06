@@ -22,10 +22,19 @@
 -module(nkmedia_fs_sip).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start_in/3, start_out/3, answer_out/2]).
+-export([start_in/4, start_out/4, answer_out/2]).
 -export([nkmedia_sip_invite/2, nkmedia_sip_bye/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
+
+
+% To debug, set debug => [nkmedia_fs_sip]
+
+-define(DEBUG(Txt, Args, State),
+    case erlang:get(nkmedia_fs_sip_debug) of
+        true -> ?LLOG(debug, Txt, Args, State);
+        _ -> ok
+    end).
 
 -define(LLOG(Type, Txt, Args, State),
     lager:Type("NkMEDIA FS SIP (~s) "++Txt, [State#state.session_id | Args])).
@@ -33,6 +42,7 @@
 -define(TIMEOUT, 200000).
 
 -include_lib("nklib/include/nklib.hrl").
+
 
 %% ===================================================================
 %% Types
@@ -48,11 +58,11 @@
 %% We place a SIP-class SDP into FS and get an answer
 
 
--spec start_in(nkmedia_session:id(), nkmedia_fs:id(), nkmedia:offer()) ->
+-spec start_in(nkservice:id(), nkmedia_session:id(), nkmedia_fs:id(), nkmedia:offer()) ->
     {ok, UUID::binary(), SDP::binary()} | {error, term()}.
 
-start_in(SessId, FsId, #{sdp:=SDP}) ->
-    {ok, Pid} = gen_server:start(?MODULE, [in, FsId, SessId, SDP], []),
+start_in(SrvId, SessId, FsId, #{sdp:=SDP}) ->
+    {ok, Pid} = gen_server:start(?MODULE, [in, SrvId, FsId, SessId, SDP], []),
     case nkservice_util:call(Pid, get_uuid) of
         {ok, UUID} ->
             Reply = case nkservice_util:call(Pid, get_sdp) of
@@ -73,11 +83,11 @@ start_in(SessId, FsId, #{sdp:=SDP}) ->
 %% will be called, calling us with the SDP
 %% We reply 'ringing' to FS. We return the SDP
 %% Later on, nkmedia_fs_session will call answer_out/2
--spec start_out(nkmedia_session:id(), nkmedia_fs:id(), map()) ->
+-spec start_out(nkservice:id(), nkmedia_session:id(), nkmedia_fs:id(), map()) ->
     {ok, UUID::binary(), SDP::binary()} | {error, term()}.
 
-start_out(SessId, FsId, #{}) ->
-    {ok, Pid} = gen_server:start(?MODULE, [out, FsId, SessId], []),
+start_out(SrvId, SessId, FsId, #{}) ->
+    {ok, Pid} = gen_server:start(?MODULE, [out, SrvId, FsId, SessId], []),
     case nkservice_util:call(Pid, get_sdp) of
         {ok, SDP} -> {ok, SessId, SDP};
         {error, Error} -> {error, Error}
@@ -138,6 +148,7 @@ find(SessId) ->
 
 -record(state, {
     fs_id :: nkmedia_fs_engine:id(),
+    srv_id :: nkservice:id(),
     session_id :: nkmedia_session:id(),
     uuid :: binary(),
     handle :: binary(),
@@ -153,10 +164,12 @@ find(SessId) ->
     {ok, tuple()} | {ok, tuple(), timeout()|hibernate} |
     {stop, term()} | ignore.
 
-init([in, FsId, SessId, SDP]) ->
+init([in, SrvId, FsId, SessId, SDP]) ->
     true = nklib_proc:reg({?MODULE, SessId}),
-    State1 = #state{fs_id = FsId, session_id = SessId},
-    ?LLOG(info, "process start (inbound)", [], State1),
+    State1 = #state{fs_id = FsId, srv_id=SrvId, session_id = SessId},
+    set_log(State1),
+    nkservice_util:register_for_changes(SrvId),
+    ?DEBUG("process start (inbound)", [], State1),
     case nkmedia_fs_engine:get_config(FsId) of
         {ok, #{host:=Host, base:=Base}} ->
             Uri = #uri{
@@ -184,7 +197,7 @@ init([in, FsId, SessId, SDP]) ->
             {stop, Error}
     end;
 
-init([out, FsId, SessId]) ->
+init([out, SrvId, FsId, SessId]) ->
     true = nklib_proc:reg({?MODULE, SessId}),
     Host = nklib_util:to_host(nkmedia_app:get(erlang_ip)),
     Port = nkmedia_app:get(sip_port),
@@ -199,7 +212,9 @@ init([out, FsId, SessId]) ->
             gen_server:cast(Self, {originate, Reply})
         end),
     State = #state{fs_id=FsId, session_id=SessId, uuid=SessId},
-    ?LLOG(info, "process start (outbound)", [], State),
+    set_log(State),
+    nkservice_util:register_for_changes(SrvId),
+    ?DEBUG("process start (outbound)", [], State),
     erlang:send_after(?TIMEOUT, self(), out_timeout),
     {ok, State}.
 
@@ -220,7 +235,7 @@ handle_call(get_sdp, _From, #state{sdp=SDP}=State) ->
 
 handle_call({sip_invite, Handle, Dialog, SDP}, _From, #state{wait_sdp=Wait}=State) ->
     nklib_util:reply(Wait, {ok, SDP}),
-    ?LLOG(info, "received SDP from FS", [], State),
+    ?DEBUG("received SDP from FS", [], State),
     State2 = State#state{
         handle = Handle,
         dialog = Dialog,
@@ -244,11 +259,11 @@ handle_call(Msg, _From, State) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
 handle_cast({originate, {ok, UUID}}, #state{uuid=UUID}=State) ->
-    ?LLOG(info, "originate OK", [], State),
+    ?DEBUG("originate OK", [], State),
     {noreply, ok, State};
 
 handle_cast({originate, {error, Error}}, State) ->
-    ?LLOG(info, "originate error: ~p", [Error], State),
+    ?DEBUG("originate error: ~p", [Error], State),
     {stop, normal, State};
 
 handle_cast(stop, State) ->
@@ -264,12 +279,15 @@ handle_cast(Msg, State) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
 handle_info(in_timeout, State) -> 
-    ?LLOG(warning, "inbound timeout", [], State),
+    ?LLOG(notice, "inbound timeout", [], State),
     {stop, normal, State};
 
 handle_info(out_timeout, State) -> 
-    ?LLOG(warning, "outbound timeout", [], State),
+    ?LLOG(notice, "outbound timeout", [], State),
     {stop, normal, State};
+
+handle_info(nkservice_updated, State) ->
+    {noreply, set_log(State)};
 
 handle_info(Info, State) -> 
     lager:warning("Module ~p received unexpected info: ~p (~p)", [?MODULE, Info, State]),
@@ -289,7 +307,7 @@ code_change(_OldVsn, State, _Extra) ->
     ok.
 
 terminate(Reason, State) ->
-    ?LLOG(notice, "process stop: ~p", [Reason], State).
+    ?DEBUG("process stop: ~p", [Reason], State).
     
 
 
@@ -297,5 +315,13 @@ terminate(Reason, State) ->
 %% Internal
 %% ===================================================================
 
+%% @private
+set_log(#state{srv_id=SrvId}=State) ->
+    Debug = case nkservice_util:get_debug_info(SrvId, ?MODULE) of
+        {true, _} -> true;
+        _ -> false
+    end,
+    put(nkmedia_fs_sip_debug, Debug),
+    State.
 
 

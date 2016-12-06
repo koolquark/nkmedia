@@ -32,6 +32,14 @@
 
 -define(CONNECT_RETRY, 5000).
 
+% To debug, set debug => [nkmedia_janus_engine]
+
+-define(DEBUG(Txt, Args, State),
+    case erlang:get(nkmedia_janus_engine_debug) of
+        true -> ?LLOG(debug, Txt, Args, State);
+        _ -> ok
+    end).
+
 -define(LLOG(Type, Txt, Args, State),
 	lager:Type("NkMEDIA Janus Engine '~s' "++Txt, [State#state.id|Args])).
 
@@ -211,9 +219,11 @@ init([#{srv_id:=SrvId, name:=Id}=Config]) ->
 	State = #state{id=Id, srv_id=SrvId, config=Config},
 	nklib_proc:put(?MODULE, {SrvId, Id}),
 	true = nklib_proc:reg({?MODULE, Id}, {connecting, undefined}),
+	set_log(State),
+	nkservice_util:register_for_changes(SrvId),
 	self() ! connect,
 	self() ! get_rooms,
-	?LLOG(info, "started (~p)", [self()], State),
+	?DEBUG("started (~p)", [self()], State),
 	{ok, State}.
 
 
@@ -263,9 +273,9 @@ handle_info(connect, #state{conn=Pid}=State) when is_pid(Pid) ->
 	true = is_process_alive(Pid),
 	{noreply, State};
 
-handle_info(connect, #state{id=Id, config=Config}=State) ->
+handle_info(connect, #state{srv_id=SrvId, id=Id, config=Config}=State) ->
 	State2 = update_status(connecting, State#state{conn=undefined}),
-	case nkmedia_janus_client:start(Id, Config) of
+	case nkmedia_janus_client:start(SrvId, Id, Config) of
 		{ok, Pid} ->
 			case nkmedia_janus_client:info(Pid) of
 				{ok, Info} ->
@@ -282,11 +292,11 @@ handle_info(connect, #state{id=Id, config=Config}=State) ->
 					},
 					{noreply, update_status(ready, State3)};
 				{error, Error} ->
-					?LLOG(warning, "error response from Janus: ~p", [Error], State2),
+					?LLOG(notice, "error response from Janus: ~p", [Error], State2),
 					{stop, normal, State2}
 			end;
 		{error, Error} ->
-			?LLOG(warning, "could not connect: ~p", [Error], State2),
+			?LLOG(notice, "could not connect: ~p", [Error], State2),
 			{stop, normal, State2}
 	end;
 
@@ -298,8 +308,11 @@ handle_info(get_rooms, #state{conn=Conn}=State) ->
 	erlang:send_after(?KEEPALIVE, self(), get_rooms),
 	{noreply, State2};
 
+handle_info(nkservice_updated, State) ->
+    {noreply, set_log(State)};
+
 handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{conn=Pid}=State) ->
-	?LLOG(warning, "connection event down", [], State),
+	?LLOG(notice, "connection event down", [], State),
 	erlang:send_after(?CONNECT_RETRY, self(), connect),
 	{noreply, update_status(connecting, State#state{conn=undefined})};
 
@@ -321,7 +334,7 @@ code_change(_OldVsn, State, _Extra) ->
     ok.
 
 terminate(Reason, State) ->
-    ?LLOG(info, "stop: ~p", [Reason], State).
+    ?DEBUG("stop: ~p", [Reason], State).
 
 
 
@@ -329,6 +342,14 @@ terminate(Reason, State) ->
 %% Internal
 %% ===================================================================
 
+%% @private
+set_log(#state{srv_id=SrvId}=State) ->
+    Debug = case nkservice_util:get_debug_info(SrvId, ?MODULE) of
+        {true, _} -> true;
+        _ -> false
+    end,
+    put(nkmedia_janus_engine_debug, Debug),
+    State.
 
 
 %% @private

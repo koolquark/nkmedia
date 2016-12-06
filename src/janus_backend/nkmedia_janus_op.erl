@@ -27,7 +27,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([start/2, stop/1, videocall/2, echo/2, play/3]).
+-export([start/3, stop/1, videocall/2, echo/2, play/3]).
 -export([list_rooms/1, create_room/3, destroy_room/2]).
 -export([publish/3, unpublish/1]).
 -export([listen/3, listen_switch/2, unlisten/1]).
@@ -39,6 +39,15 @@
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
 
+
+% To debug, set debug => [nkmedia_janus_op]
+
+-define(DEBUG(Txt, Args, State),
+    case erlang:get(nkmedia_janus_op_debug) of
+        true -> ?LLOG(debug, Txt, Args, State);
+        _ -> ok
+    end).
+
 -define(LLOG(Type, Txt, Args, State),
     lager:Type("NkMEDIA Janus OP ~s (~p) "++Txt, 
                [State#state.id, State#state.status | Args])).
@@ -48,6 +57,7 @@
 -define(WAIT_TIMEOUT, 60).      % Secs
 -define(OP_TIMEOUT, 4*60*60).   
 -define(KEEPALIVE, 20).
+-define(ALARM_PERIOD, 5).
 
 
 %% ===================================================================
@@ -98,11 +108,11 @@
 %% @doc Starts a new session
 %% Starts a new Janus client
 %% Monitors calling process
--spec start(janus_id(), session_id()) ->
+-spec start(nkservice:id(), janus_id(), session_id()) ->
     {ok, pid()}.
 
-start(JanusId, SessionId) ->
-    gen_server:start(?MODULE, {JanusId, SessionId, self()}, []).
+start(SrvId, JanusId, SessionId) ->
+    gen_server:start(?MODULE, {SrvId, JanusId, SessionId, self()}, []).
 
 
 %% @doc Stops a session
@@ -149,12 +159,12 @@ play(Id, Play, Opts) ->
     do_call(Id, {play, Play, Opts}).
 
 
-%% @doc List all videorooms
--spec list_rooms(id()) ->
+%% @doc List all videorooms without 
+-spec list_rooms(janus_id()) ->
     {ok, list()} | {error, nkservice:error()}.
 
 list_rooms(Id) ->
-    do_call(Id, list_rooms).
+    do_call2(Id, list_rooms).
 
 
 %% @doc Creates a new videoroom
@@ -162,7 +172,7 @@ list_rooms(Id) ->
     {ok, room()} | {error, nkservice:error()}.
 
 create_room(Id, Room, Opts) ->
-    do_call(Id, {create_room, to_room(Room), Opts}).
+    do_call2(Id, {create_room, to_room(Room), Opts}).
 
 
 %% @doc Destroys a videoroom
@@ -170,7 +180,7 @@ create_room(Id, Room, Opts) ->
     ok | {error, nkservice:error()}.
 
 destroy_room(Id, Room) ->
-    do_call(Id, {destroy_room, to_room(Room)}).
+    do_call2(Id, {destroy_room, to_room(Room)}).
 
 
 %% @doc Starts a conection to a videoroom.
@@ -352,6 +362,7 @@ nkmedia_sip_invite(User, Req) ->
 
 -record(state, {
     id ::nkmedia_session:id(),
+    srv_id :: nkservice:id(),
     janus_id :: nkmedia_janus:id(),
     conn ::  pid(),
     conn_mon :: reference(),
@@ -367,8 +378,9 @@ nkmedia_sip_invite(User, Req) ->
     sip_contact :: nklib:uri(),
     offer :: nkmedia:offer(),
     from :: {pid(), term()},
-    % opts :: map(),
-    timer :: reference()
+    timer :: reference(),
+    alarm_timer :: reference(),
+    alarm_last = 0 :: nklib_util:timestamp()
 }).
 
 
@@ -376,13 +388,14 @@ nkmedia_sip_invite(User, Req) ->
 -spec init(term()) ->
     {ok, tuple()}.
 
-init({JanusId, SessId, CallerPid}) ->
-    case nkmedia_janus_client:start(JanusId) of
+init({SrvId, JanusId, SessId, CallerPid}) ->
+    case nkmedia_janus_client:start(SrvId, JanusId) of
         {ok, Pid} ->
             {ok, JanusSessId} = nkmedia_janus_client:create(Pid, ?MODULE, self()),
             State = #state{
                 janus_id = JanusId, 
                 id = SessId,
+                srv_id = SrvId,
                 sess_id = JanusSessId,
                 conn = Pid,
                 conn_mon = monitor(process, Pid),
@@ -390,7 +403,10 @@ init({JanusId, SessId, CallerPid}) ->
             },
             true = nklib_proc:reg({?MODULE, JanusSessId}),
             nklib_proc:put(?MODULE, {JanusSessId, SessId}),
+            set_log(State),
+            nkservice_util:register_for_changes(SrvId),
             self() ! send_keepalive,
+            ?DEBUG("started", [], State),
             {ok, status(wait, State)};
         {error, Error} ->
             {stop, Error}
@@ -492,7 +508,7 @@ handle_call({media, Opts}, _From, #state{status=Status, wait=Wait}=State) ->
         listen ->
             do_listen_media(Opts, State);
         _ ->
-            ?LLOG(warning, "media error: ~p, ~p", [Status, Wait], State),
+            ?LLOG(notice, "media error: ~p, ~p", [Status, Wait], State),
             reply_stop({error, {internal_error, ?LINE}}, State)
     end;
 
@@ -505,7 +521,7 @@ handle_call({media_peer, Opts}, _From, #state{status=Status, wait=Wait}=State) -
         {wait, videocall_answer} ->
             do_videocall_media(Opts, callee, State);
         _ ->
-            ?LLOG(warning, "media_peer error: ~p, ~p", [Status, Wait], State),
+            ?LLOG(notice, "media_peer error: ~p, ~p", [Status, Wait], State),
             reply({error, {internal_error, ?LINE}}, State)
     end;
 
@@ -528,12 +544,12 @@ handle_call(Msg, _From, #state{status=Status, wait=Wait}=State) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
 handle_cast({event, _Id, _Handle, stop}, State) ->
-    ?LLOG(notice, "received stop from janus", [], State),
+    ?DEBUG("received stop from janus", [], State),
     {stop, normal, State};
 
 handle_cast({event, _Id, _Handle, #{<<"janus">>:=<<"hangup">>}=Msg}, State) ->
     #{<<"reason">>:=Reason} = Msg,
-    ?LLOG(info, "hangup from janus (~s)", [Reason], State),
+    ?DEBUG("hangup from Janus (~s)", [Reason], State),
     {stop, normal, State};
 
 handle_cast({event, _Id, Handle, #{<<"janus">>:=<<"webrtcup">>}}, State) ->
@@ -563,16 +579,31 @@ handle_cast({event, _Id, Handle, #{<<"janus">>:=<<"media">>}=Msg}, State) ->
     nkmedia_janus_session:update_status(SessId, Side, Data),
     {noreply, State};
 
-handle_cast({event, _Id, Handle, #{<<"janus">>:=<<"slowlink">>}=Msg}, State) ->
-    Side = case State of
-        #state{handle_id=Handle, id=SessId} -> caller;
-        #state{handle_id2=Handle, id=SessId} -> callee
+handle_cast({event, _Id, _Handle, #{<<"janus">>:=<<"slowlink">>}=Msg}, State) ->
+    % Side = case State of
+    %     #state{handle_id=Handle, id=SessId} -> caller;
+    %     #state{handle_id2=Handle, id=SessId} -> callee
+    % end,
+    #state{id=SessId, alarm_timer=Timer, alarm_last=Last} = State,
+    Now = nklib_util:timestamp(),
+    Last2 = case Now - Last < ?ALARM_PERIOD of
+        true ->
+            ?DEBUG("skipping slow_link", [], State),
+            Last;
+        false ->
+            Nacks = maps:get(<<"nacks">>, Msg, 0), 
+            Dir = case maps:get(<<"uplink">>, Msg, <<>>) of
+                true -> incoming;
+                false -> outcoming;
+                _ -> unknown
+            end,
+            Data = #{alarm=>true, nacks=>Nacks, dir=>Dir},
+            nkmedia_session:send_info(SessId, slow_link, Data),
+            Now
     end,
-    Nacks = maps:get(<<"nacks">>, Msg, 0), 
-    UpLink = maps:get(<<"uplink">>, Msg, <<>>),
-    Data = #{slow_link=>#{nacks=>Nacks, uplink=>UpLink}},
-    nkmedia_janus_session:update_status(SessId, Side, Data),
-    {noreply, State};
+    nklib_util:cancel_timer(Timer),
+    Timer2 = erlang:send_after(1100*?ALARM_PERIOD, self(), clean_alarm),
+    {noreply, State#state{alarm_timer=Timer2, alarm_last=Last2}};
 
 handle_cast({event, Id, Handle, Msg}, State) ->
     case parse_event(Msg) of
@@ -592,7 +623,7 @@ handle_cast({invite, {ok, Body}}, #state{status=wait, wait=from_sip_invite}=Stat
 
 handle_cast({invite, {error, Error}}, #state{status=wait, wait=from_sip_invite}=State) ->
     #state{from=From} =State,
-    ?LLOG(notice, "invite error: ~p", [Error], State),
+    ?LLOG(info, "invite error: ~p", [Error], State),
     gen_server:reply(From, {error, Error}),
     {stop, normal, State#state{from=undefined}};
 
@@ -621,7 +652,7 @@ handle_cast({candidate, Candidate}, State) ->
     end;
 
 handle_cast(stop, State) ->
-    ?LLOG(info, "user stop", [], State),
+    ?DEBUG("user stop", [], State),
     {stop, normal, State};
 
 handle_cast(Msg, State) -> 
@@ -639,21 +670,33 @@ handle_info(send_keepalive, State) ->
     noreply(State);
 
 handle_info({timeout, _, status_timeout}, State) ->
-    ?LLOG(info, "status timeout", [], State),
+    ?DEBUG("status timeout", [], State),
     {stop, normal, State};
 
+handle_info(clean_alarm, #state{id=SessId}=State) ->
+    nkmedia_session:send_info(SessId, slow_link, #{alarm=>false}),
+    {noreply, State};
+
 handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{conn_mon=Ref}=State) ->
-    ?LLOG(notice, "client monitor stop: ~p", [Reason], State),
+    case Reason of
+        normal -> 
+            ?DEBUG("client monitor stop", [], State);
+        _ -> 
+            ?LLOG(info, "client monitor stop: ~p", [Reason], State)
+    end,
     {stop, normal, State};
 
 handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{user_mon=Ref}=State) ->
     case Reason of
         normal ->
-            ?LLOG(info, "caller monitor stop", [], State);
+            ?DEBUG("caller monitor stop", [], State);
         _ ->
-            ?LLOG(notice, "caller monitor stop: ~p", [Reason], State)
+            ?LLOG(info, "caller monitor stop: ~p", [Reason], State)
     end,
     {stop, normal, State};
+
+handle_info(nkservice_updated, State) ->
+    {noreply, set_log(State)};
 
 handle_info(Msg, State) -> 
     lager:warning("Module ~p received unexpected info ~p", [?MODULE, Msg]),
@@ -674,7 +717,7 @@ code_change(_OldVsn, State, _Extra) ->
 
 terminate(Reason, #state{from=From}=State) ->
     destroy(State),
-    ?LLOG(info, "process stop: ~p", [Reason], State),
+    ?DEBUG("process stop: ~p", [Reason], State),
     nklib_util:reply(From, {error, process_down}),
     ok.
 
@@ -889,7 +932,7 @@ do_destroy_room(Room, State) ->
             #{<<"videoroom">>:=<<"destroyed">>} = Msg,
             reply_stop(ok, State);
         {error, Error} ->
-            ?LLOG(notice, "destroy_room error: ~p", [Error], State),
+            ?LLOG(info, "destroy_room error: ~p", [Error], State),
             reply_stop({error, Error}, State)
     end.
 
@@ -1220,7 +1263,7 @@ do_event(Id, Handle, {event, <<"incomingcall">>, _, #{<<"sdp">>:=SDP}}, State) -
             State2 = State#state{from=undefined},
             noreply(wait(from_sip_answer_2, State2));
         _ ->
-            ?LLOG(warning, "unexpected incomingcall", [], State),
+            ?LLOG(notice, "unexpected incomingcall", [], State),
             {stop, normal, State}
     end;
 
@@ -1256,7 +1299,7 @@ do_event(_Id, _Handle, {data, #{<<"publishers">>:=_}}, State) ->
     noreply(State);
 
 do_event(_Id, _Handle, {data, #{<<"videoroom">>:=<<"destroyed">>}}, State) ->
-    ?LLOG(notice, "videoroom destroyed", [], State),
+    ?LLOG(info, "videoroom destroyed", [], State),
     {stop, normal, State};
 
 do_event(_Id, _Handle, {event, <<"registered">>, _, _}, State) ->
@@ -1277,27 +1320,27 @@ do_event(_Id, _Handle, {event, <<"hangingup">>, _, _}, State) ->
     {noreply, State};
 
 do_event(_Id, _Handle, {event, <<"registration_failed">>, _, _}, State) ->
-    ?LLOG(warning, "registration error", [], State),
+    ?LLOG(notice, "registration error", [], State),
     {stop, normal, State};
 
 do_event(_Id, _Handle, {event, <<"hangup">>, _, _}, State) ->
-    ?LLOG(info, "hangup from Janus", [], State),
+    ?DEBUG("hangup from Janus", [], State),
     {stop, normal, State};
 
-do_event(_Id, _Handle, {data, #{<<"videoroom">>:=<<"slow_link">>}=Data}, State) ->
-    BR = maps:get(<<"current-bitrate">>, Data, 0),
-    #state{room=Room} = State,
-    Data = #{time=>nklib_util:timestamp(), bitrate=>BR},
-    nkmedia_room:update_status(Room, #{slow_link=>Data}),
+do_event(_Id, _Handle, {data, #{<<"videoroom">>:=<<"slow_link">>}=_Data}, State) ->
+    % BR = maps:get(<<"current-bitrate">>, Data, 0),
+    % #state{room=Room} = State,
+    % Data2 = #{time=>nklib_util:timestamp(), bitrate=>BR},
+    % nkmedia_room:update_status(Room, #{slow_link=>Data}),
     % ?LLOG(notice, "videroom slow_link (~p)", [BR], State),
     {noreply, State};
 
 do_event(_Id, _Handle, {data, #{<<"result">>:=Result}}, State) ->
     case Result of
         #{<<"status">>:=Status, <<"bitrate">>:=Bitrate} ->
-            ?LLOG(notice, "status: ~s, bitrate: ~p", [Status, Bitrate], State);
+            ?LLOG(info, "status: ~s, bitrate: ~p", [Status, Bitrate], State);
         _ ->
-            ?LLOG(warning, "unexpected result: ~p", [Result], State)
+            ?LLOG(notice, "unexpected result: ~p", [Result], State)
     end,
     {noreply, State};
 
@@ -1310,7 +1353,7 @@ do_event(_Id, _Handle, {data, #{<<"leaving">>:=_User, <<"room">>:=_Room}}, State
     {noreply, State};
 
 do_event(_Id, _Handle, Event, State) ->
-    ?LLOG(warning, "unexpected event: ~p", [Event], State),
+    ?LLOG(notice, "unexpected event: ~p", [Event], State),
     noreply(State).
 
 
@@ -1319,6 +1362,16 @@ do_event(_Id, _Handle, Event, State) ->
 %% ===================================================================
 %% Internal
 %% ===================================================================
+
+%% @private
+set_log(#state{srv_id=SrvId}=State) ->
+    Debug = case nkservice_util:get_debug_info(SrvId, ?MODULE) of
+        {true, _} -> true;
+        _ -> false
+    end,
+    put(nkmedia_janus_op_debug, Debug),
+    State.
+
 
 %% @private
 attach(Plugin, #state{sess_id=SessId, conn=Pid}) ->
@@ -1395,7 +1448,7 @@ wait(Reason, State) ->
 status(NewStatus, #state{status=OldStatus, timer=Timer}=State) ->
     case NewStatus of
         OldStatus -> ok;
-        _ -> ?LLOG(info, "status changed to ~p", [NewStatus], State)
+        _ -> ?DEBUG("status changed to ~p", [NewStatus], State)
     end,
     nklib_util:cancel_timer(Timer),
     Time = case NewStatus of
@@ -1451,14 +1504,27 @@ do_call(SessId, Msg, Timeout) ->
     case find(SessId) of
         {ok, Pid} -> 
             nkservice_util:call(Pid, Msg, Timeout);
-        not_found -> 
-            case start(SessId, <<>>) of
-                {ok, Pid} ->
-                    nkservice_util:call(Pid, Msg, Timeout);
-                _ ->
-                    {error, session_not_found}
-            end
+        % not_found -> 
+        %     case start(SessId, <<>>) of
+        %         {ok, Pid} ->
+        %             nkservice_util:call(Pid, Msg, Timeout);
+        %         _ ->
+        %             {error, session_not_found}
+        %     end
+            _ ->
+                {error, session_not_found}
     end.
+
+
+%% @private
+do_call2(JanusId, Msg) ->
+    case start(none, JanusId, <<>>) of
+        {ok, Pid} ->
+            nkservice_util:call(Pid, Msg, 5000);
+        {error, Error} ->
+            {error, Error}
+    end.
+
 
 
 %% @private

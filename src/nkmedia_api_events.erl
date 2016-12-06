@@ -100,7 +100,7 @@ send_event(SrvId, Class, Id, Type, Body) ->
     ok.
 
 send_event(SrvId, Class, Id, Type, Body, Pid) ->
-    lager:info("MEDIA EVENT (~s:~s:~s): ~p", [Class, Type, Id, Body]),
+    % lager:info("MEDIA EVENT (~s:~s:~s): ~p", [Class, Type, Id, Body]),
     Event = #event{
         srv_id = SrvId,     
         class = <<"media">>, 

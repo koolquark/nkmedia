@@ -22,7 +22,7 @@
 -module(nkmedia_janus_client).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/1, start/2, stop/1, get_all/0]).
+-export([start/2, start/3, stop/1, get_all/0]).
 -export([info/1, create/3, attach/3, message/5, detach/3, destroy/2]).
 -export([keepalive/2, candidate/4, get_clients/1]).
 
@@ -33,12 +33,24 @@
 
 -include_lib("nksip/include/nksip.hrl").
 
+
+% To debug, set debug => [{nkmedia_janus_client, #{nkpacket=>true}}]
+
+-define(DEBUG(Txt, Args, State),
+    case erlang:get(nkmedia_janus_client_debug) of
+        true -> ?LLOG(debug, Txt, Args, State);
+        _ -> ok
+    end).
+
+-define(MSG(Txt, Args, State),
+    case erlang:get(nkmedia_janus_client_debug) of
+        true -> print(Txt, Args, State);
+        _ -> ok
+    end).
+
+
 -define(LLOG(Type, Txt, Args, State),
     lager:Type("NkMEDIA Janus Client (~p) "++Txt, [self()|Args])).
-
--define(PRINT(Txt, Args, State), 
-        % print(Txt, Args, State),    % Comment this
-        ok).
 
 
 % -define(OP_TIME, 5*60*1000).    % Maximum operation time
@@ -47,6 +59,12 @@
 -define(CODECS, [opus,vp8,speex,iLBC,'GSM','PCMU','PCMA']).
 
 -define(JANUS_WS_TIMEOUT, 60*60*1000).
+
+
+
+
+
+
 
 
 %% ===================================================================
@@ -62,29 +80,34 @@
 %% ===================================================================
 
 %% @doc Starts a new Janus session
--spec start(nkmedia_janus_engine:id()) ->
+-spec start(nkservice:id(), nkmedia_janus_engine:id()) ->
     {ok, pid()} | {error, term()}.
 
-start(JanusId) ->
+start(SrvId, JanusId) ->
     case nkmedia_janus_engine:get_config(JanusId) of
         {ok, #{}=Config} -> 
-            start(JanusId, Config);
+            start(SrvId, JanusId, Config);
         {error, Error} -> 
             {error, Error}
     end.
 
 
 %% @doc Starts a new Janus session
--spec start(nkmedia_janus_engine:id(), nkmedia_janus:config()) ->
+-spec start(nkservice:id(), nkmedia_janus_engine:id(), nkmedia_janus:config()) ->
     {ok, pid()} | {error, term()}.
 
-start(JanusId, #{host:=Host, base:=Base, pass:=Pass}) ->
+start(SrvId, JanusId, #{host:=Host, base:=Base, pass:=Pass}) ->
+    Debug = case nkservice_util:get_debug_info(SrvId, ?MODULE) of
+        {true, #{nkpacket:=true}} -> true;
+        _ -> false
+    end,
     ConnOpts = #{
         class => ?MODULE,
         monitor => self(),
         idle_timeout => ?JANUS_WS_TIMEOUT,
-        user => #{pass=>Pass, janus_id=>JanusId},
-        ws_proto => <<"janus-protocol">>
+        user => #{srv_id=>SrvId, pass=>Pass, janus_id=>JanusId},
+        ws_proto => <<"janus-protocol">>,
+        debug => Debug
     },
     {ok, Ip} = nklib_util:to_ip(Host),
     Conn = {?MODULE, ws, Ip, Base},
@@ -205,6 +228,7 @@ get_clients(Pid) ->
 
 -record(state, {
     janus_id :: nkmedia_janus_engine:id(),
+    srv_id :: nkservice:id(),
     remote :: binary(),
     pass :: binary(),
     clients = #{} :: #{id() => {module(), Id::term(), reference()}},
@@ -234,14 +258,17 @@ default_port(wss) -> 8989.
 conn_init(NkPort) ->
     {ok, Remote} = nkpacket:get_remote_bin(NkPort),
     {ok, _Class, User} = nkpacket:get_user(NkPort),
-    #{pass:=Pass, janus_id:=JanusId} = User,
+    #{srv_id:=SrvId, pass:=Pass, janus_id:=JanusId} = User,
+    nkservice_util:register_for_changes(SrvId),
     State = #state{
         janus_id = JanusId,
+        srv_id = SrvId,
         pass = Pass,
         remote = Remote,
         pos = erlang:phash2(nklib_util:uid())
     },
-    ?LLOG(info, "new session", [], State),
+    set_log(State),
+    ?DEBUG("new session", [], State),
     nklib_proc:put(?MODULE),
     {ok, State}.
 
@@ -263,7 +290,7 @@ conn_parse({text, Data}, NkPort, State) ->
         _ ->
             ok
     end,
-    ?PRINT("receiving ~s", [Msg], State),
+    ?MSG("receiving ~s", [Msg], State),
     case Msg of
         #{<<"janus">>:=BinCmd, <<"transaction">>:=Trans} ->
             OpId = {trans, Trans},
@@ -284,7 +311,7 @@ conn_parse({text, Data}, NkPort, State) ->
                             event(CallBack, ClientId, Id, Handle, Msg, State),
                             {ok, State};
                         not_found ->
-                            ?LLOG(notice, "unexpected server event2: ~p", [Msg], State),
+                            ?LLOG(notice, "unexpected server event: ~p", [Msg], State),
                             {ok, State}
                     end;
                 not_found ->
@@ -296,11 +323,11 @@ conn_parse({text, Data}, NkPort, State) ->
                     event(CallBack, ClientId, Id, Handle, Msg, State),
                     {ok, State};
                 not_found ->
-                    ?LLOG(notice, "unexpected server event: ~p", [Msg], State),
+                    ?LLOG(notice, "unexpected server event2: ~p", [Msg], State),
                     {ok, State}
             end;
         #{<<"janus">>:=<<"timeout">>, <<"session_id">>:=Id} ->
-            ?LLOG(notice, "server session timeout for ~p", [Id], State),
+            ?DEBUG("server session timeout for ~p", [Id], State),
             State2 = del_client(Id, State),
             {ok, State2};
         #{<<"janus">>:=<<"detached">>} ->
@@ -380,7 +407,7 @@ conn_handle_info({timeout, _, {op_timeout, OpId}}, _NkPort, State) ->
             {ok, State2};
         {#trans{from=From, req=Req}, State2} ->
             nklib_util:reply(From, {error, timeout}),
-            ?LLOG(warning, "operation timeout: ~p", [Req], State),
+            ?LLOG(notice, "operation timeout: ~p", [Req], State),
             {ok, State2};
         not_found ->
             {ok, State}
@@ -392,9 +419,9 @@ conn_handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, NkPort, State) ->
         {ok, Id} ->
             case Reason of
                 normal ->
-                    ?LLOG(info, "session ~p has stopped (normal)", [Id], State);
+                    ?DEBUG("session ~p has stopped (normal)", [Id], State);
                 _ ->
-                    ?LLOG(notice, "session ~p has stopped (~p)", [Id, Reason], State)
+                    ?LLOG(info, "session ~p has stopped (~p)", [Id, Reason], State)
             end,
             State2 = del_client(Id, State),
             send_client_req({destroy, Id}, undefined, NkPort, State2);
@@ -402,6 +429,9 @@ conn_handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, NkPort, State) ->
             lager:warning("Module ~p received unexpected info: ~p", [?MODULE, Msg]),
             {ok, State}
     end;
+
+conn_handle_info(nkservice_updated, _NkPort, State) ->
+    {ok, set_log(State)};
 
 conn_handle_info(Msg, _NkPort, State) ->
     lager:warning("Module ~p received unexpected info: ~p", [?MODULE, Msg]),
@@ -414,7 +444,7 @@ conn_handle_info(Msg, _NkPort, State) ->
 
 conn_stop(Reason, _NkPort, _State) ->
     % session_event(stop, State),
-    ?LLOG(info, "connection stop: ~p", [Reason], _State).
+    ?DEBUG("connection stop: ~p", [Reason], _State).
 
 
 %% ===================================================================
@@ -549,7 +579,7 @@ process_server_resp(Other, _OpId, _Req, From, Msg, _NkPort, State) ->
 
 %% @private
 process_server_req(Cmd, _Msg, _NkPort, State) ->
-    ?LLOG(warning, "unexpected server req: ~s, ~p", [Cmd, _Msg], State),
+    ?LLOG(notice, "unexpected server req: ~s, ~p", [Cmd, _Msg], State),
     {ok, State}.
 
    
@@ -558,6 +588,16 @@ process_server_req(Cmd, _Msg, _NkPort, State) ->
 %% ===================================================================
 %% Util
 %% ===================================================================
+
+%% @private
+set_log(#state{srv_id=SrvId}=State) ->
+    Debug = case nkservice_util:get_debug_info(SrvId, ?MODULE) of
+        {true, _} -> true;
+        _ -> false
+    end,
+    put(nkmedia_janus_op_debug, Debug),
+    State.
+
 
 %% @private
 insert_op(OpId, Req, From, #state{trans=AllOps}=State) ->
@@ -624,19 +664,19 @@ event(CallBack, ClientId, SessId, Handle, Event, State) ->
         ok ->
             ok;
         _ ->
-            ?LLOG(warning, "Error calling ~p:janus_event/4: ~p", [CallBack], Error)
+            ?LLOG(notice, "Error calling ~p:janus_event/4: ~p", [CallBack], Error)
     end,
     State.
 
 
 %% @private
 send(Msg, NkPort, State) ->
-    ?PRINT("sending ~s", [Msg], State),
+    ?MSG("sending ~s", [Msg], State),
     case send(Msg, NkPort) of
         ok -> 
             {ok, State};
         error -> 
-            ?LLOG(notice, "error sending msg", [], State),
+            ?LLOG(info, "error sending msg", [], State),
             {stop, normal, State}
     end.
 
@@ -673,7 +713,7 @@ print(Txt, [#{jsep:=Jsep}=Msg], State) ->
 print(Txt, [#{}=Map], State) ->
     print(Txt, [nklib_json:encode_pretty(Map)], State);
 print(Txt, Args, _State) ->
-    ?LLOG(notice, Txt, Args, _State).
+    ?LLOG(debug, Txt, Args, _State).
 
 
 

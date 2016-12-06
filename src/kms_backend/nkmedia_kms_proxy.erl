@@ -22,8 +22,7 @@
 -module(nkmedia_kms_proxy).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([plugin_deps/0, plugin_syntax/0, plugin_listen/2, 
-         plugin_start/2, plugin_stop/2]).
+-export([plugin_deps/0, plugin_syntax/0, plugin_listen/2]).
 -export([nkmedia_kms_proxy_init/2, nkmedia_kms_proxy_find_kms/2,
          nkmedia_kms_proxy_in/2, nkmedia_kms_proxy_out/2, 
          nkmedia_kms_proxy_terminate/2, nkmedia_kms_proxy_handle_call/3,
@@ -71,17 +70,6 @@ plugin_listen(Config, #{id:=SrvId}) ->
     },                                  
     [{Conns, maps:merge(ConnOpts, Opts)} || {Conns, ConnOpts} <- Listen].
     
-
-
-plugin_start(Config, #{name:=Name}) ->
-    lager:info("Plugin NkMEDIA KMS Proxy (~s) starting", [Name]),
-    {ok, Config}.
-
-
-plugin_stop(Config, #{name:=Name}) ->
-    lager:info("Plugin NkMEDIA KMS Proxy (~p) stopping", [Name]),
-    {ok, Config}.
-
 
 
 %% ===================================================================

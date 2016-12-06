@@ -22,9 +22,9 @@
 -module(nkmedia_fs_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([plugin_deps/0, plugin_group/0, plugin_syntax/0, plugin_config/2,
-         plugin_start/2, plugin_stop/2]).
+-export([plugin_deps/0, plugin_group/0, plugin_syntax/0, plugin_config/2, plugin_stop/2]).
 -export([error_code/1]).
+-export([service_init/2]).
 -export([nkmedia_fs_get_mediaserver/1]).
 -export([nkmedia_session_start/3, nkmedia_session_stop/2,
          nkmedia_session_offer/4, nkmedia_session_answer/4, nkmedia_session_cmd/3, 
@@ -71,22 +71,7 @@ plugin_config(Config, _Service) ->
     {ok, Config, Cache}.
 
 
-plugin_start(Config, #{name:=Name}) ->
-    lager:info("Plugin NkMEDIA Freeswitch (~s) starting", [Name]),
-    case nkdocker_monitor:register(?MODULE) of
-        {ok, DockerMonId} ->
-            nkmedia_app:put(docker_fs_mon_id, DockerMonId),
-            lager:info("Installed images: ~s", 
-                [nklib_util:bjoin(find_images(DockerMonId))]);
-        {error, Error} ->
-            lager:error("Could not start Docker Monitor: ~p", [Error]),
-            erlang:error(docker_monitor)
-    end,
-    {ok, Config}.
-
-
-plugin_stop(Config, #{name:=Name}) ->
-    lager:info("Plugin NkMEDIA Freeswitch (~p) stopping", [Name]),
+plugin_stop(Config, _Service) ->
     nkdocker_monitor:unregister(?MODULE),
     {ok, Config}.
 
@@ -126,6 +111,25 @@ error_code(fs_channel_stop)      ->  {302006, "Freeswitch channel stop"};
 error_code(fs_transfer_error)    ->  {302007, "Freeswitch transfer error"};
 error_code(fs_bridge_error)      ->  {302008, "Freeswitch bridge error"};
 error_code(_)                    ->  continue.
+
+
+%% ===================================================================
+%% Implemented Callbacks - nkservice
+%% ===================================================================
+
+service_init(_Service, State) ->
+    case nkdocker_monitor:register(?MODULE) of
+        {ok, DockerMonId} ->
+            nkmedia_app:put(docker_fs_mon_id, DockerMonId),
+            lager:info("NkMEDIA FS installed images: ~s", 
+                [nklib_util:bjoin(find_images(DockerMonId))]);
+        {error, Error} ->
+            lager:error("Could not start Docker Monitor: ~p", [Error]),
+            erlang:error(docker_monitor)
+    end,
+    {ok, State}.
+
+
 
 
 %% ===================================================================

@@ -174,7 +174,7 @@ get_janus(#{srv_id:=SrvId}=Room) ->
 -spec create_room(room()) ->
     {ok, room()} | {error, term()}.
 
-create_room(#{nkmedia_janus_id:=JanusId, room_id:=RoomId}=Room) ->
+create_room(#{srv_id:=SrvId, nkmedia_janus_id:=JanusId, room_id:=RoomId}=Room) ->
     Base = #{
         audio_codec => opus, 
         video_codec => vp8,
@@ -186,7 +186,7 @@ create_room(#{nkmedia_janus_id:=JanusId, room_id:=RoomId}=Room) ->
         videocodec => maps:get(video_codec, Room2),
         bitrate => maps:get(bitrate, Room2)             % Default for publishers
     },                                                  
-    case nkmedia_janus_op:start(JanusId, RoomId) of
+    case nkmedia_janus_op:start(SrvId, JanusId, RoomId) of
         {ok, Pid} ->
             case nkmedia_janus_op:create_room(Pid, RoomId, Opts) of
                 ok ->
@@ -202,8 +202,8 @@ create_room(#{nkmedia_janus_id:=JanusId, room_id:=RoomId}=Room) ->
 -spec destroy_room(room()) ->
     ok | {error, term()}.
 
-destroy_room(#{nkmedia_janus_id:=JanusId, room_id:=RoomId}) ->
-    case nkmedia_janus_op:start(JanusId, RoomId) of
+destroy_room(#{srv_id:=SrvId, nkmedia_janus_id:=JanusId, room_id:=RoomId}) ->
+    case nkmedia_janus_op:start(SrvId, JanusId, RoomId) of
         {ok, Pid} ->
             nkmedia_janus_op:destroy_room(Pid, RoomId);
         {error, Error} ->

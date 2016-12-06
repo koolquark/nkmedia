@@ -22,7 +22,7 @@
 -module(nkmedia_kms_client).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/1, start/2, stop/1, stop_all/0, get_all/0]).
+-export([start/2, start/3, stop/1, stop_all/0, get_all/0]).
 -export([connect/1, reconnect/2]).
 -export([manager/2, create/4, invoke/4, release/2, subscribe/3, unsubscribe/3]).
 -export([register/4]).
@@ -34,12 +34,24 @@
 
 -include("../../include/nkmedia.hrl").
 
+
+% To debug, set debug => [{nkmedia_kms_client, #{nkpacket=>true}}]
+
+-define(DEBUG(Txt, Args, State),
+    case erlang:get(nkmedia_kms_client_debug) of
+        true -> ?LLOG(debug, Txt, Args, State);
+        _ -> ok
+    end).
+
+
+-define(MSG(Txt, Args, State),
+    case erlang:get(nkmedia_kms_client_debug) of
+        true -> print(Txt, Args, State);
+        _ -> ok
+    end).
+
 -define(LLOG(Type, Txt, Args, State),
     lager:Type("NkMEDIA KMS Client ~s "++Txt, [State#state.sess_id|Args])).
-
--define(PRINT(Txt, Args, State), 
-        % print(Txt, Args, State),    % Comment this
-        ok).
 
 
 -define(CALL_TIMEOUT, 5*60*1000).
@@ -69,16 +81,21 @@
 
 %% @doc Starts a new verto session to Kurento
 %% You must then use connect/1 or reconnect/2.
--spec start(id(), nkmedia_kms:config()) ->
+-spec start(nkservice:id(), id(), nkmedia_kms:config()) ->
     {ok, SessId::binary(), pid()} | {error, term()}.
 
-start(KurentoId, #{host:=Host, base:=Base}) ->
+start(SrvId, KurentoId, #{host:=Host, base:=Base}) ->
+    Debug = case nkservice_util:get_debug_info(SrvId, ?MODULE) of
+        {true, #{nkpacket:=true}} -> true;
+        _ -> false
+    end,
     ConnOpts = #{
         class => ?MODULE,
         monitor => self(),
         idle_timeout => ?WS_TIMEOUT,
-        user => #{kms_id=>KurentoId},
-        path => <<"/kurento">>
+        user => #{srv_id=>SrvId, kms_id=>KurentoId},
+        path => <<"/kurento">>,
+        debug => Debug
     },
     {ok, Ip} = nklib_util:to_ip(Host),
     Conn = {?MODULE, ws, Ip, Base},
@@ -86,13 +103,13 @@ start(KurentoId, #{host:=Host, base:=Base}) ->
 
 
 %% @doc Starts a new verto session to FS
--spec start(id()) ->
+-spec start(nkservice:id(), id()) ->
     {ok, pid()} | {error, term()}.
 
-start(KurentoId) ->
+start(SrvId, KurentoId) ->
     case nkmedia_kms_engine:get_config(KurentoId) of
         {ok, #{}=Config} -> 
-            start(KurentoId, Config);
+            start(SrvId, KurentoId, Config);
         {error, Error} -> 
             {error, Error}
     end.
@@ -208,6 +225,7 @@ get_all() ->
 
 -record(state, {
     kms_id :: nkmedia_kms_engine:id(),
+    srv_id :: nkservice:id(),
     remote :: binary(),
     trans = #{} :: #{integer() => #trans{}},
     sess_id :: binary(),
@@ -235,13 +253,16 @@ default_port(wss) -> 8989.
 conn_init(NkPort) ->
     {ok, Remote} = nkpacket:get_remote_bin(NkPort),
     {ok, _Class, User} = nkpacket:get_user(NkPort),
-    #{kms_id:=KurentoId} = User,
+    #{srv_id:=SrvId, kms_id:=KurentoId} = User,
     State = #state{
         kms_id = KurentoId,
+        srv_id = SrvId, 
         remote = Remote,
         pos = 0
     },
-    ?LLOG(info, "new session (~p)", [self()], State),
+    set_log(State),
+    nkservice_util:register_for_changes(SrvId),
+    ?DEBUG("new session (~p)", [self()], State),
     nklib_proc:put(?MODULE, KurentoId),
     % gen_server:cast(self(), get_info),
     self() ! send_ping,
@@ -253,7 +274,7 @@ conn_init(NkPort) ->
     {ok, #state{}} | {stop, term(), #state{}}.
 
 conn_parse(close, _NkPort, State) ->
-    ?LLOG(warning, "TCP close", [], State),
+    ?DEBUG("TCP close", [], State),
     {ok, State};
 
 %% Messages received from Kurento
@@ -266,7 +287,7 @@ conn_parse({text, Data}, NkPort, #state{sess_id=SessId}=State) ->
         _ ->
             ok
     end,
-    ?PRINT("receiving ~s", [Msg], State),
+    ?MSG("receiving ~s", [Msg], State),
     case Msg of
         #{<<"id">>:=TransId, <<"method">>:=Method} ->
             process_server_req(TransId, Method, NkPort, State);
@@ -275,7 +296,7 @@ conn_parse({text, Data}, NkPort, #state{sess_id=SessId}=State) ->
                 {Op, State2} ->
                     State3 = case Result of
                         #{<<"sessionId">>:=MsgSessId} when SessId==undefined ->
-                            ?LLOG(info, "session id is ~s", [MsgSessId], State),
+                            ?DEBUG("session id is ~s", [MsgSessId], State),
                             nklib_proc:put(?MODULE, SessId),
                             nklib_proc:put({?MODULE, SessId}),
                             State2#state{sess_id=MsgSessId};
@@ -284,7 +305,7 @@ conn_parse({text, Data}, NkPort, #state{sess_id=SessId}=State) ->
                     end,
                     process_resp(Op, Result, NkPort, State3);
                 not_found ->
-                    ?LLOG(warning, "received unexpected server result!", [], State),
+                    ?LLOG(notice, "received unexpected server result!", [], State),
                     {ok, State}
             end;
         #{<<"id">>:=TransId, <<"error">>:=Result} ->
@@ -294,7 +315,7 @@ conn_parse({text, Data}, NkPort, #state{sess_id=SessId}=State) ->
                     nklib_util:reply(From, {error, {kms_error, Code, Error}}),
                     {ok, State2};
                 not_found ->
-                    ?LLOG(warning, "received unexpected server result!", [], State),
+                    ?LLOG(notice, "received unexpected server result!", [], State),
                     {ok, State}
             end;
         #{<<"method">>:=<<"onEvent">>, <<"params">> := #{<<"value">>:=Value}} ->
@@ -306,19 +327,19 @@ conn_parse({text, Data}, NkPort, #state{sess_id=SessId}=State) ->
                         ]} ->
                             nkmedia_kms_session_lib:kms_event(NkSessId, Type, EvData);
                         #{<<"tags">>:=[Tag]} ->
-                            ?LLOG(warning, "unexpected tags: ~s", 
+                            ?LLOG(notice, "unexpected tags: ~s", 
                                   [nklib_json:encode_pretty(Tag)], State);
                         _ ->
-                            ?LLOG(warning, "unexpected event: ~s", 
+                            ?LLOG(notice, "unexpected event: ~s", 
                                   [nklib_json:encode_pretty(Value)], State)
                     end;
                 _ ->
-                    ?LLOG(warning, "unrecognized event: ~s", 
+                    ?LLOG(notice, "unrecognized event: ~s", 
                           [nklib_json:encode_pretty(Value)], State)
             end,
             {ok, State};
         _ ->
-            ?LLOG(warning, "unrecognized msg: ~s", 
+            ?LLOG(notice, "unrecognized msg: ~s", 
                   [nklib_json:encode_pretty(Msg)], State),
             {ok, State}
     end.
@@ -391,23 +412,25 @@ conn_handle_info({timeout, _, {op_timeout, OpId}}, _NkPort, State) ->
     case extract_op(OpId, State) of
         {#trans{op=Op, from=From}, State2} ->
             nklib_util:reply(From, {error, timeout}),
-            ?LLOG(warning, "operation ~p timeout", [Op], State),
+            ?LLOG(notice, "operation ~p timeout", [Op], State),
             {ok, State2};
         not_found ->
             {ok, State}
     end;
 
+conn_handle_info(nkservice_updated, _NkPort, State) ->
+    {ok, set_log(State)};
+
 conn_handle_info(Msg, _NkPort, State) ->
     lager:warning("Module ~p received unexpected info: ~p", [?MODULE, Msg]),
     {ok, State}.
-
 
 %% @doc Called when the connection stops
 -spec conn_stop(Reason::term(), nkpacket:nkport(), #state{}) ->
     ok.
 
 conn_stop(Reason, _NkPort, _State) ->
-    ?LLOG(info, "connection stop: ~p", [Reason], _State).
+    ?DEBUG("connection stop: ~p", [Reason], _State).
 
 
 %% ===================================================================
@@ -552,7 +575,7 @@ process_resp(#trans{from=From}=_Op, Result, _NkPort, State) ->
 
 %% @private
 process_server_req(Request, Params, _NkPort, State) ->
-    ?LLOG(warning, "unexpected server req: ~s, ~p", [Request, Params], State),
+    ?LLOG(notice, "unexpected server req: ~s, ~p", [Request, Params], State),
     {ok, State}.
 
 
@@ -560,6 +583,16 @@ process_server_req(Request, Params, _NkPort, State) ->
 %% ===================================================================
 %% Util
 %% ===================================================================
+
+%% @private
+set_log(#state{srv_id=SrvId}=State) ->
+    Debug = case nkservice_util:get_debug_info(SrvId, ?MODULE) of
+        {true, _} -> true;
+        _ -> false
+    end,
+    put(nkmedia_kms_client_debug, Debug),
+    State.
+
 
 %% @private
 do_call(Id, Msg) ->
@@ -637,12 +670,12 @@ value(Result) ->
 
 %% @private
 send(Msg, NkPort, State) ->
-    ?PRINT("sending ~s", [Msg], State),
+    ?MSG("sending ~s", [Msg], State),
     case send(Msg, NkPort) of
         ok -> 
             {ok, State};
         error -> 
-            ?LLOG(notice, "error sending msg", [], State),
+            ?LLOG(info, "error sending msg", [], State),
             {stop, normal, State}
     end.
 
@@ -668,7 +701,7 @@ print(_Txt, [#{<<"result">>:=#{<<"value">>:=<<"pong">>}}], _State) ->
 print(Txt, [#{}=Map], State) ->
     print(Txt, [nklib_json:encode_pretty(Map)], State);
 print(Txt, Args, _State) ->
-    ?LLOG(info, Txt, Args, _State).
+    ?LLOG(debug, Txt, Args, _State).
 
 
 

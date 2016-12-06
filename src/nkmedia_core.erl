@@ -24,7 +24,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([start/0, stop/0, register_session/2, invite/2]).
--export([plugin_listen/2, plugin_start/2, plugin_stop/2]).
+-export([plugin_listen/2]).
 -export([sip_route/5]).
 -export([sip_invite/2, sip_reinvite/2, sip_bye/2, sip_register/2]).
 
@@ -105,16 +105,6 @@ plugin_listen(Config, _Service) ->
         idle_timeout => ?WS_TIMEOUT
     },                                  
     [{Conns, maps:merge(ConnOpts, Opts)} || {Conns, ConnOpts} <- Listen].
-
-
-plugin_start(Config, _Service) ->
-    lager:info("NkMEDIA Core Service starting"),
-    {ok, Config}.
-
-
-plugin_stop(Config, _Service) ->
-    lager:info("NkMEDIA Core Service stopping"),
-    {ok, Config}.
 
 
 

@@ -22,7 +22,7 @@
 -module(nkmedia_fs_verto).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start_in/3, start_out/3, answer_out/2, start/1, start/2, stop/1, get_all/0]).
+-export([start_in/4, start_out/4, answer_out/2, stop/1, get_all/0]).
 -export([bw_test/2, invite/3, hangup/2, dtmf/3, outbound/3, answer/3, cmd/2]).
 -export([transports/1, default_port/1]).
 -export([conn_init/1, conn_encode/2, conn_parse/3, conn_stop/3]).
@@ -32,13 +32,23 @@
 -include("../../include/nkmedia.hrl").
 
 
+% To debug, set debug => [{nkmedia_fs_verto, #{nkpacket=>true}}]
+
+-define(DEBUG(Txt, Args, State),
+    case erlang:get(nkmedia_fs_verto_debug) of
+        true -> ?LLOG(debug, Txt, Args, State);
+        _ -> ok
+    end).
+
+-define(MSG(Txt, Args, State),
+    case erlang:get(nkmedia_fs_verto_debug) of
+        true -> print(Txt, Args, State);
+        _ -> ok
+    end).
 
 -define(LLOG(Type, Txt, Args, State),
     lager:Type("NkMEDIA FS Verto (~s) "++Txt, [State#state.sess_id | Args])).
 
--define(PRINT(Txt, Args, State), 
-        % print(Txt, Args, State),    % Comment this
-        ok).
 
 
 -define(OP_TIME, 5*60*1000).    % Maximum operation time
@@ -62,11 +72,11 @@
 
 %% @doc Starts a new verto session and place an inbound call with the same 
 %% CallId as the SessId.
--spec start_in(id(), nkmedia_fs_engine:id(), nkmedia:offer()) ->
+-spec start_in(nkservice:id(), id(), nkmedia_fs_engine:id(), nkmedia:offer()) ->
     {ok, UUID::binary(), SDP::binary()} | {error, term()}.
 
-start_in(SessId, FsId, Offer) ->
-    case start(SessId, FsId) of
+start_in(SrvId, SessId, FsId, Offer) ->
+    case start(SrvId, SessId, FsId) of
         {ok, SessPid} ->
             case invite(SessPid, SessId, Offer#{callee_id=><<"nkmedia_in">>}) of
                 {ok, SDP} -> {ok, SessId, SDP};
@@ -79,11 +89,11 @@ start_in(SessId, FsId, Offer) ->
 
 %% @doc Starts a new verto session and generates an outbound call with the same
 %% CallId as the SessId. Must call answer_out/3.
--spec start_out(id(), nkmedia_fs_engine:id(), map()) ->
+-spec start_out(nkservice:id(), id(), nkmedia_fs_engine:id(), map()) ->
     {ok, UUID::binary(), SDP::binary()} | {error, term()}.
 
-start_out(SessId, FsId, Opts) ->
-    case start(SessId, FsId) of
+start_out(SrvId, SessId, FsId, Opts) ->
+    case start(SrvId, SessId, FsId) of
         {ok, SessPid} ->
             case outbound(SessPid, SessId, Opts) of
                 {ok, SDP} -> {ok, SessId, SDP};
@@ -102,26 +112,31 @@ answer_out(SessId, Answer) ->
     answer(SessId, SessId, Answer).
 
 
+% %% @doc Starts a new verto session to FS
+% -spec start(nkmedia_fs_engine:id()) ->
+%     {ok, pid()} | {error, term()}.
+
+% start(FsId) ->
+%     start(nklib_util:uuid_4122(), FsId).
+
+
 %% @doc Starts a new verto session to FS
--spec start(nkmedia_fs_engine:id()) ->
+-spec start(nkservice:id(), id(), nkmedia_fs_engine:id()) ->
     {ok, pid()} | {error, term()}.
 
-start(FsId) ->
-    start(nklib_util:uuid_4122(), FsId).
-
-
-%% @doc Starts a new verto session to FS
--spec start(id(), nkmedia_fs_engine:id()) ->
-    {ok, pid()} | {error, term()}.
-
-start(SessId, FsId) ->
+start(SrvId, SessId, FsId) ->
     {ok, Config} = nkmedia_fs_engine:get_config(FsId),
     #{host:=Host, base:=Base, pass:=Pass} = Config,
+    Debug = case nkservice_util:get_debug_info(SrvId, ?MODULE) of
+        {true, #{nkpacket:=true}} -> true;
+        _ -> false
+    end,
     ConnOpts = #{
         class => ?MODULE,
         monitor => self(),
         idle_timeout => ?VERTO_WS_TIMEOUT,
-        user => #{fs_id=>FsId, pass=>Pass, sess_id=>SessId}
+        user => #{srv_id=>SrvId, fs_id=>FsId, pass=>Pass, sess_id=>SessId},
+        debug => Debug
     },
     {ok, Ip} = nklib_util:to_ip(Host),
     Conn = {?MODULE, ws, Ip, Base+1},
@@ -245,6 +260,7 @@ find(Id) ->
 }).
 
 -record(state, {
+    srv_id :: nkservice:id(),
     fs_id :: nkmedia_fs_engine:id(),
     remote :: binary(),
     sess_id :: binary(),
@@ -275,14 +291,17 @@ default_port(wss) -> 8082.
 conn_init(NkPort) ->
     {ok, Remote} = nkpacket:get_remote_bin(NkPort),
     {ok, _Class, User} = nkpacket:get_user(NkPort),
-    #{fs_id:=FsId, pass:=Pass, sess_id:=SessId} = User,
+    #{srv_id:=SrvId, fs_id:=FsId, pass:=Pass, sess_id:=SessId} = User,
     State = #state{
+        srv_id = SrvId,
         fs_id = FsId,
         sess_id = SessId,
         pass = Pass,
         remote = Remote
     },
-    ?LLOG(info, "new session (~p)", [self()], State),
+    set_log(State),
+    nkservice_util:register_for_changes(SrvId),
+    ?DEBUG("new session (~p)", [self()], State),
     true = nklib_proc:reg({?MODULE, SessId}),
     nklib_proc:put(?MODULE, SessId),
     {ok, State}.
@@ -302,7 +321,7 @@ conn_parse({text, <<"#S", _/binary>>=Msg}, _NkPort, State) ->
             gen_server:reply(From, {ok, Msg}),
             {ok, State2};
         not_found ->
-            ?LLOG(warning, "BW test reply without client", [], State),
+            ?LLOG(notice, "BW test reply without client", [], State),
             {ok, State}
     end;
 
@@ -315,7 +334,7 @@ conn_parse({text, Data}, NkPort, State) ->
         _ ->
             ok
     end,
-    ?PRINT("received ~s", [Msg], State),
+    ?MSG("received ~s", [Msg], State),
     case nkmedia_fs_util:verto_class(Msg) of
         {{req, Method}, _Id} ->
             process_server_req(Method, Msg, NkPort, State);
@@ -324,7 +343,7 @@ conn_parse({text, Data}, NkPort, State) ->
                 {Op, State2} ->
                     process_server_resp(Op, Resp, Msg, NkPort, State2);
                 not_found ->
-                    ?LLOG(warning, "received FS response for unknown req: ~p", 
+                    ?LLOG(notice, "received FS response for unknown req: ~p", 
                           [Msg], State),
                     {ok, State}
             end;
@@ -397,7 +416,7 @@ conn_handle_info({timeout, _, {op_timeout, OpId}}, _NkPort, State) ->
     case extract_op(OpId, State) of
         {#session_op{from=From}, State2} ->
             gen_server:reply(From, {error, timeout}),
-            ?LLOG(warning, "operation timeout", [], State),
+            ?LLOG(notice, "operation timeout", [], State),
             {stop, normal, State2};
         not_found ->
             {ok, State}
@@ -412,6 +431,9 @@ conn_handle_info({'EXIT', Pid, _Reason}=Msg, _NkPort, #state{originates=Pids}=St
             {ok, State}
     end;
 
+conn_handle_info(nkservice_updated, _NkPort, State) ->
+    {ok, set_log(State)};
+
 conn_handle_info(Msg, _NkPort, State) ->
     lager:warning("Module ~p received unexpected info: ~p", [?MODULE, Msg]),
     {ok, State}.
@@ -423,7 +445,7 @@ conn_handle_info(Msg, _NkPort, State) ->
 
 conn_stop(Reason, _NkPort, State) ->
     session_event(verto_stop, State),
-    ?LLOG(info, "connection stop: ~p", [Reason], State).
+    ?DEBUG("connection stop: ~p", [Reason], State).
 
 
 %% ===================================================================
@@ -513,7 +535,7 @@ process_server_resp(#session_op{from=From}, {ok, _}, _Msg, _NkPort, State) ->
     {ok, State};
 
 process_server_resp(#session_op{type=Type}, {error, Code, Error}, _Msg, _NkPort, State) ->
-    ?LLOG(warning, "error response to ~p: ~p (~s)", [Type, Code, Error], State),
+    ?LLOG(notice, "error response to ~p: ~p (~s)", [Type, Code, Error], State),
     {stop, normal, State}.
 
 
@@ -527,7 +549,7 @@ process_server_req(<<"verto.invite">>, Msg, NkPort, State) ->
             Resp = nkmedia_fs_util:verto_resp(<<"verto.invite">>, Msg),
             send(Resp, NkPort, State2);
         not_found ->
-            ?LLOG(warning, "received unexpected INVITE from FS", [], State),
+            ?LLOG(notice, "received unexpected INVITE from FS", [], State),
             {stop, normal, State}
     end;
 
@@ -539,7 +561,7 @@ process_server_req(<<"verto.answer">>, Msg, NkPort, State) ->
             Resp = nkmedia_fs_util:verto_resp(<<"verto.answer">>, Msg),
             send(Resp, NkPort, State2);
         error ->
-            ?LLOG(warning, "unexpected verto.answer", [], State),
+            ?LLOG(notice, "unexpected verto.answer", [], State),
             {stop, normal, State}
     end;
 
@@ -556,14 +578,14 @@ process_server_req(<<"verto.bye">>, Msg, NkPort, State) ->
 
 %% Sent when FS detects another session for the same session id
 process_server_req(<<"verto.punt">>, _Msg, _NkPort, State) ->
-    ?LLOG(notice, "stopping connection because of verto.punt", [], State),
+    ?DEBUG("stopping connection because of verto.punt", [], State),
     {stop, normal, State};
 
 process_server_req(<<"verto.display">>, _Msg, _NkPort, State) ->
     {ok, State};
 
 process_server_req(Req, Msg, _NkPort, State) ->
-    ?LLOG(warning, "unexpected FS request ~s: ~p", [Req, Msg], State),
+    ?LLOG(info, "unexpected FS request ~s: ~p", [Req, Msg], State),
     {ok, State}.
 
 
@@ -576,6 +598,15 @@ process_server_event(_Event, _NkPort, State) ->
 %% ===================================================================
 %% Util
 %% ===================================================================
+
+%% @private
+set_log(#state{srv_id=SrvId}=State) ->
+    Debug = case nkservice_util:get_debug_info(SrvId, ?MODULE) of
+        {true, _} -> true;
+        _ -> false
+    end,
+    put(nkmedia_fs_verto_debug, Debug),
+    State.
 
 
 %% @private
@@ -702,12 +733,12 @@ extract_op(OpId, #state{session_ops=AllOps}=State) ->
 
 %% @private
 send(Msg, NkPort, State) ->
-    ?PRINT("sending ~s", [Msg], State),
+    ?MSG("sending ~s", [Msg], State),
     case send(Msg, NkPort) of
         ok -> 
             {ok, State};
         error -> 
-            ?LLOG(notice, "error sending msg", [], State),
+            ?LLOG(info, "error sending msg", [], State),
             {stop, normal, State}
     end.
 
@@ -721,7 +752,7 @@ send(Msg, NkPort) ->
 print(Txt, [#{}=Map], State) ->
     print(Txt, [nklib_json:encode_pretty(Map)], State);
 print(Txt, Args, State) ->
-    ?LLOG(info, Txt, Args, State).
+    ?LLOG(debug, Txt, Args, State).
 
 
 

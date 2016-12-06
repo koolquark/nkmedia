@@ -391,10 +391,10 @@ do_type(_Type, _Opts, Session) ->
 
 
 %% @private
-get_fs_answer(Offer, #{nkmedia_fs_id:=FsId, session_id:=SessId}=Session) ->
+get_fs_answer(Offer, #{srv_id:=SrvId, nkmedia_fs_id:=FsId, session_id:=SessId}=Session) ->
     Type = maps:get(sdp_type, Offer, webrtc),
     Mod = fs_mod(Type),
-    case Mod:start_in(SessId, FsId, Offer) of
+    case Mod:start_in(SrvId, SessId, FsId, Offer) of
         {ok, UUID, SDP} ->
             wait_park(Session),
             Answer1 = #{
@@ -414,10 +414,10 @@ get_fs_answer(Offer, #{nkmedia_fs_id:=FsId, session_id:=SessId}=Session) ->
 
 
 %% @private
-get_fs_offer(#{nkmedia_fs_id:=FsId, session_id:=SessId}=Session) ->
+get_fs_offer(#{srv_id:=SrvId, nkmedia_fs_id:=FsId, session_id:=SessId}=Session) ->
     Type = maps:get(sdp_type, Session, webrtc),
     Mod = fs_mod(Type),
-    case Mod:start_out(SessId, FsId, #{}) of
+    case Mod:start_out(SrvId, SessId, FsId, #{}) of
         {ok, UUID, SDP} ->
             Offer1 = #{
                 sdp => SDP,

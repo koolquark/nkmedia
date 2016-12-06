@@ -32,6 +32,14 @@
 
 -define(CONNECT_RETRY, 5000).
 
+% To debug, set debug => [nkmedia_fs_engine]
+
+-define(DEBUG(Txt, Args, State),
+    case erlang:get(nkmedia_fs_engine_debug) of
+        true -> ?LLOG(debug, Txt, Args, State);
+        _ -> ok
+    end).
+
 -define(LLOG(Type, Txt, Args, State),
 	lager:Type("NkMEDIA FS Engine '~s' "++Txt, [State#state.id|Args])).
 
@@ -210,6 +218,7 @@ start_link(Config) ->
 
 -record(state, {
 	id :: id(),
+	srv_id :: nkservice:id(),
 	config :: config(),
 	status :: status(),
 	conn :: pid()
@@ -222,11 +231,13 @@ start_link(Config) ->
     {stop, term()} | ignore.
 
 init([#{name:=Id, srv_id:=SrvId}=Config]) ->
-	State = #state{id=Id, config=Config},
+	State = #state{id=Id, srv_id=SrvId, config=Config},
 	nklib_proc:put(?MODULE, {SrvId, Id}),
 	true = nklib_proc:reg({?MODULE, Id}, {connecting, undefined}),
+	set_log(State),
+	nkservice_util:register_for_changes(SrvId),
 	self() ! connect,
-	?LLOG(info, "started (~p)", [self()], State),
+	?DEBUG("started (~p)", [self()], State),
 	{ok, State}.
 
 
@@ -269,15 +280,16 @@ handle_info(connect, #state{conn=Pid}=State) when is_pid(Pid) ->
 	true = is_process_alive(Pid),
 	{noreply, State};
 
-handle_info(connect, #state{config=#{host:=Host, base:=Base, pass:=Pass}}=State) ->
+handle_info(connect, State) ->
+ 	#state{srv_id=SrvId, config=#{host:=Host, base:=Base, pass:=Pass}} = State,
 	State2 = update_status(connecting, State#state{conn=undefined}),
-	case nkmedia_fs_event_protocol:start(Host, Base, Pass) of
+	case nkmedia_fs_event_protocol:start(SrvId, Host, Base, Pass) of
 		{ok, Pid} ->
 			monitor(process, Pid),
 			State3 = State2#state{conn=Pid},
 			{noreply, update_status(ready, State3)};
 		{error, Error} ->
-			?LLOG(warning, "could not connect: ~p", [Error], State2),
+			?LLOG(notice, "could not connect: ~p", [Error], State2),
 			{stop, normal, State2}
 	end;
 
@@ -302,16 +314,19 @@ handle_info({nkmedia_fs_event, _Pid, Name, Event}, State) ->
 				true -> 
 					{noreply, State};
 				false ->
-					?LLOG(info, "ignoring event ~s", [Name2], State),
+					?DEBUG("ignoring event ~s", [Name2], State),
 					lager:info("\n~s\n", [nklib_json:encode_pretty(Event)]),
 					{noreply, State}
 			end
 	end;
 
 handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{conn=Pid}=State) ->
-	?LLOG(warning, "connection event down", [], State),
+	?LLOG(notice, "connection event down", [], State),
 	erlang:send_after(?CONNECT_RETRY, self(), connect),
 	{noreply, update_status(connecting, State#state{conn=undefined})};
+
+handle_info(nkservice_updated, State) ->
+    {noreply, set_log(State)};
 
 handle_info(Info, State) -> 
     lager:warning("Module ~p received unexpected info: ~p (~p)", [?MODULE, Info, State]),
@@ -331,13 +346,23 @@ code_change(_OldVsn, State, _Extra) ->
     ok.
 
 terminate(Reason, State) ->
-    ?LLOG(info, "stop: ~p", [Reason], State).
+    ?DEBUG("stop: ~p", [Reason], State).
 
 
 
 % ===================================================================
 %% Internal
 %% ===================================================================
+
+
+%% @private
+set_log(#state{srv_id=SrvId}=State) ->
+    Debug = case nkservice_util:get_debug_info(SrvId, ?MODULE) of
+        {true, _} -> true;
+        _ -> false
+    end,
+    put(nkmedia_fs_engine_debug, Debug),
+    State.
 
 
 %% @private
@@ -406,7 +431,7 @@ parse_event(<<"CHANNEL_BRIDGE">>, #{?NK_ID_VAR:=SessIdA}=Data, #state{id=FsId}=S
 	send_event(SessIdB, {bridge, SessIdA}, State);
 
 parse_event(<<"CONFERENCE_DATA">>, Data, State) ->
-    ?LLOG(notice, "CONF DATA: ~s", [nklib_json:encode_pretty(Data)], State);
+    ?DEBUG("CONF DATA: ~s", [nklib_json:encode_pretty(Data)], State);
 
 parse_event(<<"conference::maintenance">>, Data, State) ->
     case Data of
@@ -432,7 +457,7 @@ parse_event(<<"conference::maintenance">>, Data, State) ->
 
 parse_event(Name, _Data, State) ->
 	% io:format("DATA: ~s\n", [nklib_json:encode_pretty(_Data)]),
-    ?LLOG(warning, "unexpected event: ~s", [Name], State).
+    ?LLOG(notice, "unexpected event: ~s", [Name], State).
 
 
 %% @private

@@ -23,7 +23,7 @@
 -module(nkmedia_callbacks).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([plugin_deps/0, plugin_start/2, plugin_stop/2]).
+-export([plugin_deps/0]).
 -export([nkmedia_session_init/2, nkmedia_session_terminate/2, 
 		 nkmedia_session_event/3, nkmedia_session_reg_event/4,
 		 nkmedia_session_reg_down/4,
@@ -58,17 +58,6 @@
 
 plugin_deps() ->
     [nksip].
-
-
-plugin_start(Config, #{name:=Name}) ->
-    lager:info("Plugin NkMEDIA CORE (~s) starting", [Name]),
-    {ok, Config}.
-
-
-plugin_stop(Config, #{name:=Name}) ->
-    lager:info("Plugin NkMEDIA CORE (~p) stopping", [Name]),
-    {ok, Config}.
-
 
 
 

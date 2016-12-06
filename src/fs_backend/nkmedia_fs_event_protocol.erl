@@ -22,7 +22,7 @@
 -module(nkmedia_fs_event_protocol).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([start/3]).
+-export([start/4]).
 -export([api/2, api_block/2, event/3, msg/3, shutdown/1]).
 -export([execute/3, execute/4, execute/5, execute/6]).
 -export([t/1]).
@@ -44,6 +44,17 @@
 	<<"FreeSWITCH-IPv6">>, <<"FreeSWITCH-Switchname">>]).
 
 
+-define(DEBUG(Txt, Args, State),
+    case erlang:get(nkmedia_fs_event_protocol_debug) of
+        true -> ?LLOG(debug, Txt, Args, State);
+        _ -> ok
+    end).
+
+-define(LLOG(Type, Txt, Args, State),
+	lager:Type("NkMEDIA FS Event "++Txt, Args)).
+
+
+
 -include("nkmedia.hrl").
 
 
@@ -53,17 +64,22 @@
 
 
 %% @doc
--spec start(binary(), inet:port_number(), binary()) ->
+-spec start(nkservice:id(), binary(), inet:port_number(), binary()) ->
 	{ok, pid()} | {error, term()}.
 
-start(Host, Base, Pass) ->
+start(SrvId, Host, Base, Pass) ->
 	{ok, Ip} = nklib_util:to_ip(Host),
 	Conn = {?MODULE, tcp, Ip, Base},
+	Debug = case nkservice_util:get_debug_info(SrvId, ?MODULE) of
+		{true, #{nkpacket:=true}} -> true;
+		_ -> false
+	end,
 	ConnOpts = #{
 		class => nkmedia_fs, 
 		idle_timeout => 60000,
 		monitor => self(),
-		user => #{password=>nklib_util:to_binary(Pass), notify=>self()}
+		user => #{srv_id=>SrvId, password=>nklib_util:to_binary(Pass), notify=>self()},
+		debug => Debug
 	},
 	nkpacket:connect(Conn, ConnOpts).
 
@@ -174,6 +190,7 @@ shutdown(Pid) ->
 
 
 -record(state, {
+	srv_id :: nkservice:id(),
     password :: binary(),
     notify :: pid(),
     authenticated :: boolean(),
@@ -201,18 +218,19 @@ default_port(tcp) -> 50000.
 	{ok, #state{}}.
 
 conn_init(NkPort) ->
-    {ok, _SrvId, User} = nkpacket:get_user(NkPort),
-    State1 = #state{
-        password = maps:get(password, User, "ClueCon"),
-        authenticated = false
+    {ok, _Class, User} = nkpacket:get_user(NkPort),
+	#{srv_id:=SrvId, password:=Pass, notify:=Pid} = User,
+	monitor(process, Pid),
+    State = #state{
+    	srv_id = SrvId,
+        password = Pass,
+        authenticated = false,
+        notify = Pid
     },
-    case User of
-    	#{notify:=Pid} ->
-    		monitor(process, Pid),
-    		{ok, State1#state{notify=Pid}};
-    	_ ->
-    		{ok, State1}
-    end.
+    set_log(State),
+	nkservice_util:register_for_changes(SrvId),
+    ?DEBUG("started", [], State),
+    {ok, State}.
 
 
 %% @private
@@ -281,6 +299,9 @@ conn_handle_cast(Msg, _NkPort, State) ->
 conn_handle_info({'DOWN', _Ref, process, Pid, _Reason}, _NkPort, #state{notify=Pid}=State) ->
 	{stop, normal, State};
 
+conn_handle_info(nkservice_updated, _NkPort, State) ->
+    {ok, set_log(State)};
+
 conn_handle_info(Msg, _NkPort, State) ->
     lager:warning("Module ~p received unexpected info: ~p", [?MODULE, Msg]),
     {ok, State}.
@@ -291,6 +312,15 @@ conn_handle_info(Msg, _NkPort, State) ->
 %% Util
 %% ===================================================================
 
+
+%% @private
+set_log(#state{srv_id=SrvId}=State) ->
+    Debug = case nkservice_util:get_debug_info(SrvId, ?MODULE) of
+        {true, _} -> true;
+        _ -> false
+    end,
+    put(nkmedia_fs_event_protocol_debug, Debug),
+    State.
 
 %% @private
 do_call(Pid, Msg) ->

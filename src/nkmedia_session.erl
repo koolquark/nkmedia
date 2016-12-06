@@ -37,6 +37,20 @@
          handle_cast/2, handle_info/2]).
 -export_type([id/0, config/0, session/0, event/0, type_ext/0]).
 
+% To debug, set debug => [{nkmedia_session, #{media=>true}}]
+
+-define(DEBUG(Txt, Args, State),
+    case erlang:get(nkmedia_session_debug) of
+        true -> ?LLOG(debug, Txt, Args, State);
+        _ -> ok
+    end).
+
+-define(MEDIA(Txt, Args, State),
+    case erlang:get(nkmedia_session_debug_media) of
+        true -> ?LLOG(debug, Txt, Args, State);
+        _ -> ok
+    end).
+
 -define(LLOG(Type, Txt, Args, State),
     lager:Type("NkMEDIA Session ~s (~p) "++Txt, 
                [State#state.id, State#state.type | Args])).
@@ -49,7 +63,6 @@
 -define(MAX_ICE_TIME, 5000).
 -define(MAX_CALL_TIME, 5000).
 
-% -define(DEBUG_MEDIA, true). 
 
 
 %% ===================================================================
@@ -457,8 +470,10 @@ init([#{session_id:=Id, type:=Type, srv_id:=SrvId}=Session]) ->
         _ ->
             State1
     end,
-    ?LLOG(notice, "starting (~p, ~p)", [Role, self()], State2),
-    ?LLOG(info, "config: ~p", [maps:remove(offer, Session3)], State2),
+    set_log(State2),
+    nkservice_util:register_for_changes(SrvId),
+    ?LLOG(info, "starting (~p, ~p)", [Role, self()], State2),
+    ?DEBUG("config: ~p", [maps:remove(offer, Session3)], State2),
     gen_server:cast(self(), do_start),
     {ok, State3} = handle(nkmedia_session_init, [Id], State2),
     {ok, event(created, State3)}.
@@ -483,7 +498,7 @@ handle_call({cmd, Cmd, Opts}, _From, State) ->
 
 handle_call({link_to_slave, SlaveId, PidB}, _From, #state{id=MasterId}=State) ->
     % We are Master of SlaveId
-    ?LLOG(info, "linked to slave session ~s", [SlaveId], State),
+    ?DEBUG("linked to slave session ~s", [SlaveId], State),
     do_cast(PidB, {link_to_master, MasterId, self()}),
     reply({ok, self()}, link_to_slave(SlaveId, PidB, State));
     
@@ -552,7 +567,7 @@ handle_cast({set_slave_answer, SlaveId, Answer}, #state{session=Session}=State) 
                     {noreply, State2}
             end;
         _ ->
-            ?LLOG(notice, "received answer from unknown slave ~s", [SlaveId], State),
+            ?LLOG(info, "received answer from unknown slave ~s", [SlaveId], State),
             noreply(State)
     end;
 
@@ -569,6 +584,7 @@ handle_cast({update_status, Data}, #state{session=Session}=State) ->
     Status1 = maps:get(status, Session),
     Status2 = maps:merge(Status1, Data),
     State2 = add_to_session(status, Status2, State),
+    ?LLOG(info, "updated status: ~p", [Data], State),
     {noreply, event({status, Data}, State2)};
 
 handle_cast({send_info, Info, Meta}, State) ->
@@ -582,7 +598,7 @@ handle_cast({backend_candidate, Candidate}, State) ->
 
 handle_cast({link_to_master, MasterId, PidB}, State) ->
     % We are Slave of MasterId
-    ?LLOG(info, "linked to master ~s", [MasterId], State),
+    ?DEBUG("linked to master ~s", [MasterId], State),
     noreply(link_to_master(MasterId, PidB, State));
 
 handle_cast({unlink_session, PeerId}, #state{id=SessId, session=Session}=State) ->
@@ -624,11 +640,11 @@ handle_cast(unlink_session, #state{id=SessId, session=Session}=State) ->
     noreply(State3);
 
 handle_cast({register, Link}, State) ->
-    ?LLOG(info, "registered link (~p)", [Link], State),
+    ?DEBUG("registered link (~p)", [Link], State),
     noreply(links_add(Link, State));
 
 handle_cast({unregister, Link}, State) ->
-    ?LLOG(info, "proc unregistered (~p)", [Link], State),
+    ?DEBUG("proc unregistered (~p)", [Link], State),
     noreply(links_remove(Link, State));
 
 handle_cast({peer_stopped, PeerId}, #state{session=Session}=State) ->
@@ -651,15 +667,15 @@ handle_cast(Msg, State) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
 handle_info({timeout, _, session_timeout}, State) ->
-    ?LLOG(notice, "operation timeout", [], State),
+    ?LLOG(info, "operation timeout", [], State),
     do_stop(session_timeout, State);
 
 handle_info({timeout, _, client_ice_timeout}, State) ->
-    ?LLOG(info, "Client ICE timeout", [], State),
+    ?DEBUG("Client ICE timeout", [], State),
     noreply(do_client_candidate(#candidate{last=true}, State));
 
 handle_info({timeout, _, backend_ice_timeout}, State) ->
-    ?LLOG(info, "Backend ICE timeout", [], State),
+    ?DEBUG("Backend ICE timeout", [], State),
     noreply(do_backend_candidate(#candidate{last=true}, State));
 
 handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, State) ->
@@ -672,8 +688,12 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, State) ->
                 {stop, normal, State3} ->
                     do_stop(normal, State3);    
                 {stop, Error, State3} ->
-                    ?LLOG(notice, "stopping because of reg '~p' down (~p)",
-                          [Link, Reason], State3),
+                    case Reason of
+                        normal ->
+                            ?DEBUG("reg '~p' down (~p)", [Link, Reason], State3);
+                        _ ->
+                            ?LLOG(info, "reg '~p' down (~p)", [Link, Reason], State3)
+                    end,
                     do_stop(Error, State3)
             end;
         {ok, _, State2} ->
@@ -684,6 +704,9 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, State) ->
 
 handle_info(destroy, State) ->
     {stop, normal, State};
+
+handle_info(nkservice_updated, State) ->
+    {noreply, set_log(State)};
 
 handle_info(Msg, State) -> 
     handle(nkmedia_session_handle_info, [Msg], State).
@@ -723,6 +746,18 @@ terminate(Reason, #state{stop_reason=Stop}=State) ->
 %% ===================================================================
 
 %% @private
+set_log(#state{srv_id=SrvId}=State) ->
+    {Debug, Media} = case nkservice_util:get_debug_info(SrvId, ?MODULE) of
+        {true, #{media:=true}} -> {true, true};
+        {true, _} -> {true, false};
+        _ -> false
+    end,
+    put(nkmedia_session_debug, Debug),
+    put(nkmedia_session_debug_media, Media),
+    State.
+
+
+%% @private
 do_start(#state{type=Type, backend_role=Role}=State) ->
     case handle(nkmedia_session_start, [Type, Role], State) of
         {ok, State2} ->
@@ -730,11 +765,11 @@ do_start(#state{type=Type, backend_role=Role}=State) ->
                 {ok, State3} ->
                     noreply(restart_timer(State3));
                 {error, Error, State3} ->
-                    ?LLOG(notice, "do_start error: ~p", [Error], State3),
+                    ?LLOG(info, "do_start error: ~p", [Error], State3),
                     do_stop(Error, State3)
             end;
        {error, Error, State2} ->
-            ?LLOG(notice, "do_start error: ~p", [Error], State2),
+            ?LLOG(info, "do_start error: ~p", [Error], State2),
             do_stop(Error, State2)
     end.
 
@@ -804,15 +839,15 @@ do_set_offer(Offer, #state{type=Type, backend_role=Role, session=Session}=State)
                 offerer ->
                     % Offer is from backend
                     #state{backend_candidates=trickle} = State,
-                    ?LLOG(notice, "starting buffering trickle ICE for backend offer"
-                          " (~p msecs)", [Time], State),
+                    ?DEBUG("starting buffering trickle ICE for backend offer"
+                           " (~p msecs)", [Time], State),
                     erlang:start_timer(Time, self(), backend_ice_timeout),
                     State2#state{backend_candidates=[]};
                 offeree ->
                     % Offer is from client
                     #state{client_candidates=trickle} = State,
-                    ?LLOG(notice, "starting buffering trickle ICE for client offer"
-                          " (~p msecs)", [Time], State),
+                    ?DEBUG("starting buffering trickle ICE for client offer"
+                           " (~p msecs)", [Time], State),
                     erlang:start_timer(Time, self(), client_ice_timeout),
                     State#state{client_candidates=[]}
             end,
@@ -827,8 +862,8 @@ do_set_offer(Offer, #state{type=Type, backend_role=Role, session=Session}=State)
                         session = ?SESSION(#{offer=>Offer}, Session2),
                         wait_offer = []
                     },
-                    ?LLOG(info, "offer set", [], State3),
-                    debug_media("offer:\n~s", [maps:get(sdp, Offer2, <<>>)], State3),
+                    ?DEBUG("offer set", [], State3),
+                    ?MEDIA("offer:\n~s", [maps:get(sdp, Offer2, <<>>)], State3),
                     State4 = case Role of
                         offerer ->
                             event({offer, Offer2}, State3);
@@ -861,14 +896,14 @@ do_set_answer(Answer, #state{type=Type, backend_role=Role, session=Session}=Stat
                 offerer ->
                     % Answer is from client
                     #state{client_candidates=trickle} = State,
-                    ?LLOG(notice, "starting buffering trickle ICE for client answer"
-                          " (~p msecs)", [Time], State),
+                    ?DEBUG("starting buffering trickle ICE for client answer"
+                           " (~p msecs)", [Time], State),
                     erlang:start_timer(Time, self(), client_ice_timeout),
                     State2#state{client_candidates=[]};
                 offeree ->
                     #state{backend_candidates=trickle} = State,
-                    ?LLOG(notice, "starting buffering trickle ICE for backend answer"
-                          " (~p msecs)", [Time], State),
+                    ?DEBUG("starting buffering trickle ICE for backend answer"
+                           " (~p msecs)", [Time], State),
                     erlang:start_timer(Time, self(), backend_ice_timeout),
                     State2#state{backend_candidates=[]}
             end,
@@ -883,12 +918,11 @@ do_set_answer(Answer, #state{type=Type, backend_role=Role, session=Session}=Stat
                         session = ?SESSION(#{answer=>Answer2}, Session2),
                         wait_answer = []
                     },
-                    ?LLOG(info, "answer set", [], State3),
-                    debug_media("answer:\n~s", [maps:get(sdp, Answer2, <<>>)], State3),
+                    ?DEBUG("answer set", [], State3),
+                    ?MEDIA("answer:\n~s", [maps:get(sdp, Answer2, <<>>)], State3),
                     State4 = case Session of
                         #{set_master_answer:=true, master_id:=MasterId} ->
-                            ?LLOG(notice, "calling set_answer for ~s", 
-                                  [MasterId], State3),
+                            ?DEBUG("calling set_answer for ~s", [MasterId], State3),
                             set_answer(MasterId, Answer2),
                             State3;
                         _ ->
@@ -910,23 +944,23 @@ do_client_candidate(Candidate, #state{client_candidates=trickle}=State) ->
     #candidate{a_line=Line, last=Last} = Candidate,
     case handle(nkmedia_session_candidate, [Candidate], State) of
         {ok, State2} when Last->
-            debug_media("sent last client candidate to backend", [], State),
+            ?MEDIA("sent last client candidate to backend", [], State),
             State2;
         {ok, State2} ->
-            debug_media("sent client candidate ~s to backend", [Line], State),
+            ?MEDIA("sent client candidate ~s to backend", [Line], State),
             State2;
         {continue, #state{session=#{master_id:=MasterId}}=State2} ->
             % If we receive a client candidate, a no backend takes it,
             % let's send it to my salve as a backend candidate. 
-            debug_media("sent client candidate ~s to MASTER", [Line], State),
+            ?MEDIA("sent client candidate ~s to MASTER", [Line], State),
             backend_candidate(MasterId, Candidate),
             State2;
         {continue, #state{session=#{slave_id:=SlaveId}}=State2} ->
-            debug_media("sent client candidate ~s to SLAVE", [Line], State),
+            ?MEDIA("sent client candidate ~s to SLAVE", [Line], State),
             backend_candidate(SlaveId, Candidate),
             State2;
         {continue, State2} ->
-            ?LLOG(notice, "unmanaged offer candidate!", [], State2),
+            ?LLOG(info, "unmanaged offer candidate!", [], State2),
             State2
     end;
 
@@ -934,28 +968,28 @@ do_client_candidate(#candidate{last=true}, #state{client_candidates=last}=State)
     State;
 
 do_client_candidate(#candidate{last=true}, #state{client_candidates=[]}=State) ->
-    ?LLOG(warning, "no received client candidates!", [], State),
+    ?LLOG(info, "no received client candidates!", [], State),
     stop(self(), no_ice_candidates),
     State;
 
 do_client_candidate(Candidate, #state{client_candidates=last}=State) ->
-    ?LLOG(notice, "ignoring late client candidate ~p", [Candidate], State),
+    ?LLOG(info, "ignoring late client candidate ~p", [Candidate], State),
     State;
 
 do_client_candidate(#candidate{last=true}, #state{backend_role=offerer}=State) ->
     % This candidate is for an answer
-    ?LLOG(notice, "last client answer candidate received", [], State),
+    ?MEDIA("last client answer candidate received", [], State),
     #state{client_candidates=Candidates} = State,
     candidate_answer(Candidates, State#state{client_candidates=last});
 
 do_client_candidate(#candidate{last=true}, #state{backend_role=offeree}=State) ->
     % This candidate is for an offer
-    ?LLOG(notice, "last client offer candidate received", [], State),
+    ?MEDIA("last client offer candidate received", [], State),
     #state{client_candidates=Candidates} = State,
     candidate_offer(Candidates, State#state{client_candidates=last});
 
 do_client_candidate(Candidate, #state{client_candidates=Candidates}=State) ->
-    debug_media("storing client candidate ~s", [Candidate#candidate.a_line], State),
+    ?MEDIA("storing client candidate ~s", [Candidate#candidate.a_line], State),
     Candidates2 = [Candidate|Candidates],
     State#state{client_candidates=Candidates2}.
 
@@ -967,9 +1001,9 @@ do_backend_candidate(Candidate, #state{backend_candidates=trickle}=State) ->
     #candidate{a_line=Line, last=Last} = Candidate,
     case Last of
         true ->
-            debug_media("sent backend candidate ~s to client (event)", [Line], State);
+            ?MEDIA("sent backend candidate ~s to client (event)", [Line], State);
         false ->
-            debug_media("sent last backend candidate to client (event)", [], State)
+            ?MEDIA("sent last backend candidate to client (event)", [], State)
     end,
     event({candidate, Candidate}, State);
 
@@ -977,28 +1011,28 @@ do_backend_candidate(#candidate{last=true}, #state{backend_candidates=last}=Stat
     State;
 
 do_backend_candidate(#candidate{last=true}, #state{backend_candidates=[]}=State) ->
-    ?LLOG(warning, "no received backend candidates!", [], State),
+    ?LLOG(info, "no received backend candidates!", [], State),
     stop(self(), no_ice_candidates),
     State;
 
 do_backend_candidate(Candidate, #state{backend_candidates=last}=State) ->
-    ?LLOG(notice, "ignoring late backend candidate ~p", [Candidate], State),
+    ?LLOG(info, "ignoring late backend candidate ~p", [Candidate], State),
     State;
 
 do_backend_candidate(#candidate{last=true}, #state{backend_role=offerer}=State) ->
     % This candidate is for an offer
     #state{backend_candidates=Candidates} = State,
-    ?LLOG(info, "last backend offer candidate received", [], State),
+    ?MEDIA("last backend offer candidate received", [], State),
     candidate_offer(Candidates, State#state{backend_candidates=last});
 
 do_backend_candidate(#candidate{last=true}, #state{backend_role=offeree}=State) ->
     % This candidate is for an answer
     #state{backend_candidates=Candidates} = State,
-    ?LLOG(notice, "last backend answer candidate received", [], State),
+    ?MEDIA("last backend answer candidate received", [], State),
     candidate_answer(Candidates, State#state{backend_candidates=last});
 
 do_backend_candidate(Candidate, #state{backend_candidates=Candidates}=State) ->
-    debug_media("storing backend candidate ~s", [Candidate#candidate.a_line], State),
+    ?MEDIA("storing backend candidate ~s", [Candidate#candidate.a_line], State),
     Candidates2 = [Candidate|Candidates],
     State#state{backend_candidates=Candidates2}.
 
@@ -1008,14 +1042,14 @@ candidate_offer(Candidates, #state{session=Session}=State) ->
     #{offer:=#{sdp:=SDP1}=Offer} = Session,
     SDP2 = nksip_sdp_util:add_candidates(SDP1, lists:reverse(lists:sort(Candidates))),
     Offer2 = Offer#{sdp:=nksip_sdp:unparse(SDP2), trickle_ice=>false},
-    ?LLOG(notice, "generating new offer with ~p received candidates", 
-          [length(Candidates)], State),
+    ?LLOG(info, "generating new offer with ~p received candidates", 
+           [length(Candidates)], State),
     State2 = add_to_session(offer, Offer2, State),
     case check_offer(State2) of
         {ok, State3} ->
             State3;
         {error, Error, State3} ->
-            ?LLOG(notice, "ICE error after last candidate: ~p", [Error], State),
+            ?LLOG(info, "ICE error after last candidate: ~p", [Error], State),
             stop(self(), Error),
             State3
     end.
@@ -1026,14 +1060,14 @@ candidate_answer(Candidates, #state{session=Session}=State) ->
     #{answer:=#{sdp:=SDP1}=Answer} = Session,
     SDP2 = nksip_sdp_util:add_candidates(SDP1, Candidates),
     Answer2 = Answer#{sdp:=nksip_sdp:unparse(SDP2), trickle_ice=>false},
-    ?LLOG(notice, "generating new answer with ~p received candidates", 
-          [length(Candidates)], State),
+    ?LLOG(info, "generating new answer with ~p received candidates", 
+           [length(Candidates)], State),
     State2 = add_to_session(answer, Answer2, State),
     case check_offer(State2) of
         {ok, State3} ->
             State3;
         {error, Error, State3} ->
-            ?LLOG(notice, "ICE error after last candidate: ~p", [Error], State),
+            ?LLOG(info, "ICE error after last candidate: ~p", [Error], State),
             stop(self(), Error),
             State3
     end.
@@ -1080,7 +1114,7 @@ noreply(State) ->
 
 %% @private
 do_stop(Reason, #state{stop_reason=false}=State) ->
-    ?LLOG(notice, "stopped: ~p", [Reason], State),
+    ?LLOG(info, "stopped: ~p", [Reason], State),
     #state{wait_offer=WaitOffer, wait_answer=WaitAnswer} = State,
     reply_all_waiting({error, session_stopped}, WaitOffer),
     reply_all_waiting({error, session_stopped}, WaitAnswer),
@@ -1116,11 +1150,7 @@ send_stop_peers( #state{id=SessId, session=Session}) ->
 
 %% @private
 event(Event, #state{id=Id}=State) ->
-    case Event of
-        {offer, _} ->  ?LLOG(info, "sending 'offer'", [], State);
-        {answer, _} -> ?LLOG(info, "sending 'answer'", [], State);
-        _ ->           ?LLOG(info, "sending 'event': ~p", [Event], State)
-    end,
+    ?DEBUG("sending 'event': ~p", [Event], State),
     State2 = links_fold(
         fun(Link, AccState) ->
             {ok, AccState2} = 
@@ -1203,7 +1233,7 @@ link_to_slave(SlaveId, PidB, State) ->
 unlink_from_slave(SlaveId, #state{session=Session}=State) ->
     case maps:find(slave_id, Session) of
         {ok, SlaveId} ->
-            ?LLOG(notice, "unlinked from slave ~s", [SlaveId], State),
+            ?DEBUG("unlinked from slave ~s", [SlaveId], State),
             State2 = links_remove({slave_id, SlaveId}, State),
             remove_from_session(slave_id, State2);
         _ ->
@@ -1215,7 +1245,7 @@ unlink_from_slave(SlaveId, #state{session=Session}=State) ->
 unlink_from_master(MasterId, #state{session=Session}=State) ->
     case maps:find(master_id, Session) of
         {ok, MasterId} ->
-            ?LLOG(notice, "unlinked from master ~s", [MasterId], State),
+            ?DEBUG("unlinked from master ~s", [MasterId], State),
             State2 = links_remove({master_id, MasterId}, State),
             remove_from_session(master_id, State2);
         _ ->
@@ -1251,11 +1281,4 @@ links_down(Mon, #state{links=Links}=State) ->
 %% @private
 links_fold(Fun, Acc, #state{links=Links}) ->
     nklib_links:fold(Fun, Acc, Links).
-
-
--ifdef(DEBUG_MEDIA).
-debug_media(Txt, List, State) -> ?LLOG(info, Txt, List, State).
--else.
-debug_media(_Txt, _List, _State) -> ok.
--endif.
 
