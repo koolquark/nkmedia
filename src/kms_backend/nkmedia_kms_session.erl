@@ -34,9 +34,21 @@
 
 -export_type([session/0, type/0, opts/0, cmd/0]).
 
+-define(DEBUG(Txt, Args, State),
+    case erlang:get(nkmedia_session_debug) of
+        true -> ?LLOG(debug, Txt, Args, State);
+        _ -> ok
+    end).
+
 -define(LLOG(Type, Txt, Args, Session),
-    lager:Type("NkMEDIA KMS Session ~s "++Txt, 
-               [maps:get(session_id, Session) | Args])).
+    lager:Type(
+        [
+            {media_session_id, maps:get(session_id, Session)},
+            {user_id, maps:get(user_id, Session)},
+            {session_id, maps:get(user_session, Session)}
+        ],
+        "NkMEDIA KMS Session ~s (~s) "++Txt, 
+        [maps:get(session_id, Session), maps:get(type, Session) | Args])).
 
 -include_lib("nksip/include/nksip.hrl").
 -include("../../include/nkmedia.hrl").
@@ -251,7 +263,7 @@ handle_call({bridge, PeerSessId, PeerProxy, Opts},
     ok = connect_to_proxy(Opts, Session),
     case connect_from_peer(PeerProxy, Session) of
         {ok, Session2} ->
-            ?LLOG(info, "remote connect ~s to us", [PeerProxy], Session),
+            ?DEBUG("remote connect ~s to us", [PeerProxy], Session),
             update_type(bridge, #{peer_id=>PeerSessId}),
             {reply, {ok, Proxy}, Session2};
         {error, Error} ->
@@ -268,7 +280,7 @@ handle_call(get_room, _From, Session) ->
 %% @private
 handle_cast({bridge_stop, PeerId}, 
             #{type:=bridge, type_ext:=#{peer_id:=PeerId}}=Session) ->
-    ?LLOG(info, "received bridge stop from ~s", [PeerId], Session),
+    ?DEBUG("received bridge stop from ~s", [PeerId], Session),
     case Session of
         #{stop_after_peer:=false} ->
             Session2 = reset_type(Session),
@@ -283,7 +295,7 @@ handle_cast({bridge_stop, PeerId},
     end;
 
 handle_cast({bridge_stop, PeerId}, Session) ->
-    ?LLOG(notice, "ignoring bridge stop from ~s", [PeerId], Session),
+    ?LLOG(info, "ignoring bridge stop from ~s", [PeerId], Session),
     {noreply, Session};
 
 handle_cast({end_of_stream, Player}, 
@@ -406,7 +418,7 @@ do_type(bridge, #{peer_id:=PeerId}=Opts, Session) ->
     case session_call(PeerId, {bridge, SessId, Proxy, Opts}) of
         {ok, PeerProxy} ->
             ok = connect_to_proxy(Opts, Session2),
-            ?LLOG(info, "connecting from ~s", [PeerProxy], Session),
+            ?DEBUG("connecting from ~s", [PeerProxy], Session),
             case connect_from_peer(PeerProxy, Session2) of
                 {ok, Session3} ->
                     {ok, #{peer_id=>PeerId}, Session3};
@@ -504,7 +516,7 @@ get_pipeline(_Type, Session) ->
 get_pipeline_from_room(RoomId, Session) ->
     case nkmedia_room:get_room(RoomId) of
         {ok, #{nkmedia_kms:=#{kms_id:=KmsId}}} -> 
-            ?LLOG(info, "getting engine from ROOM: ~s", [KmsId], Session),
+            ?DEBUG("getting engine from ROOM: ~s", [KmsId], Session),
             Session2 = ?SESSION(#{nkmedia_kms_id=>KmsId}, Session),
             case nkmedia_kms_session_lib:get_pipeline(Session2) of
                 {ok, Session3} -> 
@@ -551,7 +563,7 @@ reset_type(#{session_id:=SessId}=Session) ->
     end,
     case Session2 of
         #{type:=bridge, type_ext:=#{peer_id:=PeerId}} ->
-            ?LLOG(info, "sending bridge stop to ~s", [PeerId], Session),
+            ?DEBUG("sending bridge stop to ~s", [PeerId], Session),
             % In case we were linked
             nkmedia_session:unlink_session(self(), PeerId),
             session_cast(PeerId, {bridge_stop, SessId});
@@ -612,7 +624,7 @@ notify_publisher(RoomId, #{session_id:=SessId}=Session) ->
         ok ->
             ok;
         {error, Error} ->
-            ?LLOG(warning, "room publish error: ~p", [Error], Session)
+            ?LLOG(notice, "room publish error: ~p", [Error], Session)
     end.
 
 
@@ -624,7 +636,7 @@ notify_listener(RoomId, PeerId, #{session_id:=SessId}=Session) ->
         ok ->
             ok;
         {error, Error} ->
-            ?LLOG(warning, "room publish error: ~p", [Error], Session)
+            ?LLOG(notice, "room publish error: ~p", [Error], Session)
     end.
 
 

@@ -290,7 +290,7 @@ handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{conn=Pid}=State) ->
 	erlang:send_after(?CONNECT_RETRY, self(), connect),
 	{noreply, update_status(connecting, State#state{conn=undefined})};
 
-handle_info(nkservice_updated, State) ->
+handle_info({nkservice_updated, _SrvId}, State) ->
     {noreply, set_log(State)};
 
 handle_info(Info, State) -> 

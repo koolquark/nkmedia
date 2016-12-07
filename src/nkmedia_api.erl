@@ -49,7 +49,7 @@
 %% - if the session is killed, it is detected in 
 %%   api_server_reg_down() -> api_session_down() here
 cmd(create, Req, State) ->
-	#api_req{srv_id=SrvId, data=Data, user=User, session_id=UserSession} = Req,
+	#api_req{srv_id=SrvId, data=Data, user_id=User, session_id=UserSession} = Req,
 	#{type:=Type} = Data,
 	Config = Data#{
 		register => {nkmedia_api, self()},
@@ -184,7 +184,7 @@ cmd(Other, _Data, State) ->
 %% it receives the DOWN.
 session_stopped(SessId, ApiPid, Session) ->
 	#{srv_id:=SrvId} = Session,
-	Event = get_session_event(SrvId, SessId, undefined),
+	Event = get_session_event(SrvId, SessId),
 	nkservice_api_server:unsubscribe(ApiPid, Event),
 	nkservice_api_server:unregister(ApiPid, {nkmedia_session, SessId, self()}),
 	{ok, Session}.
@@ -202,7 +202,7 @@ session_stopped(SessId, ApiPid, Session) ->
 api_session_down(SessId, Reason, State) ->
 	#{srv_id:=SrvId} = State,
 	lager:warning("API Server: Session ~s is down: ~p", [SessId, Reason]),
-	Event = get_session_event(SrvId, SessId, undefined),
+	Event = get_session_event(SrvId, SessId),
 	nkservice_api_server:unsubscribe(self(), Event),
 	nkmedia_api_events:session_down(SrvId, SessId).
 
@@ -240,14 +240,12 @@ get_create_reply(SessId, Config) ->
 
 
 %% @private
-get_session_event(SrvId, SessId, Body) ->
+get_session_event(SrvId, SessId) ->
 	#event{
 		srv_id = SrvId, 
 		class = <<"media">>, 
 		subclass = <<"session">>,
-		type = <<"*">>,
-		obj_id = SessId,
-		body = Body
+		obj_id = SessId
 	}.
 
 

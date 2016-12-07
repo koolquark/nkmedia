@@ -430,7 +430,7 @@ conn_handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, NkPort, State) ->
             {ok, State}
     end;
 
-conn_handle_info(nkservice_updated, _NkPort, State) ->
+conn_handle_info({nkservice_updated, _SrvId}, _NkPort, State) ->
     {ok, set_log(State)};
 
 conn_handle_info(Msg, _NkPort, State) ->

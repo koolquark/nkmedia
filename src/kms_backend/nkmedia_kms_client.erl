@@ -418,7 +418,7 @@ conn_handle_info({timeout, _, {op_timeout, OpId}}, _NkPort, State) ->
             {ok, State}
     end;
 
-conn_handle_info(nkservice_updated, _NkPort, State) ->
+conn_handle_info({nkservice_updated, _SrvId}, _NkPort, State) ->
     {ok, set_log(State)};
 
 conn_handle_info(Msg, _NkPort, State) ->

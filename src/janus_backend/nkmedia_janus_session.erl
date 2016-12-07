@@ -32,8 +32,14 @@
 -export_type([session/0, type/0, opts/0, cmd/0]).
 
 -define(LLOG(Type, Txt, Args, Session),
-    lager:Type("NkMEDIA JANUS Session ~s (~s) "++Txt, 
-               [maps:get(session_id, Session), maps:get(type, Session) | Args])).
+    lager:Type(
+        [
+            {media_session_id, maps:get(session_id, Session)},
+            {user_id, maps:get(user_id, Session)},
+            {session_id, maps:get(user_session, Session)}
+        ],
+        "NkMEDIA JANUS Session ~s (~s) "++Txt, 
+        [maps:get(session_id, Session), maps:get(type, Session) | Args])).
 
 
 -include_lib("nksip/include/nksip.hrl").
@@ -353,7 +359,7 @@ handle_cast({callee_status, Data}, Session) ->
         #{type:=bridge, type_ext:=#{peer_id:=PeerId}} ->
             nkmedia_session:update_status(PeerId, Data);
         _ ->
-            ?LLOG(warning, "received unexpected callee_status", [], Session)
+            ?LLOG(notice, "received unexpected callee_status", [], Session)
     end,
     {noreply, Session}.
 
@@ -484,7 +490,7 @@ get_janus_op(#{srv_id:=SrvId, nkmedia_janus_id:=JanusId, session_id:=SessId}=Ses
             },
             {ok, Session2};
         {error, Error} ->
-            ?LLOG(warning, "janus connection start error: ~p", [Error], Session),
+            ?LLOG(notice, "janus connection start error: ~p", [Error], Session),
             {error, janus_connection_error}
     end.
 
@@ -526,7 +532,7 @@ notify_publisher(RoomId, #{session_id:=SessId}=Session) ->
         ok ->
             ok;
         {error, Error} ->
-            ?LLOG(warning, "room publish error: ~p", [Error], Session)
+            ?LLOG(notice, "room publish error: ~p", [Error], Session)
     end.
 
 
@@ -538,7 +544,7 @@ notify_listener(RoomId, PeerId, #{session_id:=SessId}=Session) ->
         ok ->
             ok;
         {error, Error} ->
-            ?LLOG(warning, "room publish error: ~p", [Error], Session)
+            ?LLOG(notice, "room publish error: ~p", [Error], Session)
     end.
 
 

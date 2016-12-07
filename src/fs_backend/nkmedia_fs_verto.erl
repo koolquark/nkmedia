@@ -431,7 +431,7 @@ conn_handle_info({'EXIT', Pid, _Reason}=Msg, _NkPort, #state{originates=Pids}=St
             {ok, State}
     end;
 
-conn_handle_info(nkservice_updated, _NkPort, State) ->
+conn_handle_info({nkservice_updated, _SrvId}, _NkPort, State) ->
     {ok, set_log(State)};
 
 conn_handle_info(Msg, _NkPort, State) ->

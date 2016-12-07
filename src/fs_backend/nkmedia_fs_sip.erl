@@ -286,7 +286,7 @@ handle_info(out_timeout, State) ->
     ?LLOG(notice, "outbound timeout", [], State),
     {stop, normal, State};
 
-handle_info(nkservice_updated, State) ->
+handle_info({nkservice_updated, _SrvId}, State) ->
     {noreply, set_log(State)};
 
 handle_info(Info, State) -> 

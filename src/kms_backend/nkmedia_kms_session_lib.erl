@@ -31,15 +31,26 @@
 -export([connect_from/3, connect_to_proxy/2, park/1]).
 -export([print_info/2]).
 
+-define(DEBUG(Txt, Args, State),
+    case erlang:get(nkmedia_session_debug) of
+        true -> ?LLOG(debug, Txt, Args, State);
+        _ -> ok
+    end).
+
 -define(LLOG(Type, Txt, Args, Session),
-    lager:Type("NkMEDIA KMS Session ~s "++Txt, 
-                [
-                    case is_map(Session) of 
-                        true -> maps:get(session_id, Session); 
-                        false -> Session 
-                    end
-                    | Args
-                ])).
+    lager:Type(
+        [
+            {media_session_id, maps:get(session_id, Session)},
+            {user_id, maps:get(user_id, Session)},
+            {session_id, maps:get(user_session, Session)}
+        ],
+        "NkMEDIA KMS Session ~s (~s) "++Txt, 
+        [maps:get(session_id, Session), maps:get(type, Session) | Args])).
+
+
+-define(PRINT(Txt, Args, Session),
+    lager:debug("NkMEDIA KMS Session ~s "++Txt, [Session|Args])).
+
 
 -include_lib("nksip/include/nksip.hrl").
 -include("../../include/nkmedia.hrl").
@@ -313,8 +324,9 @@ recorder_op(start, Opts, #{nkmedia_kms_recorder:=_}=Session) ->
 
 recorder_op(start, #{uri:=Uri}=Opts, #{nkmedia_kms_proxy:=Proxy}=Session) ->
     Profile = maps:get(mediaProfile, Opts, <<"WEBM">>),
-    Params = #{uri=>nklib_util:to_binary(Uri), mediaProfile=>Profile},
-    ?LLOG(notice, "started recording: ~p", [Params], Session),
+    Uri2 = nklib_util:to_binary(Uri),
+    Params = #{uri=>Uri2, mediaProfile=>Profile},
+    nkmedia_session:update_status(self(), #{record=>start, uri=>Uri2}),
     case create_endpoint('RecorderEndpoint', Params, Session) of
         {ok, ObjId} ->
             subscribe(ObjId, 'Error', Session),
@@ -439,7 +451,7 @@ player_op(get_info, _Opts, #{nkmedia_kms_player:=PlayerEP}=Session) ->
             },
             {ok, Data2, Session};
         _ ->
-            ?LLOG(warning, "unknown player info: ~p", [Data], Session),
+            ?LLOG(notice, "unknown player info: ~p", [Data], Session),
             {ok, #{}, Session}
     end;
 
@@ -517,7 +529,7 @@ update_media(Opts, #{nkmedia_kms_endpoint:=EP, nkmedia_kms_proxy:=Proxy}=Session
         {[], []} ->
             ok;
         {Add, Remove} ->
-            ?LLOG(info, "updated media: +~p, -~p", [Add, Remove], Session),
+            ?DEBUG("updated media: +~p, -~p", [Add, Remove], Session),
             do_connect(EP, Proxy, Add, Session),
             do_disconnect(EP, Proxy, Remove, Session)
     end.
@@ -563,13 +575,13 @@ connect_to_proxy(Opts, Session) ->
 
 %% @private Connects an Element to a Sink
 do_connect(Elem, SinkEP, all, Session) ->
-    ?LLOG(info, "connecting ~s -> ~s (all)", 
+    ?DEBUG("connecting ~s -> ~s (all)", 
           [print_id(Elem, Session), print_id(SinkEP, Session)], Session),
     invoke(Elem, connect, #{sink=>SinkEP}, Session);
 do_connect(_Elem, _SinkEP, [], _Session) ->
     ok;
 do_connect(Elem, SinkEP, [Type|Rest], Session) ->
-    ?LLOG(info, "connecting ~s -> ~s (~s)", 
+    ?DEBUG("connecting ~s -> ~s (~s)", 
           [print_id(Elem, Session), print_id(SinkEP, Session), Type], Session),
     case invoke(Elem, connect, #{sink=>SinkEP, mediaType=>Type}, Session) of
         ok ->
@@ -580,13 +592,13 @@ do_connect(Elem, SinkEP, [Type|Rest], Session) ->
 
 %% @private Disconnect a Sink from an Element
 do_disconnect(Elem, SinkEP, all, Session) ->
-    ?LLOG(info, "disconnecting ~s -> ~s (all)", 
+    ?DEBUG("disconnecting ~s -> ~s (all)", 
           [print_id(Elem, Session), print_id(SinkEP, Session)], Session),
     invoke(Elem, disconnect, #{sink=>SinkEP}, Session);
 do_disconnect(_Elem, _SinkEP, [], _Session) ->
     ok;
 do_disconnect(Elem, SinkEP, [Type|Rest], Session) ->
-    ?LLOG(info, "disconnecting ~s -> ~s (~s)", 
+    ?DEBUG("disconnecting ~s -> ~s (~s)", 
           [print_id(Elem, Session), print_id(SinkEP, Session), Type], Session),
     case invoke(Elem, disconnect, #{sink=>SinkEP, mediaType=>Type}, Session) of
         ok ->
@@ -640,7 +652,7 @@ invoke(ObjId, Op, Params, #{nkmedia_kms_id:=KmsId}) ->
     ok | {error, nkservice:error()}.
  
 release(ObjId, #{nkmedia_kms_id:=KmsId}=Session) ->
-    ?LLOG(info, "releasing ~s", [print_id(ObjId, Session)], Session),
+    ?DEBUG("releasing ~s", [print_id(ObjId, Session)], Session),
     nkmedia_kms_client:release(KmsId, ObjId).
 
 
@@ -860,19 +872,15 @@ print_event(SessId, <<"OnIceComponentStateChanged">>, Data) ->
         <<"streamId">> := StreamId,
         <<"componentId">> := CompId
     } = Data,
-    {Level, Msg} = case IceSession of
-        <<"GATHERING">> -> {info, gathering};
-        <<"CONNECTING">> -> {info, connecting};
-        <<"CONNECTED">> -> {info, connected};
-        <<"READY">> -> {info, ready};
-        <<"FAILED">> -> {warning, failed}
+    State = case IceSession of
+        <<"GATHERING">> -> gathering;
+        <<"CONNECTING">> -> connecting;
+        <<"CONNECTED">> -> connected;
+        <<"READY">> -> ready;
+        <<"FAILED">> -> failed
     end,
-    Txt = io_lib:format("ICE State (~p:~p) ~s", [StreamId, CompId, Msg]),
-    case Level of
-        info ->    ?LLOG(info, "~s", [Txt], SessId);
-        notice ->  ?LLOG(notice, "~s", [Txt], SessId);
-        warning -> ?LLOG(warning, "~s", [Txt], SessId)
-    end;
+    Status = #{ice_state=>State, stream_id=>StreamId, component_id=>CompId},
+    nkmedia_session:update_status(SessId, Status);
 
 print_event(SessId, <<"OnIceComponentSessionChanged">>, Data) ->
     #{
@@ -881,22 +889,18 @@ print_event(SessId, <<"OnIceComponentSessionChanged">>, Data) ->
         <<"streamId">> := StreamId,
         <<"componentId">> := CompId
     } = Data,
-    {Level, Msg} = case IceSession of
-        <<"GATHERING">> -> {info, gathering};
-        <<"CONNECTING">> -> {info, connecting};
-        <<"CONNECTED">> -> {notice, connected};
-        <<"READY">> -> {notice, ready};
-        <<"FAILED">> -> {warning, failed}
+    State = case IceSession of
+        <<"GATHERING">> -> gathering;
+        <<"CONNECTING">> -> connecting;
+        <<"CONNECTED">> -> connected;
+        <<"READY">> -> ready;
+        <<"FAILED">> -> failed
     end,
-    Txt = io_lib:format("ICE Session (~p:~p) ~s", [StreamId, CompId, Msg]),
-    case Level of
-        info ->    ?LLOG(info, "~s", [Txt], SessId);
-        notice ->  ?LLOG(notice, "~s", [Txt], SessId);
-        warning -> ?LLOG(warning, "~s", [Txt], SessId)
-    end;
+    Status = #{ice_state=>State, stream_id=>StreamId, component_id=>CompId},
+    nkmedia_session:update_status(SessId, Status);
 
 print_event(SessId, <<"MediaSessionStarted">>, _Data) ->
-    ?LLOG(info, "event media session started", [], SessId);
+    ?PRINT("event media session started", [], SessId);
 
 print_event(SessId, <<"ElementConnected">>, Data) ->
     #{
@@ -904,7 +908,7 @@ print_event(SessId, <<"ElementConnected">>, Data) ->
         <<"sink">> := Sink,
         <<"source">> := Source
     } = Data,
-    ?LLOG(info, "event element connected ~s: ~s -> ~s", 
+    ?PRINT("event element connected ~s: ~s -> ~s", 
            [Type, print_id(Source), print_id(Sink)], SessId);
 
 print_event(SessId, <<"ElementDisconnected">>, Data) ->
@@ -913,7 +917,7 @@ print_event(SessId, <<"ElementDisconnected">>, Data) ->
         <<"sink">> := Sink,
         <<"source">> := Source
     } = Data,
-    ?LLOG(info, "event element disconnected ~s: ~s -> ~s", 
+    ?PRINT("event element disconnected ~s: ~s -> ~s", 
            [Type, print_id(Source), print_id(Sink)], SessId);
 
 print_event(SessId, <<"NewCandidatePairSelected">>, Data) ->
@@ -925,7 +929,7 @@ print_event(SessId, <<"NewCandidatePairSelected">>, Data) ->
             <<"remoteCandidate">> := Remote
         }
     } = Data,
-    ?LLOG(notice, "candidate selected (~p:~p) local: ~s remote: ~s", 
+    ?PRINT("candidate selected (~p:~p) local: ~s remote: ~s", 
            [StreamId, CompId, Local, Remote], SessId);
 
 print_event(SessId, <<"ConnectionStateChanged">>, Data) ->
@@ -933,12 +937,11 @@ print_event(SessId, <<"ConnectionStateChanged">>, Data) ->
         <<"oldState">> := _Old,
         <<"newState">> := New
     } = Data,
-    % ?LLOG(info, "event connection state changed (~s -> ~s)", [Old, New], SessId),
     Status = case New of
-        <<"CONNECTED">> -> up;
-        <<"DISCONNECTED">> -> down
+        <<"CONNECTED">> -> true;
+        <<"DISCONNECTED">> -> false
     end,
-    nkmedia_session:send_info(SessId, webrtc, #{status=>Status});
+    nkmedia_session:update_status(SessId, #{webrtc_ready=>Status});
 
 print_event(SessId, <<"MediaFlowOutStateChange">>, Data) ->
     #{
@@ -946,7 +949,6 @@ print_event(SessId, <<"MediaFlowOutStateChange">>, Data) ->
         <<"padName">> := _Pad,
         <<"state">> := State
     }  = Data,
-    % ?LLOG(info, "event media flow out state change (~s: ~s)", [Type, State], SessId),
     Media = case Type of
         <<"AUDIO">> -> audio;
         <<"VIDEO">> -> video;
@@ -957,7 +959,7 @@ print_event(SessId, <<"MediaFlowOutStateChange">>, Data) ->
         <<"NOT_FLOWING">> -> down
     end,
     Body = #{direction=>out, media=>Media, status=>Flowing},
-    nkmedia_session:send_info(SessId, media, Body);
+    ?PRINT("Media Out: ~p", [Body], SessId);
 
 print_event(SessId, <<"MediaFlowInStateChange">>, Data) ->
     #{
@@ -965,7 +967,6 @@ print_event(SessId, <<"MediaFlowInStateChange">>, Data) ->
         <<"padName">> := _Pad,
         <<"state">> := State
     }  = Data,
-    % ?LLOG(info, "event media in out state change (~s: ~s)", [Type, State], SessId), 
     Media = case Type of
         <<"AUDIO">> -> audio;
         <<"VIDEO">> -> video;
@@ -976,23 +977,23 @@ print_event(SessId, <<"MediaFlowInStateChange">>, Data) ->
         <<"NOT_FLOWING">> -> down
     end,
     Body = #{direction=>in, media=>Media, status=>Flowing},
-    nkmedia_session:send_info(SessId, media, Body);
+    ?PRINT("Media In: ~p", [Body], SessId);
 
 print_event(SessId, <<"MediaStateChanged">>, Data) ->
     #{
         <<"newState">> := New,
         <<"oldState">> := Old
     } = Data,
-    ?LLOG(info, "event media state changed (~s -> ~s)", [Old, New], SessId);
+    ?PRINT("event media state changed (~s -> ~s)", [Old, New], SessId);
 
 print_event(SessId, <<"Recording">>, _Data) ->
-    ?LLOG(info, "event 'recording'", [], SessId);
+    ?PRINT("event 'recording'", [], SessId);
 
 print_event(SessId, <<"Paused">>, _Data) ->
-    ?LLOG(info, "event 'paused recording'", [], SessId);
+    ?PRINT("event 'paused recording'", [], SessId);
 
 print_event(SessId, <<"Stopped">>, _Data) ->
-    ?LLOG(info, "event 'stopped recording'", [], SessId);
+    ?PRINT("event 'stopped recording'", [], SessId);
 
 print_event(SessId, Type, Data) ->
-    ?LLOG(warning, "unknown event ~s: ~p", [Type, Data], SessId).
+    ?PRINT("unknown event ~s: ~p", [Type, Data], SessId).

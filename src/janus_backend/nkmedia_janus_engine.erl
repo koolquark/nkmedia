@@ -308,7 +308,7 @@ handle_info(get_rooms, #state{conn=Conn}=State) ->
 	erlang:send_after(?KEEPALIVE, self(), get_rooms),
 	{noreply, State2};
 
-handle_info(nkservice_updated, State) ->
+handle_info({nkservice_updated, _SrvId}, State) ->
     {noreply, set_log(State)};
 
 handle_info({'DOWN', _Ref, process, Pid, _Reason}, #state{conn=Pid}=State) ->

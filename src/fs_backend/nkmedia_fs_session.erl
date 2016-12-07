@@ -27,9 +27,21 @@
 
 -export_type([session/0, type/0, opts/0, cmd/0]).
 
+-define(DEBUG(Txt, Args, State),
+    case erlang:get(nkmedia_session_debug) of
+        true -> ?LLOG(debug, Txt, Args, State);
+        _ -> ok
+    end).
+
 -define(LLOG(Type, Txt, Args, Session),
-    lager:Type("NkMEDIA FS Session ~s "++Txt, 
-               [maps:get(session_id, Session) | Args])).
+    lager:Type(
+        [
+            {media_session_id, maps:get(session_id, Session)},
+            {user_id, maps:get(user_id, Session)},
+            {session_id, maps:get(user_session, Session)}
+        ],
+        "NkMEDIA FS Session ~s (~s) "++Txt, 
+        [maps:get(session_id, Session), maps:get(type, Session) | Args])).
 
 -define(LLOG2(Type, Txt, Args, SessId),
     lager:Type("NkMEDIA FS Session ~s "++Txt, 
@@ -97,7 +109,7 @@ fs_event(SessId, FsId, Event) ->
         {error, _} when Event==stop ->
             ok;
         {error, _} -> 
-            ?LLOG2(warning, "FS event ~p for unknown session", [Event], SessId) 
+            ?LLOG2(notice, "FS event ~p for unknown session", [Event], SessId) 
     end.
 
 
@@ -221,7 +233,6 @@ cmd(_Update, _Opts, Session) ->
     {ok, session()}.
 
 stop(_Reason, #{nkmedia_fs_uuid:=UUID, nkmedia_fs_id:=FsId}=Session) ->
-    ?LLOG(info, "session stop: ~p", [_Reason], Session),
     Session2 = reset_type(Session),
     nkmedia_fs_cmd:hangup(FsId, UUID),
     {ok, Session2};
@@ -232,11 +243,9 @@ stop(_Reason, Session) ->
 
 %% @private Called from nkmedia_fs_callbacks
 handle_call({bridge, PeerId, PeerUUID}, _From, Session) ->
-    ?LLOG(info, "sending bridge to ~s", [PeerId], Session),
     case fs_bridge(PeerUUID, Session) of
         ok ->
             update_type(bridge, #{peer_id=>PeerId}),
-            ?LLOG(info, "received remote ~s bridge request", [PeerId], Session),
             {reply, ok, Session};
         {error, Error} ->
             ?LLOG(notice, "error when received remote ~s bridge: ~p", 
@@ -248,7 +257,6 @@ handle_call({bridge, PeerId, PeerUUID}, _From, Session) ->
 %% @private Called from nkmedia_fs_callbacks
 handle_cast({bridge_stop, PeerId}, 
             #{type:=bridge, type_ext:=#{peer_id:=PeerId}}=Session) ->
-    ?LLOG(info, "received bridge stop from ~s", [PeerId], Session),
     case Session of
         #{stop_after_peer:=false} ->
             % In case we were linked
@@ -261,7 +269,7 @@ handle_cast({bridge_stop, PeerId},
     end;
 
 handle_cast({bridge_stop, PeerId}, Session) ->
-    ?LLOG(notice, "ignoring bridge stop from ~s", [PeerId], Session),
+    ?LLOG(info, "ignoring bridge stop from ~s", [PeerId], Session),
     {noreply, Session};
 
 handle_cast({fs_event, FsId, Event}, #{nkmedia_fs_id:=FsId, type:=Type}=Session) ->
@@ -269,7 +277,7 @@ handle_cast({fs_event, FsId, Event}, #{nkmedia_fs_id:=FsId, type:=Type}=Session)
     {noreply, Session2};
 
 handle_cast({fs_event, _FsId, _Event}, Session) ->
-    ?LLOG(warning, "received FS Event for unknown FsId!", [], Session),
+    ?LLOG(notice, "received FS Event for unknown FsId!", [], Session),
     {noreply, Session}.
 
 
@@ -376,10 +384,10 @@ do_type(bridge, #{peer_id:=PeerId}, Session) ->
     Session2 = reset_type(Session),
     case session_call(PeerId, {bridge, SessId, UUID}) of
         ok ->
-            ?LLOG(warning, "bridged accepted at ~s", [PeerId], Session),
+            ?DEBUG("bridged accepted at ~s", [PeerId], Session),
             {ok, #{peer_id=>PeerId}, Session2};
         {error, Error} ->
-            ?LLOG(notice, "bridged not accepted at ~s", [PeerId], Session),
+            ?DEBUG("bridged not accepted at ~s", [PeerId], Session),
             {error, Error, Session2}
     end;
 
@@ -407,7 +415,7 @@ get_fs_answer(Offer, #{srv_id:=SrvId, nkmedia_fs_id:=FsId, session_id:=SessId}=S
             Session2 = ?SESSION(#{answer=>Answer2, nkmedia_fs_uuid=>UUID}, Session),
             {ok, Session2};
         {error, Error} ->
-            ?LLOG(warning, "error calling start_in: ~p", [Error], Session),
+            ?LLOG(notice, "error calling start_in: ~p", [Error], Session),
             {error, fs_get_answer_error}
     end.
 
@@ -428,7 +436,7 @@ get_fs_offer(#{srv_id:=SrvId, nkmedia_fs_id:=FsId, session_id:=SessId}=Session) 
             Offer2 = mangle_ip(Offer1),
             {ok, ?SESSION(#{offer=>Offer2, nkmedia_fs_uuid=>UUID}, Session)};
         {error, Error} ->
-            ?LLOG(warning, "error calling start_out: ~p", [Error], Session),
+            ?LLOG(notice, "error calling start_out: ~p", [Error], Session),
             {error, fs_get_offer_error}
     end.
 
@@ -478,7 +486,7 @@ reset_type(#{session_id:=SessId}=Session) ->
     % TODO: Check player
     case Session of
         #{type:=bridge, type_ext:=#{peer_id:=PeerId}} ->
-            ?LLOG(info, "sending bridge stop to ~s", [PeerId], Session),
+            ?DEBUG("sending bridge stop to ~s", [PeerId], Session),
             % In case we were linked
             nkmedia_session:unlink_session(self(), PeerId),
             session_cast(PeerId, {bridge_stop, SessId}),
@@ -492,12 +500,12 @@ reset_type(#{session_id:=SessId}=Session) ->
 %% @private
 fs_transfer(Dest, Session) ->
     #{nkmedia_fs_id:=FsId, nkmedia_fs_uuid:=UUID} = Session,
-    ?LLOG(info, "sending transfer to ~s", [Dest], Session),
+    ?DEBUG("sending transfer to ~s", [Dest], Session),
     case nkmedia_fs_cmd:transfer_inline(FsId, UUID, Dest) of
         ok ->
             ok;
         {error, Error} ->
-            ?LLOG(warning, "transfer error: ~p", [Error], Session),
+            ?LLOG(notice, "transfer error: ~p", [Error], Session),
             {error, fs_transfer_error}
     end.
 
@@ -511,11 +519,11 @@ fs_bridge(UUID_B, Session) ->
                 ok ->
                     nkmedia_fs_cmd:bridge(FsId, UUID_A, UUID_B);
                 {error, Error} ->
-                    ?LLOG(warning, "FS bridge error: ~p", [Error], Session),
+                    ?LLOG(notice, "FS bridge error: ~p", [Error], Session),
                     error
             end;
         {error, Error} ->
-            ?LLOG(warning, "FS bridge error: ~p", [Error], Session),
+            ?LLOG(notice, "FS bridge error: ~p", [Error], Session),
             {error, fs_bridge_error}
     end.
 
@@ -533,10 +541,10 @@ do_fs_event(parked, bridge, Session) ->
     Session2 = reset_type(Session),
     case Session2 of
         #{stop_after_peer:=false} ->
-            ?LLOG(notice, "received parked in bridge!1", [], Session),
+            ?LLOG(notice, "received parked in bridge1!", [], Session),
             update_type(park, #{});
         _ ->
-            ?LLOG(notice, "received parked in bridge!2", [], Session),
+            ?LLOG(notice, "received parked in bridge2!", [], Session),
             nkmedia_session:stop(self(), bridge_stop)
     end,
     Session2;
@@ -551,35 +559,35 @@ do_fs_event({bridge, PeerId}, bridge, Session) ->
         #{type_ext:=#{peer_id:=PeerId}} ->
             ok;
         #{type_ext:=Ext} ->
-            ?LLOG(warning, "received bridge for different peer ~s: ~p!", 
+            ?LLOG(notice, "received bridge for different peer ~s: ~p!", 
                   [PeerId, Ext], Session)
     end,
     update_type(bridge, #{peer_id=>PeerId}),
     Session;
 
 do_fs_event({bridge, PeerId}, Type, Session) ->
-    ?LLOG(warning, "received bridge in ~p state", [Type], Session),
+    ?LLOG(notice, "received bridge in ~p state", [Type], Session),
     update_type(bridge, #{peer_id=>PeerId}),
     Session;
 
 do_fs_event({mcu, Info}, mcu, #{type_ext:=Ext}=Session) ->
-    ?LLOG(info, "FS MCU Info: ~p", [Info], Session),
+    ?DEBUG("FS MCU Info: ~p", [Info], Session),
     update_type(mcu, maps:merge(Ext, Info)),
     Session;
 
 do_fs_event({mcu, Info}, Type, Session) ->
-    ?LLOG(warning, "received mcu in ~p state", [Type], Session),
+    ?LLOG(notice, "received mcu in ~p state", [Type], Session),
     update_type(mcu, Info),
     Session;
 
 do_fs_event(Stop, _Type, Session)
         when Stop==hangup; Stop==destroy; Stop==verto_stop; Stop==verto_hangup ->
-   ?LLOG(info, "received hangup from FS: ~p", [Stop], Session),
+   ?DEBUG("received hangup from FS: ~p", [Stop], Session),
     nkmedia_session:stop(self(), fs_channel_stop),
     Session;
  
 do_fs_event(Event, Type, Session) ->
-    ?LLOG(warning, "received FS event ~p in type '~p'!", [Event, Type], Session).
+    ?LLOG(notice, "received FS event ~p in type '~p'!", [Event, Type], Session).
 
 
 %% @private
@@ -594,7 +602,7 @@ wait_park(Session) ->
         {'$gen_cast', {nkmedia_fs, {fs_event, _, parked}}} -> ok
     after 
         2000 -> 
-            ?LLOG(warning, "parked not received", [], Session)
+            ?LLOG(notice, "parked not received", [], Session)
     end.
 
 

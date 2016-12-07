@@ -299,7 +299,7 @@ conn_handle_cast(Msg, _NkPort, State) ->
 conn_handle_info({'DOWN', _Ref, process, Pid, _Reason}, _NkPort, #state{notify=Pid}=State) ->
 	{stop, normal, State};
 
-conn_handle_info(nkservice_updated, _NkPort, State) ->
+conn_handle_info({nkservice_updated, _SrvId}, _NkPort, State) ->
     {ok, set_log(State)};
 
 conn_handle_info(Msg, _NkPort, State) ->

@@ -568,13 +568,13 @@ handle_cast({event, _Id, Handle, #{<<"janus">>:=<<"media">>}=Msg}, State) ->
     #{<<"type">>:=Type, <<"receiving">>:=Bool} = Msg,
     % ?LLOG(warning, "Media ~s: ~s", [Type, Bool], State),
     Status = case Bool of
-        <<"true">> -> true;
-        <<"false">> -> false
+        <<"true">> -> started;
+        <<"false">> -> stopped
     end,
     Data = case Type of
-        <<"audio">> -> #{audio_ready=>Status};
-        <<"video">> -> #{video_ready=>Status};
-        <<"data">> -> #{data_ready=>Status}
+        <<"audio">> -> #{audio_status=>Status};
+        <<"video">> -> #{video_status=>Status};
+        <<"data">> -> #{data_status=>Status}
     end,
     nkmedia_janus_session:update_status(SessId, Side, Data),
     {noreply, State};
@@ -695,7 +695,7 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}, #state{user_mon=Ref}=State) ->
     end,
     {stop, normal, State};
 
-handle_info(nkservice_updated, State) ->
+handle_info({nkservice_updated, _SrvId}, State) ->
     {noreply, set_log(State)};
 
 handle_info(Msg, State) -> 
