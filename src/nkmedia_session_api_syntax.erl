@@ -20,7 +20,7 @@
 
 %% @doc NkMEDIA external API
 
--module(nkmedia_api_syntax).
+-module(nkmedia_session_api_syntax).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([syntax/4, offer/0, answer/0, get_info/1]).
 
@@ -111,6 +111,28 @@ syntax(update_media, Syntax, Defaults, Mandatory) ->
 		},
 		Defaults,
 		[session_id|Mandatory]
+	};
+
+syntax(update_status, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{
+			session_id => binary,
+			talking => boolean,
+			no_events => boolean
+		},
+		Defaults,
+		[session_id|Mandatory]
+	};
+
+syntax(timelog, Syntax, Defaults, Mandatory) ->
+	{
+		Syntax#{
+			session_id => binary,
+			msg => binary,
+			body => map
+		},
+		Defaults,
+		[session_id, msg|Mandatory]
 	};
 
 syntax(set_type, Syntax, Defaults, Mandatory) ->

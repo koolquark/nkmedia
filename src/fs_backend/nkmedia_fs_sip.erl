@@ -190,7 +190,8 @@ init([in, SrvId, FsId, SessId, SDP]) ->
                     erlang:send_after(5000, self(), in_timeout),
                     {ok, State2};
                 Other ->
-                    lager:error("invalid response from FS INVITE: ~p", [Other]),
+                    ?LLOG(warning, "invalid response from FS INVITE: ~p", 
+                          [Other], State1),
                     {stop, fs_invite_error}
             end;
         {error, Error} ->

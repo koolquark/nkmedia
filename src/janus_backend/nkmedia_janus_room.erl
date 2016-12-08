@@ -25,6 +25,12 @@
 -export([init/2, stop/2, timeout/2, handle_cast/2]).
 -export([janus_check/3]).
 
+-define(DEBUG(Txt, Args, State),
+    case erlang:get(nkmedia_room_debug) of
+        true -> ?LLOG(debug, Txt, Args, State);
+        _ -> ok
+    end).
+
 -define(LLOG(Type, Txt, Args, Room),
     lager:Type("NkMEDIA Janus Room ~s "++Txt, [maps:get(room_id, Room) | Args])).
 
@@ -96,9 +102,9 @@ init(_RoomId, Room) ->
 stop(_Reason, Room) ->
     case destroy_room(Room) of
         ok ->
-            ?LLOG(info, "stopping, destroying room", [], Room);
+            ?DEBUG("stopping, destroying room", [], Room);
         {error, Error} ->
-            ?LLOG(warning, "could not destroy room: ~p", [Error], Room)
+            ?LLOG(notice, "could not destroy room: ~p", [Error], Room)
     end,
     {ok, Room}.
 

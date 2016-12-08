@@ -240,7 +240,6 @@ cmd(print_info, _Opts, #{session_id:=SessId}=Session) ->
     {ok, #{}, Session};
 
 cmd(_Update, _Opts, Session) ->
-    lager:error("A: ~p", [_Update]),
     {error, not_implemented, Session}.
 
 

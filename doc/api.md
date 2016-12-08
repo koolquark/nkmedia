@@ -13,12 +13,14 @@ See the [API Introduction](intro.md) for an introduction to the interface, and [
 * [**`get_offer`**](#get_offer): Gets the offer for a session
 * [**`get_answer`**](#get_answer): Gets the answer for a session
 * [**`update_media`**](#update_media): Updates media processing in a current session
+* [**`update_status`**](#update_status): Updates status for current sessi
 * [**`set_type`**](#set_type): Updates the type of a current session
 * [**`recorder_action`**](#recorder_action): Performs an action over the recorder
 * [**`player_action`**](#player_action): Performs an action over the player
 * [**`room_action`**](#room_action): Performs an action over the current room
 * [**`set_candidate`**](#set_candidate): Sends a Trickle ICE candidate
 * [**`set_candidate_end`**](#set_candidate_end): Signals that no more candidates are available
+* [**`timelog`**](#timelog): Adds an entry to the session's time log
 
 
 All commands must have 
@@ -323,6 +325,18 @@ bitrate|0|Bitrate to use (kbps, 0 for unlimited)
 ```
 
 
+## update_status
+
+Allows the client to update the current status of the session.
+The `session_id` is mandatory. The possible updates are:
+
+Field|Type|Description
+---|---|---
+talking|boolean|Inform to the server that high level audio energy has been detected for this session. Should notify again when it stops.
+no_events|boolean|Do not generate events and history for this update
+
+
+
 ## set_type
 
 Some backends allow to change the session type once started.
@@ -435,4 +449,16 @@ candidate|"candidate..."|Current candidate
 
 When the client has no more candidates to send, it should use this command to inform the server.
 
+
+## timelog
+
+Each sessions keeps time-based log containing all important aspects happening during the session life span. The client can insert new entries in this log with this API.
+
+Fields `session_id` and `msg` are mandatory. Field `body`, if present, will also be included in the log.
+
+Field|Sample|Description
+---|---|---
+session_id|-|Session id this candidate refers to
+op|"ice_started"|Short description of the event
+body|(any)|Any JSON object
 

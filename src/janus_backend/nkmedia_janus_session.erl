@@ -332,7 +332,6 @@ handle_call(get_room_id, _From, Session) ->
     {reply, {error, invalid_publisher}, Session};
 
 handle_call({set_media_proxy, Data}, _From, Session) ->
-    % lager:error("Media peer: ~p", [Data]),
     #{session_id:=SessId, nkmedia_janus_pid:=Pid} = Session,
     nkmedia_session:update_status(SessId, Data),
     case nkmedia_janus_op:media_peer(Pid, Data) of
@@ -345,7 +344,6 @@ handle_call({set_media_proxy, Data}, _From, Session) ->
 
 %% @private
 handle_cast({proxy_candidate, Candidate}, #{nkmedia_janus_pid:=Pid}=Session) ->
-    % lager:error("RECEIVED PROXY CANDIDATE"),
     case Session of
         #{type_ext:=#{proxy_type:=videocall}} ->
             nkmedia_janus_op:candidate_peer(Pid, Candidate);
@@ -716,82 +714,3 @@ default_media() ->
         bitrate => nkmedia_app:get(default_bitrate)
     }.
 
-
-
-
-
-
-% %% @private
-% -spec get_room(publish|listen, session()) ->
-%     {ok, nkmedia_janus_room:id()} | {error, term()}.
-
-% get_room(Type, #{nkmedia_janus_id:=JanusId}=Session) ->
-%     case get_room_id(Type, Session) of
-%         {ok, RoomId} ->
-%             case nkmedia_room:get_room(RoomId) of
-%                 {ok, #{nkmedia_janus_id:=JanusId}} ->
-%                     % lager:error("Room exists in same Janus"),
-%                     {ok, RoomId};
-%                 {ok, _O} ->
-%                     {error, different_mediaserver};
-%                 {error, room_not_found} when Create->
-%                     create_room(RoomId, Session);
-%                 {error, room_not_found} ->
-%                     {error, room_not_found};
-%                 {error, Error} ->
-%                     {error, Error}
-%             end;
-%         {error, Error} ->
-%             {error, Error}
-%     end.
-
-
-% %% @private
-% -spec get_room_id(publish|listen, session()) ->
-%     {ok, nkmedia_room:id()} | {error, term()}.
-
-% get_room_id(Type, Session) ->
-%     case maps:find(room_id, Session) of
-%         {ok, RoomId} -> 
-%             {ok, nklib_util:to_binary(RoomId)};
-%         error when Type==publish -> 
-%             {ok, nklib_util:uuid_4122()};
-%         error when Type==listen ->
-%             case Session of
-%                 #{publisher_id:=Publisher} ->
-%                     case session_call(Publisher, get_room_id) of
-%                         {ok, RoomId} -> {ok, RoomId};
-%                         {error, _Error} -> {error, invalid_publisher}
-%                     end;
-%                 _ ->
-%                     {error, {missing_field, publisher_id}}
-%             end
-%     end.
-
-
-% %% @private
-% create_room(RoomId, #{srv_id:=SrvId, nkmedia_janus_id:=JanusId}=Session) ->
-%     Opts1 = [
-%         {room_id, RoomId},
-%         {backend, nkmedia_janus},
-%         {nkmedia_janus_id, JanusId},
-%         case maps:find(room_audio_codec, Session) of
-%             {ok, AC} -> {audio_codec, AC};
-%             error -> []
-%         end,
-%         case maps:find(room_video_codec, Session) of
-%             {ok, VC} -> {video_codec, VC};
-%             error -> []
-%         end,
-%         case maps:find(room_bitrate, Session) of
-%             {ok, BR} -> {bitrate, BR};
-%             error -> []
-%         end
-%     ],
-%     Opts2 = maps:from_list(lists:flatten(Opts1)),
-%     case nkmedia_room:start(SrvId, Opts2) of
-%         {ok, RoomId, _} ->
-%             {ok, RoomId};
-%         {error, Error} ->
-%             {error, Error}
-%     end.

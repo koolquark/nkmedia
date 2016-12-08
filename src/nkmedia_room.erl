@@ -36,6 +36,14 @@
 -export_type([id/0, room/0, event/0]).
 
 
+% To debug, set debug => [nkmedia_room]
+
+-define(DEBUG(Txt, Args, State),
+    case erlang:get(nkmedia_room_debug) of
+        true -> ?LLOG(debug, Txt, Args, State);
+        _ -> ok
+    end).
+
 -define(LLOG(Type, Txt, Args, State),
     lager:Type("NkMEDIA Room ~s (~p) "++Txt, 
                [State#state.id, State#state.backend | Args])).
@@ -285,7 +293,9 @@ init([#{srv_id:=SrvId, room_id:=RoomId}=Room]) ->
         _ ->
             State1
     end,
-    ?LLOG(notice, "started", [], State2),
+    set_log(State2),
+    nkservice_util:register_for_changes(SrvId),
+    ?LLOG(info, "started", [], State2),
     State3 = do_event({created, Room2}, State2),
     {ok, do_restart_timeout(State3)}.
 
@@ -336,16 +346,16 @@ handle_cast({send_info, Info, Meta}, State) ->
     {noreply, do_event({info, Info, Meta}, State2)};
 
 handle_cast({register, Link}, State) ->
-    ?LLOG(info, "proc registered (~p)", [Link], State),
+    ?DEBUG("proc registered (~p)", [Link], State),
     State2 = links_add(Link, State),
     {noreply, State2};
 
 handle_cast({unregister, Link}, State) ->
-    ?LLOG(info, "proc unregistered (~p)", [Link], State),
+    ?DEBUG("proc unregistered (~p)", [Link], State),
     {noreply, links_remove(Link, State)};
 
 handle_cast({stop, Reason}, State) ->
-    ?LLOG(info, "external stop: ~p", [Reason], State),
+    ?DEBUG("external stop: ~p", [Reason], State),
     do_stop(Reason, State);
 
 handle_cast(Msg, State) -> 
@@ -370,11 +380,17 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}=M, State) ->
         {ok, _, _, State2} when Stop /= false ->
             {noreply, State2};
         {ok, SessId, member, State2} ->
-            ?LLOG(notice, "member ~s down", [SessId], State2),
+            ?DEBUG("member ~s down", [SessId], State2),
             {noreply, do_stopped_member(SessId, State2)};
         {ok, Link, reg, State2} ->
-            ?LLOG(notice, "stopping because of reg '~p' down (~p)",
-                  [Link, Reason], State2),
+            case Reason of
+                normal ->
+                    ?DEBUG("stopping because of reg '~p' down (~p)",
+                           [Link, Reason], State2);
+                _ ->
+                    ?LLOG(notice, "stopping because of reg '~p' down (~p)",
+                          [Link, Reason], State2)
+            end,
             do_stop(registered_down, State2);
         not_found ->
             handle(nkmedia_room_handle_info, [M], State)
@@ -382,6 +398,9 @@ handle_info({'DOWN', Ref, process, _Pid, Reason}=M, State) ->
 
 handle_info(destroy, State) ->
     {stop, normal, State};
+
+handle_info({nkservice_updated, _SrvId}, State) ->
+    {noreply, set_log(State)};
 
 handle_info(Msg, #state{}=State) -> 
     handle(nkmedia_room_handle_info, [Msg], State).
@@ -415,6 +434,16 @@ terminate(Reason, #state{stop_reason=Stop}=State) ->
 % ===================================================================
 %% Internal
 %% ===================================================================
+
+
+%% @private
+set_log(#state{srv_id=SrvId}=State) ->
+    Debug = case nkservice_util:get_debug_info(SrvId, ?MODULE) of
+        {true, _} -> true;
+        _ -> false
+    end,
+    put(nkmedia_room_debug, Debug),
+    State.
 
 
 %% @private
@@ -513,7 +542,7 @@ do_cast(Id, Msg) ->
 
 %% @private
 do_stop(Reason, #state{stop_reason=false}=State) ->
-    ?LLOG(notice, "stopped: ~p", [Reason], State),
+    ?LLOG(info, "stopped: ~p", [Reason], State),
     do_stop_all(State),
     % Give time for possible registrations to success and capture stop event
     timer:sleep(100),
@@ -537,7 +566,7 @@ do_stop_all(#state{room=#{members:=Members}}) ->
 
 %% @private
 do_event(Event, #state{id=Id}=State) ->
-    ?LLOG(info, "sending 'event': ~p", [Event], State),
+    ?DEBUG("sending 'event': ~p", [Event], State),
     State2 = links_fold(
         fun
             (Link, reg, AccState) ->

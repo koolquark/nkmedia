@@ -387,7 +387,7 @@ conn_handle_call(Msg, From, NkPort, State) ->
     {ok, #state{}} | {stop, term(), #state{}}.
 
 conn_handle_cast(stop, _NkPort, State) ->
-    lager:warning("RECEIVED STOP"),
+    ?DEBUG("received stop", [], State),
     {stop, normal, State};
 
 conn_handle_cast({originate_error, CallId, Error}, _NkPort, State) ->
@@ -399,7 +399,7 @@ conn_handle_cast({originate_error, CallId, Error}, _NkPort, State) ->
         _ when Error==normal_clearing ->
             {ok, State};
         _ ->
-            lager:error("ORIGINATE ERROR: ~s, ~p", [CallId, Error]),
+            ?LLOG(notice, "originate error: ~s, ~p", [CallId, Error], State),
             {ok, State}
     end;
 

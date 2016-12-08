@@ -171,7 +171,6 @@ apply_mod(Req, Fun) ->
                     {reply, forbidden}
             end;
         _ ->
-            lager:error("APPL2"),
             {reply, forbidden}
     end.
 

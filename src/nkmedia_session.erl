@@ -26,7 +26,7 @@
 
 -export([start/3, get_type/1, get_status/1, get_session/1, get_offer/1, get_answer/1]).
 -export([set_answer/2, set_type/3, cmd/3, cmd_async/3, send_info/3]).
--export([update_history/3, update_status/2]).
+-export([timelog/2, update_status/2]).
 -export([stop/1, stop/2, stop_all/0]).
 -export([candidate/2]).
 -export([register/2, unregister/2]).
@@ -146,6 +146,7 @@
 
 -type status() :: 
     #{
+        talking => boolean(),
         mute_audio => boolean(),
         mute_video => boolean(),
         mute_data => boolean(),
@@ -326,11 +327,11 @@ send_info(SessId, Info, Meta) when is_map(Meta) ->
 
 
 %% @doc Sends an info to the sesison
--spec update_history(id(), atom(), map()) ->
+-spec timelog(id(), map()) ->
     ok | {error, nkservice:error()}.
 
-update_history(SessId, Op, Data) when is_map(Data) ->
-    do_cast(SessId, {update_history, Op, Data}).
+timelog(SessId, #{msg:=_}=Data) ->
+    do_cast(SessId, {timelog, Data}).
 
 
 %% @doc Links this session to another. We are master, other is slave
@@ -447,7 +448,7 @@ backend_candidate(SessId, Candidate) ->
     user_id :: binary(),
     session_id :: binary(),
     started :: nklib_util:l_timestamp(),
-    history = [] :: [{integer(), atom()|map()}]
+    timelog = [] :: [{integer(), map()}]
 
 }).
 
@@ -608,15 +609,21 @@ handle_cast({cmd, Cmd, Opts}, State) ->
     noreply(State2);
 
 handle_cast({update_status, Data}, #state{session=Session}=State) ->
+    Data2 = maps:remove(no_events, Data),
     Status1 = maps:get(status, Session),
-    Status2 = maps:merge(Status1, Data),
+    Status2 = maps:merge(Status1, Data2),
     State2 = add_to_session(status, Status2, State),
-    State3 = add_history(updated_status, Data, State2),
-    ?LLOG(info, "updated status: ~p", [Data], State3),
-    {noreply, event({status, Data}, State3)};
+    case Data of
+        #{no_events:=true} ->
+            {noreply, State2};
+        _ ->
+            State3 = timelog(Data2#{msg=>updated_status}, State2),
+            ?LLOG(info, "updated status: ~p", [Data2], State3),
+            {noreply, event({status, Data2}, State3)}
+    end;
 
-handle_cast({update_history, Op, Data}, State) ->
-    {noreply, add_history(Op, Data, State)};
+handle_cast({timelog, Data}, State) ->
+    {noreply, add_timelog(Data, State)};
 
 handle_cast({send_info, Info, Meta}, State) ->
     noreply(event({info, Info, Meta}, State));
@@ -703,12 +710,12 @@ handle_info({timeout, _, session_timeout}, State) ->
 
 handle_info({timeout, _, client_ice_timeout}, State) ->
     ?MEDIA("Client ICE timeout", [], State),
-    State2 = add_history(client_ice_timeout, State),
+    State2 = add_timelog(client_ice_timeout, State),
     noreply(do_client_candidate(#candidate{last=true}, State2));
 
 handle_info({timeout, _, backend_ice_timeout}, State) ->
     ?MEDIA("Backend ICE timeout", [], State),
-    State2 = add_history(backend_ice_timeout, State),
+    State2 = add_timelog(backend_ice_timeout, State),
     noreply(do_backend_candidate(#candidate{last=true}, State2));
 
 handle_info({'DOWN', Ref, process, _Pid, Reason}=Msg, State) ->
@@ -758,7 +765,7 @@ code_change(OldVsn, State, Extra) ->
 -spec terminate(term(), #state{}) ->
     ok.
 
-terminate(Reason, #state{stop_reason=Stop, history=History}=State) ->
+terminate(Reason, #state{stop_reason=Stop, timelog=Log}=State) ->
     case Stop of
         false ->
             Ref = nklib_util:uid(),
@@ -767,7 +774,7 @@ terminate(Reason, #state{stop_reason=Stop, history=History}=State) ->
         _ ->
             State2 = State
     end,
-    State3 = event({record, lists:reverse(History)}, State2),
+    State3 = event({record, lists:reverse(Log)}, State2),
     State4 = event(destroyed, State3),
     {ok, _State5} = handle(nkmedia_session_terminate, [Reason], State4),
     ok.
@@ -854,7 +861,8 @@ check_type(#state{type=OldType, type_ext=OldExt, session=Session}=State) ->
             {ok, State};
         #{type:=Type, type_ext:=Ext} ->
             State2 = State#state{type=Type, type_ext=Ext},
-            State3 = add_history(updated_type, #{type=>Type, type_ext=>Ext}, State2),
+            Log = #{msg=>updated_type, type=>Type, type_ext=>Ext},
+            State3 = add_timelog(Log, State2),
             ?LLOG(info, "session updated (~p)", [Ext], State3),
             {ok, event({type, Type, Ext}, State3)}
     end.
@@ -877,7 +885,7 @@ do_set_offer(Offer, #state{type=Type, backend_role=Role, session=Session}=State)
                     ?MEDIA("starting buffering trickle ICE for backend offer"
                            " (~p msecs)", [Time], State),
                     erlang:start_timer(Time, self(), backend_ice_timeout),
-                    State3 = add_history(start_backed_offer_buffer, State2),
+                    State3 = add_timelog(start_backed_offer_buffer, State2),
                     State4 = State3#state{backend_candidates=[]};
                 offeree ->
                     % Offer is from client
@@ -885,7 +893,7 @@ do_set_offer(Offer, #state{type=Type, backend_role=Role, session=Session}=State)
                     ?MEDIA("starting buffering trickle ICE for client offer"
                            " (~p msecs)", [Time], State),
                     erlang:start_timer(Time, self(), client_ice_timeout),
-                    State3 = add_history(start_client_offer_buffer, State2),
+                    State3 = add_timelog(start_client_offer_buffer, State2),
                     State4 = State3#state{client_candidates=[]}
             end,
             {ok, State4};
@@ -907,7 +915,7 @@ do_set_offer(Offer, #state{type=Type, backend_role=Role, session=Session}=State)
                         offeree ->
                             State3
                     end,
-                    {ok, add_history(offer_set, State4)};
+                    {ok, add_timelog(offer_set, State4)};
                 {ignore, State2} ->
                     {ok, State2};
                 {error, Error, State2} ->
@@ -936,14 +944,14 @@ do_set_answer(Answer, #state{type=Type, backend_role=Role, session=Session}=Stat
                     ?MEDIA("starting buffering trickle ICE for client answer"
                            " (~p msecs)", [Time], State),
                     erlang:start_timer(Time, self(), client_ice_timeout),
-                    State3 = add_history(start_client_answer_buffer, State2),
+                    State3 = add_timelog(start_client_answer_buffer, State2),
                     State4 = State3#state{client_candidates=[]};
                 offeree ->
                     #state{backend_candidates=trickle} = State,
                     ?MEDIA("starting buffering trickle ICE for backend answer"
                            " (~p msecs)", [Time], State),
                     erlang:start_timer(Time, self(), backend_ice_timeout),
-                    State3 = add_history(start_backend_answer_buffer, State2),
+                    State3 = add_timelog(start_backend_answer_buffer, State2),
                     State4 = State3#state{backend_candidates=[]}
             end,
             {ok, State4};
@@ -967,7 +975,7 @@ do_set_answer(Answer, #state{type=Type, backend_role=Role, session=Session}=Stat
                         _ ->
                             event({answer, Answer2}, State3)
                     end,
-                    State5 = add_history(answer_set, State4),
+                    State5 = add_timelog(answer_set, State4),
                     {ok, restart_timer(State5)};
                 {ignore, State2} ->
                     {ok, State2};
@@ -985,7 +993,7 @@ do_client_candidate(Candidate, #state{client_candidates=trickle}=State) ->
     case handle(nkmedia_session_candidate, [Candidate], State) of
         {ok, State2} when Last->
             ?MEDIA("sent last client candidate to backend", [], State),
-            add_history(sent_last_client_candidate_to_backend, State2);
+            add_timelog(sent_last_client_candidate_to_backend, State2);
         {ok, State2} ->
             ?MEDIA("sent client candidate ~s to backend", [Line], State),
             State2;
@@ -1014,20 +1022,20 @@ do_client_candidate(#candidate{last=true}, #state{client_candidates=[]}=State) -
 
 do_client_candidate(Candidate, #state{client_candidates=last}=State) ->
     ?MEDIA("ignoring late client candidate ~p", [Candidate], State),
-    add_history(ignoring_late_client_candidate, State);
+    add_timelog(ignoring_late_client_candidate, State);
 
 do_client_candidate(#candidate{last=true}, #state{backend_role=offerer}=State) ->
     % This candidate is for an answer
     ?MEDIA("last client answer candidate received", [], State),
     #state{client_candidates=Candidates} = State,
-    State2 = add_history(last_client_answer_candidate_received, State),
+    State2 = add_timelog(last_client_answer_candidate_received, State),
     candidate_answer(Candidates, State2#state{client_candidates=last});
 
 do_client_candidate(#candidate{last=true}, #state{backend_role=offeree}=State) ->
     % This candidate is for an offer
     ?MEDIA("last client offer candidate received", [], State),
     #state{client_candidates=Candidates} = State,
-    State2 = add_history(last_client_offer_candidate_received, State),
+    State2 = add_timelog(last_client_offer_candidate_received, State),
     candidate_offer(Candidates, State2#state{client_candidates=last});
 
 do_client_candidate(Candidate, #state{client_candidates=Candidates}=State) ->
@@ -1047,7 +1055,7 @@ do_backend_candidate(Candidate, #state{backend_candidates=trickle}=State) ->
             State2 = State;
         false ->
             ?MEDIA("sent last backend candidate to client (event)", [], State),
-            State2 = add_history(sent_last_backend_candidate_to_clint, State)
+            State2 = add_timelog(sent_last_backend_candidate_to_clint, State)
     end,
     event({candidate, Candidate}, State2);
 
@@ -1061,20 +1069,20 @@ do_backend_candidate(#candidate{last=true}, #state{backend_candidates=[]}=State)
 
 do_backend_candidate(Candidate, #state{backend_candidates=last}=State) ->
     ?MEDIA("ignoring late backend candidate ~p", [Candidate], State),
-    add_history(ignoring_late_backend_candidate, State);
+    add_timelog(ignoring_late_backend_candidate, State);
 
 do_backend_candidate(#candidate{last=true}, #state{backend_role=offerer}=State) ->
     % This candidate is for an offer
     #state{backend_candidates=Candidates} = State,
     ?MEDIA("last backend offer candidate received", [], State),
-    State2 = add_history(last_backend_offer_candidate_received, State),
+    State2 = add_timelog(last_backend_offer_candidate_received, State),
     candidate_offer(Candidates, State2#state{backend_candidates=last});
 
 do_backend_candidate(#candidate{last=true}, #state{backend_role=offeree}=State) ->
     % This candidate is for an answer
     #state{backend_candidates=Candidates} = State,
     ?MEDIA("last backend answer candidate received", [], State),
-    State2 = add_history(last_backend_answer_candidate_received, State),
+    State2 = add_timelog(last_backend_answer_candidate_received, State),
     candidate_answer(Candidates, State2#state{backend_candidates=last});
 
 do_backend_candidate(Candidate, #state{backend_candidates=Candidates}=State) ->
@@ -1091,7 +1099,7 @@ candidate_offer(Candidates, #state{session=Session}=State) ->
     ?LLOG(info, "generating new offer with ~p received candidates", 
            [length(Candidates)], State),
     State2 = add_to_session(offer, Offer2, State),
-    State3 = add_history(generated_new_offer, State2),
+    State3 = add_timelog(generated_new_offer, State2),
     case check_offer(State3) of
         {ok, State4} ->
             State4;
@@ -1110,7 +1118,7 @@ candidate_answer(Candidates, #state{session=Session}=State) ->
     ?LLOG(info, "generating new answer with ~p received candidates", 
            [length(Candidates)], State),
     State2 = add_to_session(answer, Answer2, State),
-    State3 = add_history(generated_new_answer, State2),
+    State3 = add_timelog(generated_new_answer, State2),
     case check_offer(State3) of
         {ok, State4} ->
             State4;
@@ -1172,7 +1180,7 @@ do_stop(Reason, #state{srv_id=SrvId, stop_reason=false}=State) ->
     State2 = event({stopped, Reason}, State),
     {ok, State3} = handle(nkmedia_session_stop, [Reason], State2),
     {_Code, Txt} = nkservice_util:error_code(SrvId, Reason),
-    State4 = add_history(stopped, #{reason=>Txt}, State3),
+    State4 = timelog(#{msg=>stopped, reason=>Txt}, State3),
     % Delay the destroyed event
     erlang:send_after(5000, self(), destroy),
     {noreply, State4#state{stop_reason=Reason}};
@@ -1304,13 +1312,12 @@ unlink_from_master(MasterId, #state{session=Session}=State) ->
 
 
 %% @private
-add_history(Op, State) ->
-    add_history(Op, #{}, State).
+add_timelog(Msg, State) when is_atom(Msg); is_binary(Msg) ->
+    add_timelog(#{msg=>Msg}, State);
 
-%% @private
-add_history(Op, Data, #state{started=Started, history=History}=State) ->
+add_timelog(#{msg:=_}=Data, #state{started=Started, timelog=Log}=State) ->
     Time = (nklib_util:l_timestamp() - Started) div 1000,
-    State#state{history=[{Time, Data#{op=>Op}}|History]}.
+    State#state{timelog=[{Time, Data}|Log]}.
 
 
 

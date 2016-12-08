@@ -248,7 +248,6 @@ conn_parse(?CT_AUTH_ACCEPTED, NkPort, #state{authenticated=false}=State) ->
 	ret_send(<<"events json all\n\n">>, NkPort, State);
 
 conn_parse(?CT_AUTH_EVENTS, _NkPort, #state{authenticated=false}=State) ->
-	% lager:info("NkMEDIA FS Event Protocol connected to freeswitch"),
 	{ok, State#state{authenticated=true}};
 
 conn_parse(Data, _NkPort, #state{}=State) ->
@@ -338,7 +337,7 @@ ret_send(Msg, NkPort, State) ->
         {error, closed} ->
             {stop, normal, State};
         {error, Error} ->
-            lager:notice("Error sending FS command ~p: ~p", [Msg, Error]),
+            ?LLOG(notice, "error sending FS command ~p: ~p", [Msg, Error], State),
             {stop, {send_error, Error}, State}
     end.
 
@@ -395,13 +394,13 @@ do_parse_msg(Head, Body, Rest, State) ->
 				#{<<"Event-Name">>:=Name} = Event ->
 					do_parse_event(Name, Event, Rest, State);
 				_ ->
-					lager:error("Error decoding JSON ~p", [Body]),
+					?LLOG(warning, "error decoding JSON ~p", [Body], State),
 					{error, decode_error}
 			end;
 		<<"text/disconnect-notice">> ->
 			{ok, State};
 		error ->
-			lager:error("Unknown response in FS: ~p, ~p", [Head, Body]),
+			?LLOG(warning, "unknown response in FS: ~p, ~p", [Head, Body], State),
 			do_parse(Rest, State)
 	end.
 
@@ -435,7 +434,7 @@ do_parse_event(<<"BACKGROUND_JOB">>, Event, Rest, #state{jobs=Jobs}=State) ->
 			gen_server:reply(From, {ok, Data}),
 			do_parse(Rest, State#state{jobs=Jobs1});
 		false ->
-			lager:warning("FS: Unknown background job"),
+			?LLOG(notice, "unknown background job", [], State),
 			do_parse(Rest, State)
 	end;
 
@@ -445,7 +444,7 @@ do_parse_event(Name, Event, Rest, #state{notify=Notify}=State) ->
 			Event1 = maps:without(?IGNORE_FIELDS, Event),
 			Notify ! {nkmedia_fs_event, self(), Name, Event1};
 		false ->
-			lager:notice("EVENT: ~s", [Name])
+			?DEBUG("EVENT: ~s", [Name], State)
 	end,
 	do_parse(Rest, State).
 

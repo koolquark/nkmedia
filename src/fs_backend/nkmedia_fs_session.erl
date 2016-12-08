@@ -624,7 +624,7 @@ session_cast(SessId, Msg) ->
 
 %% @private
 mangle_ip(#{sdp_type:=rtp}=Map) ->
-    lager:error("MANGLE IP"),
+    % lager:error("MANGLE IP"),
     nkmedia_util:mangle_sdp_ip(Map);
 
 mangle_ip(Map) ->

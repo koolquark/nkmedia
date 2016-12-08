@@ -64,7 +64,7 @@ event(_RoomId, _Event, Room) ->
 
 %% @private
 send_event(RoomId, Type, Body, #{srv_id:=SrvId}=Room) ->
-    nkmedia_api_events:send_event(SrvId, room, RoomId, Type, Body),
+    nkmedia_session_api_events:send_event(SrvId, room, RoomId, Type, Body),
     {ok, Room}.
 
 

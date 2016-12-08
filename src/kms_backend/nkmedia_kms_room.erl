@@ -24,6 +24,12 @@
 
 -export([init/2, stop/2, timeout/2]).
 
+-define(DEBUG(Txt, Args, State),
+    case erlang:get(nkmedia_room_debug) of
+        true -> ?LLOG(debug, Txt, Args, State);
+        _ -> ok
+    end).
+
 -define(LLOG(Type, Txt, Args, Room),
     lager:Type("NkMEDIA Kms Room ~s "++Txt, [maps:get(room_id, Room) | Args])).
 
@@ -76,7 +82,7 @@ init(_RoomId, Room) ->
     {ok, room()} | {error, term()}.
 
 stop(_Reason, Room) ->
-    ?LLOG(info, "stopping, destroying room", [], Room),
+    ?DEBUG("stopping, destroying room", [], Room),
     {ok, Room}.
 
 

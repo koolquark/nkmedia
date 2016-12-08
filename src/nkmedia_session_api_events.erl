@@ -20,7 +20,7 @@
 
 %% @doc NkMEDIA external events processing
 
--module(nkmedia_api_events).
+-module(nkmedia_session_api_events).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([event/3, session_down/2]).
@@ -41,7 +41,7 @@
 	{ok, nkmedia_session:session()}.
 
 event(SessId, created, Session) ->
-    Data = nkmedia_api_syntax:get_info(Session),
+    Data = nkmedia_session_api_syntax:get_info(Session),
     do_send_event(SessId, created, Data, Session);
 
 event(SessId, {answer, Answer}, Session) ->

@@ -32,6 +32,11 @@
 -export([nkmedia_session_start/3, nkmedia_session_stop/2,
 	     nkmedia_session_offer/4, nkmedia_session_answer/4, 
 		 nkmedia_session_cmd/3, nkmedia_session_candidate/2]).
+-export([nkmedia_room_init/2, nkmedia_room_terminate/2, 
+         nkmedia_room_event/3, nkmedia_room_reg_event/4, nkmedia_room_reg_down/4,
+         nkmedia_room_timeout/2, nkmedia_room_stop/2,
+         nkmedia_room_handle_call/3, nkmedia_room_handle_cast/2, 
+         nkmedia_room_handle_info/2]).
 -export([error_code/1]).
 -export([api_server_cmd/2, api_server_syntax/4, api_server_reg_down/3]).
 -export([nkdocker_notify/2]).
@@ -88,6 +93,13 @@ error_code(peer_stopped)       		->  {300021, "Peer session stopped"};
 error_code(no_active_recorder) 		->  {300030, "No active recorder"};
 error_code(no_active_player) 		->  {300031, "No active player"};
 error_code(no_active_room)	 		->  {300032, "No active room"};
+
+error_code(room_not_found)          ->  {304001, "Room not found"};
+error_code(room_already_exists)     ->  {304002, "Room already exists"};
+error_code(room_destroyed)          ->  {304003, "Room destroyed"};
+error_code(no_room_members)         ->  {304004, "No remaining room members"};
+error_code(invalid_publisher)       ->  {304005, "Invalid publisher"};
+error_code(publisher_stop)          ->  {304006, "Publisher stopped"};
 
 error_code(_) -> continue.
 
@@ -188,7 +200,7 @@ nkmedia_session_candidate(Candidate, Session) ->
 	{ok, session()} | continue().
 
 nkmedia_session_event(SessId, Event, Session) ->
-	{ok, Session2} = nkmedia_api_events:event(SessId, Event, Session),
+	{ok, Session2} = nkmedia_session_api_events:event(SessId, Event, Session),
 	{ok, Session2}.
 
 				  
@@ -199,7 +211,7 @@ nkmedia_session_event(SessId, Event, Session) ->
 	{ok, session()} | continue().
 
 nkmedia_session_reg_event(SessId, {nkmedia_api, Pid}, {stopped, _Reason}, Session) ->
-	nkmedia_api:session_stopped(SessId, Pid, Session),
+	nkmedia_session_api:session_stopped(SessId, Pid, Session),
 	{ok, Session};
 
 nkmedia_session_reg_event(_SessId, _Link, _Event, Session) ->
@@ -250,13 +262,111 @@ nkmedia_session_stop(_Reason, Session) ->
 
 
 
+%% ===================================================================
+%% Room Callbacks - Generated from nkmedia_room
+%% ===================================================================
+
+-type room_id() :: nkmedia_room:id().
+-type room() :: nkmedia_room:room().
+
+
+
+%% @doc Called when a new room starts
+%% Backend must set the 'backend' property
+-spec nkmedia_room_init(room_id(), room()) ->
+    {ok, room()} | {error, term()}.
+
+nkmedia_room_init(_RoomId, Room) ->
+    {ok, Room}.
+
+
+%% @doc Called when the room stops
+-spec nkmedia_room_terminate(Reason::term(), room()) ->
+    {ok, room()}.
+
+nkmedia_room_terminate(_Reason, Room) ->
+    {ok, Room}.
+
+
+%% @doc Called when the status of the room changes
+-spec nkmedia_room_event(room_id(), nkmedia_room:event(), room()) ->
+    {ok, room()} | continue().
+
+nkmedia_room_event(RoomId, Event, Room) ->
+    nkmedia_room_api_events:event(RoomId, Event, Room).
+
+
+%% @doc Called when the status of the room changes, for each registered
+%% process to the room
+-spec nkmedia_room_reg_event(room_id(), nklib:link(), nkmedia_room:event(), room()) ->
+    {ok, room()} | continue().
+
+nkmedia_room_reg_event(_RoomId, _Link, _Event, Room) ->
+    {ok, Room}.
+
+
+%% @doc Called when a registered process fails
+-spec nkmedia_room_reg_down(room_id(), nklib:link(), term(), room()) ->
+    {ok, room()} | {stop, Reason::term(), room()} | continue().
+
+nkmedia_room_reg_down(_RoomId, _Link, _Reason, Room) ->
+    {stop, registered_down, Room}.
+
+
+%% @doc Called when the timeout timer fires
+-spec nkmedia_room_timeout(room_id(), room()) ->
+    {ok, room()} | {stop, nkservice:error(), room()} | continue().
+
+nkmedia_room_timeout(_RoomId, Room) ->
+    {stop, timeout, Room}.
+
+
+%% @doc Called when the timeout timer fires
+-spec nkmedia_room_stop(term(), room()) ->
+    {ok, room()}.
+
+nkmedia_room_stop(_Reason, Room) ->
+    {ok, Room}.
+
+
+%% @doc
+-spec nkmedia_room_handle_call(term(), {pid(), term()}, room()) ->
+    {reply, term(), room()} | {noreply, room()} | continue().
+
+nkmedia_room_handle_call(Msg, _From, Room) ->
+    lager:error("Module nkmedia_room received unexpected call: ~p", [Msg]),
+    {noreply, Room}.
+
+
+%% @doc
+-spec nkmedia_room_handle_cast(term(), room()) ->
+    {noreply, room()} | continue().
+
+nkmedia_room_handle_cast(Msg, Room) ->
+    lager:error("Module nkmedia_room received unexpected cast: ~p", [Msg]),
+    {noreply, Room}.
+
+
+%% @doc
+-spec nkmedia_room_handle_info(term(), room()) ->
+    {noreply, room()} | continue().
+
+nkmedia_room_handle_info(Msg, Room) ->
+    lager:warning("Module nkmedia_room received unexpected info: ~p", [Msg]),
+    {noreply, Room}.
+
+
+
 % ===================================================================
 %% API Server Callbacks
 %% ===================================================================
 
 %% @private
 api_server_cmd(#api_req{class=media, subclass=session, cmd=Cmd}=Req, State) ->
-	nkmedia_api:cmd(Cmd, Req, State);
+	nkmedia_session_api:cmd(Cmd, Req, State);
+
+api_server_cmd(#api_req{class=media, subclass=room, cmd=Cmd}=Req, State) ->
+    nkmedia_room_api:cmd(Cmd, Req, State);
 
 api_server_cmd(_Req, _State) ->
 	continue.
@@ -265,15 +375,19 @@ api_server_cmd(_Req, _State) ->
 %% @private
 api_server_syntax(#api_req{class=media, subclass=session, cmd=Cmd}, 
 		   		  Syntax, Defaults, Mandatory) ->
-	nkmedia_api_syntax:syntax(Cmd, Syntax, Defaults, Mandatory);
+	nkmedia_session_api_syntax:syntax(Cmd, Syntax, Defaults, Mandatory);
 	
+api_server_syntax(#api_req{class=media, subclass=room, cmd=Cmd}, 
+                  Syntax, Defaults, Mandatory) ->
+    nkmedia_room_api_syntax:syntax(Cmd, Syntax, Defaults, Mandatory);
+
 api_server_syntax(_Req, _Syntax, _Defaults, _Mandatory) ->
 	continue.
 
 
 %% @private
 api_server_reg_down({nkmedia_session, SessId, _SessPid}, Reason, State) ->
-	nkmedia_api:api_session_down(SessId, Reason, State),
+	nkmedia_session_api:api_session_down(SessId, Reason, State),
 	continue;
 
 api_server_reg_down(_Link, _Reason, _State) ->

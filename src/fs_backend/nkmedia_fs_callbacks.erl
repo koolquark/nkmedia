@@ -50,7 +50,7 @@
 
 
 plugin_deps() ->
-    [nkmedia, nkmedia_room].
+    [nkmedia].
 
 
 plugin_group() ->

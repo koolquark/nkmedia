@@ -20,7 +20,7 @@
 
 %% @doc NkMEDIA external API
 
--module(nkmedia_api).
+-module(nkmedia_session_api).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -export([cmd/3]).
 -export([session_stopped/3, api_session_down/3]).
@@ -140,7 +140,7 @@ cmd(get_info, #api_req{data=Data}, State) ->
 	#{session_id:=SessId} = Data,
 	case nkmedia_session:get_session(SessId) of
 		{ok, Session} ->
-			Data2 = nkmedia_api_syntax:get_info(Session),
+			Data2 = nkmedia_session_api_syntax:get_info(Session),
 			{ok, Data2, State};
 		{error, Error} ->
 			{error, Error, State}
@@ -160,6 +160,24 @@ cmd(get_stats, #api_req{data=Data}, State) ->
 	case nkmedia_session:get_status(SessId) of
 		{ok, Status} ->
 			{ok, Status, State};
+		{error, Error} ->
+			{error, Error, State}
+	end;
+
+cmd(update_status, #api_req{data=Data}, State) ->
+	#{session_id:=SessId} = Data,
+	case nkmedia_session:update_status(SessId, Data) of
+		ok ->
+			{ok, #{}, State};
+		{error, Error} ->
+			{error, Error, State}
+	end;
+
+cmd(timelog, #api_req{data=Data}, State) ->
+	#{session_id:=SessId} = Data,
+	case nkmedia_session:timelog(SessId, maps:remove(session_id, Data)) of
+		ok ->
+			{ok, #{}, State};
 		{error, Error} ->
 			{error, Error, State}
 	end;
@@ -204,7 +222,7 @@ api_session_down(SessId, Reason, State) ->
 	lager:warning("API Server: Session ~s is down: ~p", [SessId, Reason]),
 	Event = get_session_event(SrvId, SessId),
 	nkservice_api_server:unsubscribe(self(), Event),
-	nkmedia_api_events:session_down(SrvId, SessId).
+	nkmedia_session_api_events:session_down(SrvId, SessId).
 
 
 
