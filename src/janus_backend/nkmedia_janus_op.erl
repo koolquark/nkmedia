@@ -406,7 +406,7 @@ init({SrvId, JanusId, SessId, CallerPid}) ->
             set_log(State),
             nkservice_util:register_for_changes(SrvId),
             self() ! send_keepalive,
-            ?DEBUG("started", [], State),
+            ?DEBUG("started (~p)", [self()], State),
             {ok, status(wait, State)};
         {error, Error} ->
             {stop, Error}
@@ -1517,12 +1517,17 @@ do_call(SessId, Msg, Timeout) ->
 
 
 %% @private
-do_call2(JanusId, Msg) ->
-    case start(none, JanusId, <<>>) of
-        {ok, Pid} ->
-            nkservice_util:call(Pid, Msg, 5000);
-        {error, Error} ->
-            {error, Error}
+do_call2(JanusOrSessionId, Msg) ->
+    case do_call(JanusOrSessionId, Msg, 5000) of
+        {error, session_not_found} ->
+            case start(none, JanusOrSessionId, <<>>) of
+                {ok, Pid} ->
+                    nkservice_util:call(Pid, Msg, 5000);
+                {error, Error} ->
+                    {error, Error}
+            end;
+        Other ->
+            Other
     end.
 
 
