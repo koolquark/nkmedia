@@ -103,7 +103,7 @@ connect(#{name:=Name, host:=Host, base:=Base, pass:=Pass}=Config) ->
 				ok ->
 					nkmedia_sup:start_child(?MODULE, Config);
 				error ->
-					{error, no_connection}
+					{error, no_mediaserver}
 			end;
 		{ok, _Status, FsPid, _ConnPid} ->
 			#{vsn:=Vsn, rel:=Rel} = Config,
@@ -147,7 +147,7 @@ get_config(Id) ->
 		{ok, _Status, FsPid, _ConnPid} ->
 			nkservice_util:call(FsPid, get_config, ?CALL_TIME);
 		not_found ->
-			{error, no_connection}
+			{error, no_mediaserver}
 	end.
 
 
@@ -162,7 +162,7 @@ api(Id, Api) ->
 		{ok, _, _, _} ->
 			{error, not_ready};
 		not_found ->
-			{error, no_connection}
+			{error, no_mediaserver}
 	end.
 
 

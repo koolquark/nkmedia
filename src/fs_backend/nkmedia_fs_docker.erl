@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([start/1, stop/1, stop_all/0]).
--export([notify/4]).
+-export([notify/4, check_started/1]).
 
 -include("../../include/nkmedia.hrl").
 
@@ -83,7 +83,8 @@ start(Service) ->
             net => host,
             interactive => true,
             labels => Labels,
-            volumes => [{LogDir, "/usr/local/freeswitch/log"}]
+            volumes => [{LogDir, "/usr/local/freeswitch/log"}],
+            restart => {on_failure, 3}
         },
         DockerOpts2 = case nkmedia_app:get(docker_log) of
             undefined -> DockerOpts1;
@@ -216,6 +217,17 @@ notify(MonId, stop, Name, Data) ->
 
 notify(_MonId, stats, Name, Stats) ->
     nkmedia_fs_engine:stats(Name, Stats).
+
+
+%% @private
+check_started(SrvId) ->
+    case nkmedia_fs_engine:get_all(SrvId) of
+        [] ->
+            lager:info("No FS engine detected"),
+            start(SrvId);
+        _ ->
+            ok
+    end.
 
 
 

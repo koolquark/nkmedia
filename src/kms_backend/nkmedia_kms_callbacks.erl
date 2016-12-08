@@ -72,7 +72,13 @@ plugin_config(Config, _Service) ->
     {ok, Config, Cache}.
 
 
-plugin_stop(Config, _Service) ->
+plugin_stop(Config, #{id:=SrvId}) ->
+    lists:foreach(
+        fun({Id, Pid}) ->
+            nkmedia_kms_engine:stop(Pid),
+            nkmedia_kms_docker:stop(Id)
+        end,
+        nkmedia_kms_engine:get_all(SrvId)),
     nkdocker_monitor:unregister(?MODULE),
     {ok, Config}.
 
@@ -110,12 +116,17 @@ error_code(_) -> continue.
 %% ===================================================================
 
 
-service_init(_Service, State) ->
+service_init(_Service, #{id:=SrvId}=State) ->
     case nkdocker_monitor:register(?MODULE) of
         {ok, DockerMonId} ->
             nkmedia_app:put(docker_kms_mon_id, DockerMonId),
             lager:info("NkMEDIA KMS installed images: ~s", 
-                [nklib_util:bjoin(find_images(DockerMonId))]);
+                [nklib_util:bjoin(find_images(DockerMonId))]),
+            spawn_link(
+                fun() ->
+                    timer:sleep(5000),
+                    nkmedia_kms_docker:check_started(SrvId)
+                end);
         {error, Error} ->
             lager:error("Could not start Docker Monitor: ~p", [Error]),
             error(docker_monitor)

@@ -75,7 +75,7 @@ connect(#{name:=Name, host:=Host, base:=Base, pass:=Pass}=Config) ->
 				ok ->
 					nkmedia_sup:start_child(?MODULE, Config);
 				error ->
-					{error, no_connection}
+					{error, no_mediaserver}
 			end;
 		{ok, _Status, JanusPid, _ConnPid} ->
 			#{vsn:=Vsn, rel:=Rel} = Config,
@@ -118,7 +118,7 @@ get_config(Id) ->
 		{ok, _Status, JanusPid, _ConnPid} ->
 			nkservice_util:call(JanusPid, get_config, ?CALL_TIME);
 		not_found ->
-			{error, no_connection}
+			{error, no_mediaserver}
 	end.
 
 
@@ -131,7 +131,7 @@ get_conn(Id) ->
 		{ok, ready, _JanusPid, ConnPid} ->
 			{ok, ConnPid};
 		_ ->
-			{error, no_connection}
+			{error, no_mediaserver}
 	end.
 
 
@@ -144,7 +144,7 @@ check_room(Id, Room) ->
 		{ok, _Status, JanusPid, _ConnPid} ->
 			nkservice_util:call(JanusPid, {check_room, Room}, ?CALL_TIME);
 		_ ->
-			{error, no_connection}
+			{error, no_mediaserver}
 	end.
 
 

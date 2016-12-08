@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([start/1, stop/1, stop_all/0]).
--export([notify/4]).
+-export([notify/4, check_started/1]).
 
 -include("../../include/nkmedia.hrl").
 
@@ -76,8 +76,9 @@ start(Service) ->
             net => host,
             interactive => true,
             labels => Labels,
-            ulimits => [{nproc, 65536, 65536}]
+            ulimits => [{nproc, 65536, 65536}],
             % volumes => [{LogDir, "/usr/local/kurento/log"}]
+            restart => {on_failure, 3}
         },
         DockerPid = case get_docker_pid() of
             {ok, DockerPid0} -> DockerPid0;
@@ -204,6 +205,17 @@ notify(MonId, stop, Name, Data) ->
 
 notify(_MonId, stats, Name, Stats) ->
     nkmedia_kms_engine:stats(Name, Stats).
+
+
+%% @private
+check_started(SrvId) ->
+    case nkmedia_kms_engine:get_all(SrvId) of
+        [] ->
+            lager:info("No KMS engine detected"),
+            start(SrvId);
+        _ ->
+            ok
+    end.
 
 
 

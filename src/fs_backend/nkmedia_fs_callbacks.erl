@@ -71,7 +71,13 @@ plugin_config(Config, _Service) ->
     {ok, Config, Cache}.
 
 
-plugin_stop(Config, _Service) ->
+plugin_stop(Config, #{id:=SrvId}) ->
+    lists:foreach(
+        fun({Id, Pid}) ->
+            nkmedia_fs_engine:stop(Pid),
+            nkmedia_fs_docker:stop(Id)
+        end,
+        nkmedia_fs_engine:get_all(SrvId)),
     nkdocker_monitor:unregister(?MODULE),
     {ok, Config}.
 
@@ -117,12 +123,17 @@ error_code(_)                    ->  continue.
 %% Implemented Callbacks - nkservice
 %% ===================================================================
 
-service_init(_Service, State) ->
+service_init(_Service, #{id:=SrvId}=State) ->
     case nkdocker_monitor:register(?MODULE) of
         {ok, DockerMonId} ->
             nkmedia_app:put(docker_fs_mon_id, DockerMonId),
             lager:info("NkMEDIA FS installed images: ~s", 
-                [nklib_util:bjoin(find_images(DockerMonId))]);
+                [nklib_util:bjoin(find_images(DockerMonId))]),
+            spawn_link(
+                fun() ->
+                    timer:sleep(5000),
+                    nkmedia_fs_docker:check_started(SrvId)
+                end);
         {error, Error} ->
             lager:error("Could not start Docker Monitor: ~p", [Error]),
             erlang:error(docker_monitor)

@@ -617,8 +617,8 @@ handle_cast({update_status, Data}, #state{session=Session}=State) ->
         #{no_events:=true} ->
             {noreply, State2};
         _ ->
-            State3 = timelog(Data2#{msg=>updated_status}, State2),
-            ?LLOG(info, "updated status: ~p", [Data2], State3),
+            State3 = add_timelog(Data2#{msg=>updated_status}, State2),
+            ?DEBUG("updated status: ~p", [Data2], State3),
             {noreply, event({status, Data2}, State3)}
     end;
 
@@ -1096,7 +1096,7 @@ candidate_offer(Candidates, #state{session=Session}=State) ->
     #{offer:=#{sdp:=SDP1}=Offer} = Session,
     SDP2 = nksip_sdp_util:add_candidates(SDP1, lists:reverse(lists:sort(Candidates))),
     Offer2 = Offer#{sdp:=nksip_sdp:unparse(SDP2), trickle_ice=>false},
-    ?LLOG(info, "generating new offer with ~p received candidates", 
+    ?DEBUG("generating new offer with ~p received candidates", 
            [length(Candidates)], State),
     State2 = add_to_session(offer, Offer2, State),
     State3 = add_timelog(generated_new_offer, State2),
@@ -1170,7 +1170,7 @@ noreply(State) ->
 
 %% @private
 do_stop(Reason, #state{srv_id=SrvId, stop_reason=false}=State) ->
-    ?LLOG(info, "stopped: ~p", [Reason], State),
+    ?DEBUG("stopped: ~p", [Reason], State),
     #state{wait_offer=WaitOffer, wait_answer=WaitAnswer} = State,
     reply_all_waiting({error, session_stopped}, WaitOffer),
     reply_all_waiting({error, session_stopped}, WaitAnswer),
@@ -1180,7 +1180,7 @@ do_stop(Reason, #state{srv_id=SrvId, stop_reason=false}=State) ->
     State2 = event({stopped, Reason}, State),
     {ok, State3} = handle(nkmedia_session_stop, [Reason], State2),
     {_Code, Txt} = nkservice_util:error_code(SrvId, Reason),
-    State4 = timelog(#{msg=>stopped, reason=>Txt}, State3),
+    State4 = add_timelog(#{msg=>stopped, reason=>Txt}, State3),
     % Delay the destroyed event
     erlang:send_after(5000, self(), destroy),
     {noreply, State4#state{stop_reason=Reason}};

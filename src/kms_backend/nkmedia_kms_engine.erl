@@ -74,7 +74,7 @@ connect(#{name:=Name, host:=Host, base:=Base}=Config) ->
 				ok ->
 					nkmedia_sup:start_child(?MODULE, Config);
 				error ->
-					{error, no_connection}
+					{error, no_mediaserver}
 			end;
 		{ok, _Status, KmsPid, _ConnPid} ->
 			#{vsn:=Vsn, rel:=Rel} = Config,
@@ -159,7 +159,7 @@ do_call(Id, Msg) ->
 		{ok, _Status, KmsPid, _ConnPid} ->
 			nkservice_util:call(KmsPid, Msg, ?CALL_TIME);
 		not_found ->
-			{error, no_connection}
+			{error, no_mediaserver}
 	end.
 
 

@@ -76,7 +76,13 @@ plugin_config(Config, _Service) ->
     {ok, Config, Cache}.
 
 
-plugin_stop(Config, _Service) ->
+plugin_stop(Config, #{id:=SrvId}) ->
+    lists:foreach(
+        fun({Id, Pid}) ->
+            nkmedia_janus_engine:stop(Pid),
+            nkmedia_janus_docker:stop(Id)
+        end,
+        nkmedia_janus_engine:get_all(SrvId)),
     nkdocker_monitor:unregister(?MODULE),
     {ok, Config}.
 
@@ -119,12 +125,17 @@ error_code(_)                           ->  continue.
 %% ===================================================================
 
 %% We delay the start of the Janus Engine util the service is fully started
-service_init(_Service, State) ->
+service_init(_Service, #{id:=SrvId}=State) ->
     case nkdocker_monitor:register(?MODULE) of
         {ok, DockerMonId} ->
             nkmedia_app:put(docker_janus_mon_id, DockerMonId),
             lager:info("NkMEDIA Janus installed images: ~s", 
-                [nklib_util:bjoin(find_images(DockerMonId))]);
+                [nklib_util:bjoin(find_images(DockerMonId))]),
+            spawn_link(
+                fun() ->
+                    timer:sleep(5000),
+                    nkmedia_janus_docker:check_started(SrvId)
+                end);
         {error, Error} ->
             lager:error("Could not start Docker Monitor: ~p", [Error]),
             error(docker_monitor)
