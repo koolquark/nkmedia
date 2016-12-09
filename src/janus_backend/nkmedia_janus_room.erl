@@ -23,7 +23,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
 -export([room_exists/2]).
--export([init/2, stop/2, timeout/2, handle_info/2]).
+-export([init/2, check/1, timeout/1, stop/2]).
 
 -define(DEBUG(Txt, Args, State),
     case erlang:get(nkmedia_room_debug) of
@@ -34,7 +34,6 @@
 -define(LLOG(Type, Txt, Args, Room),
     lager:Type("NkMEDIA Janus Room '~s' "++Txt, [maps:get(room_id, Room) | Args])).
 
--define(CHECK_TIME, 10).
 
 -include("../../include/nkmedia_room.hrl").
 
@@ -52,6 +51,7 @@
     #{
         nkmedia_janus_id => nkmedia_janus:id()
     }.
+        
 
 
 
@@ -88,6 +88,46 @@ init(RoomId, Room) ->
     end.
 
 
+%% @private
+-spec check(room()) ->
+    {ok, room()} | {stop, room_not_found, room()}.
+
+check(#{nkmedia_janus_id:=JanusId, room_id:=RoomId}=Room) ->
+    case nkmedia_janus_engine:get_room(JanusId, RoomId) of
+        {ok, #{<<"num_participants">>:=Num}=Data} ->
+            case length(nkmedia_room:get_all_with_role(publisher, Room)) of
+                Num -> 
+                    ?DEBUG("Janus check: ~p", [Data], Room),
+                    ok;
+                Other ->
+                    ?LLOG(notice, "Janus says ~p participants, we have ~p!", 
+                          [Num, Other], Room)
+            end,
+            {ok, Room};
+        {error, room_not_found} ->
+            ?LLOG(warning, "room not found on Janus!", [], Room),
+            {stop, room_not_found, Room};
+        {error, no_mediaserver} ->
+            ?LLOG(warning, "mediaserver not found on check!", [], Room),
+            {stop, no_mediaserver, Room};
+        _ ->
+            {ok, Room}
+    end.
+
+
+%% @private
+-spec timeout(room()) ->
+    {ok, room()} | {stop, nkservice:error(), room()}.
+
+timeout(Room) ->
+    case length(nkmedia_room:get_all_with_role(publisher, Room)) of
+        0 ->
+            {stop, timeout, Room};
+        _ ->
+            {ok, Room}
+ end.
+
+
 %% @doc
 -spec stop(term(), room()) ->
     {ok, room()} | {error, term()}.
@@ -104,41 +144,6 @@ stop(_Reason, #{nkmedia_janus_id:=JanusId, room_id:=RoomId}=Room) ->
     {ok, Room}.
 
 
-%% @private
--spec timeout(room_id(), room()) ->
-    {ok, room()} | {stop, nkservice:error(), room()}.
-
-timeout(_RoomId, Room) ->
-    case length(nkmedia_room:get_all_with_role(publisher, Room)) of
-        0 ->
-            {stop, timeout, Room};
-        _ ->
-            {ok, Room}
- end.
-
-
-%% @private
--spec handle_info(term(), room()) ->
-    {noreply, room()}.
-
-handle_info(check, #{nkmedia_janus_id:=JanusId, room_id:=RoomId}=Room) ->
-    case nkmedia_janus_engine:get_room(JanusId, RoomId) of
-        {ok, #{<<"num_participants">>:=Num}} ->
-            case length(nkmedia_room:get_all_with_role(publisher, Room)) of
-                Num -> 
-                    ok;
-                Other ->
-                    ?LLOG(notice, "Janus says ~p participants, we have ~p!", 
-                          [Num, Other], Room)
-            end;
-        {error, room_not_found} ->
-            ?LLOG(warning, "room not found on Janus!", [], Room),
-            nkmedia_room:stop(self(), room_not_found);
-        _ ->
-            ok
-    end,
-    erlang:send_after(1000*?CHECK_TIME, self(), {nkmedia_janus, check}),
-    {noreply, Room}.
 
 
 
@@ -189,7 +194,6 @@ create_room(JanusId, RoomId, Room) ->
                 backend=>nkmedia_janus,
                 nkmedia_janus_id => JanusId
             },
-            self() ! {nkmedia_janus, check},
             {ok, ?ROOM(Janus, Room2)};
         {error, room_already_exists} ->
             case nkmedia_janus_engine:destroy_room(JanusId, RoomId) of

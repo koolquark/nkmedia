@@ -34,7 +34,7 @@
 		 nkmedia_session_cmd/3, nkmedia_session_candidate/2]).
 -export([nkmedia_room_init/2, nkmedia_room_terminate/2, 
          nkmedia_room_event/3, nkmedia_room_reg_event/4, nkmedia_room_reg_down/4,
-         nkmedia_room_timeout/2, nkmedia_room_stop/2,
+         nkmedia_room_check/2, nkmedia_room_timeout/2, nkmedia_room_stop/2,
          nkmedia_room_handle_call/3, nkmedia_room_handle_cast/2, 
          nkmedia_room_handle_info/2]).
 -export([error_code/1]).
@@ -162,14 +162,6 @@ nkmedia_session_answer(_Type, _Role, Answer, Session) ->
 	{ok, Answer, Session}.
 
 
-% %% @private
-% -spec nkmedia_session_slave_answer(nkmedia:answer(), session()) ->
-% 	{ok, nkmedia:answer(), session()} | {ignore, session()} | continue().
-
-% nkmedia_session_slave_answer(Answer, Session) ->
-% 	{ok, Answer, Session}.
-
-
 %% @private
 -spec nkmedia_session_cmd(nkmedia_session:cmd(), Opts::map(), session()) ->
 	{ok, Reply::map(), session()} |
@@ -185,14 +177,6 @@ nkmedia_session_cmd(_Cmd, _Opts, Session) ->
 
 nkmedia_session_candidate(Candidate, Session) ->
 	{continue, [Candidate, Session]}.
-
-
-% %% @private
-% -spec nkmedia_session_peer_candidate(nkmedia:candidate(), session()) ->
-% 	{ok, nkmedia:candidate(), session()} | {ignore, session()} | continue().
-
-% nkmedia_session_peer_candidate(Candidate, Session) ->
-% 	{ok, Candidate, Session}.
 
 
 %% @private%% @doc Called when the status of the session changes
@@ -311,6 +295,14 @@ nkmedia_room_reg_event(_RoomId, _Link, _Event, Room) ->
 
 nkmedia_room_reg_down(_RoomId, _Link, _Reason, Room) ->
     {stop, registered_down, Room}.
+
+
+%% @doc Called when the check timer fires
+-spec nkmedia_room_check(room_id(), room()) ->
+    {ok, room()} | {stop, nkservice:error(), room()} | continue().
+
+nkmedia_room_check(_RoomId, Room) ->
+    {ok, Room}.
 
 
 %% @doc Called when the timeout timer fires

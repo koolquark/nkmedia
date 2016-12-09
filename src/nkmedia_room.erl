@@ -48,6 +48,8 @@
     lager:Type("NkMEDIA Room '~s' (~p) "++Txt, 
                [State#state.id, State#state.backend | Args])).
 
+-define(CHECK_TIME, 10).
+
 -include("nkmedia_room.hrl").
 -include_lib("nkservice/include/nkservice.hrl").
 
@@ -292,6 +294,7 @@ init([#{srv_id:=SrvId, room_id:=RoomId}=Room]) ->
             nkservice_util:register_for_changes(SrvId),
             ?LLOG(info, "started", [], State2),
             State3 = do_event(created, State2),
+            do_restart_check(),
             {ok, do_restart_timeout(State3)};
         {ok, _} ->
             {stop, not_implemented};
@@ -366,13 +369,28 @@ handle_cast(Msg, State) ->
 -spec handle_info(term(), #state{}) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
 
-handle_info(room_timeout, #state{id=RoomId}=State) ->
+handle_info(room_check, #state{id=RoomId, stop_reason=false}=State) ->
+    case handle(nkmedia_room_check, [RoomId], State) of
+        {ok, State2} ->
+            do_restart_check(),
+            {noreply, State2};
+        {stop, Reason, State2} ->
+            do_stop(Reason, State2)
+    end;
+
+handle_info(room_check, State) ->
+    {noreply, State};
+
+handle_info(room_timeout, #state{id=RoomId, stop_reason=false}=State) ->
     case handle(nkmedia_room_timeout, [RoomId], State) of
         {ok, State2} ->
             {noreply, do_restart_timeout(State2)};
         {stop, Reason, State2} ->
             do_stop(Reason, State2)
     end;
+
+handle_info(room_timeout, State) ->
+    {noreply, State};
 
 handle_info({'DOWN', Ref, process, _Pid, Reason}=M, State) ->
     #state{stop_reason=Stop} = State,
@@ -635,3 +653,7 @@ do_restart_timeout(#state{timer=Timer, room=Room}=State) ->
     end,
     State#state{timer=erlang:send_after(1000*Time, self(), room_timeout)}.
 
+
+%% @private
+do_restart_check() ->
+    erlang:send_after(1000*?CHECK_TIME, self(), room_check).

@@ -225,27 +225,19 @@ nkmedia_room_init(Id, Room) ->
 
 
 %% @private
+nkmedia_room_timeout(_RoomId, #{nkmedia_kms_id:=_}=Room) ->
+    nkmedia_kms_room:timeout(Room);
+
+nkmedia_room_timeout(_RoomId, _Room) ->
+    continue.
+
+%% @private
 nkmedia_room_stop(Reason, #{nkmedia_kms_id:=_}=Room) ->
     nkmedia_kms_room:stop(Reason, Room);
 
 nkmedia_room_stop(_Reason, Room) ->
     {ok, Room}.
 
-
-%% @private
-nkmedia_room_timeout(RoomId, #{nkmedia_kms_id:=_}=Room) ->
-    nkmedia_kms_room:timeout(RoomId, Room);
-
-nkmedia_room_timeout(_RoomId, _Room) ->
-    continue.
-
-
-% %% @private
-% nkmedia_room_handle_cast({nkmedia_kms, Msg}, Room) ->
-%     nkmedia_kms_room:handle_cast(Msg, Room);
-
-% nkmedia_room_handle_cast(_Msg, _Room) ->
-%     continue.
 
 
 
