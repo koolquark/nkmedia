@@ -24,7 +24,7 @@
 
 -export([event/3]).
 
-% -include_lib("nkservice/include/nkservice.hrl").
+-include_lib("nkservice/include/nkservice.hrl").
 
 
 %% ===================================================================
@@ -57,15 +57,23 @@ event(RoomId, {stopped, Reason}, #{srv_id:=SrvId}=Room) ->
     {Code, Txt} = nkservice_util:error_code(SrvId, Reason),
     send_event(RoomId, destroyed, #{code=>Code, reason=>Txt}, Room);
 
-
 event(_RoomId, _Event, Room) ->
     {ok, Room}.
 
+%% ===================================================================
+%% Internal
+%% ===================================================================
+
 
 %% @private
-send_event(RoomId, Type, Body, #{srv_id:=SrvId}=Room) ->
-    nkmedia_session_api_events:send_event(SrvId, room, RoomId, Type, Body),
-    {ok, Room}.
-
-
+send_event(RoomId, Type, Body, #{srv_id:=SrvId}) ->
+    Event = #event{
+        srv_id = SrvId,     
+        class = <<"media">>, 
+        subclass = <<"room">>,
+        type = nklib_util:to_binary(Type),
+        obj_id = RoomId,
+        body = Body
+    },
+    nkservice_events:send(Event).
 

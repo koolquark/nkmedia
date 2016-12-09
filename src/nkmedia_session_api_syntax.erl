@@ -63,7 +63,10 @@ syntax(create, Syntax, Defaults, Mandatory) ->
 	        publisher_id => binary,				% "
 	        layout => binary,					% For mcu
 	        loops => {integer, 0, none},		% For player		
-        	uri => binary						% For player
+        	uri => binary, 					    % For player
+
+        	session_events => {list, binary},
+        	session_events_body => map
 		},
 		Defaults,
 		[type|Mandatory]

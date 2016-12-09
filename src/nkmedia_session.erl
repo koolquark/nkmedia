@@ -112,9 +112,6 @@
         wait_timeout => integer(),                  % Secs
         ready_timeout => integer(),
 
-        user_id => nkservice:user_id(),             % Informative only
-        user_session => nkservice:user_session(),   % Informative only
-        
         room_id => binary(),                        % To be used in backends
         publisher_id => binary(),
         mute_audio => boolean(),
@@ -125,6 +122,10 @@
         record_uri => binary(),
         player_uri => binary(),
 
+        user_id => nkservice:user_id(),             % For API
+        user_session => nkservice:user_session(),   % %
+        events => [nkservice_events:type()],        % %
+        
         term() => term()                            % Plugin data
     }.
 
@@ -448,7 +449,7 @@ backend_candidate(SessId, Candidate) ->
     user_id :: binary(),
     session_id :: binary(),
     started :: nklib_util:l_timestamp(),
-    timelog = [] :: [{integer(), map()}]
+    timelog = [] :: [map()]
 
 }).
 
@@ -863,7 +864,7 @@ check_type(#state{type=OldType, type_ext=OldExt, session=Session}=State) ->
             State2 = State#state{type=Type, type_ext=Ext},
             Log = #{msg=>updated_type, type=>Type, type_ext=>Ext},
             State3 = add_timelog(Log, State2),
-            ?LLOG(info, "session updated (~p)", [Ext], State3),
+            ?DEBUG("session updated (~p)", [Ext], State3),
             {ok, event({type, Type, Ext}, State3)}
     end.
 
@@ -1317,7 +1318,7 @@ add_timelog(Msg, State) when is_atom(Msg); is_binary(Msg) ->
 
 add_timelog(#{msg:=_}=Data, #state{started=Started, timelog=Log}=State) ->
     Time = (nklib_util:l_timestamp() - Started) div 1000,
-    State#state{timelog=[{Time, Data}|Log]}.
+    State#state{timelog=[Data#{time=>Time}|Log]}.
 
 
 

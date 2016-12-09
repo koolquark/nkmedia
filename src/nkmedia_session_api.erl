@@ -201,12 +201,9 @@ cmd(Other, _Data, State) ->
 %% @private Sent by the media session when it has been stopped
 %% We sent a message to the API session to remove the session before 
 %% it receives the DOWN.
-session_stopped(SessId, ApiPid, Session) ->
-	#{srv_id:=SrvId} = Session,
-	Event = get_session_event(SrvId, SessId),
-	nkservice_api_server:unsubscribe(ApiPid, Event),
+session_stopped(SessId, ApiPid, _Session) ->
 	nkservice_api_server:unregister(ApiPid, {nkmedia_session, SessId, self()}),
-	{ok, Session}.
+	unsubscribe(SessId, ApiPid).
 
 
 
@@ -221,15 +218,25 @@ session_stopped(SessId, ApiPid, Session) ->
 api_session_down(SessId, Reason, State) ->
 	#{srv_id:=SrvId} = State,
 	lager:warning("API Server: Session ~s is down: ~p", [SessId, Reason]),
-	Event = get_session_event(SrvId, SessId),
-	nkservice_api_server:unsubscribe(self(), Event),
-	nkmedia_session_api_events:session_down(SrvId, SessId).
+	nkmedia_session_api_events:event_session_down(SrvId, SessId, self()),
+	unsubscribe(SessId, self()).
 
 
 
 %% ===================================================================
 %% Internal
 %% ===================================================================
+
+
+%% @private
+unsubscribe(SessId, ConnId) ->
+	Fun = fun(#event{class=Class, subclass=Sub, obj_id=ObjId}) ->
+		to_bin(Class) == <<"media">> andalso
+		to_bin(Sub) == <<"session">> andalso
+		ObjId == SessId 
+	end,
+	nkservice_api_server:unsubscribe_fun(ConnId, Fun).
+
 
 %% @private
 get_create_reply(SessId, Config) ->
@@ -258,14 +265,6 @@ get_create_reply(SessId, Config) ->
 	end.
 
 
-%% @private
-get_session_event(SrvId, SessId) ->
-	#event{
-		srv_id = SrvId, 
-		class = <<"media">>, 
-		subclass = <<"session">>,
-		obj_id = SessId
-	}.
-
+to_bin(Term) -> nklib_util:to_binary(Term).
 
 
