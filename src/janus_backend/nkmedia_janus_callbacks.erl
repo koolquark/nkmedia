@@ -33,8 +33,8 @@
          nkmedia_session_cmd/3,
          nkmedia_session_handle_call/3, nkmedia_session_handle_cast/2, 
          nkmedia_session_handle_info/2]).
--export([nkmedia_room_init/2, nkmedia_room_stop/2, nkmedia_room_timeout/2,
-         nkmedia_room_handle_cast/2]).
+-export([nkmedia_room_init/2, nkmedia_room_stop/2, nkmedia_room_timeout/2, 
+         nkmedia_room_handle_info/2]).
 -export([api_server_syntax/4]).
 -export([nkdocker_notify/2]).
 
@@ -275,12 +275,11 @@ nkmedia_room_stop(_Reason, Room) ->
 
 
 %% @private
-nkmedia_room_handle_cast({nkmedia_janus, Msg}, Room) ->
-    nkmedia_janus_room:handle_cast(Msg, Room);
+nkmedia_room_handle_info({nkmedia_janus, Msg}, Room) ->
+    nkmedia_janus_room:handle_info(Msg, Room);
 
-nkmedia_room_handle_cast(_Msg, _Room) ->
+nkmedia_room_handle_info(_Msg, _Room) ->
     continue.
-
 
 
 

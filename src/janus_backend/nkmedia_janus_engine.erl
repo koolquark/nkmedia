@@ -24,7 +24,8 @@
 -behaviour(gen_server).
 
 -export([connect/1, stop/1, find/1]).
--export([stats/2, get_config/1, get_conn/1, check_room/2]).
+-export([stats/2, get_config/1, get_conn/1]).
+-export([get_all_rooms/1, get_room/2, create_room/3, destroy_room/2]).
 -export([get_all/0, get_all/1, stop_all/0]).
 -export([start_link/1, init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
@@ -57,6 +58,15 @@
 -type config() :: nkmedia:engine_config().
 
 -type status() :: connecting | ready.
+
+-type room_opts() ::
+    #{
+        audiocodec => opus | isac32 | isac16 | pcmu | pcma,
+        videocodec => vp8 | vp9 | h264,
+        description => binary(),
+        bitrate => integer(),
+        publishers => integer()
+    }.
 
 
 
@@ -114,12 +124,7 @@ stats(Id, Stats) ->
 	{ok, config()} | {error, term()}.
 
 get_config(Id) ->
-	case find(Id) of
-		{ok, _Status, JanusPid, _ConnPid} ->
-			nkservice_util:call(JanusPid, get_config, ?CALL_TIME);
-		not_found ->
-			{error, no_mediaserver}
-	end.
+	do_call(Id, get_config).
 
 
 %% @private
@@ -136,16 +141,35 @@ get_conn(Id) ->
 
 
 %% @private
--spec check_room(id(), integer()) ->
+-spec get_all_rooms(id()) ->
+	{ok, map()} | {error, term()}.
+
+get_all_rooms(Id) ->
+	do_call(Id, get_all_rooms).
+
+
+%% @private
+-spec get_room(id(), nkmedia:room_id()) ->
 	ok.
 
-check_room(Id, Room) ->
-	case find(Id) of
-		{ok, _Status, JanusPid, _ConnPid} ->
-			nkservice_util:call(JanusPid, {check_room, Room}, ?CALL_TIME);
-		_ ->
-			{error, no_mediaserver}
-	end.
+get_room(Id, RoomId) ->
+	do_call(Id, {get_room, to_bin(RoomId)}).
+
+
+%% @private
+-spec create_room(id(), nkmedia:room_id(), room_opts()) ->
+	ok.
+
+create_room(Id, RoomId, Opts) ->
+	do_call(Id, {create_room, to_bin(RoomId), Opts}).
+
+
+%% @private
+-spec destroy_room(id(), nkmedia:room_id()) ->
+	ok.
+
+destroy_room(Id, RoomId) ->
+	do_call(Id, {destroy_room, to_bin(RoomId)}).
 
 
 %% @doc
@@ -168,12 +192,24 @@ get_all(SrvId) ->
 find(Id) ->
 	Id2 = case is_pid(Id) of
 		true -> Id;
-		false -> nklib_util:to_binary(Id)
+		false -> to_bin(Id)
 	end,
 	case nklib_proc:values({?MODULE, Id2}) of
 		[{{Status, ConnPid}, JanusPid}] -> {ok, Status, JanusPid, ConnPid};
 		[] -> not_found
 	end.
+
+
+%% @private
+do_call(Id, Msg) ->
+	case find(Id) of
+		{ok, _Status, JanusPid, _ConnPid} ->
+			nkservice_util:call(JanusPid, Msg, ?CALL_TIME);
+		_ ->
+			{error, no_mediaserver}
+	end.
+
+
 
 
 %% @private
@@ -189,9 +225,6 @@ start_link(Config) ->
 	gen_server:start_link(?MODULE, [Config], []).
 
 
-
-
-
 % ===================================================================
 %% gen_server behaviour
 %% ===================================================================
@@ -205,8 +238,7 @@ start_link(Config) ->
 	conn :: pid(),
 	session :: integer(),
 	handle :: integer(),
-	info = #{} :: map(),
-	rooms = #{} :: #{Room::binary() => map()}
+	info = #{} :: map()
 }).
 
 
@@ -216,13 +248,17 @@ start_link(Config) ->
     {stop, term()} | ignore.
 
 init([#{srv_id:=SrvId, name:=Id}=Config]) ->
-	State = #state{id=Id, srv_id=SrvId, config=Config},
+	State = #state{
+		id=Id, 
+		srv_id=SrvId, 
+		config=Config
+	},
 	nklib_proc:put(?MODULE, {SrvId, Id}),
 	true = nklib_proc:reg({?MODULE, Id}, {connecting, undefined}),
 	set_log(State),
 	nkservice_util:register_for_changes(SrvId),
 	self() ! connect,
-	self() ! get_rooms,
+	self() ! keepalive,
 	?DEBUG("started (~p)", [self()], State),
 	{ok, State}.
 
@@ -238,11 +274,28 @@ handle_call(get_state, _From, State) ->
 handle_call(get_config, _From, #state{config=Config}=State) ->
     {reply, {ok, Config}, State};
 
-handle_call({check_room, Room}, _From, #state{rooms=Rooms}=State) ->
-	Reply = case maps:find(Room, Rooms) of
-		{ok, Data} -> {ok, Data};
-		error -> {error, room_not_found}
+handle_call(get_all_rooms, _From, State) ->
+	Reply = do_get_rooms(State),
+	{reply, Reply, State};
+
+handle_call({get_room, RoomId}, _From, State) ->
+	Reply = case do_get_rooms(State) of
+		{ok, Rooms} ->
+			case maps:find(RoomId, Rooms) of
+				{ok, Data} -> {ok, Data};
+				error -> {error, room_not_found}
+			end;
+		{error, Error} ->
+			{error, Error}
 	end,
+    {reply, Reply, State};
+
+handle_call({create_room, RoomId, Opts}, _From, State) ->
+	Reply = do_create_room(RoomId, Opts, State),
+    {reply, Reply, State};
+
+handle_call({destroy_room, RoomId}, _From, State) ->
+	Reply = do_destroy_room(RoomId, State),
     {reply, Reply, State};
 
 handle_call(Msg, _From, State) ->
@@ -253,6 +306,10 @@ handle_call(Msg, _From, State) ->
 %% @private
 -spec handle_cast(term(), #state{}) ->
     {noreply, #state{}} | {stop, term(), #state{}}.
+
+handle_cast({destroy_room, RoomId}, State) ->
+	do_destroy_room(RoomId, State),
+    {noreply, State};
 
 handle_cast({stats, _Stats}, State) ->
 	{noreply, State};
@@ -300,13 +357,13 @@ handle_info(connect, #state{srv_id=SrvId, id=Id, config=Config}=State) ->
 			{stop, normal, State2}
 	end;
 
-handle_info(get_rooms, #state{conn=Conn}=State) ->
-	State2 = case is_pid(Conn) of
-		true -> get_rooms(State);
-		false -> State
+handle_info(keepalive, #state{conn=Conn, session=Session}=State) ->
+	case is_pid(Conn) of
+		true -> nkmedia_janus_client:keepalive(Conn, Session);
+		false -> ok
 	end,
-	erlang:send_after(?KEEPALIVE, self(), get_rooms),
-	{noreply, State2};
+	erlang:send_after(30000, self(), keepalive),
+	{noreply, State};
 
 handle_info({nkservice_updated, _SrvId}, State) ->
     {noreply, set_log(State)};
@@ -395,25 +452,94 @@ connect_janus(Host, Base, Tries) ->
 
 
 %% @private
-get_rooms(#state{id=Id, conn=Conn, session=Session, handle=Handle}=State) ->
-	{ok, Data, _} = 
-		nkmedia_janus_client:message(Conn, Session, Handle, #{request=>list}, #{}),
-	#{<<"data">>:=#{<<"list">>:=List}} = Data, 
-	lists:foreach(
-		fun
-			(#{<<"room">>:=1234}) ->
-				ok;
-			(#{<<"description">>:=Desc}=RoomData) ->
-				nkmedia_janus_room:janus_check(Id, Desc, RoomData)
-		end,
-		List),
-	Rooms = maps:from_list([{Room, Map} || #{<<"description">>:=Room}=Map<-List]),
-	State#state{rooms=Rooms}.
+do_get_rooms(#state{id=Id}=State) ->
+	case do_req(#{request=>list}, State) of
+		{ok, #{<<"data">>:=#{<<"list">>:=List}}} ->
+			Rooms = lists:foldl(
+				fun
+					(#{<<"room">>:=1234}, Acc) ->
+						Acc;
+					(#{<<"description">>:=RoomId}=Data, Acc) ->
+						case nkmedia_janus_room:room_exists(Id, RoomId) of
+							true -> 
+								[{RoomId, Data}|Acc];
+							false ->
+								?LLOG(notice, "removing orphan room ~s", [RoomId], State),
+								gen_server:cast(self(), {destroy_room, RoomId}),
+								Acc
+						end
+				end,
+				[],
+				List),
+			{ok, maps:from_list(Rooms)};
+		{error, Error} ->
+			{error, Error}
+	end.
 
 
+%% @private
+do_create_room(RoomId, Opts, State) ->
+    Room = to_room_id(RoomId),
+    Op = #{
+        request => create, 
+        description => to_bin(RoomId),
+        bitrate => maps:get(bitrate, Opts, 128000),
+        publishers => 1000,
+        audiocodec => maps:get(audiocodec, Opts, opus),
+        videocodec => maps:get(videocodec, Opts, vp8),
+        is_private => false,
+        permanent => false,
+        room => Room
+        % fir_freq
+    },
+    case do_req(Op, State) of
+    	{ok, #{<<"data">>:=#{<<"videoroom">>:=<<"created">>}}} ->
+            ok;
+    	{ok, #{<<"data">>:=#{<<"error_code">>:=427}}} ->
+            {error, room_already_exists};
+        {ok, Other} ->
+        	?LLOG(notice, "unexpected response: ~p", [Other], State),
+        	{error, internal_error};
+        {error, Error} ->
+            {error, Error}
+    end.
 
 
+%% @private
+do_destroy_room(RoomId, State) ->
+    Room = to_room_id(RoomId),
+    Op = #{request => destroy, room => Room},
+    case do_req(Op, State) of
+        {ok, #{<<"data">>:=#{<<"videoroom">>:=<<"destroyed">>}}} ->
+            ok;
+        {ok, #{<<"data">>:=#{<<"error_code">>:=426}}} ->
+        	{error, room_not_found};
+        {ok, Other} ->
+        	?LLOG(notice, "unexpected response: ~p", [Other], State),
+        	{error, internal_error};
+        {error, Error} ->
+        	{error, Error}
+    end.
 
 
+%% @private
+do_req(Op, #state{conn=Conn, session=Session, handle=Handle}) when is_pid(Conn) ->
+	case nkmedia_janus_client:message(Conn, Session, Handle, Op, #{}) of
+		{ok, Data, _Jsep} ->
+			{ok, Data};
+		{error, Error} ->
+			{error, Error}
+	end;
 
+do_req(_Op, _State) ->
+	{error, no_connection}.
+
+
+%% @private
+to_room_id(Room) when is_integer(Room) -> Room;
+to_room_id(Room) when is_binary(Room) -> erlang:phash2(Room).
+
+
+%% @private
+to_bin(Term) -> nklib_util:to_binary(Term).
 

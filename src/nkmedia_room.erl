@@ -30,7 +30,7 @@
 -export([send_info/3, update_status/2]).
 -export([restart_timeout/1, register/2, unregister/2, get_all/0]).
 -export([get_all_with_role/2]).
--export([find/1, do_call/2, do_call/3, do_cast/2]).
+-export([find/1, find_backend/1, do_call/2, do_call/3, do_cast/2]).
 -export([init/1, terminate/2, code_change/3, handle_call/3,
          handle_cast/2, handle_info/2]).
 -export_type([id/0, room/0, event/0]).
@@ -45,14 +45,11 @@
     end).
 
 -define(LLOG(Type, Txt, Args, State),
-    lager:Type("NkMEDIA Room ~s (~p) "++Txt, 
+    lager:Type("NkMEDIA Room '~s' (~p) "++Txt, 
                [State#state.id, State#state.backend | Args])).
 
--include("../../include/nkmedia_room.hrl").
+-include("nkmedia_room.hrl").
 -include_lib("nkservice/include/nkservice.hrl").
-
-
--define(CHECK_TIME, 24*60*60).  
 
 
 %% ===================================================================
@@ -80,6 +77,7 @@
     #{
         room_id => id(),
         srv_id => nkservice:id(),
+        engine_id => term(),
         members => #{session_id() => member_info()},
         status => status()
     }.
@@ -102,7 +100,7 @@
 
 
 -type event() :: 
-    {created, room()}                               |
+    created                                         |
     {started_member, session_id(), member_info()}   |
     {stopped_member, session_id(), member_info()}   |
     {status, status()}                              |
@@ -129,12 +127,9 @@ start(Srv, Config) ->
             case nkservice_srv:get_srv_id(Srv) of
                 {ok, SrvId} ->
                     Config3 = Config2#{room_id=>RoomId, srv_id=>SrvId},
-                    case SrvId:nkmedia_room_init(RoomId, Config3) of
-                        {ok, #{backend:=_}=Config4} ->
-                            {ok, Pid} = gen_server:start(?MODULE, [Config4], []),
+                    case gen_server:start(?MODULE, [Config3], []) of
+                        {ok, Pid} ->
                             {ok, RoomId, Pid};
-                        {ok, _} ->
-                            {error, not_implemented};
                         {error, Error} ->
                             {error, Error}
                     end;
@@ -248,11 +243,10 @@ unregister(RoomId, Link) ->
 
 %% @doc Gets all started rooms
 -spec get_all() ->
-    [{id(), nkmedia:backend(), pid()}].
+    [{id(), pid()}].
 
 get_all() ->
-    [{Id, Backend, Pid} || 
-        {{Id, Backend}, Pid}<- nklib_proc:values(?MODULE)].
+    nklib_proc:values(?MODULE).
 
 
 % ===================================================================
@@ -277,27 +271,33 @@ get_all() ->
 
 init([#{srv_id:=SrvId, room_id:=RoomId}=Room]) ->
     true = nklib_proc:reg({?MODULE, RoomId}),
-    Backend = maps:get(backend, Room, undefined),
-    nklib_proc:put(?MODULE, {RoomId, Backend}),
+    nklib_proc:put(?MODULE, RoomId),
     Room2 = Room#{members=>#{}, status=>#{}},
-    State1 = #state{
-        id = RoomId, 
-        srv_id = SrvId, 
-        backend = Backend,
-        links = nklib_links:new(),
-        room = Room2
-    },
-    State2 = case Room of
-        #{register:=Link} ->
-            links_add(Link, State1);
-        _ ->
-            State1
-    end,
-    set_log(State2),
-    nkservice_util:register_for_changes(SrvId),
-    ?LLOG(info, "started", [], State2),
-    State3 = do_event({created, Room2}, State2),
-    {ok, do_restart_timeout(State3)}.
+    case SrvId:nkmedia_room_init(RoomId, Room2) of
+        {ok, #{backend:=Backend}=Room3} ->
+            State1 = #state{
+                id = RoomId, 
+                srv_id = SrvId, 
+                backend = Backend,
+                links = nklib_links:new(),
+                room = Room3
+            },
+            State2 = case Room of
+                #{register:=Link} ->
+                    links_add(Link, State1);
+                _ ->
+                    State1
+            end,
+            set_log(State2),
+            nkservice_util:register_for_changes(SrvId),
+            ?LLOG(info, "started", [], State2),
+            State3 = do_event(created, State2),
+            {ok, do_restart_timeout(State3)};
+        {ok, _} ->
+            {stop, not_implemented};
+        {error, Error} ->
+            {stop, Error}
+    end.
 
 
 %% @private
@@ -516,6 +516,15 @@ find(Id) ->
 
 
 %% @private
+find_backend(Id) ->
+    Id2 = nklib_util:to_binary(Id),
+    case nklib_proc:values({?MODULE, Id2}) of
+        [{{Backend, EngineId}, _Pid}] -> {ok, Backend, EngineId};
+        [] -> not_found
+    end.
+
+
+%% @private
 do_call(Id, Msg) ->
     do_call(Id, Msg, 5000).
 
@@ -549,7 +558,7 @@ do_stop(Reason, #state{stop_reason=false}=State) ->
     % Give time for registrations to success
     State2 = do_event({stopped, Reason}, State),
     {ok, State3} = handle(nkmedia_room_stop, [Reason], State2),
-    erlang:send_after(5000, self(), destroy),
+    erlang:send_after(?SRV_DELAYED_DESTROY, self(), destroy),
     {noreply, State3#state{stop_reason=Reason}};
 
 do_stop(_Reason, State) ->
@@ -620,6 +629,9 @@ links_fold(Fun, Acc, #state{links=Links}) ->
 %% @private
 do_restart_timeout(#state{timer=Timer, room=Room}=State) ->
     nklib_util:cancel_timer(Timer),
-    Time = 1000 * maps:get(timeout, Room, ?CHECK_TIME),
-    State#state{timer=erlang:send_after(Time, self(), room_timeout)}.
+    Time = case maps:find(timeout, Room) of
+        {ok, UserTime} -> UserTime;
+        error -> nkmedia_app:get(room_timeout)
+    end,
+    State#state{timer=erlang:send_after(1000*Time, self(), room_timeout)}.
 

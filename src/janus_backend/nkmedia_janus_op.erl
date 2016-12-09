@@ -28,7 +28,6 @@
 -behaviour(gen_server).
 
 -export([start/3, stop/1, videocall/2, echo/2, play/3]).
--export([list_rooms/1, create_room/3, destroy_room/2]).
 -export([publish/3, unpublish/1]).
 -export([listen/3, listen_switch/2, unlisten/1]).
 -export([from_sip/2, to_sip/2]).
@@ -72,15 +71,6 @@
 
 -type play() :: binary().
 
-
--type room_opts() ::
-    #{
-        audiocodec => opus | isac32 | isac16 | pcmu | pcma,
-        videocodec => vp8 | vp9 | h264,
-        description => binary(),
-        bitrate => integer(),
-        publishers => integer()
-    }.
 
 -type media_opts() ::
     #{
@@ -157,30 +147,6 @@ videocall(Id, Offer) ->
 
 play(Id, Play, Opts) ->
     do_call(Id, {play, Play, Opts}).
-
-
-%% @doc List all videorooms without 
--spec list_rooms(janus_id()) ->
-    {ok, list()} | {error, nkservice:error()}.
-
-list_rooms(Id) ->
-    do_call2(Id, list_rooms).
-
-
-%% @doc Creates a new videoroom
--spec create_room(id(), room(), room_opts()) ->
-    {ok, room()} | {error, nkservice:error()}.
-
-create_room(Id, Room, Opts) ->
-    do_call2(Id, {create_room, to_room(Room), Opts}).
-
-
-%% @doc Destroys a videoroom
--spec destroy_room(id(), room()) ->
-    ok | {error, nkservice:error()}.
-
-destroy_room(Id, Room) ->
-    do_call2(Id, {destroy_room, to_room(Room)}).
 
 
 %% @doc Starts a conection to a videoroom.
@@ -426,15 +392,6 @@ handle_call({play, File, Opts}, _From, #state{status=wait}=State) ->
 
 handle_call({videocall, Offer}, From, #state{status=wait}=State) -> 
     do_videocall(Offer, From, State);
-
-handle_call(list_rooms, _From, #state{status=wait}=State) -> 
-    do_list_rooms(State);
-
-handle_call({create_room, Room, Opts}, _From, #state{status=wait}=State) -> 
-    do_create_room(Room, Opts, State);
-
-handle_call({destroy_room, Room}, _From, #state{status=wait}=State) -> 
-    do_destroy_room(Room, State);
 
 handle_call({publish, Room, Offer}, _From, #state{status=wait}=State) -> 
     do_publish(Offer, Room, State);
@@ -873,68 +830,6 @@ do_videocall_media(Opts, Type, #state{handle_id=Handle1, handle_id2=Handle2}=Sta
             reply({error, Error}, State)
     end.
 
-
-
-
-%% ===================================================================
-%% Rooms
-%% ===================================================================
-
-%% @private
-do_list_rooms(State) ->
-    {ok, Handle} = attach(videoroom, State),
-    Body = #{request => list}, 
-    case message(Handle, Body, #{}, State) of
-        {ok, #{<<"list">>:=List}, _} ->
-            List2 = [{Desc, Data} || #{<<"description">>:=Desc}=Data <- List],
-            % detach(Handle, State),
-            reply_stop({ok, maps:from_list(List2)}, State);
-        {error, Error} ->
-            ?LLOG(notice, "list_rooms error: ~p", [Error], State),
-            reply_stop({error, Error}, State)
-    end.
-
-
-%% @private
-do_create_room(Room, Opts, State) ->
-    {ok, Handle} = attach(videoroom, State),
-    RoomId = to_room_id(Room),
-    Body = #{
-        request => create, 
-        description => nklib_util:to_binary(Room),
-        bitrate => maps:get(bitrate, Opts, 128000),
-        publishers => 1000,
-        audiocodec => maps:get(audiocodec, Opts, opus),
-        videocodec => maps:get(videocodec, Opts, vp8),
-        % record => maps:get(record, Opts, false),
-        is_private => false,
-        permanent => false,
-        room => RoomId
-        % fir_freq
-    },
-    case message(Handle, Body, #{}, State) of
-        {ok, Msg, _} ->
-            #{<<"videoroom">>:=<<"created">>, <<"room">>:=RoomId} = Msg,
-            reply_stop(ok, State#state{room=Room});
-        {error, Error} ->
-            reply_stop({error, Error}, State)
-    end.
-
-
-%% @private
-%% Connected peers will receive event from Janus and will stop
-do_destroy_room(Room, State) ->
-    {ok, Handle} = attach(videoroom, State),
-    RoomId = to_room_id(Room),
-    Body = #{request => destroy, room => RoomId},
-    case message(Handle, Body, #{}, State) of
-        {ok, Msg, _} ->
-            #{<<"videoroom">>:=<<"destroyed">>} = Msg,
-            reply_stop(ok, State);
-        {error, Error} ->
-            ?LLOG(info, "destroy_room error: ~p", [Error], State),
-            reply_stop({error, Error}, State)
-    end.
 
 
 
@@ -1504,30 +1399,8 @@ do_call(SessId, Msg, Timeout) ->
     case find(SessId) of
         {ok, Pid} -> 
             nkservice_util:call(Pid, Msg, Timeout);
-        % not_found -> 
-        %     case start(SessId, <<>>) of
-        %         {ok, Pid} ->
-        %             nkservice_util:call(Pid, Msg, Timeout);
-        %         _ ->
-        %             {error, session_not_found}
-        %     end
-            _ ->
-                {error, session_not_found}
-    end.
-
-
-%% @private
-do_call2(JanusOrSessionId, Msg) ->
-    case do_call(JanusOrSessionId, Msg, 5000) of
-        {error, session_not_found} ->
-            case start(none, JanusOrSessionId, <<>>) of
-                {ok, Pid} ->
-                    nkservice_util:call(Pid, Msg, 5000);
-                {error, Error} ->
-                    {error, Error}
-            end;
-        Other ->
-            Other
+        _ ->
+            {error, session_not_found}
     end.
 
 
@@ -1539,18 +1412,6 @@ do_cast(SessId, Msg) ->
         not_found -> {error, session_not_found}
     end.
 
-
-
-% %% @private
-% get_body(Opts) ->
-%     #{
-%         audio => maps:get(use_audio, Opts, true),
-%         video => maps:get(use_video, Opts, true),
-%         data => maps:get(use_data, Opts, true),
-%         bitrate => maps:get(bitrate, Opts, 0),
-%         record => maps:get(record, Opts, false),
-%         filename => maps:get(filename, Opts, <<>>)
-%     }.
 
 
 %% @private

@@ -22,8 +22,8 @@
 -module(nkmedia_janus_room).
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 
--export([init/2, stop/2, timeout/2, handle_cast/2]).
--export([janus_check/3]).
+-export([room_exists/2]).
+-export([init/2, stop/2, timeout/2, handle_info/2]).
 
 -define(DEBUG(Txt, Args, State),
     case erlang:get(nkmedia_room_debug) of
@@ -32,9 +32,12 @@
     end).
 
 -define(LLOG(Type, Txt, Args, Room),
-    lager:Type("NkMEDIA Janus Room ~s "++Txt, [maps:get(room_id, Room) | Args])).
+    lager:Type("NkMEDIA Janus Room '~s' "++Txt, [maps:get(room_id, Room) | Args])).
+
+-define(CHECK_TIME, 10).
 
 -include("../../include/nkmedia_room.hrl").
+
 
 
 %% ===================================================================
@@ -56,18 +59,12 @@
 %% External
 %% ===================================================================
 
-%% @private Called periodically from nkmedia_janus_engine
-janus_check(JanusId, RoomId, Data) ->
-    case nkmedia_room:find(RoomId) of
-        {ok, Pid} ->
-            #{<<"num_participants">>:=Num} = Data,
-            gen_server:cast(Pid, {nkmedia_janus, {participants, Num}});
-        not_found ->
-            spawn(
-                fun() -> 
-                    lager:warning("Destroying orphan Janus room ~s", [RoomId]),
-                    destroy_room(#{nkmedia_janus_id=>JanusId, room_id=>RoomId})
-                end)
+
+%% @private
+room_exists(JanusId, RoomId) ->
+    case nklib_proc:values({?MODULE, JanusId, RoomId}) of
+        [{_, _Pid}] -> true;
+        _ -> false
     end.
 
 
@@ -81,16 +78,12 @@ janus_check(JanusId, RoomId, Data) ->
 -spec init(room_id(), room()) ->
     {ok, room()} | {error, term()}.
 
-init(_RoomId, Room) ->
+init(RoomId, Room) ->
     case get_janus(Room) of
-        {ok, Room2} ->
-            case create_room(Room2) of
-                {ok, Room3} ->
-                    {ok, ?ROOM(#{class=>sfu, backend=>nkmedia_janus}, Room3)};
-                {error, Error} ->
-                    {error, Error}
-            end;
-       error ->
+        {ok, JanusId} ->
+            true = nklib_proc:reg({?MODULE, JanusId, RoomId}),
+            create_room(JanusId, RoomId, Room);
+        error ->
             {error, no_mediaserver}
     end.
 
@@ -99,57 +92,52 @@ init(_RoomId, Room) ->
 -spec stop(term(), room()) ->
     {ok, room()} | {error, term()}.
 
-stop(_Reason, Room) ->
-    case destroy_room(Room) of
+stop(_Reason, #{nkmedia_janus_id:=JanusId, room_id:=RoomId}=Room) ->
+    case nkmedia_janus_engine:destroy_room(JanusId, RoomId) of
         ok ->
             ?DEBUG("stopping, destroying room", [], Room);
+        {error, room_not_found} ->
+            ok;
         {error, Error} ->
             ?LLOG(notice, "could not destroy room: ~p", [Error], Room)
     end,
     {ok, Room}.
 
 
-
 %% @private
 -spec timeout(room_id(), room()) ->
     {ok, room()} | {stop, nkservice:error(), room()}.
 
-timeout(RoomId, #{nkmedia_janus_id:=JanusId}=Room) ->
+timeout(_RoomId, Room) ->
     case length(nkmedia_room:get_all_with_role(publisher, Room)) of
         0 ->
             {stop, timeout, Room};
         _ ->
-           case nkmedia_janus_engine:check_room(JanusId, RoomId) of
-                {ok, _} ->      
-                    {ok, Room};
-                _ ->
-                    % Is timeout < nkmedia_engine check time?
-                    ?LLOG(warning, "room ~p is not on engine ~p", 
-                          [RoomId, JanusId], Room),
-                    {ok, Room}
-                    % {stop, timeout, Room}
-            end
-    end.
+            {ok, Room}
+ end.
 
 
 %% @private
--spec handle_cast(term(), room()) ->
+-spec handle_info(term(), room()) ->
     {noreply, room()}.
 
-handle_cast({participants, Num}, Room) ->
-    case length(nkmedia_room:get_all_with_role(publisher, Room)) of
-        Num -> 
-            ok;
-        Other ->
-            ?LLOG(notice, "Janus says ~p participants, we have ~p!", 
-                  [Num, Other], Room),
-            case Num of
-                0 ->
-                    nkmedia_room:stop(self(), no_room_members);
-                _ ->
-                    ok
-            end
+handle_info(check, #{nkmedia_janus_id:=JanusId, room_id:=RoomId}=Room) ->
+    case nkmedia_janus_engine:get_room(JanusId, RoomId) of
+        {ok, #{<<"num_participants">>:=Num}} ->
+            case length(nkmedia_room:get_all_with_role(publisher, Room)) of
+                Num -> 
+                    ok;
+                Other ->
+                    ?LLOG(notice, "Janus says ~p participants, we have ~p!", 
+                          [Num, Other], Room)
+            end;
+        {error, room_not_found} ->
+            ?LLOG(warning, "room not found on Janus!", [], Room),
+            nkmedia_room:stop(self(), room_not_found);
+        _ ->
+            ok
     end,
+    erlang:send_after(1000*?CHECK_TIME, self(), {nkmedia_janus, check}),
     {noreply, Room}.
 
 
@@ -162,29 +150,31 @@ handle_cast({participants, Num}, Room) ->
 
 %% @private
 -spec get_janus(room()) ->
-    {ok, room()} | error.
+    {ok, nkmedia_janus_engine:id()} | error.
 
-get_janus(#{nkmedia_janus_id:=_}=Room) ->
-    {ok, Room};
+get_janus(#{nkmedia_janus_id:=JanusId}) ->
+    {ok, JanusId};
 
-get_janus(#{srv_id:=SrvId}=Room) ->
+get_janus(#{srv_id:=SrvId}) ->
     case SrvId:nkmedia_janus_get_mediaserver(SrvId) of
         {ok, JanusId} ->
-            {ok, ?ROOM(#{nkmedia_janus_id=>JanusId}, Room)};
+            {ok, JanusId};
+            % ?ROOM(#{nkmedia_janus_id=>JanusId}, Room)};
         {error, _Error} ->
             error
     end.
 
 
 %% @private
--spec create_room(room()) ->
+-spec create_room(nkmedia_janus_engine:id(), room_id(), room()) ->
     {ok, room()} | {error, term()}.
 
-create_room(#{srv_id:=SrvId, nkmedia_janus_id:=JanusId, room_id:=RoomId}=Room) ->
+create_room(JanusId, RoomId, Room) ->
     Base = #{
         audio_codec => opus, 
         video_codec => vp8,
-        bitrate => nkmedia_app:get(default_room_bitrate)
+        bitrate => nkmedia_app:get(default_room_bitrate),
+        nkmedia_janus_id => JanusId
     },
     Room2 = ?ROOM_MERGE(Base, Room),
     Opts = #{        
@@ -192,28 +182,24 @@ create_room(#{srv_id:=SrvId, nkmedia_janus_id:=JanusId, room_id:=RoomId}=Room) -
         videocodec => maps:get(video_codec, Room2),
         bitrate => maps:get(bitrate, Room2)             % Default for publishers
     },                                                  
-    case nkmedia_janus_op:start(SrvId, JanusId, RoomId) of
-        {ok, Pid} ->
-            case nkmedia_janus_op:create_room(Pid, RoomId, Opts) of
+    case nkmedia_janus_engine:create_room(JanusId, RoomId, Opts) of
+        ok ->
+            Janus = #{
+                class=>sfu, 
+                backend=>nkmedia_janus,
+                nkmedia_janus_id => JanusId
+            },
+            self() ! {nkmedia_janus, check},
+            {ok, ?ROOM(Janus, Room2)};
+        {error, room_already_exists} ->
+            case nkmedia_janus_engine:destroy_room(JanusId, RoomId) of
                 ok ->
-                    {ok, Room2};
+                    create_room(JanusId, RoomId, Room);
                 {error, Error} ->
+                    ?LLOG(warning, "error removing starting room: ~p", [Error], Room),
                     {error, Error}
             end;
         {error, Error} ->
             {error, Error}
     end.
-
-
--spec destroy_room(room()) ->
-    ok | {error, term()}.
-
-destroy_room(#{srv_id:=SrvId, nkmedia_janus_id:=JanusId, room_id:=RoomId}) ->
-    case nkmedia_janus_op:start(SrvId, JanusId, RoomId) of
-        {ok, Pid} ->
-            nkmedia_janus_op:destroy_room(Pid, RoomId);
-        {error, Error} ->
-            {error, Error}
-    end.
-
 

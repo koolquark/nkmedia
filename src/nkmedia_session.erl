@@ -1182,7 +1182,7 @@ do_stop(Reason, #state{srv_id=SrvId, stop_reason=false}=State) ->
     {_Code, Txt} = nkservice_util:error_code(SrvId, Reason),
     State4 = add_timelog(#{msg=>stopped, reason=>Txt}, State3),
     % Delay the destroyed event
-    erlang:send_after(5000, self(), destroy),
+    erlang:send_after(?SRV_DELAYED_DESTROY, self(), destroy),
     {noreply, State4#state{stop_reason=Reason}};
 
 do_stop(_Reason, State) ->
