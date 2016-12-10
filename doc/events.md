@@ -49,6 +49,7 @@ candidate_end|`{}`|No more _trickle ICE_ candidates arte available
 status|`{...}`|Some session-specific new status is fired
 info|`{...}`|Some user-specific event is fired
 destroyed|`{code: Code, reason: Reason}`|The session has been stopped
+record|`{...}`|Sends a complete record of the call.
 
 
 **Sample**

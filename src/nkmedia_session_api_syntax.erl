@@ -50,6 +50,7 @@ syntax(create, Syntax, Defaults, Mandatory) ->
 			stop_after_peer => boolean,
 			wait_timeout => {integer, 1, none},
 			ready_timeout => {integer, 1, none},
+			meta => map,
 
 			% Media
 			mute_audio => boolean,
@@ -271,6 +272,9 @@ answer() ->
 get_info(Session) ->
 	Keys = [
 		session_id, 
+		type,
+		type_ext,
+		status,
 		offer,
 		answer,
 		no_offer_trickle_ice,
@@ -284,12 +288,13 @@ get_info(Session) ->
 		stop_after_peer,
 		wait_timeout,
 		ready_timeout,
-		user_id,
-		user_session,
 		backend_role,
-		type,
-		type_ext,
-		status,
+		meta,
+
+		mute_audio,
+        mute_video,
+        mute_data,
+        bitrate,
 
 		peer_id,
 		room_id,
@@ -297,12 +302,10 @@ get_info(Session) ->
 		layout,
 		loops,
 		uri,
-		mute_audio,
-        mute_video,
-        mute_data,
-        bitrate
+
+		user_id,
+		user_session,
+    	session_events,
+    	session_events_body
     ],
     maps:with(Keys, Session).
-
-
-

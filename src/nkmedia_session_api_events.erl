@@ -67,8 +67,9 @@ event(SessId, {stopped, Reason}, #{srv_id:=SrvId}=Session) ->
     {Code, Txt} = nkservice_util:error_code(SrvId, Reason),
     send_event(SessId, destroyed, #{code=>Code, reason=>Txt}, Session);
 
-event(SessId, {record, Info}, Session) ->
-    send_event(SessId, record, #{timelog=>Info}, Session);
+event(SessId, {record, Log}, Session) ->
+    Record = #{info=>nkmedia_session_api_syntax:get_info(Session), timelog=>Log},
+    send_event(SessId, record, Record, Session);
 
 event(_SessId, _Event, Session) ->
     {ok, Session}.

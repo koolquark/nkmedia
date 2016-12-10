@@ -79,6 +79,9 @@ set_master_answer|false|If `true`, this _slave_ session will set its _answer_ to
 stop_after_peer|true|For _master_ or _slave_ sessions, stop if peer stops
 wait_timeout|60|Timeout for sessions in _wait_ state
 ready_timeout|86400|Timeout for sessions in _ready_ (_answer_ is already set) state
+session_events|[]|Direct-events you want to be subscribed to (see bellow)
+session_events_bodfy|{}|JSON object to be included in direct-events
+meta|{}|Any JSON object
 
 If you use `wait_reply=true`, the backend will supply the _answer_ (in case you supplied an _offer_), or the _offer_ (if you don't supply one, you must then send the _answer_ to the backend). Otherwhise, you must use the `get_offer` or `get_answer` commands.
 
@@ -96,6 +99,7 @@ If you use `wait_reply=true`, the backend will supply the _answer_ (in case you 
 		offer: {
 			sdp: "v=0.."
 		}
+		session_events: ["answer", "destroyed"]
 	}
 	tid: 1
 }
@@ -133,7 +137,11 @@ uri|URI to use for the player
 
 **Events**
 
-When creating a session, the user connection is automatically subscribed to receive all events related to the session (unless `subscribe=false` is used).
+The session, as many other NetComposer objects, generates a number of events described bellow, and you can subscribe to any of the at any moment.
+
+However, session objects support also subscription to _direct_ events, if you use the `session_events` (and, optionally, `session_events_body`). Direct events are very similar to normal events, but you don't have to use any subscription request, and you can't unsubscribe to them. When the session stops, you are automatically unsubscribed to them.
+
+They are also available from the creating of the session, meaning that all subscribed events will be received from the caller, even if they are generated right after the creation of the session (and before any possible subscription request you may send).
 
 **Master/Slave sessions**
 
