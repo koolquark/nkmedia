@@ -56,6 +56,9 @@ event(SessId, {candidate, #candidate{a_line=Line, m_id=Id, m_index=Index}}, Sess
     Data = #{sdpMid=>Id, sdpMLineIndex=>Index, candidate=>Line},
     send_event(SessId, candidate, Data, Session);
 
+event(_SessId, {status, #{no_events:=true}}, Session) ->
+    {ok, Session};
+
 event(SessId, {status, Update}, Session) ->
     send_event(SessId, status, Update, Session);
 
@@ -101,19 +104,24 @@ event_session_down(SrvId, SessId, ConnId) ->
 
 %% @private
 send_event(SessId, Type, Body, #{srv_id:=SrvId}=Session) ->
-
-    Type2 = nklib_util:to_binary(Type),
     Event = #event{
         srv_id = SrvId,     
         class = <<"media">>, 
         subclass = <<"session">>,
-        type = Type2,
+        type = nklib_util:to_binary(Type),
         obj_id = SessId,
         body = Body
     },
+    send_direct_event(Event, Session),
+    nkservice_events:send(Event),
+    {ok, Session}.
+
+
+%% @private
+send_direct_event(#event{type=Type, body=Body}=Event, Session) ->
     case Session of
         #{session_events:=Events, user_session:=ConnId} ->
-            case lists:member(Type2, Events) of
+            case lists:member(Type, Events) of
                 true ->
                     Event2 = case Session of
                         #{session_events_body:=Body2} ->
@@ -127,8 +135,5 @@ send_event(SessId, Type, Body, #{srv_id:=SrvId}=Session) ->
             end;
         _ ->
             ok
-    end,
-    nkservice_events:send(Event),
-    {ok, Session}.
-
+    end.
 

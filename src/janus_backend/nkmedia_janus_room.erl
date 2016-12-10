@@ -196,6 +196,7 @@ create_room(JanusId, RoomId, Room) ->
             },
             {ok, ?ROOM(Janus, Room2)};
         {error, room_already_exists} ->
+            ?LLOG(warning, "room ~s already exists at ~s", [RoomId, JanusId], Room),
             case nkmedia_janus_engine:destroy_room(JanusId, RoomId) of
                 ok ->
                     create_room(JanusId, RoomId, Room);

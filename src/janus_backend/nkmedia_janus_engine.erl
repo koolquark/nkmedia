@@ -275,15 +275,21 @@ handle_call(get_config, _From, #state{config=Config}=State) ->
     {reply, {ok, Config}, State};
 
 handle_call(get_all_rooms, _From, State) ->
-	Reply = do_get_rooms(State),
-	{reply, Reply, State};
+	case do_get_rooms(State) of
+		{ok, Rooms} -> 
+			{reply, maps:from_list(Rooms), State};
+		{error, Error} ->
+			{reply, {error, Error}, State}
+	end;
 
 handle_call({get_room, RoomId}, _From, State) ->
 	Reply = case do_get_rooms(State) of
 		{ok, Rooms} ->
-			case maps:find(RoomId, Rooms) of
-				{ok, Data} -> {ok, Data};
-				error -> {error, room_not_found}
+			case nklib_util:get_value(RoomId, Rooms) of
+				undefined ->
+					{error, room_not_found};
+				Room ->
+					{ok, Room}
 			end;
 		{error, Error} ->
 			{error, Error}
@@ -357,12 +363,16 @@ handle_info(connect, #state{srv_id=SrvId, id=Id, config=Config}=State) ->
 			{stop, normal, State2}
 	end;
 
-handle_info(keepalive, #state{conn=Conn, session=Session}=State) ->
+handle_info(keepalive, #state{conn=Conn, session=_Session}=State) ->
 	case is_pid(Conn) of
-		true -> nkmedia_janus_client:keepalive(Conn, Session);
-		false -> ok
+		true -> 
+			% Refresh rooms (to find orphans)
+			% Could also do nkmedia_janus_client:keepalive(Conn, Session)
+			_ = do_get_rooms(State);
+		false -> 
+			ok
 	end,
-	erlang:send_after(30000, self(), keepalive),
+	erlang:send_after(?KEEPALIVE, self(), keepalive),
 	{noreply, State};
 
 handle_info({nkservice_updated, _SrvId}, State) ->
@@ -471,13 +481,13 @@ do_get_rooms(#state{id=Id}=State) ->
 				end,
 				[],
 				List),
-			{ok, maps:from_list(Rooms)};
+			{ok, Rooms};
 		{error, Error} ->
 			{error, Error}
 	end.
 
 
-%% @private
+	%% @private
 do_create_room(RoomId, Opts, State) ->
     Room = to_room_id(RoomId),
     Op = #{

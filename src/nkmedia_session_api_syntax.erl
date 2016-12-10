@@ -50,7 +50,7 @@ syntax(create, Syntax, Defaults, Mandatory) ->
 			stop_after_peer => boolean,
 			wait_timeout => {integer, 1, none},
 			ready_timeout => {integer, 1, none},
-			meta => map,
+			session_meta => map,
 
 			% Media
 			mute_audio => boolean,
@@ -128,7 +128,7 @@ syntax(update_status, Syntax, Defaults, Mandatory) ->
 		[session_id|Mandatory]
 	};
 
-syntax(timelog, Syntax, Defaults, Mandatory) ->
+syntax(add_timelog, Syntax, Defaults, Mandatory) ->
 	{
 		Syntax#{
 			session_id => binary,
@@ -289,7 +289,9 @@ get_info(Session) ->
 		wait_timeout,
 		ready_timeout,
 		backend_role,
-		meta,
+		session_meta,
+		start_time,
+		stop_time,
 
 		mute_audio,
         mute_video,

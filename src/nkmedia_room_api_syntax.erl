@@ -41,7 +41,7 @@ syntax(create, Syntax, Defaults, Mandatory) ->
             audio_codec => {enum, [opus, isac32, isac16, pcmu, pcma]},
             video_codec => {enum , [vp8, vp9, h264]},
             bitrate => {integer, 0, none},
-            meta => map
+            room_meta => map
         },
         Defaults,
         [class|Mandatory]

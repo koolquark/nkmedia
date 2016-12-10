@@ -34,7 +34,7 @@
 
 %% @private
 -spec event(nkmedia_room:id(), nkmedia_room:event(), nkmedia_room:room()) ->
-    {ok, nkmedia_room:room()}.
+    ok.
 
 event(RoomId, created, Room) ->
     Data = nkmedia_room_api_syntax:get_info(Room),
@@ -57,8 +57,8 @@ event(RoomId, {stopped, Reason}, #{srv_id:=SrvId}=Room) ->
     {Code, Txt} = nkservice_util:error_code(SrvId, Reason),
     send_event(RoomId, destroyed, #{code=>Code, reason=>Txt}, Room);
 
-event(_RoomId, _Event, Room) ->
-    {ok, Room}.
+event(_RoomId, _Event, _Room) ->
+    ok.
 
 %% ===================================================================
 %% Internal
@@ -75,5 +75,6 @@ send_event(RoomId, Type, Body, #{srv_id:=SrvId}) ->
         obj_id = RoomId,
         body = Body
     },
-    nkservice_events:send(Event).
+    nkservice_events:send(Event),
+    ok.
 

@@ -277,7 +277,8 @@ nkmedia_room_terminate(_Reason, Room) ->
     {ok, room()} | continue().
 
 nkmedia_room_event(RoomId, Event, Room) ->
-    nkmedia_room_api_events:event(RoomId, Event, Room).
+    ok = nkmedia_room_api_events:event(RoomId, Event, Room),
+    {ok, Room}.
 
 
 %% @doc Called when the status of the room changes, for each registered

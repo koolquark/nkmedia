@@ -173,10 +173,10 @@ cmd(update_status, #api_req{data=Data}, State) ->
 			{error, Error, State}
 	end;
 
-cmd(timelog, #api_req{data=Data}, State) ->
+cmd(add_timelog, #api_req{data=Data}, State) ->
 	#{session_id:=SessId, msg:=Msg} = Data,
     Body = maps:get(body, Data, #{}),
-	case nkmedia_session:timelog(SessId, Body#{msg=>Msg}) of
+	case nkmedia_session:add_timelog(SessId, Body#{msg=>Msg}) of
 		ok ->
 			{ok, #{}, State};
 		{error, Error} ->

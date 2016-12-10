@@ -20,7 +20,7 @@ See the [API Introduction](intro.md) for an introduction to the interface, and [
 * [**`room_action`**](#room_action): Performs an action over the current room
 * [**`set_candidate`**](#set_candidate): Sends a Trickle ICE candidate
 * [**`set_candidate_end`**](#set_candidate_end): Signals that no more candidates are available
-* [**`timelog`**](#timelog): Adds an entry to the session's time log
+* [**`add_timelog`**](#add_timelog): Adds an entry to the session's time log
 
 
 All commands must have 
@@ -81,7 +81,7 @@ wait_timeout|60|Timeout for sessions in _wait_ state
 ready_timeout|86400|Timeout for sessions in _ready_ (_answer_ is already set) state
 session_events|[]|Direct-events you want to be subscribed to (see bellow)
 session_events_bodfy|{}|JSON object to be included in direct-events
-meta|{}|Any JSON object
+session_meta|{}|Any JSON object
 
 If you use `wait_reply=true`, the backend will supply the _answer_ (in case you supplied an _offer_), or the _offer_ (if you don't supply one, you must then send the _answer_ to the backend). Otherwhise, you must use the `get_offer` or `get_answer` commands.
 
@@ -458,7 +458,7 @@ candidate|"candidate..."|Current candidate
 When the client has no more candidates to send, it should use this command to inform the server.
 
 
-## timelog
+## add_timelog
 
 Each sessions keeps time-based log containing all important aspects happening during the session life span. The client can insert new entries in this log with this API.
 
