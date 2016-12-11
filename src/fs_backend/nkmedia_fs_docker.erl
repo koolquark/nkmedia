@@ -50,7 +50,7 @@ start(Service) ->
             not_found -> throw(unknown_service)
         end,
         Config = nkservice_srv:get_item(SrvId, config_nkmedia_fs),
-        BasePort = 35000, %crypto:rand_uniform(32768, 65535),
+        BasePort = crypto:rand_uniform(32768, 65535),
         Pass = nklib_util:luid(),
         Image = nkmedia_fs_build:run_name(Config),
         ErlangIp = nklib_util:to_host(nkmedia_app:get(erlang_ip)),

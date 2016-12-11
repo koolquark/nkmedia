@@ -47,7 +47,7 @@ start(Service) ->
             not_found -> throw(unknown_service)
         end,
         Config = nkservice_srv:get_item(SrvId, config_nkmedia_kms),
-        BasePort = 36000, %crypto:rand_uniform(32768, 65535),
+        BasePort = crypto:rand_uniform(32768, 65535),
         Image = nkmedia_kms_build:run_name(Config),
         KmsIp = nklib_util:to_host(nkmedia_app:get(docker_ip)),
         Name = list_to_binary([

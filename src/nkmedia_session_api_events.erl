@@ -47,7 +47,7 @@ event(SessId, {answer, Answer}, Session) ->
     send_event(SessId, answer, #{answer=>Answer}, Session);
 
 event(SessId, {type, Type, Ext}, Session) ->
-    send_event(SessId, type, Ext#{type=>Type}, Session);
+    send_event(SessId, updated_type, Ext#{type=>Type}, Session);
 
 event(SessId, {candidate, #candidate{last=true}}, Session) ->
     send_event(SessId, candidate_end, #{}, Session);
@@ -60,7 +60,7 @@ event(_SessId, {status, #{no_events:=true}}, Session) ->
     {ok, Session};
 
 event(SessId, {status, Update}, Session) ->
-    send_event(SessId, status, Update, Session);
+    send_event(SessId, updated_status, Update, Session);
 
 event(SessId, {info, Info, Meta}, Session) ->
     send_event(SessId, info, Meta#{info=>Info}, Session);
