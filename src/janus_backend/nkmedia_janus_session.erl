@@ -116,15 +116,16 @@ update_status(SessId, callee, Data) ->
 start(bridge, offerer, #{peer_id:=PeerId}=Session) ->
     case nkmedia_session:cmd(PeerId, get_proxy_offer, #{}) of
         {ok, #{janus_id:=Id, proxy_type:=ProxyType, offer:=Offer}} ->
+            Offer2 = mangle_sip_offer(Offer, ProxyType),
             Update = #{
                 backend => nkmedia_janus, 
                 nkmedia_janus_id => Id,
-                no_answer_trickle_ice => false
+                no_answer_trickle_ice => false,
+                offer => Offer2
             },
             Session2 = ?SESSION(Update, Session),
-            update_type(bridge, #{peer_id=>PeerId, role=>slave, proxy_type=>ProxyType}),
-            Offer2 = mangle_sip_offer(Offer, ProxyType),
-            {ok, set_offer(Offer2, Session2)};
+            TypeExt = #{peer_id=>PeerId, role=>slave, proxy_type=>ProxyType},
+            {ok, update_type(bridge, TypeExt, Session2)};
         {error, Error} ->
             {error, Error, Session}
     end;
@@ -154,7 +155,7 @@ start(Type, Role, Session) ->
 
 %% @private Someone set the offer
 -spec offer(type(), nkmedia:role(), nkmedia:offer(), session()) ->
-    {ok, session()} | {error, nkservice:error(), session()} | continue.
+    {ok, nkmedia:offer(), session()} | {error, nkservice:error(), session()} | continue.
 
 offer(_Type, offerer, _Offer, _Session) ->
     % We generated the offer
@@ -244,8 +245,8 @@ cmd(set_type, #{type:=listen, publisher_id:=Publisher}, #{type:=listen}=Session)
     case nkmedia_janus_op:listen_switch(Pid, Publisher) of
         ok ->
             notify_listener(RoomId, Publisher, Session),
-            update_type(listen, Ext#{publisher_id=>Publisher}),
-            {ok, #{}, Session};
+            Session2 = update_type(listen, Ext#{publisher_id=>Publisher}, Session),
+            {ok, #{}, Session2};
         {error, Error} ->
             {error, Error, Session}
     end;
@@ -278,18 +279,19 @@ cmd(set_proxy_answer, #{peer_id:=PeerId, answer:=Answer}, #{type:=proxy}=Session
             #{type_ext:=#{proxy_type:=ProxyType}} = Session,
             Answer3 = mangle_sip_answer(Answer2, ProxyType),
             nkmedia_session:set_answer(self(), Answer3),
-            update_type(bridge, #{proxy_type=>ProxyType, peer_id=>PeerId, role=>master}),
-            Session2 = ?SESSION_RM(nkmedia_janus_proxy_offer, Session),
+            TypeExt = #{proxy_type=>ProxyType, peer_id=>PeerId, role=>master},
+            Session2 = update_type(bridge, TypeExt, Session),
+            Session3 = ?SESSION_RM(nkmedia_janus_proxy_offer, Session2),
             case ProxyType of
                 videocall ->
-                    case set_default_media(Session2) of
-                        {ok, Session3} ->
-                            {ok, #{}, Session3};
-                        {error, Error, Session3} ->
-                            {error, Error, Session3}
+                    case set_default_media(Session3) of
+                        {ok, Session4} ->
+                            {ok, #{}, Session4};
+                        {error, Error, Session4} ->
+                            {error, Error, Session4}
                     end;
                 _ ->
-                    {ok, #{}, Session2}
+                    {ok, #{}, Session3}
             end;
         {error, Error} ->
             {error, Error, Session}
@@ -386,9 +388,11 @@ start_offerer(listen, #{publisher_id:=Publisher, nkmedia_janus_pid:=Pid}=Session
         {ok, RoomId} -> 
             case nkmedia_janus_op:listen(Pid, RoomId, Publisher) of
                 {ok, Offer} ->
-                    notify_listener(RoomId, Publisher, Session),
-                    update_type(listen, #{room_id=>RoomId, publisher_id=>Publisher}),
-                    {ok, set_offer(Offer, Session)};
+                    Session2 = ?SESSION(#{offer=>Offer}, Session),
+                    TypeExt = #{room_id=>RoomId, publisher_id=>Publisher},
+                    Session3 = update_type(listen, TypeExt, Session2),
+                    notify_listener(RoomId, Publisher, Session3),
+                    {ok, Session3};
                 {error, Error} ->
                     {error, Error, Session}
             end;
@@ -412,7 +416,7 @@ start_offerer(_, Session) ->
 start_offeree(echo, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
     case nkmedia_janus_op:echo(Pid, Offer) of
         {ok, Answer} ->
-            Session2 = set_answer(Answer, Session),
+            Session2 = ?SESSION(#{answer=>Answer}, Session),
             set_default_media(Session2);
         {error, Error} ->
             {error, Error, Session}
@@ -437,9 +441,9 @@ start_offeree(proxy, Offer, #{nkmedia_janus_pid:=Pid}=Session) ->
                         nkmedia_janus_proxy_offer => Offer2,
                         no_answer_trickle_ice => false
                     },
+                    Session2 = ?SESSION(Update, Session),
                     % Media will be set on answer
-                    update_type(proxy, #{proxy_type=>ProxyType}),
-                    {ok, ?SESSION(Update, Session)};
+                    {ok, update_type(proxy, #{proxy_type=>ProxyType}, Session2)};
                 {error, Error} ->
                     {error, Error, Session}
             end
@@ -454,16 +458,16 @@ start_offeree(publish, Offer, #{room_id:=RoomId, nkmedia_janus_pid:=Pid}=Session
         {ok, Room} ->
             case nkmedia_janus_op:publish(Pid, RoomId, Offer) of
                 {ok, Answer} ->
-                    notify_publisher(RoomId, Session),
-                    update_type(publish, #{room_id=>RoomId}),
-                    Session2 = set_answer(Answer, Session),
-                    Session3 = case Room of
+                    Session2 = ?SESSION(#{answer=>Answer}, Session),
+                    Session3 = update_type(publish, #{room_id=>RoomId}, Session2),
+                    Session4 = case Room of
                         #{bitrate:=BR} ->
-                            maps:merge(#{bitrate=>BR}, Session2);
+                            maps:merge(#{bitrate=>BR}, Session3);
                         _ ->
-                            Session2
+                            Session3
                     end,
-                    set_default_media(Session3);
+                    notify_publisher(RoomId, Session4),
+                    set_default_media(Session4);
                 {error, Error} ->
                     {error, Error, Session}
             end;
@@ -547,16 +551,6 @@ notify_listener(RoomId, PeerId, #{session_id:=SessId}=Session) ->
 
 
 %% @private
-set_offer(Offer, Session) ->
-    ?SESSION(#{offer=>Offer}, Session).
-
-
-%% @private
-set_answer(Answer, Session) ->
-    ?SESSION(#{answer=>Answer}, Session).
-
-
-%% @private
 session_call(SessId, Msg) ->
     nkmedia_session:do_call(SessId, {nkmedia_janus, Msg}).
 
@@ -567,8 +561,8 @@ session_cast(SessId, Msg) ->
 
 
 %% @private
-update_type(Type, TypeExt) ->
-    nkmedia_session:set_type(self(), Type, TypeExt).
+update_type(Type, TypeExt, Session) ->
+    nkmedia_session:update_type(Type, TypeExt, Session).
 
 
 %% @private

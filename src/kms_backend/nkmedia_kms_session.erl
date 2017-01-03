@@ -140,7 +140,7 @@ start(Type, Role, Session) ->
 
 %% @private Someone set the offer
 -spec offer(type(), nkmedia:role(), nkmedia:offer(), session()) ->
-    {ok, session()} | {error, nkservice:error(), session()} | continue.
+    {ok, nkmedia:offer(), session()} | {error, nkservice:error(), session()} | continue.
 
 offer(_Type, offerer, _Offer, _Session) ->
     % We generated the offer
@@ -196,8 +196,8 @@ candidate(Candidate, Session) ->
 cmd(set_type, #{type:=Type}=Opts, Session) ->
     case do_type(Type, Opts, Session) of
         {ok, TypeExt, Session2} -> 
-            update_type(Type, TypeExt),
-            {ok, TypeExt, Session2};
+            Session3 = update_type(Type, TypeExt, Session2),
+            {ok, TypeExt, Session3};
         {error, Error, Session3} ->
             {error, Error, Session3}
     end;
@@ -262,9 +262,9 @@ handle_call({bridge, PeerSessId, PeerProxy, Opts},
     ok = connect_to_proxy(Opts, Session),
     case connect_from_peer(PeerProxy, Session) of
         {ok, Session2} ->
-            ?DEBUG("remote connect ~s to us", [PeerProxy], Session),
-            update_type(bridge, #{peer_id=>PeerSessId}),
-            {reply, {ok, Proxy}, Session2};
+            ?DEBUG("remote connect ~s to us", [PeerProxy], Session2),
+            Session3 = update_type(bridge, #{peer_id=>PeerSessId}, Session2),
+            {reply, {ok, Proxy}, Session3};
         {error, Error} ->
             {reply, {error, Error}, Session}
     end;
@@ -285,9 +285,9 @@ handle_cast({bridge_stop, PeerId},
             Session2 = reset_type(Session),
             % In case we were linked
             nkmedia_session:unlink_session(self(), PeerId),
-            update_type(park, #{}),
-            {ok, Session3} = nkmedia_kms_session_lib:park(Session2),
-            {noreply, Session3};
+            Session3 = update_type(park, #{}, Session2),
+            {ok, Session4} = nkmedia_kms_session_lib:park(Session3),
+            {noreply, Session4};
         _ ->
             nkmedia_session:stop(self(), bridge_stop),
             {noreply, Session}
@@ -311,8 +311,7 @@ handle_cast({end_of_stream, Player},
                 {ok, _, Session2} -> ok;
                 {error, Session2} -> ok
             end,
-            update_type(play, Ext#{loops=>Loops-1}),
-            {noreply, Session2};
+            {noreply, update_type(play, Ext#{loops=>Loops-1}, Session2)};
         _ ->
             % Launch player stop event
             {noreply, Session}
@@ -384,9 +383,8 @@ start_offeree(Type, Offer, Session) ->
 do_start_type(Type, Session) ->
     case do_type(Type, Session, Session) of
         {ok, TypeExt, Session2} ->                    
-            update_type(Type, TypeExt),
-            {ok, Session2};
-        {error, Error, Session3} ->
+            {ok, update_type(Type, TypeExt, Session2)};
+       {error, Error, Session3} ->
             {error, Error, Session3}
     end.
 
@@ -661,8 +659,8 @@ get_peer_proxy(SessId, _Session) ->
 
 
 %% @private
-update_type(Type, TypeExt) ->
-    nkmedia_session:set_type(self(), Type, TypeExt).
+update_type(Type, TypeExt, Session) ->
+    nkmedia_session:update_type(Type, TypeExt, Session).
 
 
 %% @private

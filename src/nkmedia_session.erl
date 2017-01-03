@@ -25,12 +25,13 @@
 -behaviour(gen_server).
 
 -export([start/3, get_type/1, get_status/1, get_session/1, get_offer/1, get_answer/1]).
--export([set_answer/2, set_type/3, cmd/3, cmd_async/3, send_info/3]).
+-export([set_answer/2, cmd/3, cmd_async/3, send_info/3]).
 -export([add_timelog/2, get_timelog/1, update_status/2]).
 -export([stop/1, stop/2, stop_all/0]).
 -export([candidate/2]).
 -export([register/2, unregister/2]).
 -export([link_to_slave/2, unlink_session/1, unlink_session/2]).
+-export([update_type/3]).
 -export([get_all/0, get_session_file/1]).
 -export([set_slave_answer/3, backend_candidate/2, update_session/2]).
 -export([find/1, do_cast/2, do_call/2, do_call/3, do_info/2]).
@@ -273,14 +274,6 @@ set_answer(SessId, Answer) ->
     do_cast(SessId, {set_answer, Answer}).
 
 
-%% @doc Updates the session's current type
--spec set_type(id(), type(), type_ext()) ->
-    ok | {error, nkservice:error()}.
-
-set_type(SessId, Type, TypeExt) ->
-    do_cast(SessId, {set_type, Type, TypeExt}).
-
-
 %% @doc Sends a ICE candidate from the client to the backend
 -spec candidate(id(), nkmedia:candidate()) ->
     ok | {error, term()}.
@@ -402,6 +395,18 @@ unregister(SessId, Link) ->
 
 get_all() ->
     nklib_proc:values(?MODULE).
+
+
+
+%% @doc Updates the session's current type
+-spec update_type(type(), type_ext(), session()) ->
+    session().
+
+update_type(Type, TypeExt, #{}=Session) ->
+    do_cast(self(), updated_type),
+    ?SESSION(#{type=>Type, type_ext=>TypeExt}, Session).
+
+
 
 
 %% ===================================================================
@@ -610,10 +615,14 @@ handle_cast({set_slave_answer, SlaveId, Answer}, #state{session=Session}=State) 
             noreply(State)
     end;
 
-handle_cast({set_type, Type, TypeExt}, #state{session=Session}=State) ->
-    Session2 = ?SESSION(#{type=>Type, type_ext=>TypeExt}, Session),
-    {ok, #state{}=State2} = check_type(State#state{session=Session2}),
-    noreply(State2);
+handle_cast(updated_type, State) ->
+    noreply(check_type(State)),
+    noreply(State);
+
+% handle_cast({set_type, Type, TypeExt}, #state{session=Session}=State) ->
+%     Session2 = ?SESSION(#{type=>Type, type_ext=>TypeExt}, Session),
+%     {ok, #state{}=State2} = check_type(State#state{session=Session2}),
+%     noreply(State2);
 
 handle_cast({cmd, Cmd, Opts}, State) ->
     {_Reply, State2} = do_cmd(Cmd, Opts, State),
@@ -849,26 +858,26 @@ check_answer(#state{has_answer=false, session=#{answer:=Answer}}=State) ->
     % The callback can update the type here also
     case do_set_answer(Answer, State) of
         {ok, State2} -> 
-            check_type(State2);
+            {ok, check_type(State2)};
         {error, Error, State2} -> 
             {error, Error, State2}
     end;
 
 check_answer(State) ->
-    check_type(State).
+    {ok, check_type(State)}.
 
 
 %% @private
 check_type(#state{type=OldType, type_ext=OldExt, session=Session}=State) ->
     case Session of
         #{type:=OldType, type_ext:=OldExt} ->
-            {ok, State};
+            State;
         #{type:=Type, type_ext:=Ext} ->
             State2 = State#state{type=Type, type_ext=Ext},
             Log = #{msg=>updated_type, type=>Type, type_ext=>Ext},
             State3 = do_add_timelog(Log, State2),
             ?DEBUG("session updated (~p)", [Ext], State3),
-            {ok, event({type, Type, Ext}, State3)}
+            event({type, Type, Ext}, State3)
     end.
 
 

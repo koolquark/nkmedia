@@ -151,7 +151,7 @@ start(Type, Role, Session) ->
 
 %% @private Someone set the offer
 -spec offer(type(), nkmedia:role(), nkmedia:offer(), session()) ->
-    {ok, session()} | {error, nkservice:error(), session()} | continue.
+    {ok, nkmedia:offer(), session()} | {error, nkservice:error(), session()} | continue.
 
 offer(_Type, offerer, _Offer, _Session) ->
     % We generated the offer
@@ -199,8 +199,8 @@ answer(Type, offerer, Answer, #{nkmedia_fs_uuid:=UUID, offer:=Offer}=Session) ->
 cmd(set_type, #{type:=Type}=Opts, Session) ->
     case do_type(Type, Opts, Session) of
         {ok, TypeExt, Session2} -> 
-            update_type(Type, TypeExt),
-            {ok, TypeExt, Session2};
+            Session3 = update_type(Type, TypeExt, Session2),
+            {ok, TypeExt, Session3};
         {error, Error, Session2} ->
             {error, Error, Session2}
     end;
@@ -245,8 +245,8 @@ stop(_Reason, Session) ->
 handle_call({bridge, PeerId, PeerUUID}, _From, Session) ->
     case fs_bridge(PeerUUID, Session) of
         ok ->
-            update_type(bridge, #{peer_id=>PeerId}),
-            {reply, ok, Session};
+            Session2 = update_type(bridge, #{peer_id=>PeerId}, Session),
+            {reply, ok, Session2};
         {error, Error} ->
             ?LLOG(notice, "error when received remote ~s bridge: ~p", 
                   [PeerId, Error], Session),
@@ -261,8 +261,8 @@ handle_cast({bridge_stop, PeerId},
         #{stop_after_peer:=false} ->
             % In case we were linked
             nkmedia_session:unlink_session(self(), PeerId),
-            update_type(park, #{}),
-            {noreply, Session};
+            Session2 = update_type(park, #{}, Session),
+            {noreply, Session2};
         _ ->
             nkmedia_session:stop(self(), bridge_stop),
             {noreply, Session}
@@ -330,8 +330,7 @@ start_offeree(Type, Offer, Session) ->
 do_start_type(Type, Session) ->
     case do_type(Type, Session, Session) of
         {ok, TypeExt, Session2} ->
-            update_type(Type, TypeExt),
-            {ok, Session2};
+            {ok, update_type(Type, TypeExt, Session2)};
         {error, Error, Session2} ->
             {error, Error, Session2}
     end.
@@ -462,8 +461,8 @@ room_action(layout, #{layout:=Layout}, Session) ->
     #{type_ext:=#{room_id:=Room}=Ext, nkmedia_fs_id:=FsId} = Session,
     case nkmedia_fs_cmd:conf_layout(FsId, Room, Layout) of
         ok  ->
-            update_type(mcu, Ext#{layout=>Layout}),
-            {ok, #{}, Session};
+            Session2 = update_type(mcu, Ext#{layout=>Layout}, Session),
+            {ok, #{}, Session2};
         {error, Error} ->
             {error, Error, Session}
     end;
@@ -542,12 +541,12 @@ do_fs_event(parked, bridge, Session) ->
     case Session2 of
         #{stop_after_peer:=false} ->
             ?LLOG(notice, "received parked in bridge1!", [], Session),
-            update_type(park, #{});
+            update_type(park, #{}, Session2);
         _ ->
             ?LLOG(notice, "received parked in bridge2!", [], Session),
-            nkmedia_session:stop(self(), bridge_stop)
-    end,
-    Session2;
+            nkmedia_session:stop(self(), bridge_stop),
+            Session2
+    end;
 
 do_fs_event(parked, _Type, Session) ->
     ?LLOG(notice, "received parked in ~p!", [_Type], Session),
@@ -562,23 +561,19 @@ do_fs_event({bridge, PeerId}, bridge, Session) ->
             ?LLOG(notice, "received bridge for different peer ~s: ~p!", 
                   [PeerId, Ext], Session)
     end,
-    update_type(bridge, #{peer_id=>PeerId}),
-    Session;
+    update_type(bridge, #{peer_id=>PeerId}, Session);
 
 do_fs_event({bridge, PeerId}, Type, Session) ->
     ?LLOG(notice, "received bridge in ~p state", [Type], Session),
-    update_type(bridge, #{peer_id=>PeerId}),
-    Session;
+    update_type(bridge, #{peer_id=>PeerId}, Session);
 
 do_fs_event({mcu, Info}, mcu, #{type_ext:=Ext}=Session) ->
     ?DEBUG("FS MCU Info: ~p", [Info], Session),
-    update_type(mcu, maps:merge(Ext, Info)),
-    Session;
+    update_type(mcu, maps:merge(Ext, Info), Session);
 
 do_fs_event({mcu, Info}, Type, Session) ->
     ?LLOG(notice, "received mcu in ~p state", [Type], Session),
-    update_type(mcu, Info),
-    Session;
+    update_type(mcu, Info, Session);
 
 do_fs_event(Stop, _Type, Session)
         when Stop==hangup; Stop==destroy; Stop==verto_stop; Stop==verto_hangup ->
@@ -607,8 +602,8 @@ wait_park(Session) ->
 
 
 %% @private
-update_type(Type, TypeExt) ->
-    nkmedia_session:set_type(self(), Type, TypeExt).
+update_type(Type, TypeExt, Session) ->
+    nkmedia_session:update_type(Type, TypeExt, Session).
 
 
 %% @private
