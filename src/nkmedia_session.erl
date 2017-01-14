@@ -330,12 +330,12 @@ add_timelog(SessId, #{msg:=_}=Data) ->
     do_cast(SessId, {add_timelog, Data}).
 
 
-%% @doc Sends an info to the sesison
+%% @doc 
 -spec get_timelog(id()) ->
     ok | {error, nkservice:error()}.
 
 get_timelog(SessId) ->
-    do_cast(SessId, get_timelog).
+    do_call(SessId, get_timelog).
 
 
 %% @doc Links this session to another. We are master, other is slave
@@ -567,6 +567,9 @@ handle_call(get_answer, _From, #state{has_answer=true, session=Session}=State) -
 
 handle_call(get_answer, From, #state{wait_answer=Wait}=State) -> 
     noreply(State#state{wait_answer=[From|Wait]});
+
+handle_call(get_timelog, _From, #state{timelog=Log}=State) -> 
+    reply({ok, Log}, State);
 
 handle_call(get_state, _From, State) -> 
     reply(State, State);

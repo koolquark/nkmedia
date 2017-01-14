@@ -25,7 +25,7 @@
 -author('Carlos Gonzalez <carlosj.gf@gmail.com>').
 -behaviour(gen_server).
 
--export([start/2, stop/1, stop/2, get_room/1, get_status/1]).
+-export([start/2, stop/1, stop/2, stop_all/0, get_room/1, get_status/1]).
 -export([started_member/3, started_member/4, stopped_member/2]).
 -export([send_info/3, update_status/2]).
 -export([restart_timeout/1, register/2, unregister/2, get_all/0]).
@@ -155,6 +155,15 @@ stop(Id) ->
 
 stop(Id, Reason) ->
     do_cast(Id, {stop, Reason}).
+
+
+%% @doc
+-spec stop(id(), nkservice:error()) ->
+    ok | {error, term()}.
+
+stop_all() ->
+    lists:foreach(fun({_Id, Pid}) -> stop(Pid) end, get_all()).
+
 
 
 %% @doc
