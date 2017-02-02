@@ -158,8 +158,8 @@ stop(Id, Reason) ->
 
 
 %% @doc
--spec stop(id(), nkservice:error()) ->
-    ok | {error, term()}.
+-spec stop_all() ->
+    ok.
 
 stop_all() ->
     lists:foreach(fun({_Id, Pid}) -> stop(Pid) end, get_all()).
