@@ -46,9 +46,9 @@ Also, for Erlang developers, you can have a look at the command [syntax specific
 Performs the creation of a new media session. The mandatory `type` field defines the type of the session. Currently, the following types are supported, along with the necessary plugin or plugins that support them.
 
 Type|Plugins
----|---|---
+---|---|
 p2p|-
-echo|[nkmedia_janus](janus.md#echo, fs.md#echo), [nkmedia_fs](fs.md#echo), [nkmedia_kms](kms.md#echo)
+echo|[nkmedia_janus](janus.md#echo), [nkmedia_fs](fs.md#echo), [nkmedia_kms](kms.md#echo)
 proxy|[nkmedia_janus](janus.md#proxy)
 publish|[nkmedia_janus](janus.md#publish), [nkmedia_kms](kms.md#publish)
 listen|[nkmedia_janus](janus.md#listen), [nkmedia_kms](kms.md#listen)
